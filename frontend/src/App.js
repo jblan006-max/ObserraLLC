@@ -33,6 +33,8 @@ import Reporting from "@/pages/Reporting";
 import PaymentSuccess from "@/pages/PaymentSuccess";
 import QRApprove from "@/pages/QRApprove";
 import { Loader2 } from "lucide-react";
+import { Splash } from "@/components/Splash";
+import { InstallBanner } from "@/components/InstallBanner";
 
 function Gate({ children }) {
   const { user } = useAuth();
@@ -51,6 +53,8 @@ function Landing() {
 function App() {
   return (
     <div className="App">
+      <Splash />
+      <InstallBanner />
       <AuthProvider>
         <BrowserRouter>
           <Routes>

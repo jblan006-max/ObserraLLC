@@ -1,0 +1,54 @@
+{
+  "summary": "Frontend-only verification of Obserra auth logo (eye+keyhole), branded splash overlay, PWA install banner, and login flow. All targeted checks passed on the public preview URL.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "auth_page_logo": {
+      "svg_http_status": 200,
+      "svg_content_type": "image/svg+xml",
+      "desktop_visible": true,
+      "desktop_bounding_box": {"x": 253.45, "y": 45.95, "width": 212.1, "height": 212.1},
+      "mobile_visible_screenshot_confirmed": true,
+      "notes": "Eye outline with keyhole (round top + tapered stem) inside ring is rendered large and centered above the OBSERRA wordmark and 'Executive Protection & Intelligence LLC' tagline. Confirmed on 1440x900 and 375x812 viewports."
+    },
+    "splash_overlay": {
+      "appears_on_first_load": true,
+      "gone_after_2_5s": true,
+      "testid": "app-splash",
+      "background_color": "#061F3B",
+      "notes": "Overlay renders on mount, fades at 1.2s, removed by 1.8s; sessionStorage 'obserra-splash-seen' prevents re-display within the session. Does not permanently block the UI."
+    },
+    "install_banner": {
+      "visible_in_headless": false,
+      "testid_absent_as_expected": true,
+      "console_errors_from_component": false,
+      "notes": "beforeinstallprompt did not fire in headless Chromium; banner correctly stays hidden and produces no errors. Component is gated behind the browser event and localStorage 'obserra-install-dismissed'."
+    },
+    "login_flow": {
+      "credentials_used": "jblan2026@gmail.com / Obserra2026!",
+      "final_url": "https://cyber-dashboard-48.preview.emergentagent.com/app",
+      "login_success": true,
+      "notes": "Sign In with email+password redirects to /app dashboard; logo/splash changes did not regress auth."
+    },
+    "console_observations": "Only unrelated pre-login 401s on /api/auth/me (expected while unauthenticated). No errors from Splash or InstallBanner components."
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Splash.jsx: cleanup runs on unmount but sessionStorage is only set at t2=1800ms; if the user navigates away during 0-1800ms the flag won't be set and splash will show again on next mount within the same session. Minor UX nit — safe to leave as-is.",
+    "InstallBanner.jsx: dismissing via 'X' is permanent (localStorage flag with no expiry). Consider TTL (e.g., 30 days) so returning users can be re-prompted after major updates.",
+    "obserra-mark.svg: no explicit width/height attributes on <svg>; sizing depends entirely on the consumer. Current usage relies on Tailwind h-* classes which works, but adding width='256' height='256' would improve robustness if the mark is embedded elsewhere.",
+    "Splash overlay uses z-[9999] and InstallBanner z-[9998]; both are above any potential modal — acceptable here but be aware if future modals need to sit above them."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "100% (4/4 targeted checks passed)"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "none",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Auth logo bug (arrow inner symbol) is resolved — /obserra-mark.svg now renders eye+keyhole correctly. Splash appears on first load only (sessionStorage 'obserra-splash-seen'); to re-test, clear sessionStorage or open a fresh context. Install banner cannot be reliably validated in headless Chromium because 'beforeinstallprompt' doesn't fire — treat absence as PASS per product owner. Login credentials in /app/memory/test_credentials.md."
+}
