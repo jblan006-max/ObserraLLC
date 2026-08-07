@@ -105,12 +105,13 @@ function ReportBuilder() {
     catch (e) { toast.error(e.response?.data?.detail ? "Email failed" : "Email failed"); }
     setExporting("");
   };
-  const saveSchedule = async (enabled) => {
+  const saveSchedule = async (patch) => {
     setSavingSched(true);
     try {
-      const { data } = await api.put("/studio/schedule", { enabled, title, sections: picked });
+      const body = { enabled: schedule?.enabled || false, title, sections: picked, cadence: schedule?.cadence || "monthly", ...patch };
+      const { data } = await api.put("/studio/schedule", body);
       setSchedule(data);
-      toast.success(enabled ? "Monthly report scheduled to board" : "Schedule turned off");
+      toast.success(data.enabled ? `Scheduled (${data.cadence}) to board` : "Schedule turned off");
     } catch { toast.error("Could not save schedule"); }
     setSavingSched(false);
   };
@@ -136,13 +137,22 @@ function ReportBuilder() {
         <button data-testid="report-compose" disabled={busy} onClick={compose} className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Compose with AI</button>
         {isAdmin && schedule && (
           <div data-testid="report-schedule" className="pt-3 mt-1 border-t border-border/60 space-y-2">
-            <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-muted-foreground"><CalendarClock className="w-3.5 h-3.5" /> Monthly auto-email</div>
-            <p className="text-[11px] text-muted-foreground">Emails this report (current title + sections) to the board on the 1st of each month.</p>
-            <button data-testid="report-schedule-toggle" disabled={savingSched} onClick={() => saveSchedule(!schedule.enabled)}
+            <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-muted-foreground"><CalendarClock className="w-3.5 h-3.5" /> Auto-email to board</div>
+            <p className="text-[11px] text-muted-foreground">Emails this report (current title + sections) to the board on your chosen cadence.</p>
+            <div className="grid grid-cols-3 gap-1.5">
+              {["weekly", "monthly", "quarterly"].map((c) => (
+                <button key={c} data-testid={`schedule-cadence-${c}`} disabled={savingSched}
+                  onClick={() => saveSchedule({ cadence: c })}
+                  className={`text-[11px] font-bold capitalize py-1.5 rounded-md border transition-colors disabled:opacity-50 ${(schedule.cadence || "monthly") === c ? "bg-primary/15 text-foreground border-primary/40" : "bg-secondary/50 text-muted-foreground border-border"}`}>
+                  {c}
+                </button>
+              ))}
+            </div>
+            <button data-testid="report-schedule-toggle" disabled={savingSched} onClick={() => saveSchedule({ enabled: !schedule.enabled })}
               className={`w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-sm font-bold transition-colors disabled:opacity-50 ${schedule.enabled ? "bg-ai/15 text-ai border border-ai/30" : "bg-secondary/60 text-muted-foreground border border-border"}`}>
-              {savingSched ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarClock className="w-4 h-4" />} {schedule.enabled ? "Scheduled — turn off" : "Schedule monthly to board"}
+              {savingSched ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarClock className="w-4 h-4" />} {schedule.enabled ? "Scheduled — turn off" : "Schedule to board"}
             </button>
-            {schedule.enabled && <div className="text-[10px] font-mono text-ai">ON · "{schedule.title}" · {schedule.sections?.length || 0} section(s)</div>}
+            {schedule.enabled && <div className="text-[10px] font-mono text-ai capitalize">ON · {schedule.cadence || "monthly"} · "{schedule.title}" · {schedule.sections?.length || 0} section(s)</div>}
           </div>
         )}
       </div>

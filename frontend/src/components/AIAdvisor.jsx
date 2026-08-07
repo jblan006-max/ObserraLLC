@@ -85,6 +85,13 @@ export function AIAdvisor() {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
         body: JSON.stringify({ message: q, mode, deep }),
       });
+      if (res.status === 429) {
+        const j = await res.json().catch(() => ({}));
+        setMessages((m) => { const c = [...m]; c[c.length - 1] = { role: "ai", text: j.detail || "Advisor paused: monthly spend cap reached." }; return c; });
+        setStreaming(false);
+        if (isAdmin) api.get("/advisor/usage").then((r) => setSpend(r.data)).catch(() => {});
+        return;
+      }
       const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
       while (true) {
         const { done, value } = await reader.read(); if (done) break;
@@ -114,6 +121,18 @@ export function AIAdvisor() {
       setSpend(data); setBudgetInput("");
       toast.success(`Monthly advisor budget set to $${v.toFixed(2)}`);
     } catch { toast.error("Could not save budget"); }
+    setSavingBudget(false);
+  };
+
+  const toggleAutoPause = async () => {
+    if (!spend) return;
+    setSavingBudget(true);
+    try {
+      await api.put("/advisor/budget", { monthly_usd: spend.budget_usd || 0, auto_pause: !spend.auto_pause });
+      const { data } = await api.get("/advisor/usage");
+      setSpend(data);
+      toast.success(`Auto-pause ${data.auto_pause ? "on" : "off"}`);
+    } catch { toast.error("Could not update auto-pause"); }
     setSavingBudget(false);
   };
 
@@ -167,6 +186,14 @@ export function AIAdvisor() {
               )}
               {spend.budget_status === "over" && <div className="text-[10px] text-crit">Over the monthly cap — advisor spend has exceeded budget.</div>}
               {spend.budget_status === "warning" && <div className="text-[10px] text-med">Nearing the monthly cap.</div>}
+              {spend.paused && <div data-testid="advisor-paused-banner" className="text-[10px] text-crit font-bold">Advisor auto-paused for this month — cap reached.</div>}
+              <div className="flex items-center justify-between pt-0.5">
+                <span className="text-[10px] font-mono text-muted-foreground">Auto-pause at cap</span>
+                <button data-testid="advisor-autopause-toggle" disabled={savingBudget} onClick={toggleAutoPause}
+                  className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors disabled:opacity-50 ${spend.auto_pause ? "bg-crit/15 text-crit border-crit/30" : "bg-secondary/60 text-muted-foreground border-border"}`}>
+                  {spend.auto_pause ? "On" : "Off"}
+                </button>
+              </div>
               <div className="flex items-center gap-1.5 pt-0.5">
                 <input data-testid="advisor-budget-input" type="number" min="0" step="1"
                   placeholder={spend.budget_usd > 0 ? `current $${spend.budget_usd}` : "set $ monthly cap"}

@@ -179,13 +179,15 @@ class ScheduleBody(BaseModel):
     enabled: bool = False
     title: str = "Monthly Board Report"
     sections: list[str] = []
+    cadence: str = "monthly"
 
 
 @studio_router.get("/schedule")
 async def get_schedule(admin: dict = Depends(require_roles("admin"))):
     org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])})
     return (org or {}).get("studio_schedule") or {
-        "enabled": False, "title": "Monthly Board Report", "sections": [s["id"] for s in REPORT_SECTIONS]}
+        "enabled": False, "title": "Monthly Board Report", "cadence": "monthly",
+        "sections": [s["id"] for s in REPORT_SECTIONS]}
 
 
 @studio_router.put("/schedule")

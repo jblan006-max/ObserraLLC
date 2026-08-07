@@ -1,6 +1,6 @@
 import os
 import json
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from datetime import datetime, timezone
@@ -62,6 +62,18 @@ async def _month_spend(org_id: str) -> float:
         {"org_id": org_id, "usage": {"$exists": True}, "ts": {"$regex": f"^{mk}"}},
         {"_id": 0, "usage": 1}).to_list(2000)
     return round(sum(l["usage"]["cost_usd"] for l in logs), 4)
+
+
+async def _org_settings(org_id: str) -> dict:
+    return await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+
+
+async def _is_paused(org_id: str) -> bool:
+    org = await _org_settings(org_id)
+    budget = float(org.get("advisor_budget_usd") or 0)
+    if budget <= 0 or not org.get("advisor_auto_pause"):
+        return False
+    return await _month_spend(org_id) >= budget
 
 
 async def _check_budget(org_id: str):
@@ -127,6 +139,8 @@ Suggest at most one ACTION per reply. Use short markdown. Prefix advice with 'RE
 @advisor_router.post("/chat")
 async def advisor_chat(body: AdvisorQuery, user: dict = Depends(require_active_subscription)):
     org_id = user["org_id"]
+    if await _is_paused(org_id):
+        raise HTTPException(status_code=429, detail="Advisor paused: monthly spend cap reached. An admin can raise or turn off the cap in the advisor panel.")
     context = await _build_context(org_id)
     provider, model = MODEL_ROUTES.get(body.mode, MODEL_ROUTES["executive"])
     session_id = body.session_id or f"{org_id}-{user['id']}"
@@ -184,24 +198,32 @@ async def advisor_usage(admin: dict = Depends(require_roles("admin"))):
     today_cost = round(sum(l["usage"]["cost_usd"] for l in logs if l.get("ts", "").startswith(today)), 4)
     month_cost = round(sum(l["usage"]["cost_usd"] for l in logs if l.get("ts", "").startswith(mk)), 4)
     budget = await _org_budget(admin["org_id"])
+    org = await _org_settings(admin["org_id"])
+    auto_pause = bool(org.get("advisor_auto_pause"))
     pct = round(month_cost / budget * 100) if budget > 0 else 0
     status = "off" if budget <= 0 else ("over" if pct >= 100 else ("warning" if pct >= 80 else "ok"))
+    paused = budget > 0 and auto_pause and month_cost >= budget
     recent = [{"prompt": l["prompt"][:80], "user": l["user"], "model": l.get("model"), "ts": l.get("ts"),
                "tokens": l["usage"]["total_tokens"], "cost_usd": l["usage"]["cost_usd"]} for l in logs[:20]]
     return {"queries": len(logs), "total_tokens": total_tokens, "total_cost_usd": total_cost,
             "today_cost_usd": today_cost, "month_cost_usd": month_cost, "budget_usd": budget,
-            "budget_pct": pct, "budget_status": status, "recent": recent}
+            "budget_pct": pct, "budget_status": status, "auto_pause": auto_pause, "paused": paused,
+            "recent": recent}
 
 
 class BudgetBody(BaseModel):
     monthly_usd: float
+    auto_pause: bool | None = None
 
 
 @advisor_router.put("/budget")
 async def set_budget(body: BudgetBody, admin: dict = Depends(require_roles("admin"))):
     val = max(0.0, round(body.monthly_usd, 2))
-    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"advisor_budget_usd": val}})
-    return {"monthly_usd": val}
+    update = {"advisor_budget_usd": val}
+    if body.auto_pause is not None:
+        update["advisor_auto_pause"] = bool(body.auto_pause)
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": update})
+    return {"monthly_usd": val, "auto_pause": update.get("advisor_auto_pause")}
 
 
 @advisor_router.post("/board-report")

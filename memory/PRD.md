@@ -88,6 +88,10 @@ Foundation: Tenant Management · Identity & RBAC | Data: Enterprise Asset Model 
 - **Spend Budget Alerts**: admins set a monthly advisor budget (PUT /api/advisor/budget, stored on organizations.advisor_budget_usd). GET /api/advisor/usage now returns month_cost, budget, budget_pct, budget_status (off/ok/warning≥80%/over≥100%). Advisor panel shows a colored budget bar + inline cap editor (admin-only). Crossing 80%/100% creates a deduped in-app notification (advisor_budget) per month via _check_budget after each query.
 - **Scheduled Studio Reports**: admins toggle a monthly auto-email in Studio Report Builder (GET/PUT /api/studio/schedule → organizations.studio_schedule {enabled,title,sections}). New cron POST /api/cron/monthly-studio-report (1st, 09:00 UTC in .emergent/crons.yml) composes each enabled org's report (reuses _compose_report) and emails admins+execs via managed Resend + creates a delivery notification. compose_report refactored into reusable _compose_report(org_id,title,sections).
 
+## Session 2026-06 (Budget Auto-Pause + Schedule Cadence)
+- **Budget Auto-Pause**: org flag advisor_auto_pause; PUT /api/advisor/budget accepts optional auto_pause; when on and month spend ≥ cap, /api/advisor/chat returns 429 (_is_paused guard). /api/advisor/usage returns auto_pause + paused. Advisor panel adds an "Auto-pause at cap" On/Off toggle + paused banner; UI catches 429 and shows the paused message. Verified: paused=true → chat 429.
+- **Schedule Cadence**: studio_schedule.cadence (weekly/monthly/quarterly). _run_studio_reports(cadences) filters orgs by cadence. Monthly cron (1st 09:00) runs {monthly} + {quarterly} on Jan/Apr/Jul/Oct; new weekly cron (Mon 09:00) runs {weekly} — both in .emergent/crons.yml. Report Builder adds a Weekly/Monthly/Quarterly selector. Verified: weekly cron 200 + delivery notification.
+
 ## Implemented (as of 2026-06)
 - JWT auth (httpOnly cookies, brute-force lockout), org/role, tenant isolation
 - Passwordless QR login (start/approve/poll, 3-min single-use, cross-device)

@@ -126,15 +126,17 @@ def _studio_markdown(report: dict) -> str:
     return "\n".join(lines)
 
 
-async def _run_monthly_studio_reports():
+async def _run_studio_reports(cadences):
     orgs = await db.organizations.find({"studio_schedule.enabled": True}).to_list(1000)
     for org in orgs:
         org_id = str(org["_id"])
         sch = org.get("studio_schedule") or {}
+        if (sch.get("cadence") or "monthly") not in cadences:
+            continue
         sections = sch.get("sections") or []
         if not sections:
             continue
-        title = sch.get("title") or "Monthly Board Report"
+        title = sch.get("title") or "Scheduled Report"
         try:
             report = await _compose_report(org_id, title, sections)
             html = _report_html(_studio_markdown(report), title)
@@ -145,9 +147,9 @@ async def _run_monthly_studio_reports():
             await notifications.create(
                 org_id, "report", "Scheduled Studio report delivered",
                 f"'{title}' emailed to {len(recipients)} executive(s)/admin(s).", ref="studio-report")
-            logger.info(f"Monthly studio report sent for org {org_id} to {len(recipients)} recipients")
+            logger.info(f"Studio report ({','.join(cadences)}) sent for org {org_id} to {len(recipients)} recipients")
         except Exception as e:
-            logger.error(f"Monthly studio report failed for org {org_id}: {e}")
+            logger.error(f"Scheduled studio report failed for org {org_id}: {e}")
 
 
 @scheduled_router.post("/cron/monthly-studio-report")
@@ -155,5 +157,18 @@ async def monthly_studio_report(request: Request, background_tasks: BackgroundTa
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     if not _authorized(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    background_tasks.add_task(_run_monthly_studio_reports)
+    from datetime import datetime, timezone
+    cadences = {"monthly"}
+    if datetime.now(timezone.utc).month in (1, 4, 7, 10):
+        cadences.add("quarterly")
+    background_tasks.add_task(_run_studio_reports, cadences)
+    return {"status": "accepted"}
+
+
+@scheduled_router.post("/cron/weekly-studio-report")
+async def weekly_studio_report(request: Request, background_tasks: BackgroundTasks):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    if not _authorized(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    background_tasks.add_task(_run_studio_reports, {"weekly"})
     return {"status": "accepted"}
