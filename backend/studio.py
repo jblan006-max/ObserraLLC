@@ -19,7 +19,7 @@ async def _ai_narrative(org_id: str, title: str, blocks: list[dict]) -> str:
         api_key=os.environ["EMERGENT_LLM_KEY"],
         session_id=f"studio-report-{org_id}",
         system_message="You are a chief risk officer writing a concise executive narrative for a custom risk & AI governance report. Ground every statement strictly in the provided report data. Cite refs in square brackets when present. Do not invent facts.",
-    ).with_model("anthropic", "claude-sonnet-5")
+    ).with_model("anthropic", "claude-opus-4-8")
     prompt = (f"REPORT TITLE: {title}\n\nREPORT DATA:\n{context}\n\n"
               "Write a single-paragraph executive narrative (<130 words) summarizing the posture, "
               "the most important risk signals, and one clear recommended action. Plain prose, no headings.")
@@ -123,4 +123,4 @@ async def compose_report(body: ReportBody, user: dict = Depends(get_current_user
     blocks = [{"heading": builders[s][0], "lines": builders[s][1]} for s in body.sections if s in builders]
     narrative = await _ai_narrative(org_id, body.title, blocks) if blocks else ""
     return {"title": body.title, "generated_at": datetime.now(timezone.utc).isoformat(),
-            "ai_narrative": narrative, "model": "claude-sonnet-5", "blocks": blocks}
+            "ai_narrative": narrative, "model": "claude-opus-4-8", "blocks": blocks}

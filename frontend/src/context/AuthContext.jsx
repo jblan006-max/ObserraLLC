@@ -38,7 +38,7 @@ export function AuthProvider({ children }) {
     const { data } = await api.post("/auth/register", payload);
     setUser(data); return data;
   };
-  const logout = async () => { await api.post("/auth/logout"); setUser(false); setSub(null); };
+  const logout = async () => { await api.post("/auth/logout"); sessionStorage.removeItem("advisor-opened"); setUser(false); setSub(null); };
 
   return (
     <AuthContext.Provider value={{ user, setUser, sub, refreshSub, mode, switchMode, login, register, logout }}>

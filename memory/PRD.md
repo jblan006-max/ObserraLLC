@@ -71,6 +71,11 @@ Foundation: Tenant Management · Identity & RBAC | Data: Enterprise Asset Model 
 - QUEUED (needs creds): real Microsoft 365 connector OAuth (Azure app client id/secret/tenant); real SAML/SCIM with an enterprise IdP.
 
 
+## Session 2026-06 (Cyber Risk + Studio + Advisor upgrade) — verified iteration_9.json (backend 14/14, frontend 100%)
+- **Cyber Risk** (3rd kernel-native app, /app/cyber-risk): posture score, risk-mitigation %, control coverage, open/total risks, composition badges, top residual risk table; admin "Treat" opens a remediation workflow + cyber_risk alert (kernel loop). Endpoints GET /api/cyber/overview, POST /api/cyber/risks/{ref}/treat.
+- **Studio** (/app/studio): Dashboard Builder (toggle live kernel-metric widgets, saved per-user via /api/studio/dashboard) + Report Builder (pick sections → POST /api/studio/report/compose → AI Executive Narrative via Claude Opus 4.8 + section blocks).
+- **AI Advisor upgrade**: model upgraded to **Claude Opus 4.8** (executive+operational routes); new **Deep analysis mode** (advisor-deep-toggle → structured Signals/Analysis/Recommendation, deep flag on /api/advisor/chat); **slim always-visible header input bar** (header-advisor-input) that expands & sends to the advisor; advisor **auto-opens once per session** on login (cleared on logout). Obserra /logo.png retained as the advisor avatar.
+
 ## Implemented (as of 2026-06)
 - JWT auth (httpOnly cookies, brute-force lockout), org/role, tenant isolation
 - Passwordless QR login (start/approve/poll, 3-min single-use, cross-device)
