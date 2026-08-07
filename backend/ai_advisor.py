@@ -11,18 +11,29 @@ from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, Strea
 
 advisor_router = APIRouter(prefix="/api/advisor")
 
-# Default routing: Claude Sonnet 5 for executive synthesis, Gemini 3.1 Pro for long-context ingestion
+# Default routing: Claude Opus 4.8 (most advanced) for executive+operational synthesis,
+# Gemini 3.1 Pro for long-context ingestion.
 MODEL_ROUTES = {
-    "executive": ("anthropic", "claude-sonnet-5"),
-    "operational": ("anthropic", "claude-sonnet-5"),
+    "executive": ("anthropic", "claude-opus-4-8"),
+    "operational": ("anthropic", "claude-opus-4-8"),
     "ingestion": ("gemini", "gemini-3.1-pro-preview"),
 }
+
+DEEP_ANALYSIS_DIRECTIVE = (
+    "\n\nDEEP ANALYSIS MODE — think in structured steps before answering. Internally: "
+    "(1) gather the relevant evidence from context, (2) reason through second-order impacts and "
+    "interdependencies, (3) weigh trade-offs, then produce a rigorous answer. Output ONLY the final "
+    "answer using these labeled sections: **Signals** (key evidence cited by ref), **Analysis** "
+    "(reasoning, second-order effects, FACT vs ESTIMATE), **Recommendation** (prioritized, with "
+    "confidence). Keep it tight and board-grade. Still emit at most one ACTION line if warranted."
+)
 
 
 class AdvisorQuery(BaseModel):
     message: str
     mode: str = "executive"
     session_id: str | None = None
+    deep: bool = False
 
 
 async def _build_context(org_id: str) -> str:
@@ -73,10 +84,10 @@ async def advisor_chat(body: AdvisorQuery, user: dict = Depends(require_active_s
     chat = LlmChat(
         api_key=os.environ["EMERGENT_LLM_KEY"],
         session_id=session_id,
-        system_message=SYSTEM_PROMPT,
+        system_message=SYSTEM_PROMPT + (DEEP_ANALYSIS_DIRECTIVE if body.deep else ""),
     ).with_model(provider, model)
 
-    full_prompt = f"ENTERPRISE CONTEXT (JSON):\n{context}\n\nQUESTION ({body.mode} mode): {body.message}"
+    full_prompt = f"ENTERPRISE CONTEXT (JSON):\n{context}\n\nQUESTION ({body.mode} mode{', deep analysis' if body.deep else ''}): {body.message}"
 
     async def event_generator():
         collected = []

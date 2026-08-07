@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { X, Send, Loader2, Zap } from "lucide-react";
+import { X, Send, Loader2, Zap, Brain } from "lucide-react";
 import { API, api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
@@ -45,9 +45,18 @@ export function AIAdvisor() {
   const [streaming, setStreaming] = useState(false);
   const [modelTag, setModelTag] = useState("");
   const [working, setWorking] = useState(null);
+  const [deep, setDeep] = useState(false);
   const scrollRef = useRef(null);
+  const sendRef = useRef(null);
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, streaming]);
+
+  useEffect(() => {
+    if (!sessionStorage.getItem("advisor-opened")) { setOpen(true); sessionStorage.setItem("advisor-opened", "1"); }
+    const h = (e) => { setOpen(true); if (e.detail) sendRef.current?.(e.detail); };
+    window.addEventListener("open-advisor", h);
+    return () => window.removeEventListener("open-advisor", h);
+  }, []);
 
   const execute = async (action_id, label) => {
     setWorking(action_id);
@@ -68,7 +77,7 @@ export function AIAdvisor() {
     try {
       const res = await fetch(`${API}/advisor/chat`, {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ message: q, mode }),
+        body: JSON.stringify({ message: q, mode, deep }),
       });
       const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = "";
       while (true) {
@@ -85,6 +94,7 @@ export function AIAdvisor() {
     } catch { setMessages((m) => { const c = [...m]; c[c.length - 1] = { role: "ai", text: "Advisor unavailable right now." }; return c; }); }
     setStreaming(false);
   };
+  sendRef.current = send;
 
   const suggestions = mode === "executive"
     ? ["Summarize our top enterprise risks for the board", "What is driving the AI Governance score?"]
@@ -104,10 +114,16 @@ export function AIAdvisor() {
               {AVATAR("w-8 h-8")}
               <div>
                 <div className="font-head font-bold text-ai">Obserra Advisor</div>
-                <div className="text-[10px] font-mono text-muted-foreground">{mode} · helper + worker · {modelTag || "claude-sonnet-5"}</div>
+                <div className="text-[10px] font-mono text-muted-foreground">{mode} · helper + worker · {modelTag || "claude-opus-4-8"}</div>
               </div>
             </div>
-            <button data-testid="advisor-close" onClick={() => setOpen(false)} className="p-1.5 rounded-md hover:bg-secondary"><X className="w-4 h-4" /></button>
+            <div className="flex items-center gap-1.5">
+              <button data-testid="advisor-deep-toggle" onClick={() => setDeep((d) => !d)} title="Deep analysis mode"
+                className={`flex items-center gap-1 text-[11px] font-head font-bold px-2.5 py-1.5 rounded-full border transition-colors ${deep ? "bg-ai text-background border-ai" : "bg-transparent text-muted-foreground border-border hover:text-ai"}`}>
+                <Brain className="w-3.5 h-3.5" /> Deep
+              </button>
+              <button data-testid="advisor-close" onClick={() => setOpen(false)} className="p-1.5 rounded-md hover:bg-secondary"><X className="w-4 h-4" /></button>
+            </div>
           </div>
 
           <div className="px-5 py-2.5 border-b border-border flex flex-wrap gap-1.5">

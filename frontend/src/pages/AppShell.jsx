@@ -129,9 +129,22 @@ export default function AppShell() {
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
-        <header className="sticky top-0 z-30 h-16 flex items-center justify-between px-6 border-b border-border/40 backdrop-blur-xl bg-background/70">
-          <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest truncate">
+        <header className="sticky top-0 z-30 h-16 flex items-center justify-between gap-4 px-6 border-b border-border/40 backdrop-blur-xl bg-background/70">
+          <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest truncate hidden lg:block">
             {sub?.org_name || "Obserra — Executive Protection & Intelligence LLC"}
+          </div>
+          <div className="flex-1 max-w-md">
+            <div className="flex items-center gap-2 rounded-full border border-ai/30 bg-ai/5 px-3 py-1.5 focus-within:ring-1 focus-within:ring-ai transition-shadow">
+              <img src="/logo.png" alt="Obserra Advisor" className="h-5 w-5 rounded-full object-cover shrink-0" style={{ objectPosition: "left center" }} />
+              <input data-testid="header-advisor-input" placeholder="Ask the Obserra Advisor…"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && e.currentTarget.value.trim()) {
+                    window.dispatchEvent(new CustomEvent("open-advisor", { detail: e.currentTarget.value.trim() }));
+                    e.currentTarget.value = "";
+                  }
+                }}
+                className="flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground" />
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <NotificationBell />

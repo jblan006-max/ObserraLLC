@@ -1,0 +1,24 @@
+{
+  "summary": "Iter 9 — Cyber Risk, Studio (Dashboard + Report Builder) and AI Advisor (Claude Opus 4.8 + Deep mode + header input) tested end-to-end. Backend: 14/14 pytest cases pass (after 1 test-side URL fix). Frontend Playwright covered login → auto-opened advisor with claude-opus-4-8 tag → Cyber overview + treat CR-004 (success toast) → Studio Dashboard toggle+save (toast + persistence via GET) → Studio Report compose (LLM narrative 956 chars + 5 blocks) → Header advisor input triggers streaming response → Deep toggle produces structured **Signals**/**Analysis**/**Recommendation** answer with cited refs → regression navs (Overview, Third-Party, AI Agents, Enterprise) all load.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter9_cyber_studio_advisor.py",
+    "/app/test_reports/pytest/iter9_results.xml",
+    "/app/test_reports/iter9_final.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "studio.py _ai_narrative uses model 'claude-sonnet-5' (not opus-4-8). Session brief said 'Claude Opus 4.8' for the narrative — confirm intended model. Response body returns model='claude-sonnet-5'. Narrative generation works fine either way.",
+    "AIAdvisor auto-open uses sessionStorage flag 'advisor-opened' — good for once-per-session, but means the panel will not auto-open again in the same tab even after logout/login of a different user. Consider clearing the flag on logout.",
+    "cyber.py treat_risk dedupe_key uses residual value only — repeat treat calls for the same risk with same residual will silently dedupe the notification. Consider timestamp component."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter9_cyber_studio_advisor.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "admin: jblan2026@gmail.com / Obserra2026! (verified working)",
+  "seed_data_creation": "None; used existing seeded org data. Test PUT of dashboard changed admin's saved widget list to ['high_risk_vendors','unread_alerts','control_effectiveness'] — no cleanup performed as this is a per-user preference and the app permits any selection.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend test suite lives at /app/backend/tests/test_iter9_cyber_studio_advisor.py — covers cyber overview/treat/404, studio dashboard get+put+persistence, studio report compose (LLM narrative present), advisor deep SSE stream verifying claude-opus-4-8 model tag, plus regression for /api/branding, /api/overview, /api/vendors, /api/agents, /api/kernel/manifest, /api/auth/me. Login button testid is auth-submit (there are two 'Sign in' texts on the auth page). Advisor auto-opens on first login per session (sessionStorage 'advisor-opened').",
+  "rca of the issue": "n/a — no bugs found."
+}
