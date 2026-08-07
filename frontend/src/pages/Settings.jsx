@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { api, API } from "@/lib/api";
 import { toast } from "sonner";
-import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw, Image as ImageIcon, Server, Package, FileText, RefreshCw, Send } from "lucide-react";
+import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw, Image as ImageIcon, Server, Package, FileText, RefreshCw, Send, Bookmark, X } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const OPTIONS = [
@@ -89,6 +89,18 @@ export default function Settings() {
 
   const [emailTo, setEmailTo] = useState("");
   const [emailBusy, setEmailBusy] = useState(false);
+  const [book, setBook] = useState([]);
+  useEffect(() => { api.get("/deploy/recipients").then((r) => setBook(r.data.recipients || [])).catch(() => {}); }, []);
+  const saveRecipient = async () => {
+    if (!emailTo) return;
+    const next = Array.from(new Set([...book, emailTo]));
+    try { const { data } = await api.put("/deploy/recipients", { recipients: next }); setBook(data.recipients); toast.success("Saved to IT distribution list"); }
+    catch (e) { toast.error(e.response?.data?.detail || "Could not save"); }
+  };
+  const removeRecipient = async (e) => {
+    const next = book.filter((x) => x !== e);
+    try { const { data } = await api.put("/deploy/recipients", { recipients: next }); setBook(data.recipients); } catch { /* noop */ }
+  };
   const emailDocs = async () => {
     setEmailBusy(true);
     try {
@@ -306,7 +318,21 @@ export default function Settings() {
               className="px-4 py-2.5 rounded-md bg-ai text-background font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
               {emailBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Email to IT team
             </button>
+            <button data-testid="email-docs-save" disabled={!emailTo} onClick={saveRecipient}
+              className="px-3 py-2.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-primary/40 text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
+              <Bookmark className="w-4 h-4" /> Save
+            </button>
           </div>
+          {book.length > 0 && (
+            <div className="flex flex-wrap gap-2" data-testid="recipients-book">
+              {book.map((e) => (
+                <span key={e} className="inline-flex items-center gap-1 text-xs bg-secondary/60 rounded-full pl-3 pr-1 py-1">
+                  <button data-testid={`book-pick-${e}`} onClick={() => setEmailTo(e)} className="hover:text-foreground">{e}</button>
+                  <button data-testid={`book-remove-${e}`} onClick={() => removeRecipient(e)} className="p-0.5 rounded-full hover:bg-crit/20 text-muted-foreground hover:text-crit"><X className="w-3 h-3" /></button>
+                </span>
+              ))}
+            </div>
+          )}
           <p className="text-xs text-muted-foreground">Emails the guide (PDF) + on-premise package (zip) as attachments. Prefer a guided video? Use the built-in walkthrough via <span className="text-foreground">Guided Tour → Replay tour</span> above — it narrates Executive vs Operational mode in-app.</p>
         </div>
       )}

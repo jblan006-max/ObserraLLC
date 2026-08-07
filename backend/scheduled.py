@@ -63,6 +63,24 @@ async def monthly_board_report(request: Request, background_tasks: BackgroundTas
     return {"status": "accepted"}
 
 
+async def _refresh_guides():
+    try:
+        from deploy import regenerate_guides
+        regenerate_guides(capture=True)
+        logger.info("Weekly guide refresh complete")
+    except Exception as e:
+        logger.error(f"Weekly guide refresh failed: {e}")
+
+
+@scheduled_router.post("/cron/weekly-guide-refresh")
+async def weekly_guide_refresh(request: Request, background_tasks: BackgroundTasks):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    if not _authorized(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    background_tasks.add_task(_refresh_guides)
+    return {"status": "accepted"}
+
+
 def _digest_html(alerts):
     rows = "".join(
         f'<tr><td style="padding:8px 0;border-bottom:1px solid #eee;font:400 13px Arial;color:#1f2937">'

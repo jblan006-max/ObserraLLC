@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { Building, Loader2, Layers, ShieldAlert, PlayCircle } from "lucide-react";
+import { Building, Loader2, Layers, ShieldAlert, PlayCircle, Search, X } from "lucide-react";
 
 const TIER = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 90% 55%", Low: "142 70% 45%" };
 
@@ -11,6 +11,9 @@ export default function VendorRisk() {
   const isAdmin = user?.role === "admin";
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState("");
+  const [q, setQ] = useState("");
+  const [tierF, setTierF] = useState("all");
+  const [selected, setSelected] = useState(null);
 
   const load = () => api.get("/vendors").then((r) => setData(r.data));
   useEffect(() => { load(); }, []);
@@ -23,6 +26,7 @@ export default function VendorRisk() {
   };
 
   if (!data) return <div className="flex items-center justify-center h-96"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
+  const shownVendors = data.vendors.filter((v) => (tierF === "all" || v.risk_tier === tierF) && `${v.name} ${v.ref}`.toLowerCase().includes(q.toLowerCase()));
 
   return (
     <div className="rise space-y-6">
@@ -40,16 +44,27 @@ export default function VendorRisk() {
         <div className="bg-card fact-border rounded-xl p-4" style={{ borderLeft: "3px solid hsl(0 84% 60%)" }}><div className="text-[10px] font-mono uppercase text-muted-foreground">High / Critical</div><div className="font-head font-black text-3xl text-crit">{data.high_risk}</div></div>
       </div>
 
+      <div className="flex flex-wrap gap-2" data-testid="vendor-filters">
+        <div className="relative flex-1 min-w-[180px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <input data-testid="vendor-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search vendors..." className="w-full bg-secondary/60 rounded-md pl-9 pr-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary" />
+        </div>
+        <select data-testid="vendor-filter" value={tierF} onChange={(e) => setTierF(e.target.value)} className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary">
+          <option value="all">All tiers</option><option value="Critical">Critical</option><option value="High">High</option><option value="Medium">Medium</option><option value="Low">Low</option>
+        </select>
+      </div>
+      <div className="md:flex md:gap-5 md:items-start">
+      <div className="min-w-0 flex-1 space-y-4">
       <div className="md:hidden space-y-3" data-testid="vendor-cards-mobile">
-        {data.vendors.map((v) => (
-          <div key={v.ref} data-testid={`vendor-card-${v.ref}`} className="bg-card fact-border rounded-xl p-4 space-y-2">
+        {shownVendors.map((v) => (
+          <div key={v.ref} data-testid={`vendor-card-${v.ref}`} onClick={() => setSelected(v)} className="bg-card fact-border rounded-xl p-4 space-y-2 active:bg-secondary/40 transition-colors">
             <div className="flex items-start justify-between gap-2">
               <div className="min-w-0"><div className="font-mono text-[11px] text-ai">{v.ref}</div><div className="font-medium text-sm">{v.name}</div><div className="text-[11px] text-muted-foreground">{v.category} · {v.data_access}</div></div>
               <span className="text-[10px] px-2 py-0.5 rounded-sm font-mono font-bold shrink-0" style={{ background: `hsl(${TIER[v.risk_tier]} / 0.15)`, color: `hsl(${TIER[v.risk_tier]})` }}>{v.risk_tier} · {v.risk_score}</span>
             </div>
             <div className="flex items-center justify-between text-xs text-muted-foreground">
               <span>Attested {v.attestation}% · {v.incidents > 0 ? <span className="text-crit">{v.incidents} incidents</span> : "0 incidents"}</span>
-              {isAdmin && <button data-testid={`assess-m-${v.ref}`} disabled={!!busy} onClick={() => assess(v.ref)} className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md bg-primary/10 border border-primary/30 disabled:opacity-50">{busy === v.ref ? <Loader2 className="w-3 h-3 animate-spin" /> : <PlayCircle className="w-3 h-3" />} Assess</button>}
+              {isAdmin && <button data-testid={`assess-m-${v.ref}`} disabled={!!busy} onClick={(e) => { e.stopPropagation(); assess(v.ref); }} className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md bg-primary/10 border border-primary/30 disabled:opacity-50">{busy === v.ref ? <Loader2 className="w-3 h-3 animate-spin" /> : <PlayCircle className="w-3 h-3" />} Assess</button>}
             </div>
           </div>
         ))}
@@ -61,8 +76,8 @@ export default function VendorRisk() {
             <tr><th className="text-left px-4 py-3">Vendor</th><th className="text-left px-4 py-3">Category</th><th className="text-left px-4 py-3">Data access</th><th className="text-left px-4 py-3">Attested</th><th className="text-left px-4 py-3">Incidents</th><th className="text-left px-4 py-3">Risk</th><th className="text-right px-4 py-3">Action</th></tr>
           </thead>
           <tbody>
-            {data.vendors.map((v) => (
-              <tr key={v.ref} data-testid={`vendor-row-${v.ref}`} className="border-b border-border/60 hover:bg-secondary/40 transition-colors">
+            {shownVendors.map((v) => (
+              <tr key={v.ref} data-testid={`vendor-row-${v.ref}`} onClick={() => setSelected(v)} className={`border-b border-border/60 hover:bg-secondary/40 transition-colors cursor-pointer ${selected?.ref === v.ref ? "bg-secondary/50" : ""}`}>
                 <td className="px-4 py-3"><div className="font-mono text-xs text-ai">{v.ref}</div><div className="font-medium">{v.name}</div></td>
                 <td className="px-4 py-3 text-muted-foreground">{v.category}</td>
                 <td className="px-4 py-3">{v.data_access}</td>
@@ -70,12 +85,31 @@ export default function VendorRisk() {
                 <td className="px-4 py-3">{v.incidents > 0 ? <span className="text-crit flex items-center gap-1"><ShieldAlert className="w-3.5 h-3.5" />{v.incidents}</span> : "0"}</td>
                 <td className="px-4 py-3"><span className="px-2 py-0.5 rounded-sm text-[10px] font-mono font-bold" style={{ background: `hsl(${TIER[v.risk_tier]} / 0.15)`, color: `hsl(${TIER[v.risk_tier]})` }}>{v.risk_tier} · {v.risk_score}</span></td>
                 <td className="px-4 py-3 text-right">
-                  {isAdmin && <button data-testid={`assess-${v.ref}`} disabled={!!busy} onClick={() => assess(v.ref)} className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 disabled:opacity-50">{busy === v.ref ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />} Assess</button>}
+                  {isAdmin && <button data-testid={`assess-${v.ref}`} disabled={!!busy} onClick={(e) => { e.stopPropagation(); assess(v.ref); }} className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 disabled:opacity-50">{busy === v.ref ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />} Assess</button>}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
+      </div>
+      </div>
+
+      {selected && (
+        <aside data-testid="vendor-detail-pane" className="hidden md:block md:w-72 lg:w-80 shrink-0 md:sticky md:top-28 bg-card fact-border rounded-xl p-4 space-y-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0"><div className="font-mono text-[11px] text-ai">{selected.ref}</div><div className="font-head font-bold text-sm">{selected.name}</div></div>
+            <button data-testid="vendor-detail-close" onClick={() => setSelected(null)} className="shrink-0 text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+          </div>
+          <span className="inline-block text-[10px] px-2 py-0.5 rounded-sm font-mono font-bold" style={{ background: `hsl(${TIER[selected.risk_tier]} / 0.15)`, color: `hsl(${TIER[selected.risk_tier]})` }}>{selected.risk_tier} · {selected.risk_score}</span>
+          <div className="text-xs space-y-1">
+            <div className="flex justify-between gap-2"><span className="text-muted-foreground">Category</span><span className="text-right">{selected.category}</span></div>
+            <div className="flex justify-between gap-2"><span className="text-muted-foreground">Data access</span><span className="text-right">{selected.data_access}</span></div>
+            <div className="flex justify-between gap-2"><span className="text-muted-foreground">Attestation</span><span>{selected.attestation}%</span></div>
+            <div className="flex justify-between gap-2"><span className="text-muted-foreground">Incidents</span><span className={selected.incidents > 0 ? "text-crit" : ""}>{selected.incidents}</span></div>
+          </div>
+          {isAdmin && <button data-testid="vendor-detail-assess" disabled={!!busy} onClick={() => assess(selected.ref)} className="w-full text-xs px-3 py-2 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">{busy === selected.ref ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />} Re-assess vendor</button>}
+        </aside>
+      )}
       </div>
       <p className="text-[11px] text-muted-foreground">Assessing a High/Critical vendor opens a remediation workflow and alerts owners — proving the kernel loop.</p>
     </div>

@@ -8,6 +8,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 
 from auth import get_current_user
+from db import db
 
 deploy_router = APIRouter(prefix="/api/deploy")
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -97,6 +98,35 @@ async def regenerate(capture: bool = False, user: dict = Depends(get_current_use
 
 class EmailDocsBody(BaseModel):
     to: str
+
+
+class RecipientsBody(BaseModel):
+    recipients: list[str] = []
+
+
+@deploy_router.get("/recipients")
+async def get_deploy_recipients(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    return {"recipients": org.get("deploy_recipients") or []}
+
+
+@deploy_router.put("/recipients")
+async def set_deploy_recipients(body: RecipientsBody, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    import re
+    from bson import ObjectId
+    valid = []
+    for e in body.recipients:
+        e = (e or "").strip()
+        if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", e) and e not in valid:
+            valid.append(e)
+    await db.organizations.update_one({"_id": ObjectId(user["org_id"])},
+                                      {"$set": {"deploy_recipients": valid}})
+    return {"recipients": valid}
 
 
 @deploy_router.post("/email-docs")

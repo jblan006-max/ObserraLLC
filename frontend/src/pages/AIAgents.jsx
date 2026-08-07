@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { Bot, Loader2, X, ShieldCheck, ShieldAlert, Zap, Layers, PlayCircle, CheckCircle2, XCircle } from "lucide-react";
+import { Bot, Loader2, X, ShieldCheck, ShieldAlert, Zap, Layers, PlayCircle, CheckCircle2, XCircle, Search } from "lucide-react";
 
 const RISK_COLOR = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 90% 55%", Low: "190 90% 50%" };
 const STATUS_COLOR = { sanctioned: "142 70% 45%", restricted: "35 90% 55%", shadow: "0 84% 60%", killed: "215 20% 50%" };
@@ -16,11 +16,14 @@ export default function AIAgents() {
   const isAdmin = user?.role === "admin";
   const [data, setData] = useState(null);
   const [active, setActive] = useState(null);
+  const [q, setQ] = useState("");
+  const [statusF, setStatusF] = useState("all");
 
   const load = () => api.get("/agents").then((r) => setData(r.data));
   useEffect(() => { load(); }, []);
 
   if (!data) return <div className="flex items-center justify-center h-96"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
+  const shownAgents = data.agents.filter((a) => (statusF === "all" || a.status === statusF) && `${a.name} ${a.ref}`.toLowerCase().includes(q.toLowerCase()));
 
   return (
     <div className="rise space-y-6">
@@ -33,8 +36,17 @@ export default function AIAgents() {
         </div>
       </div>
 
+      <div className="flex flex-wrap gap-2" data-testid="agent-filters">
+        <div className="relative flex-1 min-w-[180px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <input data-testid="agent-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search agents..." className="w-full bg-secondary/60 rounded-md pl-9 pr-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary" />
+        </div>
+        <select data-testid="agent-filter" value={statusF} onChange={(e) => setStatusF(e.target.value)} className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary">
+          <option value="all">All statuses</option><option value="sanctioned">Sanctioned</option><option value="restricted">Restricted</option><option value="shadow">Shadow</option><option value="killed">Killed</option>
+        </select>
+      </div>
       <div className="md:hidden space-y-3" data-testid="agent-cards-mobile">
-        {data.agents.map((a) => (
+        {shownAgents.map((a) => (
           <div key={a.ref} data-testid={`agent-card-${a.ref}`} onClick={() => setActive(a)}
             className="bg-card fact-border rounded-xl p-4 space-y-2 active:bg-secondary/40 transition-colors">
             <div className="flex items-start justify-between gap-2">
@@ -60,7 +72,7 @@ export default function AIAgents() {
             </tr>
           </thead>
           <tbody>
-            {data.agents.map((a) => (
+            {shownAgents.map((a) => (
               <tr key={a.ref} data-testid={`agent-row-${a.ref}`} onClick={() => setActive(a)} className="border-b border-border/60 hover:bg-secondary/40 transition-colors cursor-pointer">
                 <td className="px-4 py-3"><div className="font-mono text-xs text-ai">{a.ref}</div><div className="font-medium">{a.name}</div></td>
                 <td className="px-4 py-3 text-muted-foreground">{a.owner}</td>

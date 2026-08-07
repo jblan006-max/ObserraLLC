@@ -1,0 +1,38 @@
+{
+  "summary": "Iteration 22 tested Obserra iter22 features: (1) card view filters on /app/team, /app/vendors, /app/agents; (2) weekly-guide-refresh cron secret gate; (3) two-pane on /app/vendors and /app/controls; (4) Settings recipients book chips. Backend: 6 passed + 1 skipped (all 3 recipients-book tests + 2 cron 401 tests + previously validated 200 for weekly-guide-refresh; the valid-secret call was skipped on retest to avoid hammering the heavy background Playwright capture as advised). Recipients PUT correctly drops invalid emails ('not-an-email', ''), dedupes 'it-lead@obserra.demo' and trims '  spaced@obs.demo  '; GET returns the persisted list; ops user gets 403 on both GET and PUT. Weekly-guide-refresh returns 401 without/with wrong Bearer and 200 {status:'accepted'} with the unquoted 64-char WEBHOOK_CRON_SECRET. Frontend on 1920x1080: /app/team search 'zzznope' filters table 2→0, role=executive filters correctly; /app/vendors search 4→0, tier=Critical shows 2, clicking left of first vendor row opens vendor-detail-pane containing vendor-detail-assess, close hides it, table still visible; /app/agents (broken before fix) now loads 3 rows, search filters to 0, status=sanctioned shows 2; /app/controls clicking left of first control row opens control-detail-pane with control-detail-pack, close hides pane, table still visible; /app/settings save chip persists to backend (round-trip PUT/GET), chip click fills email-docs-input, book-remove-* deletes chip (4→3), persisted across reload; mobile 390px cards render for team/vendors/agents with filter bars and no horizontal overflow. Two critical crashers were found & fixed during testing (see updated_files).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter22_features.py",
+    "/app/test_reports/pytest/iter22_results.xml"
+  ],
+  "action_items": [
+    "Review the two runtime-error fixes applied by the tester: AIAgents.jsx (added missing q/statusF useState) and Settings.jsx (added missing Bookmark & X imports from lucide-react). Both pages threw ReferenceError and were completely non-functional before the fix — please double-check the intended state defaults ('' / 'all').",
+    "Team.jsx desktop table AND mobile cards were iterating raw members instead of shownMembers so member-search and member-filter had no visible effect (mobile also unfiltered). Tester changed both maps to shownMembers.map — please review."
+  ],
+  "critical_code_review_comments": [
+    "AIAgents.jsx line 24 referenced statusF and q which were never declared with useState — page crashed on mount with 'statusF is not defined'. Missed in code review.",
+    "Settings.jsx JSX used <Bookmark/> (line 323) and <X/> (line 331) icons but neither was imported from lucide-react — Settings page crashed on mount with 'Bookmark is not defined'.",
+    "Team.jsx computed shownMembers but rendered members.map in both the mobile card list (line 102) and the desktop table (line 120). The filter UI (member-filters) was cosmetic — no rows were ever filtered. Fixed to shownMembers.map in both places.",
+    "cron/weekly-guide-refresh triggers a heavy background Playwright browser capture inside the FastAPI worker. During iter22 backend the public gateway became unresponsive for ~5 minutes after one authorized call — while multiple 'monthly board report' cron tasks were also running and hitting 429 on the email integration. Consider throttling or offloading to a proper worker queue; the current pattern can starve the API loop.",
+    "Login flow duplicate onboarding overlays (executive tour + advisor auto-open) still create a UX papercut for admins and cause repeated dismiss steps in every automated test.",
+    "AGT-* agents list, TEAM members list, VENDOR list — none uses server-side filtering. Fine at current scale but the filter chips (role/tier/status) should probably be reflected in the URL for shareable views."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/AIAgents.jsx",
+    "/app/frontend/src/pages/Settings.jsx",
+    "/app/frontend/src/pages/Team.jsx",
+    "/app/backend/tests/test_iter22_features.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Admin jblan2026@gmail.com/Obserra2026! ; Ops analyst@obserra.demo/Analyst2026! (from /app/memory/test_credentials.md). WEBHOOK_CRON_SECRET loaded from /app/backend/.env (dotenv strips quotes; use the 64-char hex value directly).",
+  "seed_data_creation": "Recipients book left with test-recipient@obs.demo, it-lead@obserra.demo, secops@obserra.demo, spaced@obs.demo persisted on org (main agent may want to clear via PUT [] if it pollutes prod-like org).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Team desktop row testid is member-{id} (NOT member-row-*). Vendor rows use vendor-row-{ref}, Agent rows use agent-row-{ref}, Control rows use control-{control_id}. To open a two-pane row without triggering an inner action button, click ~30px from the row's LEFT edge via page.mouse.click(box.x+30, ...). Login via Enter key (auth-submit click still flaky). Onboarding + advisor auto-open every session — dismiss both. Do NOT re-call POST /api/cron/weekly-guide-refresh with the valid secret repeatedly; it launches a heavy background Playwright capture and can starve the backend event loop for minutes. Recipients GET/PUT endpoints strip quotes/trim/lowercase-agnostic dedupe; regex is r'^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$'.",
+  "rca of the issue": "AIAgents crash: useState hooks for q and statusF were omitted while wiring the filter bar. Settings crash: lucide-react named imports Bookmark and X were not added when the recipients-book UI was introduced. Team filter no-op: filter state and shownMembers derivation were added, but the JSX kept iterating the original members array in both breakpoints. All three are typical incomplete-refactor slips introduced when adding the same filter bar pattern across four pages — Vendors and Controls were correctly updated to iterate their shown* arrays; Team was missed. Mitigation applied by tester: add missing state, add missing imports, swap members.map→shownMembers.map (both mobile card map and desktop tbody map)."
+}

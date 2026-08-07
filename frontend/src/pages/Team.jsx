@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Users, UserPlus, Loader2, Trash2, Copy, KeyRound } from "lucide-react";
+import { Users, UserPlus, Loader2, Trash2, Copy, KeyRound, Search } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const ROLE_LABEL = { admin: "Admin", executive: "Executive", operational: "Operational" };
@@ -14,6 +14,9 @@ export default function Team() {
   const [busy, setBusy] = useState(false);
   const [invited, setInvited] = useState(null);
   const navigate = useNavigate();
+  const [q, setQ] = useState("");
+  const [roleF, setRoleF] = useState("all");
+  const shownMembers = (members || []).filter((m) => (roleF === "all" || m.role === roleF) && `${m.name} ${m.email}`.toLowerCase().includes(q.toLowerCase()));
 
   const load = () => api.get("/auth/team/members").then((r) => setMembers(r.data)).catch(() => navigate("/app"));
   useEffect(() => { load(); }, []);
@@ -86,8 +89,17 @@ export default function Team() {
 
       {!members ? <div className="flex items-center justify-center h-40"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div> : (
         <>
+        <div className="flex flex-wrap gap-2" data-testid="member-filters">
+          <div className="relative flex-1 min-w-[180px]">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <input data-testid="member-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name or email..." className="w-full bg-secondary/60 rounded-md pl-9 pr-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary" />
+          </div>
+          <select data-testid="member-filter" value={roleF} onChange={(e) => setRoleF(e.target.value)} className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary">
+            <option value="all">All roles</option><option value="admin">Admin</option><option value="executive">Executive</option><option value="operational">Operational</option>
+          </select>
+        </div>
         <div className="md:hidden space-y-3" data-testid="member-cards-mobile">
-          {members.map((m) => (
+          {shownMembers.map((m) => (
             <div key={m.id} data-testid={`member-card-${m.id}`} className="bg-card fact-border rounded-xl p-4 flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="font-medium text-sm truncate">{m.name}</div>
@@ -105,7 +117,7 @@ export default function Team() {
               <tr><th className="text-left px-4 py-3">Member</th><th className="text-left px-4 py-3">Email</th><th className="text-left px-4 py-3">Role</th><th className="text-right px-4 py-3">Actions</th></tr>
             </thead>
             <tbody>
-              {members.map((m) => (
+              {shownMembers.map((m) => (
                 <tr key={m.id} data-testid={`member-${m.id}`} className="border-b border-border/60 hover:bg-secondary/40 transition-colors">
                   <td className="px-4 py-3 font-medium">{m.name}</td>
                   <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{m.email}</td>

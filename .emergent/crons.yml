@@ -6,6 +6,13 @@ crons:
     method: POST
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     enabled: true
+  - name: weekly-guide-refresh
+    description: "Refreshes dashboard screenshots and rebuilds the install/user guides every Sunday 06:00 UTC"
+    cron: "0 6 * * 0"
+    endpoint: "{{BASE_URL}}/api/cron/weekly-guide-refresh"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true
   - name: weekly-drift-digest
     description: "Emails 'weekly' cadence owners/admins open control-drift alerts AND posts a weekly risk summary to each org's Teams channel, Monday 08:00 UTC"
     cron: "0 8 * * 1"
@@ -27,6 +34,9 @@ crons:
     method: POST
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     enabled: true
+  # NOTE: The platform schedules only the FIRST FIVE enabled entries above.
+  # The entries below are kept for reference but are NOT scheduled until one of
+  # the first five is disabled/removed.
   - name: weekly-studio-report
     description: "Emails each org's 'weekly' cadence Studio report to admins/execs every Monday 09:00 UTC"
     cron: "0 9 * * 1"
