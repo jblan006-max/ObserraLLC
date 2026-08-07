@@ -55,6 +55,7 @@ export function AIAdvisor() {
   const [searchQ, setSearchQ] = useState("");
   const [searchResults, setSearchResults] = useState(null);
   const [promptThemes, setPromptThemes] = useState(null);
+  const [auditOpen, setAuditOpen] = useState(null);
   const scrollRef = useRef(null);
   const sendRef = useRef(null);
 
@@ -290,13 +291,21 @@ export function AIAdvisor() {
                   onKeyDown={(e) => { if (e.key === "Enter") searchPrompts(searchQ); }}
                   className="w-full bg-secondary/60 rounded-md px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ai" />
                 {searchResults && (
-                  <div data-testid="advisor-search-results" className="mt-1 space-y-1 max-h-40 overflow-y-auto">
+                  <div data-testid="advisor-search-results" className="mt-1 space-y-1 max-h-56 overflow-y-auto">
                     {searchResults.length === 0 ? (
                       <div className="text-[10px] text-muted-foreground">No matching prompts.</div>
                     ) : searchResults.map((r, i) => (
                       <div key={i} className="text-[10px] border-l border-ai/30 pl-2">
-                        <div className="text-foreground/90 truncate">{r.prompt}</div>
-                        <div className="font-mono text-muted-foreground">{r.user} · {new Date(r.ts).toLocaleDateString()}{r.cost_usd != null ? ` · $${r.cost_usd.toFixed(4)}` : ""}</div>
+                        <button data-testid={`audit-row-${i}`} onClick={() => setAuditOpen(auditOpen === i ? null : i)}
+                          className="w-full text-left hover:bg-secondary/40 rounded px-1 -ml-1 transition-colors">
+                          <div className="text-foreground/90 truncate">{r.prompt}</div>
+                          <div className="font-mono text-muted-foreground">{r.user} · {new Date(r.ts).toLocaleDateString()}{r.cost_usd != null ? ` · $${r.cost_usd.toFixed(4)}` : ""}</div>
+                        </button>
+                        {auditOpen === i && (
+                          <div data-testid={`audit-answer-${i}`} className="mt-1 mb-1 p-1.5 rounded bg-secondary/50 text-foreground/80 whitespace-pre-wrap leading-relaxed">
+                            {r.response ? r.response : <span className="text-muted-foreground">No stored answer for this prompt.</span>}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>

@@ -314,6 +314,7 @@ async def search_prompts(q: str, admin: dict = Depends(require_roles("admin"))):
     logs = await db.advisor_logs.find(
         {"org_id": admin["org_id"], "prompt": {"$regex": rx, "$options": "i"}}, {"_id": 0}).sort("ts", -1).to_list(30)
     return [{"user": l["user"], "prompt": l["prompt"], "ts": l.get("ts"), "model": l.get("model"),
+             "response": (l.get("response") or ""),
              "cost_usd": (l.get("usage") or {}).get("cost_usd")} for l in logs]
 
 
@@ -332,12 +333,19 @@ async def prompt_insights(admin: dict = Depends(require_roles("admin"))):
     import re
     from collections import Counter
     logs = await db.advisor_logs.find({"org_id": admin["org_id"]}, {"_id": 0, "prompt": 1}).sort("ts", -1).to_list(500)
-    c = Counter()
+    bigrams, unigrams = Counter(), Counter()
     for l in logs:
-        for w in re.findall(r"[a-zA-Z]{3,}", (l.get("prompt") or "").lower()):
+        words = re.findall(r"[a-zA-Z]{2,}", (l.get("prompt") or "").lower())
+        for w in words:
             if w not in _INSIGHT_STOPWORDS:
-                c[w] += 1
-    themes = [{"term": t, "count": n} for t, n in c.most_common(12)]
+                unigrams[w] += 1
+        for i in range(len(words) - 1):
+            a, b = words[i], words[i + 1]
+            if a not in _INSIGHT_STOPWORDS and b not in _INSIGHT_STOPWORDS:
+                bigrams[f"{a} {b}"] += 1
+    top_bi = [(t, n) for t, n in bigrams.most_common(12) if n >= 2]
+    source = top_bi if len(top_bi) >= 3 else (bigrams.most_common(12) or unigrams.most_common(12))
+    themes = [{"term": t, "count": n} for t, n in source]
     return {"total_prompts": len(logs), "themes": themes}
 
 
