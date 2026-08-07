@@ -135,6 +135,31 @@ async def _check_budget(org_id: str):
                 await notifications.send_email(r["email"], f"AI Advisor spend at {round(pct)}% of monthly cap", html)
             await db.organizations.update_one({"_id": ObjectId(org_id)}, {"$set": {"advisor_alert_notified": mk}})
 
+    # Forecast Alert — projected month-end spend will cross the cap while still under it now.
+    if pct < 100:
+        from calendar import monthrange
+        now = datetime.now(timezone.utc)
+        dim = monthrange(now.year, now.month)[1]
+        forecast = spent / now.day * dim if now.day > 0 else spent
+        if forecast >= budget and org.get("advisor_forecast_notified") != mk:
+            await notifications.create(
+                org_id, "advisor_budget", "AI advisor spend projected to exceed cap",
+                f"At the current pace, advisor spend is projected to reach ${round(forecast, 2)} by month-end — "
+                f"over the ${budget} monthly cap (currently ${spent}, {round(pct)}%).",
+                ref="advisor-budget", dedupe_key=f"advisor-forecast:{mk}")
+            recips = await db.users.find(
+                {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
+            html = ("<div style=\"font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto\">"
+                    "<h2 style=\"color:#0f1e3d\">AI Advisor spend projected to exceed cap</h2>"
+                    f"<p>At the current pace, advisor spend is projected to reach <b>${round(forecast, 2)}</b> by "
+                    f"month-end — over your <b>${budget}</b> monthly cap.</p>"
+                    f"<p>You've spent <b>${spent}</b> so far ({round(pct)}% of cap). Review usage or adjust the cap "
+                    "in the Advisor panel to stay on budget.</p>"
+                    "<p style=\"font-size:11px;color:#9ca3af\">Obserra — Executive Protection &amp; Intelligence LLC</p></div>")
+            for r in recips:
+                await notifications.send_email(r["email"], "AI Advisor projected to exceed monthly cap", html)
+            await db.organizations.update_one({"_id": ObjectId(org_id)}, {"$set": {"advisor_forecast_notified": mk}})
+
 
 
 class AdvisorQuery(BaseModel):
@@ -371,7 +396,7 @@ async def set_budget(body: BudgetBody, admin: dict = Depends(require_roles("admi
     if body.alert_threshold is not None:
         update["advisor_alert_threshold"] = min(99.0, max(1.0, round(body.alert_threshold)))
     await db.organizations.update_one({"_id": ObjectId(admin["org_id"])},
-                                      {"$set": update, "$unset": {"advisor_pause_notified": "", "advisor_alert_notified": ""}})
+                                      {"$set": update, "$unset": {"advisor_pause_notified": "", "advisor_alert_notified": "", "advisor_forecast_notified": ""}})
     return {"monthly_usd": val, "auto_pause": update.get("advisor_auto_pause"), "alert_threshold": update.get("advisor_alert_threshold")}
 
 

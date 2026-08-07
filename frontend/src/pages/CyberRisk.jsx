@@ -44,6 +44,7 @@ export default function CyberRisk() {
           <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1"><Layers className="w-3.5 h-3.5" /> Composed on:</span>
           {data.composition.map((c) => <span key={c} className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-ai/10 text-ai border border-ai/20">{c}</span>)}
           {data.live_m365_users != null && <span data-testid="cyber-m365-live" className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-low/15 text-low border border-low/30">M365 LIVE · {data.live_m365_users} users{data.live_m365_risky != null ? ` · ${data.live_m365_risky} risky` : ""}</span>}
+          {data.live_risk_penalty > 0 && <span data-testid="cyber-risk-penalty" className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-high/15 text-high border border-high/30">−{data.live_risk_penalty} posture (live signal)</span>}
         </div>
       </div>
 
