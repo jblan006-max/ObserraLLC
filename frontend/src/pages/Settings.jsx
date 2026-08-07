@@ -41,7 +41,8 @@ export default function Settings() {
       const emails = recips.split(/[,\n]/).map((e) => e.trim()).filter(Boolean);
       const { data } = await api.put("/reports/recipients", { emails });
       setRecips((data.extra || []).join(", "));
-      toast.success("Recipients saved");
+      if (data.dropped?.length) toast.warning(`Saved. Skipped invalid: ${data.dropped.join(", ")}`);
+      else toast.success("Recipients saved");
     } catch (e) { toast.error(e.response?.data?.detail || "Could not save"); }
     setRecBusy(false);
   };
@@ -68,6 +69,14 @@ export default function Settings() {
   const onLogoPick = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    if (!["image/png", "image/jpeg"].includes(file.type)) {
+      toast.error("Logo must be a PNG or JPEG image");
+      e.target.value = ""; return;
+    }
+    if (file.size > 1.5 * 1024 * 1024) {
+      toast.error("Logo too large — please use an image under 1.5MB");
+      e.target.value = ""; return;
+    }
     const reader = new FileReader();
     reader.onload = () => setBrandLogo(reader.result);
     reader.readAsDataURL(file);
@@ -82,6 +91,16 @@ export default function Settings() {
       setBrand(data); setBrandLogo("");
       toast.success("Report branding saved");
     } catch (e) { toast.error(e.response?.data?.detail || "Could not save branding"); }
+    setBrandBusy(false);
+  };
+
+  const removeBranding = async () => {
+    setBrandBusy(true);
+    try {
+      const { data } = await api.put("/reports/branding", { enabled: false, company_name: "", remove_logo: true });
+      setBrand(data); setBrandLogo("");
+      toast.success("Reset to Obserra branding");
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not reset"); }
     setBrandBusy(false);
   };
 

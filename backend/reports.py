@@ -447,19 +447,25 @@ async def set_recipients(body: RecipientsBody, user: dict = Depends(get_current_
     if user.get("role") != "admin":
         raise HTTPException(403, "Only admins can manage report recipients")
     from bson import ObjectId
-    emails = []
+    emails, dropped = [], []
     for e in body.emails:
-        e = (e or "").strip().lower()
-        if e and re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", e) and e not in emails:
-            emails.append(e)
+        e2 = (e or "").strip().lower()
+        if not e2:
+            continue
+        if re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", e2):
+            if e2 not in emails:
+                emails.append(e2)
+        else:
+            dropped.append(e)
     await db.organizations.update_one({"_id": ObjectId(user["org_id"])}, {"$set": {"report_recipients": emails}})
-    return {"extra": emails}
+    return {"extra": emails, "dropped": dropped}
 
 
 class BrandingBody(BaseModel):
     enabled: bool = False
     company_name: str = ""
     logo: str = ""
+    remove_logo: bool = False
 
 
 @reports_router.get("/api/reports/branding")
@@ -476,15 +482,22 @@ async def set_branding(body: BrandingBody, user: dict = Depends(get_current_user
     if user.get("role") != "admin":
         raise HTTPException(403, "Only admins can manage report branding")
     from bson import ObjectId
-    update = {"report_branding.enabled": bool(body.enabled),
-              "report_branding.company_name": (body.company_name or "").strip()[:120]}
-    if body.logo:
-        data = body.logo.split(",", 1)[1] if "," in body.logo else body.logo
-        if len(data) > 2_000_000:
-            raise HTTPException(400, "Logo too large (max ~1.5MB)")
-        update["report_branding.logo"] = data
-    await db.organizations.update_one({"_id": ObjectId(user["org_id"])}, {"$set": update})
-    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    oid = ObjectId(user["org_id"])
+    if body.remove_logo:
+        await db.organizations.update_one(
+            {"_id": oid},
+            {"$set": {"report_branding.enabled": False, "report_branding.company_name": ""},
+             "$unset": {"report_branding.logo": ""}})
+    else:
+        update = {"report_branding.enabled": bool(body.enabled),
+                  "report_branding.company_name": (body.company_name or "").strip()[:120]}
+        if body.logo:
+            data = body.logo.split(",", 1)[1] if "," in body.logo else body.logo
+            if len(data) > 2_000_000:
+                raise HTTPException(400, "Logo too large (max ~1.5MB)")
+            update["report_branding.logo"] = data
+        await db.organizations.update_one({"_id": oid}, {"$set": update})
+    org = await db.organizations.find_one({"_id": oid}) or {}
     rb = org.get("report_branding") or {}
     return {"enabled": bool(rb.get("enabled")), "company_name": rb.get("company_name", ""),
             "has_logo": bool(rb.get("logo"))}
