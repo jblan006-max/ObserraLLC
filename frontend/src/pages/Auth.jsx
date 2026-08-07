@@ -1,9 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { formatApiErrorDetail } from "@/lib/api";
+import { formatApiErrorDetail, API, api } from "@/lib/api";
 import { QRLogin } from "@/components/QRLogin";
 import { NetworkBackground } from "@/components/NetworkBackground";
-import { ShieldHalf, Loader2 } from "lucide-react";
+import { ShieldHalf, Loader2, Apple, KeyRound, QrCode, ArrowLeft } from "lucide-react";
 
 export default function Auth() {
   const { login, register } = useAuth();
@@ -12,6 +12,9 @@ export default function Auth() {
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const [showQR, setShowQR] = useState(false);
+  const [providers, setProviders] = useState({ google: true, passwordless: true, apple: false, sso: false });
+
+  useEffect(() => { api.get("/auth/providers").then((r) => setProviders(r.data)).catch(() => {}); }, []);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -72,14 +75,15 @@ export default function Auth() {
             ))}
           </div>
 
-          {tab === "login" && (
-            <button type="button" data-testid="qr-toggle" onClick={() => setShowQR((v) => !v)}
-              className="w-full text-xs text-ai hover:underline mb-4">
-              {showQR ? "← Use email & password" : "⌁ Sign in with QR code (passwordless)"}
-            </button>
-          )}
-
-          {tab === "login" && showQR ? <QRLogin /> : (
+          {tab === "login" && showQR ? (
+            <div className="space-y-4">
+              <button type="button" data-testid="qr-back" onClick={() => setShowQR(false)}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground">
+                <ArrowLeft className="w-3.5 h-3.5" /> Use email &amp; password
+              </button>
+              <QRLogin />
+            </div>
+          ) : (
           <form onSubmit={submit} className="space-y-4">
             {tab === "register" && (
               <>
@@ -112,6 +116,27 @@ export default function Auth() {
               }} className="w-full py-2.5 rounded-md bg-white text-gray-800 font-head font-bold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-opacity">
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="" className="w-4 h-4" /> Continue with Google
               </button>
+
+              <button type="button" data-testid="apple-signin" disabled={!providers.apple}
+                title={providers.apple ? "" : "Apple Sign In is not configured yet"}
+                onClick={() => { window.location.href = `${API}/auth/apple`; }}
+                className="w-full mt-2 py-2.5 rounded-md bg-black text-white font-head font-bold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed">
+                <Apple className="w-4 h-4" /> {providers.apple ? "Continue with Apple" : "Apple — not configured"}
+              </button>
+
+              <button type="button" data-testid="sso-signin" disabled={!providers.sso}
+                title={providers.sso ? "" : "Enterprise SSO is not configured yet"}
+                onClick={() => { window.location.href = `${API}/auth/sso`; }}
+                className="w-full mt-2 py-2.5 rounded-md bg-secondary/70 border border-border text-foreground font-head font-bold text-sm flex items-center justify-center gap-2 hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+                <KeyRound className="w-4 h-4" /> {providers.sso ? "Continue with Enterprise SSO" : "Enterprise SSO — not configured"}
+              </button>
+
+              {tab === "login" && (
+                <button type="button" data-testid="qr-toggle" onClick={() => setShowQR(true)}
+                  className="w-full mt-2 py-2.5 rounded-md bg-ai/10 border border-ai/30 text-ai font-head font-bold text-sm flex items-center justify-center gap-2 hover:bg-ai/20 transition-colors">
+                  <QrCode className="w-4 h-4" /> Passwordless — sign in with QR
+                </button>
+              )}
             </>
           )}
 

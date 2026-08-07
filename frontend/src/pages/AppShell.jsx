@@ -67,11 +67,12 @@ function Paywall() {
   );
 }
 
-function SidebarInner({ user, sub, owns, doLogout, onNav }) {
+function SidebarInner({ user, sub, owns, doLogout, onNav, onClose }) {
   return (
     <>
-      <div className="flex items-center px-4 h-16 border-b border-border shrink-0">
+      <div className="flex items-center justify-between px-4 h-16 border-b border-border shrink-0">
         <img src="/logo.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-9 w-auto object-contain" />
+        {onClose && <button data-testid="mobile-nav-close" onClick={onClose} className="md:hidden p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/50"><X className="w-5 h-5" /></button>}
       </div>
       <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
         {NAV.filter((n) => !n.admin || user?.role === "admin").map((n) => {
@@ -144,10 +145,7 @@ export default function AppShell() {
         <div className="md:hidden fixed inset-0 z-[60] flex" data-testid="mobile-nav-overlay">
           <div className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={() => setMobileNav(false)} />
           <aside data-testid="mobile-nav-drawer" className="relative w-64 max-w-[82%] flex flex-col border-r border-border bg-card h-full rise" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-            <button data-testid="mobile-nav-close" onClick={() => setMobileNav(false)} className="absolute top-4 right-3 z-10 p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/50">
-              <X className="w-5 h-5" />
-            </button>
-            <SidebarInner user={user} sub={sub} owns={owns} doLogout={doLogout} onNav={() => setMobileNav(false)} />
+            <SidebarInner user={user} sub={sub} owns={owns} doLogout={doLogout} onNav={() => setMobileNav(false)} onClose={() => setMobileNav(false)} />
           </aside>
         </div>
       )}

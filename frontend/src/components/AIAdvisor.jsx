@@ -69,7 +69,9 @@ export function AIAdvisor() {
   }, [open, isAdmin]);
 
   useEffect(() => {
-    if (!sessionStorage.getItem("advisor-opened")) { setOpen(true); sessionStorage.setItem("advisor-opened", "1"); }
+    if (typeof window !== "undefined" && window.innerWidth >= 640 && !sessionStorage.getItem("advisor-opened")) {
+      setOpen(true); sessionStorage.setItem("advisor-opened", "1");
+    }
     const h = (e) => { setOpen(true); if (e.detail) sendRef.current?.(e.detail); };
     window.addEventListener("open-advisor", h);
     return () => window.removeEventListener("open-advisor", h);

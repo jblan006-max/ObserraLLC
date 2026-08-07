@@ -192,6 +192,14 @@ admin: jblan2026@gmail.com / Obserra2026! (enterprise, active) · operational: a
 - **Control-library framework mapping**: routes._CONTROL_FRAMEWORKS maps each control to NIST CSF 2.0 / NIST 800-53 / ISO 27001 / SOC 2 / CISA CPG; GET /api/controls/compliance returns per-framework coverage; ControlMonitoring shows compliance panel + per-control framework tags.
 - Testing: iteration_10.json — backend 100% (10/10 pytest), frontend 92%; the one HIGH bug (Cyber Risk Treat not gated by mode) fixed post-report.
 
+## Session 2026-06 (cross-device + sign-in options) — DONE
+- **Mobile/iOS + Windows desktop responsive**: added mobile hamburger nav drawer (mobile-nav-toggle → mobile-nav-drawer, SidebarInner shared by desktop aside + drawer); viewport-fit=cover + safe-area + iOS 16px input (no focus-zoom) + body overflow-x hidden; Auth page already responsive. Fixed AIAdvisor auto-open to skip on <640px, and moved mobile-nav-close into drawer header. Verified iteration_12 (mobile+desktop 100%).
+- **Sign-in options**: passwordless QR is now a prominent button (qr-toggle); added Apple (apple-signin) + Enterprise SSO (sso-signin) buttons gated by GET /api/auth/providers — rendered DISABLED "— not configured" until creds supplied (best practice, no fake auth). Google + email/password unchanged.
+- **Compliance Posture page** (/app/compliance): overall alignment %, per-framework bars, ranked top gaps. **Connector→charts**: operational quarterly charts show LIVE/MODELED badge and fold real M365/Copilot signals when live (metrics.operational.sources). **Teams weekly digest**: folded into weekly-drift-digest cron (5-cron limit) + POST /api/cron/weekly-teams-digest; posts risk summary MessageCard to org's Teams webhook.
+
+## Auth providers — to activate Apple / Enterprise SSO (needs user creds, then implement callbacks)
+- Apple: APPLE_TEAM_ID, APPLE_SERVICE_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY_P8, redirect URI. SSO: OIDC discovery/client or SAML metadata+cert. Callback routes NOT yet built (deferred until creds provided + testable). `/auth/providers` flips buttons to enabled once env is set.
+
 ## Backlog / remaining
 - Full SAML sign-in (ACS/assertion) — DEFERRED: needs real IdP metadata + signing cert from user. SSO live connector (metadata validation) exists.
 - Optional: enforce rate limiting beyond login brute-force; raise header mode-toggle z-index (advisor overlay can intercept clicks on small viewports).

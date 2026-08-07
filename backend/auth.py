@@ -234,6 +234,14 @@ async def me(user: dict = Depends(get_current_user)):
     return user
 
 
+@auth_router.get("/providers")
+async def auth_providers():
+    """Which sign-in methods are configured. Provider buttons render disabled until true."""
+    apple = all(os.environ.get(k) for k in ("APPLE_TEAM_ID", "APPLE_SERVICE_ID", "APPLE_KEY_ID", "APPLE_PRIVATE_KEY_P8"))
+    sso = bool(os.environ.get("OIDC_ISSUER") or os.environ.get("OIDC_DISCOVERY_URL") or os.environ.get("SSO_METADATA_URL"))
+    return {"google": True, "passwordless": True, "apple": apple, "sso": sso}
+
+
 @auth_router.post("/refresh")
 async def refresh_token(request: Request, response: Response):
     token = request.cookies.get("refresh_token")
