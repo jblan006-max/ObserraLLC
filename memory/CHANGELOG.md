@@ -1,24 +1,21 @@
 # Obserra EIOS — CHANGELOG
 
 ## 2026-06
-- **Official branding everywhere** (only logo used): `/public/brand-mark.png`, `brand-wordmark.png` (cropped from official lockup for exact font), `brand-lockup.png`. Regen: `/app/scripts/gen_brand.py`. Used on Auth, sidebar, header, advisor, install banner, splash, favicon, PWA/maskable icons, iOS splash (21, portrait + landscape iPad), onboarding-tour badge.
-- **PWA**: install banner (animation + 7-day "Later" snooze + dismiss), branded splash, maskable icons (52% safe zone), adaptive favicons.
-- **Onboarding tour** (`OnboardingTour.jsx`): role-aware (exec vs operational), spotlight on `[data-testid=mode-toggle]`, a11y (role=dialog/aria-modal/aria-labelledby, Esc, non-persisting backdrop dismiss), per-user persistence, Replay from Settings.
-- **Board report PDFs** (`reports.py`, all exports get badge + watermark + footer). Board report (`/api/reports/pdf`) adds:
-  - branded **cover page** with **light/dark theme** (`theme` param; light uses `brand-lockup-dark.png`),
-  - **exposure trend line chart** + **Top Risks bar chart** (reportlab graphics),
-  - **AI Executive Summary** callout (extracted from the report's Executive Summary section) at the top,
-  - auto **Key Takeaways & Recommended Actions** from live metrics.
-  - Reusable `_board_metrics()`, `build_board_report_pdf()`.
-- **Quarterly Deck** (`build_board_deck_pdf`, `layout:"deck"`): 5 landscape slides — cover, Enterprise Snapshot (KPI cards), Exposure Trend, Top Risks, Key Takeaways. Frontend "Deck" button in Board Report modal.
-- **Report Recipients**: `GET/PUT /api/reports/recipients` (admin-only, email-validated) stored on `org.report_recipients`; Settings "Board Report Recipients" card. Monthly cron emails branded PDF to admins/execs **plus** extra recipients.
-- **Scheduled board PDF**: monthly cron attaches the branded PDF (cover + charts + takeaways), not just HTML.
-- **Frontend**: Board Report modal has Dark/Light cover toggle + PDF + Deck download buttons.
+- **Official branding everywhere** (only logo used): `/public/brand-mark.png`, `brand-wordmark.png` (cropped from official lockup), `brand-lockup.png`. Regen: `/app/scripts/gen_brand.py`.
+- **PWA**: install banner (animation + 7-day "Later" snooze), branded splash, maskable icons, adaptive favicons, iOS splash (portrait + landscape iPad).
+- **Onboarding tour**: role-aware (exec/ops), spotlight on `[data-testid=mode-toggle]`, a11y (role=dialog/aria/Esc/non-persist backdrop), per-user persistence, Replay from Settings.
+- **Board report PDFs** (`reports.py`): badge + watermark + footer on all exports. Board report adds cover page, **light/dark theme**, **exposure trend line** + **top-risks bar chart**, **AI Executive Summary** callout, auto **Key Takeaways**.
+- **Quarterly Deck** (`layout:"deck"`): 5 landscape slides (cover, KPI snapshot, trend, risks, takeaways), theme-aware. Frontend "Deck" button + Dark/Light toggle in Board Report modal.
+- **Report Recipients**: admin-only `GET/PUT /api/reports/recipients` (email-validated) → `org.report_recipients`; monthly cron emails branded PDF to admins/execs + extras.
+- **Send Test Email**: `POST /api/reports/test-email` (admin/exec) generates + emails the branded PDF to self; Settings "Send me a test now" button.
+- **Per-org Rebranding**: `GET/PUT /api/reports/branding` (admin) — custom company name + logo (base64, ≤~1.5MB) on all board outputs; defaults to Obserra. `_resolve_brand(org)` threads a brand object through `_build_pdf` + deck; Obserra watermark dropped when custom. Settings "Report Branding" card.
+- Scheduled board PDF: cron attaches branded PDF (cover + charts + takeaways).
 
 ## Verified
 - iteration_14.json frontend 6/6 PASS.
-- Board report + deck (dark & light) rendered and visually confirmed: covers, exec-summary callout, trend line, risk bars, KPI slide, takeaways, watermark, footer.
-- Recipients GET/PUT verified via curl (validation drops bad emails).
+- iteration_15.json: backend 16/16 PASS + frontend 100% (report/deck × light/dark, recipients GET/PUT + 403, branding GET/PUT + 403 + reset, test-email + 403, Settings cards, modal PDF/Deck downloads). No bugs. Regression suite: /app/backend/tests/test_iter15_board_reports.py.
 
 ## Notes / gotchas
-- Twice during this session, large `search_replace` edits to `reports.py` silently reverted (stale in-memory module → 404s). Fix: re-apply + `sudo supervisorctl restart backend`. Verify new routes with a curl after restart.
+- Twice, large `search_replace` edits to `reports.py` went stale in-memory (404s); fix = re-apply + `sudo supervisorctl restart backend`, verify via curl.
+- Board branding logo b64 payload uses /app/frontend/public/logo-mark-192.png in tests — keep that asset.
+- Non-blocking polish backlog: validate logo MIME/magic bytes; return dropped invalid emails to UI; explicit "Remove logo"; consider splitting reports.py PDF helpers.
