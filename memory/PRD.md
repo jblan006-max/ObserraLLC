@@ -200,6 +200,15 @@ admin: jblan2026@gmail.com / Obserra2026! (enterprise, active) · operational: a
 ## Auth providers — to activate Apple / Enterprise SSO (needs user creds, then implement callbacks)
 - Apple: APPLE_TEAM_ID, APPLE_SERVICE_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY_P8, redirect URI. SSO: OIDC discovery/client or SAML metadata+cert. Callback routes NOT yet built (deferred until creds provided + testable). `/auth/providers` flips buttons to enabled once env is set.
 
+## Session 2026-06 (Apple/SSO end-to-end + PWA + Exec Snapshot) — DONE
+- **Apple + Enterprise SSO (OIDC) wired end-to-end** in `backend/social_auth.py` (Apple: authorize→form_post callback, JWKS id_token verify, ES256 client secret; OIDC: Authlib Okta/Azure/Workspace). Maps verified identity to existing Obserra user by email/identity, then issues the normal httpOnly session (mirrors Google flow). SessionMiddleware added in server.py (JWT_SECRET). GET /api/auth/providers reports config state.
+  - **Goes LIVE when env set** — Apple: APPLE_TEAM_ID, APPLE_SERVICE_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY_P8, APPLE_REDIRECT_URI, APP_BASE_URL. OIDC: OIDC_DISCOVERY_URL, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, OIDC_REDIRECT_URI, APP_BASE_URL. No app-side test needed.
+  - Sign-in buttons are ALWAYS clickable: start the real flow when configured, else show a friendly "attach in Available Connectors" message. Google + email/password + passwordless-QR button unchanged.
+- **PWA install**: public/manifest.json (standalone, start_url /app, theme #0a0f1e, logo icons) + apple-touch-icon/manifest links in index.html → "Add to Home Screen" on iOS gives full-screen app.
+- **Mobile Exec Snapshot** (/app/snapshot, nav "Exec Snapshot"): phone-first one-screen board view — health index, residual/avoided exposure, risk reduction %, decisions required, top risks by business impact. Uses /metrics/dashboard executive block.
+- **Sign-in legal**: "Property of Obserra — Executive Protection & Intelligence LLC" + Proprietary/Priority/Authorized tags + confidential-system disclaimer. Removed demo credentials hint from UI.
+- authlib + itsdangerous installed (requirements.txt frozen). Verified: providers endpoint + apple/sso routes live (404 until configured), frontend compiles, sign-in page rendered.
+
 ## Backlog / remaining
 - Full SAML sign-in (ACS/assertion) — DEFERRED: needs real IdP metadata + signing cert from user. SSO live connector (metadata validation) exists.
 - Optional: enforce rate limiting beyond login brute-force; raise header mode-toggle z-index (advisor overlay can intercept clicks on small viewports).

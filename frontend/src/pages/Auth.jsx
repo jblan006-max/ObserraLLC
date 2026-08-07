@@ -117,18 +117,16 @@ export default function Auth() {
                 <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="" className="w-4 h-4" /> Continue with Google
               </button>
 
-              <button type="button" data-testid="apple-signin" disabled={!providers.apple}
-                title={providers.apple ? "" : "Apple Sign In is not configured yet"}
-                onClick={() => { window.location.href = `${API}/auth/apple`; }}
-                className="w-full mt-2 py-2.5 rounded-md bg-black text-white font-head font-bold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed">
-                <Apple className="w-4 h-4" /> {providers.apple ? "Continue with Apple" : "Apple — not configured"}
+              <button type="button" data-testid="apple-signin"
+                onClick={() => providers.apple ? (window.location.href = `${API}/auth/apple`) : setErr("Apple Sign In isn't attached yet. An admin can connect it under Enterprise → Available Connectors, then this button signs you in with your Apple ID instantly.")}
+                className="w-full mt-2 py-2.5 rounded-md bg-black text-white font-head font-bold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-opacity">
+                <Apple className="w-4 h-4" /> Continue with Apple
               </button>
 
-              <button type="button" data-testid="sso-signin" disabled={!providers.sso}
-                title={providers.sso ? "" : "Enterprise SSO is not configured yet"}
-                onClick={() => { window.location.href = `${API}/auth/sso`; }}
-                className="w-full mt-2 py-2.5 rounded-md bg-secondary/70 border border-border text-foreground font-head font-bold text-sm flex items-center justify-center gap-2 hover:bg-secondary transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
-                <KeyRound className="w-4 h-4" /> {providers.sso ? "Continue with Enterprise SSO" : "Enterprise SSO — not configured"}
+              <button type="button" data-testid="sso-signin"
+                onClick={() => providers.sso ? (window.location.href = `${API}/auth/sso`) : setErr("Enterprise SSO isn't attached yet. An admin can connect your Okta/Azure IdP under Enterprise → Available Connectors, then this button signs you in with your company account.")}
+                className="w-full mt-2 py-2.5 rounded-md bg-secondary/70 border border-border text-foreground font-head font-bold text-sm flex items-center justify-center gap-2 hover:bg-secondary transition-colors">
+                <KeyRound className="w-4 h-4" /> Continue with Enterprise SSO
               </button>
 
               {tab === "login" && (
@@ -142,13 +140,24 @@ export default function Auth() {
 
           {tab === "login" && !showQR && (
             <>
-              <p className="mt-6 text-xs text-muted-foreground text-center">
-                Demo: <span className="font-mono text-foreground">jblan2026@gmail.com</span> / <span className="font-mono text-foreground">Obserra2026!</span>
-              </p>
               <a data-testid="visit-site-link-mobile" href="https://www.obserrallc.com/" target="_blank" rel="noopener noreferrer"
-                className="mt-3 block text-center text-xs text-ai hover:underline">Visit us at obserrallc.com →</a>
+                className="mt-6 block text-center text-xs text-ai hover:underline">Visit us at obserrallc.com →</a>
             </>
           )}
+
+          <div data-testid="auth-legal" className="mt-6 pt-4 border-t border-border/60 space-y-2">
+            <div className="text-center text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
+              Property of Obserra — Executive Protection &amp; Intelligence LLC
+            </div>
+            <div className="flex items-center justify-center gap-1.5 flex-wrap">
+              <span data-testid="tag-proprietary" className="text-[9px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-sm border border-ai/30 text-ai">Proprietary &amp; Confidential</span>
+              <span data-testid="tag-priority" className="text-[9px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-sm border border-med/40 text-med">Priority — Restricted</span>
+              <span data-testid="tag-authorized" className="text-[9px] font-mono uppercase tracking-wider px-2 py-0.5 rounded-sm border border-border text-muted-foreground">Authorized Access Only</span>
+            </div>
+            <p data-testid="auth-disclaimer" className="text-[10px] leading-relaxed text-muted-foreground text-center max-w-sm mx-auto">
+              This is a private, monitored system containing confidential and proprietary information of Obserra — Executive Protection &amp; Intelligence LLC. Access is restricted to authorized users only. Unauthorized access, use, or disclosure is prohibited and may be unlawful. All activity is logged and audited. © {new Date().getFullYear()} Obserra LLC. All rights reserved.
+            </p>
+          </div>
         </div>
       </div>
     </div>

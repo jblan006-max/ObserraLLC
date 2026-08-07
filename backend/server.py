@@ -23,6 +23,8 @@ from insights import insights_router
 from cyber import cyber_router
 from studio import studio_router
 from metrics import metrics_router
+from social_auth import social_router
+from starlette.middleware.sessions import SessionMiddleware
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -44,6 +46,7 @@ app.include_router(cyber_router)
 app.include_router(studio_router)
 app.include_router(live_connectors_router)
 app.include_router(metrics_router)
+app.include_router(social_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -52,6 +55,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Signed session cookie for OAuth state/nonce (Apple form_post + OIDC via Authlib).
+app.add_middleware(SessionMiddleware, secret_key=os.environ["JWT_SECRET"],
+                   https_only=True, same_site="lax", max_age=600)
 
 
 # Security hardening — response headers aligned to NIST 800-53 (SC-8/SC-18/SI-10),

@@ -1,0 +1,15 @@
+{
+  "short_name": "Obserra",
+  "name": "Obserra — Executive Protection & Intelligence",
+  "description": "Enterprise cyber risk, AI governance & executive intelligence.",
+  "start_url": "/app",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0a0f1e",
+  "theme_color": "#0a0f1e",
+  "icons": [
+    { "src": "/logo.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
