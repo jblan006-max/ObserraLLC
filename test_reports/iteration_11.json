@@ -1,0 +1,43 @@
+{
+  "summary": "Frontend-only regression on 3 features: (1) Compliance Posture page, (2) LIVE/MODELED source badges on operational quarterly charts, (3) Share-to-Teams from Executive Board Report. All three flows verified working. Regression on Control Monitoring passed.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Executive Overview", "issues": ["Obserra Advisor panel auto-opens and overlays the right side of the executive dashboard (covering 'Generate Board Report' button on 1920px viewport). Users must close the advisor before they can click board-report-btn. Consider either (a) not auto-opening advisor, (b) rendering it as a non-blocking drawer, or (c) reserving horizontal space so exec buttons remain reachable."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional UX: Advisor panel auto-opens over exec controls (Generate Board Report). Not a functional bug (user can close it) but hurts discoverability."
+  ],
+  "critical_code_review_comments": [
+    "BoardReportModal.generate() is triggered inside render (`if (open && !report && !loading) generate();`) which is a side-effect during render. Should be moved into a useEffect keyed on `open` to avoid double-fires under StrictMode.",
+    "In CompliancePosture rows, framework testids are slugged (e.g. framework-row-NIST-CSF-2-0) — good, but the '·' separator between percent and count is rendered without spacing in a few widths; low priority."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped)", "frontend": "100%"},
+  "test_credentials": "Admin jblan2026@gmail.com / Obserra2026! — login worked via httpOnly cookie.",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Executive Overview auto-opens the AI Advisor drawer which visually covers the 'Generate Board Report' button on desktop. Test scripts must first click [data-testid=advisor-close] before clicking [data-testid=board-report-btn]. Board report generation via /advisor/board-report takes 10-30s (Claude Sonnet); wait up to 60s for [data-testid=report-share-teams] to appear inside the modal.",
+  "verified_flows": {
+    "compliance_posture_page": {
+      "path": "/app/compliance",
+      "compliance-posture-page": "present",
+      "compliance-overall": "68%",
+      "framework_rows": ["framework-row-CISA-CPG", "framework-row-ISO-27001", "framework-row-NIST-800-53", "framework-row-NIST-CSF-2-0", "framework-row-SOC-2"],
+      "gaps": ["gap-BCP-2 (Evidence Stale, 52% effective, Ops Team)", "gap-VM-2 (Evidence Stale, 61% effective, Sam Vuln)"]
+    },
+    "operational_source_badges": {
+      "chart-nist-source": "MODELED",
+      "chart-vendor-source": "MODELED",
+      "chart-phishing-source": "MODELED",
+      "chart-patching-source": "MODELED"
+    },
+    "share_to_teams_toast": "Teams connector is not configured. Add a Teams Incoming Webhook in Available Connectors → Microsoft Teams.  (rendered as error toast — expected)",
+    "controls_regression": "compliance-panel present; per-control framework tag pills render inside the controls table (NIST CSF 2.0, NIST 800-53, ISO 27001, SOC 2, CISA CPG)."
+  }
+}

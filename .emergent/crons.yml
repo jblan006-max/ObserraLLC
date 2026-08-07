@@ -7,7 +7,7 @@ crons:
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     enabled: true
   - name: weekly-drift-digest
-    description: "Emails 'weekly' cadence owners/admins a digest of open control-drift alerts every Monday 08:00 UTC"
+    description: "Emails 'weekly' cadence owners/admins open control-drift alerts AND posts a weekly risk summary to each org's Teams channel, Monday 08:00 UTC"
     cron: "0 8 * * 1"
     endpoint: "{{BASE_URL}}/api/cron/weekly-drift-digest"
     method: POST

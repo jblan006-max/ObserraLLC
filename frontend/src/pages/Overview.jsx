@@ -49,10 +49,13 @@ function MetricCard({ icon: Icon, label, value, unit, accent, sub, testid }) {
   );
 }
 
-function QuarterChart({ title, data, kind = "bar", color = "hsl(190 90% 50%)", suffix = "", accent, testid }) {
+function QuarterChart({ title, data, kind = "bar", color = "hsl(190 90% 50%)", suffix = "", accent, source, testid }) {
   return (
     <div data-testid={testid} className="bg-card fact-border rounded-xl p-5">
-      <h3 className="font-head font-bold text-sm mb-3" style={accent ? { color: `hsl(${accent})` } : {}}>{title}</h3>
+      <div className="flex items-center justify-between mb-3 gap-2">
+        <h3 className="font-head font-bold text-sm" style={accent ? { color: `hsl(${accent})` } : {}}>{title}</h3>
+        {source && <span data-testid={`${testid}-source`} className={`text-[9px] font-mono px-1.5 py-0.5 rounded-full border shrink-0 ${source === "live" ? "bg-low/15 text-low border-low/30" : "bg-secondary/60 text-muted-foreground border-border"}`}>{source === "live" ? "LIVE" : "MODELED"}</span>}
+      </div>
       <ResponsiveContainer width="100%" height={150}>
         {kind === "bar" ? (
           <BarChart data={data}>
@@ -159,10 +162,10 @@ function OperationalOverview({ d, an, audit, intg, running, runAction, onLineage
     <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-12 gap-5" data-testid="operational-overview">
       {/* 1 — Live intelligence (charts & data first) */}
       <SectionLabel icon={Activity}>Live intelligence</SectionLabel>
-      <motion.div custom={0} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-6"><QuarterChart testid="chart-nist" title="NIST Control Maturity by Quarter" data={op.nist_maturity_by_quarter} kind="bar" color="hsl(142 70% 45%)" suffix="%" accent="142 70% 45%" /></motion.div>
-      <motion.div custom={1} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-6"><QuarterChart testid="chart-vendor" title="Third-Party Vendor Risk by Quarter" data={op.vendor_risk_by_quarter} kind="line" color="hsl(35 90% 55%)" suffix="/100" accent="35 90% 55%" /></motion.div>
-      <motion.div custom={2} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-6"><QuarterChart testid="chart-phishing" title="Phishing Click Rate by Quarter" data={op.phishing_click_rate_by_quarter} kind="line" color="hsl(0 84% 60%)" suffix="%" accent="0 84% 60%" /></motion.div>
-      <motion.div custom={3} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-6"><QuarterChart testid="chart-patching" title="Patching Coverage by Quarter" data={op.patching_coverage_by_quarter} kind="bar" color="hsl(190 90% 50%)" suffix="%" accent="190 90% 50%" /></motion.div>
+      <motion.div custom={0} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-6"><QuarterChart testid="chart-nist" title="NIST Control Maturity by Quarter" data={op.nist_maturity_by_quarter} kind="bar" color="hsl(142 70% 45%)" suffix="%" accent="142 70% 45%" source={op.sources?.nist} /></motion.div>
+      <motion.div custom={1} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-6"><QuarterChart testid="chart-vendor" title="Third-Party Vendor Risk by Quarter" data={op.vendor_risk_by_quarter} kind="line" color="hsl(35 90% 55%)" suffix="/100" accent="35 90% 55%" source={op.sources?.vendor} /></motion.div>
+      <motion.div custom={2} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-6"><QuarterChart testid="chart-phishing" title="Phishing Click Rate by Quarter" data={op.phishing_click_rate_by_quarter} kind="line" color="hsl(0 84% 60%)" suffix="%" accent="0 84% 60%" source={op.sources?.phishing} /></motion.div>
+      <motion.div custom={3} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-6"><QuarterChart testid="chart-patching" title="Patching Coverage by Quarter" data={op.patching_coverage_by_quarter} kind="bar" color="hsl(190 90% 50%)" suffix="%" accent="190 90% 50%" source={op.sources?.patching} /></motion.div>
 
       <motion.div custom={4} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-7 bg-card fact-border rounded-xl p-6">
         <h2 className="font-head font-bold text-lg mb-4">Risk Heatmap <span className="text-xs font-normal text-muted-foreground">· click a cell for evidence</span></h2>

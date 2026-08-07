@@ -9,6 +9,7 @@ import base64
 import hmac
 import logging
 
+import httpx
 from fastapi import APIRouter, Request, BackgroundTasks, HTTPException
 
 from db import db
@@ -107,6 +108,52 @@ async def weekly_drift_digest(request: Request, background_tasks: BackgroundTask
     if not _authorized(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
     background_tasks.add_task(_run_drift_digest, {"weekly"}, "Weekly")
+    background_tasks.add_task(_run_teams_digest)
+    return {"status": "accepted"}
+
+
+async def _run_teams_digest():
+    orgs = await db.organizations.find({"live_teams.valid": True}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        t = org.get("live_teams") or {}
+        url = t.get("webhook_url")
+        if not url:
+            continue
+        try:
+            health = await db.health_index.find_one({"org_id": org_id}) or {}
+            risks = await db.risks.find({"org_id": org_id}).to_list(500)
+            open_r = [r for r in risks if r.get("status") != "Remediated"]
+            crit = [r for r in risks if r.get("residual", 0) >= 16]
+            top = sorted(risks, key=lambda r: r.get("residual", 0), reverse=True)[:3]
+            top_lines = "\n\n".join(
+                f"- **{r['ref']}** {r['title']} — residual {r.get('residual')}/25"
+                + (f" ({r['business_impact']})" if r.get("business_impact") else "") for r in top)
+            text = (f"**Enterprise health:** {health.get('score', '—')} ({health.get('grade', '—')})\n\n"
+                    f"**Open risks:** {len(open_r)} &nbsp;·&nbsp; **Critical:** {len(crit)}\n\n"
+                    f"**Top risks this week:**\n\n{top_lines}")
+            card = {"@type": "MessageCard", "@context": "https://schema.org/extensions",
+                    "summary": "Weekly Risk Summary", "themeColor": "0f1e3d",
+                    "title": "Obserra — Weekly Risk Summary", "text": text}
+            async with httpx.AsyncClient(timeout=20) as c:
+                r = await c.post(url, json=card)
+            if r.status_code in (200, 202):
+                await notifications.create(
+                    org_id, "report", "Weekly Teams digest posted",
+                    f"Risk summary posted to Teams — {len(open_r)} open, {len(crit)} critical.", ref="teams-digest")
+                logger.info(f"Teams digest posted for org {org_id}")
+            else:
+                logger.warning(f"Teams digest for org {org_id} returned {r.status_code}")
+        except Exception as e:
+            logger.error(f"Teams digest failed for org {org_id}: {e}")
+
+
+@scheduled_router.post("/cron/weekly-teams-digest")
+async def weekly_teams_digest(request: Request, background_tasks: BackgroundTasks):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    if not _authorized(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    background_tasks.add_task(_run_teams_digest)
     return {"status": "accepted"}
 
 

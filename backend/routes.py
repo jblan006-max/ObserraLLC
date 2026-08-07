@@ -659,7 +659,19 @@ async def controls_compliance(user: dict = Depends(get_current_user)):
             "coverage": round(e["eff_sum"] / e["controls"]) if e["controls"] else 0,
             "mapped_refs": sorted(e["refs"])} for fw, e in agg.items()]
     out.sort(key=lambda x: x["framework"])
-    return {"frameworks": out}
+    overall = round(sum(f["coverage"] for f in out) / len(out)) if out else 0
+    _RECS = {"Failing": "Effectiveness below threshold — prioritize remediation and re-test the control.",
+             "Evidence Stale": "Evidence has expired — collect fresh evidence and re-attest.",
+             "Drifting": "Effectiveness declined vs baseline — investigate the drift and restore controls."}
+    _SEV = {"Failing": 0, "Evidence Stale": 1, "Drifting": 2}
+    gaps = [{"control_id": c["control_id"], "name": c["name"], "status": c["status"],
+             "effectiveness": c["effectiveness"], "owner": c.get("owner"),
+             "frameworks": list((c.get("frameworks") or {}).keys()),
+             "recommendation": _RECS.get(c["status"], "Review this control.")}
+            for c in statuses if c["status"] != "Passing"]
+    gaps.sort(key=lambda g: (_SEV.get(g["status"], 3), g["effectiveness"]))
+    return {"frameworks": out, "overall": overall, "gaps": gaps,
+            "total_controls": len(statuses), "passing": sum(1 for c in statuses if c["status"] == "Passing")}
 
 
 async def _emit_drift_alerts(org_id, statuses):

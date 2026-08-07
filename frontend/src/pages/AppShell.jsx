@@ -32,6 +32,7 @@ const NAV = [
   { to: "/app/risks", label: "Risk Register", icon: ListChecks },
   { to: "/app/ai-governance", label: "AI Governance", icon: Cpu },
   { to: "/app/controls", label: "Control Monitoring", icon: ShieldCheck },
+  { to: "/app/compliance", label: "Compliance Posture", icon: ShieldCheck },
   { to: "/app/assets", label: "Asset Intelligence", icon: Boxes, ent: "asset_intelligence" },
   { to: "/app/knowledge-graph", label: "Knowledge Graph", icon: Network },
   { to: "/app/decisions", label: "Recommendations", icon: GitBranch },

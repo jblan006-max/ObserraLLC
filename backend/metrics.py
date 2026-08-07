@@ -134,4 +134,23 @@ async def dashboard(user: dict = Depends(get_current_user)):
         "patching_coverage_by_quarter": _series(patching_coverage, start_ratio=0.78, digits=0),
     }
 
+    # Connector-sourced overrides — fold real M365/Copilot signals into the operational
+    # series when the connectors are LIVE; otherwise values stay modeled.
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    m365 = org.get("live_m365") or {}
+    cop = org.get("live_copilot") or {}
+    sources = {"nist": "modeled", "vendor": "modeled", "phishing": "modeled",
+               "patching": "modeled", "ai_usage": "modeled"}
+    if m365.get("live") and m365.get("user_count") and m365.get("risky_users") is not None:
+        live_click = round(min(100.0, m365["risky_users"] / max(m365["user_count"], 1) * 100), 1)
+        operational["phishing_click_rate_by_quarter"][-1]["value"] = live_click
+        operational["ai_usage"]["policy_violations"] += m365["risky_users"]
+        sources["phishing"] = "live"
+        sources["ai_usage"] = "live"
+    if cop.get("live") and cop.get("seats"):
+        operational["ai_usage"]["copilot_seats"] = cop["seats"]
+        sources["ai_usage"] = "live"
+    operational["sources"] = sources
+    operational["live"] = {"m365": bool(m365.get("live")), "copilot": bool(cop.get("live"))}
+
     return {"executive": executive, "operational": operational}
