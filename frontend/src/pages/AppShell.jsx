@@ -255,8 +255,8 @@ export default function AppShell() {
           </div>
           <div className="flex-1 max-w-md hidden sm:block">
             <div className="flex items-center gap-2 rounded-full border border-ai/30 bg-ai/5 px-3 py-1.5 focus-within:ring-1 focus-within:ring-ai transition-shadow">
-              <img src="/brand-mark.png" alt="Obserra Advisor" className="h-5 w-5 object-contain shrink-0" />
-              <input data-testid="header-advisor-input" placeholder="Ask the Obserra Advisor…"
+              <img src="/brand-mark.png" alt="Obserrian Advisor" className="h-5 w-5 object-contain shrink-0" />
+              <input data-testid="header-advisor-input" placeholder="Ask the Obserrian Advisor…"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && e.currentTarget.value.trim()) {
                     window.dispatchEvent(new CustomEvent("open-advisor", { detail: e.currentTarget.value.trim() }));

@@ -217,7 +217,7 @@ export function AIAdvisor() {
           <div className="relative rounded-xl bg-popover border border-ai/30 shadow-xl p-3.5 text-xs leading-relaxed text-foreground">
             <button data-testid="advisor-hint-dismiss" onClick={dismissHint}
               className="absolute top-2 right-2 p-0.5 rounded hover:bg-secondary text-muted-foreground"><X className="w-3.5 h-3.5" /></button>
-            <div className="font-head font-bold text-ai mb-1 pr-4">Meet your Advisor</div>
+            <div className="font-head font-bold text-ai mb-1 pr-4">Meet your Obserrian Advisor</div>
             Ask board-level questions — financial exposure, top risks, and the decisions that need your sign-off.
             <div className="absolute -bottom-1.5 right-8 w-3 h-3 rotate-45 bg-popover border-r border-b border-ai/30" />
           </div>
@@ -236,7 +236,7 @@ export function AIAdvisor() {
             <div className="flex items-center gap-2.5">
               {AVATAR("w-8 h-8")}
               <div>
-                <div className="font-head font-bold text-ai">Obserra Advisor</div>
+                <div className="font-head font-bold text-ai">Obserrian Advisor</div>
                 <div className="text-[10px] font-mono text-muted-foreground">{mode} · helper + worker · {modelTag || "claude-opus-4-8"}</div>
                 {isAdmin && spend && (
                   <div data-testid="advisor-spend" className="text-[10px] font-mono text-ai mt-0.5">

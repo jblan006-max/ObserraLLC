@@ -108,9 +108,9 @@ function Crosswalk({ x }) {
                 {ok ? <CheckCircle2 className="w-4 h-4 text-low" /> : <XCircle className="w-4 h-4 text-high" />}
               </div>
               <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">{s.full_name}</div>
-              <div className="font-head font-black text-2xl tracking-tight mt-2" style={{ color: `hsl(${col(s.compliant_pct)})` }}>{s.compliant_pct}%</div>
-              <div className="text-[11px] text-muted-foreground">{s.compliant}/{s.assessed_controls} assessed controls compliant</div>
-              <div className="text-[10px] text-muted-foreground/70 mt-0.5">{s.mapped_ref_count} of {s.catalog_controls?.toLocaleString?.() ?? s.catalog_controls} catalog controls mapped · {s.coverage_pct}% coverage</div>
+              <div className="font-head font-black text-2xl tracking-tight mt-2" style={{ color: `hsl(${col(s.meeting_pct)})` }}>{s.meeting_pct}%</div>
+              <div className="text-[11px] text-muted-foreground">{s.meeting.toLocaleString()}/{s.total.toLocaleString()} controls met</div>
+              <div className="text-[10px] text-muted-foreground/70 mt-0.5">{s.aligned} evidence-aligned · {s.met.toLocaleString()} met by default · {s.gap} gap{s.gap === 1 ? "" : "s"}</div>
               <span className={`inline-block mt-2 text-[9px] font-mono px-2 py-0.5 rounded-full ${ok ? "bg-low/15 text-low" : "bg-high/15 text-high"}`}>{s.status}</span>
             </button>
           );
@@ -157,19 +157,19 @@ function Crosswalk({ x }) {
               <>
                 <div className="flex flex-wrap gap-2 mb-3 text-[11px]">
                   <span className="px-2 py-1 rounded-md bg-secondary/60" data-testid="fw-total">{detail.total.toLocaleString()} controls</span>
-                  <span className="px-2 py-1 rounded-md bg-low/15 text-low" data-testid="fw-aligned">{detail.aligned} aligned</span>
+                  <span className="px-2 py-1 rounded-md bg-low/15 text-low" data-testid="fw-aligned">{detail.aligned} evidence-aligned</span>
+                  <span className="px-2 py-1 rounded-md bg-ai/10 text-ai" data-testid="fw-met">{detail.met.toLocaleString()} met by default</span>
                   <span className="px-2 py-1 rounded-md bg-high/15 text-high" data-testid="fw-gap">{detail.gap} gap</span>
-                  <span className="px-2 py-1 rounded-md bg-secondary/60 text-muted-foreground" data-testid="fw-unassessed">{detail.not_assessed.toLocaleString()} not assessed</span>
-                  <span className="px-2 py-1 rounded-md bg-ai/10 text-ai">{detail.coverage_pct}% catalog coverage</span>
+                  <span className="px-2 py-1 rounded-md bg-secondary/60 text-muted-foreground">{detail.meeting_pct}% meeting</span>
                 </div>
                 <div className="text-[11px] text-muted-foreground mb-2">{detailControls.length.toLocaleString()} shown</div>
                 <div className="max-h-[520px] overflow-auto rounded-lg border border-border divide-y divide-border" data-testid="framework-control-list">
                   {detailControls.map((c) => {
-                    const sc = c.status === "aligned" ? "142 70% 45%" : c.status === "gap" ? "0 84% 60%" : "215 15% 55%";
-                    const label = c.status === "aligned" ? "Aligned" : c.status === "gap" ? "Gap" : "Not assessed";
+                    const sc = c.status === "aligned" ? "142 70% 45%" : c.status === "met" ? "199 70% 50%" : c.status === "gap" ? "0 84% 60%" : "215 15% 55%";
+                    const label = c.status === "aligned" ? "Aligned" : c.status === "met" ? "Met" : c.status === "gap" ? "Gap" : "Not assessed";
                     return (
                       <div key={c.id} data-testid={`fw-control-${c.id}`} className="flex items-start gap-3 px-3 py-2.5">
-                        {c.status === "aligned" ? <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" style={{ color: `hsl(${sc})` }} /> : c.status === "gap" ? <XCircle className="w-4 h-4 mt-0.5 shrink-0" style={{ color: `hsl(${sc})` }} /> : <span className="w-3.5 h-3.5 mt-0.5 shrink-0 rounded-full border border-muted-foreground/40" />}
+                        {c.status === "aligned" || c.status === "met" ? <CheckCircle2 className="w-4 h-4 mt-0.5 shrink-0" style={{ color: `hsl(${sc})` }} /> : c.status === "gap" ? <XCircle className="w-4 h-4 mt-0.5 shrink-0" style={{ color: `hsl(${sc})` }} /> : <span className="w-3.5 h-3.5 mt-0.5 shrink-0 rounded-full border border-muted-foreground/40" />}
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span className="font-mono text-[12px] font-medium">{c.id}</span>

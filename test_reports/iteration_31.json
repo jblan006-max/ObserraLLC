@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 31 verification passed. Backend: 14/14 pytest passed for hardened control library (24 controls all Passing), meet-by-default framework model (aligned/met/gap), correct per-framework catalog totals (322/153/61/42/277/93) and gap counts (4/3/2/1/3/2), AC-2 aligned via IAM-3, AC-10 met, AC-25/PM-31/PT-8/SR-8 gaps, unknown fw 404, repeated-call idempotency. Frontend: Header placeholder reads 'Ask the Obserrian Advisor…'; Meet-your-Obserrian-Advisor tooltip and Advisor label present; no stray 'Obserra Advisor' in rendered UI. Compliance → Control Crosswalk shows six summary cards with correct meeting_pct (98.8/98/96.7/97.6/98.9/97.8%), 'X/Y controls met' text, and 'A evidence-aligned · M met by default · G gaps'. Criticality strip: Critical/High/Medium/Low all 100%. Framework browser (NIST 800-53): fw-total 322 / fw-aligned 71 / fw-met 247 / fw-gap 4; AC-2 ALIGNED (Covered by IAM-3, IAM-1), AC-10 MET, AC-25 GAP, PM-31 GAP; crosswalk-search filter functional.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Compliance → Crosswalk", "issues": ["React hydration warning: '<span> cannot be a child of <option>' in framework select. Purely cosmetic (dev console warning) but should be cleaned up — likely a <span> wrapper inside a native <option> in CompliancePosture.jsx framework select."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter31_hardened_library.py",
+    "/app/test_reports/pytest/iter31.xml",
+    "/app/test_reports/iter31_crosswalk.png"
+  ],
+  "action_items": [
+    "Optional: replace the one remaining 'Obserra Advisor' string in backend/ai_advisor.py:114 (paywall-exhausted HTML message) with 'Obserrian Advisor' for consistency — not user-visible unless quota is exhausted.",
+    "Optional: fix hydration warning by removing <span> children from native <option> elements inside the framework select in CompliancePosture.jsx."
+  ],
+  "critical_code_review_comments": [
+    "control_library.py cleanly consolidates the 24 hardened controls with per-framework mappings — good separation from routes.py.",
+    "_framework_alignment correctly classifies aligned/met/gap and would also demote a mapped-but-not-passing control to gap; current seed keeps everything Passing so this branch is untested at runtime.",
+    "/controls/framework endpoint docstring still says '/ not_assessed' but the model no longer produces that status — update docstring."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter31_hardened_library.py"],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100% on core flows"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None. _ensure_controls upserts the 24-control library on owner org on every controls read — idempotent.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter31 fully green. Hardened library = 24 controls, meet-by-default (aligned/met/gap) is live. Header placeholder must be 'Ask the Obserrian Advisor…'. One stray 'Obserra Advisor' text remains in backend/ai_advisor.py paywall HTML (not shown unless AI quota exhausted). CompliancePosture.jsx has a minor React hydration warning about <span> in <option>.",
+  "rca of the issue": "N/A — no functional bugs."
+}
