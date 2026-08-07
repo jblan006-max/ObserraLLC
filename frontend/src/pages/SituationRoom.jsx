@@ -37,8 +37,8 @@ export default function SituationRoom() {
                 <motion.div key={r.ref} initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: i * 0.05 }}
                   className="flex items-center gap-4 p-3 rounded-lg bg-secondary/30 border border-border">
                   <ScorePill value={r.residual} />
-                  <div className="flex-1 min-w-0"><div className="font-medium text-sm truncate">{r.title}</div><div className="text-[11px] text-muted-foreground">{r.ref} · {r.owner} · {r.business_impact}</div></div>
-                  <span className="text-xs px-2.5 py-1 rounded-md bg-secondary/60">{r.status}</span>
+                  <div className="flex-1 min-w-0"><div className="font-medium text-sm truncate">{r.title}</div><div className="text-[11px] text-muted-foreground truncate">{r.ref} · {r.owner} · {r.business_impact}</div></div>
+                  <span className="text-xs px-2.5 py-1 rounded-md bg-secondary/60 shrink-0">{r.status}</span>
                 </motion.div>
               ))}
             </div>
@@ -49,9 +49,9 @@ export default function SituationRoom() {
             <div className="space-y-3">
               {incidents.map((inc) => (
                 <div key={inc.ref} className="flex items-center gap-4 p-3 rounded-lg bg-secondary/30 border border-border">
-                  {inc.severity === "Critical" ? <Ban className="w-5 h-5 text-crit" /> : <AlertOctagon className="w-5 h-5 text-high" />}
-                  <div className="flex-1"><div className="font-medium text-sm">{inc.title}</div><div className="text-[11px] font-mono text-muted-foreground">{inc.ref} · {inc.system} · mode: <span className="text-ai">{inc.mode}</span></div></div>
-                  <span className="text-xs px-2.5 py-1 rounded-md bg-secondary/60">{inc.status}</span>
+                  {inc.severity === "Critical" ? <Ban className="w-5 h-5 text-crit shrink-0" /> : <AlertOctagon className="w-5 h-5 text-high shrink-0" />}
+                  <div className="flex-1 min-w-0"><div className="font-medium text-sm truncate">{inc.title}</div><div className="text-[11px] font-mono text-muted-foreground truncate">{inc.ref} · {inc.system} · mode: <span className="text-ai">{inc.mode}</span></div></div>
+                  <span className="text-xs px-2.5 py-1 rounded-md bg-secondary/60 shrink-0">{inc.status}</span>
                 </div>
               ))}
             </div>

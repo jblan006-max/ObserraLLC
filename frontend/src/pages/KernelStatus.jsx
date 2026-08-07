@@ -43,7 +43,7 @@ export default function KernelStatus() {
       </div>
 
       {kpi && (
-        <div data-testid="remediation-kpi" className="grid grid-cols-3 gap-4">
+        <div data-testid="remediation-kpi" className="grid grid-cols-3 gap-3 sm:gap-4">
           {[["Open remediations", kpi.open, "190 90% 50%"], ["Overdue", kpi.overdue, "0 84% 60%"], ["Resolved", kpi.resolved, "142 70% 45%"]].map(([label, val, color]) => (
             <div key={label} className="bg-card fact-border rounded-xl p-4" style={{ borderLeft: `3px solid hsl(${color})` }}>
               <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{label}</div>

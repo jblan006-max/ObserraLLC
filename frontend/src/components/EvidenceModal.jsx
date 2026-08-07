@@ -56,7 +56,7 @@ export function EvidenceModal({ kind, refId, onClose }) {
               <ul className="space-y-1">{(e.evidence || []).filter(Boolean).map((x, i) => <li key={i} className="text-sm text-foreground/90 flex gap-2"><span className="text-ai">•</span>{x}</li>)}</ul>
             </div>
 
-            <div className="grid grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               {[["Freshness", e.freshness === "live" ? "Live" : ">24h"], ["Confidence", pct(e.confidence)], ["Completeness", pct(e.completeness)], ["Reliability", pct(e.reliability)]].map(([k, v]) => (
                 <div key={k} className="rounded-md bg-secondary/30 border border-border p-2.5 text-center"><div className="text-[9px] font-mono uppercase text-muted-foreground">{k}</div><div className="font-head font-bold">{v}</div></div>
               ))}

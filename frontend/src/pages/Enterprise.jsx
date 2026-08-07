@@ -14,10 +14,10 @@ export default function Enterprise() {
         <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><Building2 className="w-7 h-7 text-primary" /> Enterprise Access</h1>
         <p className="text-sm text-muted-foreground mt-1">Enterprise identity, provisioning, ABAC &amp; white-label branding. <span className="text-med font-mono text-xs">Live connectors now live in the Available Connectors page.</span></p>
       </div>
-      <div className="flex gap-1 border-b border-border">
+      <div className="flex gap-1 border-b border-border overflow-x-auto whitespace-nowrap -mx-1 px-1">
         {TABS.map(([id, label, Icon]) => (
           <button key={id} data-testid={`etab-${id}`} onClick={() => setTab(id)}
-            className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === id ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
+            className={`shrink-0 flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === id ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
             <Icon className="w-4 h-4" /> {label}
           </button>
         ))}
