@@ -596,6 +596,16 @@ _CONTROL_SEED = [
 ]
 
 
+_CONTROL_FRAMEWORKS = {
+    "IAM-3": {"NIST CSF 2.0": ["PR.AA-01", "PR.AA-05"], "NIST 800-53": ["AC-2", "AC-6"], "ISO 27001": ["A.5.15", "A.8.2"], "SOC 2": ["CC6.1", "CC6.3"], "CISA CPG": ["2.A", "2.E"]},
+    "VM-2": {"NIST CSF 2.0": ["ID.RA-01", "PR.PS-02"], "NIST 800-53": ["RA-5", "SI-2"], "ISO 27001": ["A.8.8"], "SOC 2": ["CC7.1"], "CISA CPG": ["1.E", "4.C"]},
+    "AIG-1": {"NIST CSF 2.0": ["GV.OC-01"], "NIST 800-53": ["PM-9", "SA-8"], "ISO 27001": ["A.5.1"], "SOC 2": ["CC1.2"], "CISA CPG": ["2.K"]},
+    "DP-1": {"NIST CSF 2.0": ["PR.DS-01"], "NIST 800-53": ["SC-28", "PL-8"], "ISO 27001": ["A.8.11", "A.5.34"], "SOC 2": ["CC6.7"], "CISA CPG": ["2.K"]},
+    "BCP-2": {"NIST CSF 2.0": ["RC.RP-01", "PR.IP-04"], "NIST 800-53": ["CP-9", "CP-10"], "ISO 27001": ["A.8.13", "A.5.29"], "SOC 2": ["A1.2", "A1.3"], "CISA CPG": ["5.A"]},
+    "TPR-4": {"NIST CSF 2.0": ["GV.SC-01", "ID.SC-04"], "NIST 800-53": ["SR-3", "SR-6"], "ISO 27001": ["A.5.19", "A.5.20"], "SOC 2": ["CC9.2"], "CISA CPG": ["4.C"]},
+}
+
+
 def _control_status(c):
     now = datetime.now(timezone.utc)
     exp = datetime.fromisoformat(c["evidence_expires"])
@@ -612,6 +622,7 @@ def _control_status(c):
         status = "Passing"
     return {**{k: v for k, v in c.items() if k != "org_id"}, "days_to_expiry": days_to_expiry,
             "stale": stale, "drift": drift, "status": status,
+            "frameworks": _CONTROL_FRAMEWORKS.get(c["control_id"], {}),
             "drift_delta": c["effectiveness"] - c.get("baseline", c["effectiveness"])}
 
 
@@ -625,6 +636,30 @@ async def controls(user: dict = Depends(get_current_user)):
     statuses = [_control_status(c) for c in existing]
     await _emit_drift_alerts(org_id, statuses)
     return statuses
+
+
+@api.get("/controls/compliance")
+async def controls_compliance(user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    existing = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    if not existing:
+        await db.controls.insert_many([{**c, "org_id": org_id} for c in _CONTROL_SEED])
+        existing = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    statuses = [_control_status(c) for c in existing]
+    agg = {}
+    for c in statuses:
+        for fw, refs in (c.get("frameworks") or {}).items():
+            e = agg.setdefault(fw, {"framework": fw, "controls": 0, "passing": 0, "eff_sum": 0, "refs": set()})
+            e["controls"] += 1
+            e["eff_sum"] += c["effectiveness"]
+            if c["status"] == "Passing":
+                e["passing"] += 1
+            e["refs"].update(refs)
+    out = [{"framework": fw, "controls": e["controls"], "passing": e["passing"],
+            "coverage": round(e["eff_sum"] / e["controls"]) if e["controls"] else 0,
+            "mapped_refs": sorted(e["refs"])} for fw, e in agg.items()]
+    out.sort(key=lambda x: x["framework"])
+    return {"frameworks": out}
 
 
 async def _emit_drift_alerts(org_id, statuses):

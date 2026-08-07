@@ -1,4 +1,5 @@
 import os
+import re
 import jwt
 import bcrypt
 import secrets
@@ -20,6 +21,16 @@ def hash_password(password: str) -> str:
 
 def verify_password(plain: str, hashed: str) -> bool:
     return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
+
+
+# Password policy — NIST 800-63B / ISO 27001 A.5.17 / SOC 2 CC6.1 alignment.
+PASSWORD_POLICY_MSG = "at least 12 characters and include an uppercase letter, a lowercase letter, a number and a symbol"
+
+
+def validate_password_policy(pw: str):
+    if (len(pw) < 12 or not re.search(r"[A-Z]", pw) or not re.search(r"[a-z]", pw)
+            or not re.search(r"\d", pw) or not re.search(r"[^A-Za-z0-9]", pw)):
+        raise HTTPException(status_code=400, detail=f"Password must be {PASSWORD_POLICY_MSG}.")
 
 
 def get_jwt_secret() -> str:
@@ -163,6 +174,7 @@ async def register(body: RegisterBody, response: Response):
     email = body.email.lower()
     if await db.users.find_one({"email": email}):
         raise HTTPException(status_code=400, detail="Email already registered")
+    validate_password_policy(body.password)
     org = await db.organizations.insert_one({
         "name": body.org_name or f"{body.name}'s Organization",
         "plan": "trial", "subscription_status": "trialing",
@@ -376,8 +388,7 @@ async def change_password(body: ChangePasswordBody, request: Request, response: 
     record = await db.users.find_one({"_id": ObjectId(user["id"])})
     if not record or not verify_password(body.current_password, record["password_hash"]):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
-    if len(body.new_password) < 8:
-        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+    validate_password_policy(body.new_password)
     await db.users.update_one({"_id": ObjectId(user["id"])},
                               {"$set": {"password_hash": hash_password(body.new_password), "must_change_password": False}})
     await _log_audit(user["org_id"], user["email"], "user.password_change", "Password updated")

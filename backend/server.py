@@ -54,6 +54,22 @@ app.add_middleware(
 )
 
 
+# Security hardening — response headers aligned to NIST 800-53 (SC-8/SC-18/SI-10),
+# ISO 27001 A.8.x, SOC 2 CC6/CC7 and CISA CPGs. Applied to all API responses.
+@app.middleware("http")
+async def security_headers(request, call_next):
+    resp = await call_next(request)
+    resp.headers["X-Content-Type-Options"] = "nosniff"
+    resp.headers["X-Frame-Options"] = "DENY"
+    resp.headers["Referrer-Policy"] = "no-referrer"
+    resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    resp.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    resp.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+    resp.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    resp.headers["Cache-Control"] = resp.headers.get("Cache-Control", "no-store")
+    return resp
+
+
 @app.on_event("startup")
 async def startup():
     await db.users.create_index("email", unique=True)

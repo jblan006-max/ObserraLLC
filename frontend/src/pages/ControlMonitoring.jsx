@@ -7,9 +7,13 @@ const statusHsl = { Passing: "142 70% 45%", Drifting: "35 90% 55%", Failing: "0 
 
 export default function ControlMonitoring() {
   const [controls, setControls] = useState(null);
+  const [compliance, setCompliance] = useState(null);
   const [busy, setBusy] = useState("");
 
-  useEffect(() => { api.get("/controls").then((r) => setControls(r.data)); }, []);
+  useEffect(() => {
+    api.get("/controls").then((r) => setControls(r.data));
+    api.get("/controls/compliance").then((r) => setCompliance(r.data.frameworks)).catch(() => {});
+  }, []);
 
   const pack = async (id) => {
     setBusy(id);
@@ -40,6 +44,24 @@ export default function ControlMonitoring() {
         </div>
       )}
 
+      {compliance && compliance.length > 0 && (
+        <div data-testid="compliance-panel">
+          <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-muted-foreground mb-3">Framework alignment · NIST · ISO · SOC 2 · CISA</div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            {compliance.map((f) => {
+              const col = f.coverage >= 75 ? "142 70% 45%" : f.coverage >= 55 ? "35 90% 55%" : "0 84% 60%";
+              return (
+                <div key={f.framework} data-testid={`compliance-${f.framework.replace(/[^a-zA-Z0-9]/g, "-")}`} className="bg-card fact-border rounded-xl p-4">
+                  <div className="text-xs font-head font-bold truncate">{f.framework}</div>
+                  <div className="font-head font-black text-2xl mt-1" style={{ color: `hsl(${col})` }}>{f.coverage}%</div>
+                  <div className="text-[10px] text-muted-foreground">{f.passing}/{f.controls} controls passing</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="bg-card fact-border rounded-xl overflow-x-auto">
         <table className="w-full text-sm min-w-[900px]">
           <thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border">
@@ -49,7 +71,16 @@ export default function ControlMonitoring() {
             {controls.map((c) => (
               <tr key={c.control_id} data-testid={`control-${c.control_id}`} className="border-b border-border/60 hover:bg-secondary/40 transition-colors">
                 <td className="px-4 py-3"><div className="font-mono text-xs text-ai">{c.control_id}</div><div className="font-medium">{c.name}</div><div className="text-[10px] text-muted-foreground">{c.category}</div></td>
-                <td className="px-4 py-3 text-xs">{c.framework}</td>
+                <td className="px-4 py-3 text-xs">
+                  <div className="font-medium">{c.framework}</div>
+                  {c.frameworks && Object.keys(c.frameworks).length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1 max-w-[220px]">
+                      {Object.entries(c.frameworks).map(([fw, refs]) => (
+                        <span key={fw} title={refs.join(", ")} className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm bg-ai/10 text-ai border border-ai/20">{fw}</span>
+                      ))}
+                    </div>
+                  )}
+                </td>
                 <td className="px-4 py-3 w-40">
                   <div className="flex items-center gap-2">
                     <div className="flex-1 h-2 rounded-full bg-secondary overflow-hidden"><div className="h-full" style={{ width: `${c.effectiveness}%`, background: c.effectiveness >= 75 ? "hsl(142 70% 45%)" : c.effectiveness >= 55 ? "hsl(35 90% 55%)" : "hsl(0 84% 60%)" }} /></div>

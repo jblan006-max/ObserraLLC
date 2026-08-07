@@ -1,0 +1,35 @@
+{
+  "summary": "Iter 10 — Verified dual-mode Executive/Operational dashboards, Available Connectors page (M365/Copilot/ChatGPT/Teams/SSO + catalog), Board Report modal + Teams-share gating, vertical-page lenses (Cyber Risk, Risk Register, AI Governance), Control Monitoring compliance panel with 5 frameworks, security hardening (headers + password policy), and cyber posture live_risk_penalty. Backend: 10/10 pytest cases pass. Frontend: 1 bug (Cyber Risk lens not applied — Treat buttons visible in Executive mode). Everything else works.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CyberRisk.jsx", "issue": "Mode lens NOT applied on Cyber Risk. `isExec = mode === 'executive'` is declared but never used. Treat button renders in both Executive and Operational mode (5 treat-* buttons in exec vs. spec requirement that Executive mode hides Treat and shows '—'). Fix: change line 74–76 to `{isAdmin && !isExec ? <button data-testid={`treat-${r.ref}`} ...>Treat</button> : <span>—</span>}`.", "selector": "[data-testid^='treat-']", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter10_dualmode.py",
+    "/app/test_reports/pytest/iter10_results.xml",
+    "/app/test_reports/iter10_op2.png",
+    "/app/test_reports/iter10_connectors.png",
+    "/app/test_reports/iter10_controls.png"
+  ],
+  "action_items": [
+    "Fix CyberRisk.jsx: enforce mode lens — hide Treat button and render '—' when mode === 'executive'."
+  ],
+  "critical_code_review_comments": [
+    "CyberRisk.jsx imports and computes `isExec` but never applies it — dead code that indicates the lens was scaffolded but never wired in. Same pattern should be audited in any other vertical page that claims mode-driven rendering.",
+    "The header mode-toggle buttons are visually reachable but pointer-clicks were being intercepted (probably by the AI Advisor floating panel/notification bell). Playwright had to fall back to JS-level .click(). Consider raising z-index on the toggle container or lowering the advisor overlay to avoid pointer-events collision — real users on smaller viewports may hit the same problem.",
+    "Live connector cards for M365/Copilot/ChatGPT/Teams/SSO share the same data-testid namespace as the Catalog Connectors (e.g., `connector-m365` appears twice on the page). Recommend prefixing catalog connectors with `catalog-connector-<vendor>` so testids stay unique.",
+    "Control row framework tags (NIST CSF 2.0, NIST 800-53, ISO 27001, SOC 2, CISA CPG) render as plain badges without data-testid. Adding `data-testid=\"control-framework-tag-<framework>\"` would make automated coverage verification straightforward."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter10_dualmode.py"],
+  "success_rate": {"backend": "100%", "frontend": "92%"},
+  "test_credentials": "admin: jblan2026@gmail.com / Obserra2026! (verified working)",
+  "seed_data_creation": "None. Teams webhook was PUT then DELETEd back to NOT SET during testing so no residual state.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend suite: /app/backend/tests/test_iter10_dualmode.py covers security headers, weak-password 400, /api/metrics/dashboard exec+operational blocks (exec fields: exposure_residual_ale, exposure_avoided, risk_reduction_pct, risk_adjusted; op contains keys with 'nist', 'vendor', 'phish', 'patch'), /api/cyber/overview live_risk_penalty, /api/enterprise/live m365/sso/openai/copilot/teams, teams PUT+share gate 400 when unconfigured, /api/controls/compliance (5 frameworks), /api/controls each row has 'frameworks' tag list. Frontend note: mode toggle is intercepted by advisor panel — use `page.evaluate(() => document.querySelector('[data-testid=mode-toggle-operational]').click())` instead of Playwright click. Advisor auto-opens; close with [data-testid=advisor-close] first. Board Report modal generation via /advisor/board-report takes ~10-15s before report-share-teams button appears. Available Connectors page path: /app/connectors. When Teams webhook is not configured, POST /enterprise/live/teams/share returns 400 and UI toast reads 'Teams connector is not configured. Add a Teams Incoming Webhook in Available Connectors → Microsoft Teams.'",
+  "rca of the issue": "CyberRisk.jsx BUG RCA — Repro: login as admin, ensure mode = executive (header toggle), navigate to /app/cyber-risk. Expected: Treat column shows '—' per requirement 'Executive mode the Treat action buttons are hidden'. Actual: 5 Treat buttons render regardless of mode. Root cause: line 23 `const isExec = mode === 'executive';` is declared but never consumed in the JSX. The button on line 75 only checks `isAdmin`. Mitigation: gate Treat behind `isAdmin && !isExec`, else render `<span className='text-muted-foreground'>—</span>`. Risk Register and AI Governance already implement the same lens pattern correctly, so the fix mirrors those pages."
+}
