@@ -109,6 +109,10 @@ Foundation: Tenant Management · Identity & RBAC | Data: Enterprise Asset Model 
 - **Auto-Emailed Spend Report**: new cron POST /api/cron/monthly-spend-report (1st, 09:30 UTC in crons.yml) emails each org's admins/execs a full per-teammate advisor spend HTML table (email pipeline is HTML-only, no file attachments) via managed Resend + creates a notification. Reuses spend_rows(org_id, scope) (also backs the CSV export). Verified: cron 200 + "Advisor spend report emailed" notification.
 - **Prompt Search**: GET /api/advisor/prompts/search?q=<term> (admin) regex-searches all advisor prompts in the org (case-insensitive, 30 max). Advisor panel adds a "Search all advisor prompts…" box (Enter to run) listing matches with teammate + date + cost. Verified: q=risk → 11 matches, UI renders.
 
+## Session 2026-06 (CSV Email Attachment + Prompt Insights)
+- **CSV Email Attachment**: confirmed the managed Resend proxy accepts Resend-style attachments ([{filename, content(base64)}], returns 202). notifications.send_email now takes an optional `attachments` param; the monthly-spend-report cron attaches a real advisor-spend-all.csv so finance can open it in Excel. Verified: cron 200 + "Advisor spend report emailed" log.
+- **Prompt Insights**: GET /api/advisor/prompts/insights (admin) tokenizes org prompts (stopword-filtered) and returns the top 12 recurring terms with counts. Advisor shows "Top prompt themes" chips; clicking a chip runs the prompt search. Verified: top·9, sentence·4, etc.; theme-click search works.
+
 ## Implemented (as of 2026-06)
 - JWT auth (httpOnly cookies, brute-force lockout), org/role, tenant isolation
 - Passwordless QR login (start/approve/poll, 3-min single-use, cross-device)

@@ -317,6 +317,30 @@ async def search_prompts(q: str, admin: dict = Depends(require_roles("admin"))):
              "cost_usd": (l.get("usage") or {}).get("cost_usd")} for l in logs]
 
 
+_INSIGHT_STOPWORDS = set((
+    "the a an of to in for our we is are what which how do i on and or by with at as be this that it "
+    "you your my me us they them their there here can could would should will shall about into from over "
+    "under out up down off than then so if but not no yes any all some most more less give show tell list "
+    "please help need want get got make made using use used based whats what's whos who's does did done "
+    "have has had was were been being are am also just like really very much many one two three current "
+    "right now today week month year risk risks"
+).split())
+
+
+@advisor_router.get("/prompts/insights")
+async def prompt_insights(admin: dict = Depends(require_roles("admin"))):
+    import re
+    from collections import Counter
+    logs = await db.advisor_logs.find({"org_id": admin["org_id"]}, {"_id": 0, "prompt": 1}).sort("ts", -1).to_list(500)
+    c = Counter()
+    for l in logs:
+        for w in re.findall(r"[a-zA-Z]{3,}", (l.get("prompt") or "").lower()):
+            if w not in _INSIGHT_STOPWORDS:
+                c[w] += 1
+    themes = [{"term": t, "count": n} for t, n in c.most_common(12)]
+    return {"total_prompts": len(logs), "themes": themes}
+
+
 class BudgetBody(BaseModel):
     monthly_usd: float
     auto_pause: bool | None = None

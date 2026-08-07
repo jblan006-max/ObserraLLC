@@ -46,13 +46,15 @@ class NotificationEngine:
     async def mark_all_read(self, org_id):
         await db.notifications.update_many({"org_id": org_id, "read": False}, {"$set": {"read": True}})
 
-    async def send_email(self, to_email, subject, html):
+    async def send_email(self, to_email, subject, html, attachments=None):
         key = os.environ.get("EMERGENT_EMAIL_KEY")
         if not key:
             logger.warning("EMERGENT_EMAIL_KEY missing — skipping email send")
             return None
         payload = {"to": [to_email], "subject": subject, "html": html,
                    "from_name": os.environ.get("EMAIL_FROM_NAME", "Obserra EIOS")}
+        if attachments:
+            payload["attachments"] = attachments
         try:
             async with httpx.AsyncClient(timeout=30) as client:
                 resp = await client.post(f"{EMAIL_BASE_URL}/api/v1/email/send",

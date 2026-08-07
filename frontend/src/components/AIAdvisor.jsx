@@ -54,12 +54,18 @@ export function AIAdvisor() {
   const [drillPrompts, setDrillPrompts] = useState([]);
   const [searchQ, setSearchQ] = useState("");
   const [searchResults, setSearchResults] = useState(null);
+  const [promptThemes, setPromptThemes] = useState(null);
   const scrollRef = useRef(null);
   const sendRef = useRef(null);
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, streaming]);
 
-  useEffect(() => { if (open && isAdmin) api.get("/advisor/usage").then((r) => setSpend(r.data)).catch(() => {}); }, [open, isAdmin]);
+  useEffect(() => {
+    if (open && isAdmin) {
+      api.get("/advisor/usage").then((r) => setSpend(r.data)).catch(() => {});
+      api.get("/advisor/prompts/insights").then((r) => setPromptThemes(r.data)).catch(() => {});
+    }
+  }, [open, isAdmin]);
 
   useEffect(() => {
     if (!sessionStorage.getItem("advisor-opened")) { setOpen(true); sessionStorage.setItem("advisor-opened", "1"); }
@@ -263,6 +269,20 @@ export function AIAdvisor() {
                   <Download className="w-3 h-3" /> All months
                 </button>
               </div>
+              {promptThemes?.themes?.length > 0 && (
+                <div data-testid="advisor-themes" className="pt-1">
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1">Top prompt themes</div>
+                  <div className="flex flex-wrap gap-1">
+                    {promptThemes.themes.map((t) => (
+                      <button key={t.term} data-testid={`theme-${t.term}`}
+                        onClick={() => { setSearchQ(t.term); searchPrompts(t.term); }}
+                        className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-ai/10 text-ai border border-ai/20 hover:bg-ai/20 transition-colors">
+                        {t.term} · {t.count}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="pt-1">
                 <input data-testid="advisor-prompt-search" placeholder="Search all advisor prompts…"
                   value={searchQ}

@@ -3,6 +3,9 @@
 Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
 """
 import os
+import io
+import csv
+import base64
 import hmac
 import logging
 
@@ -195,6 +198,17 @@ def _spend_report_html(rows):
             "<p style=\"font-size:11px;color:#9ca3af\">Obserra — Executive Protection &amp; Intelligence LLC</p></div>")
 
 
+def _spend_csv_b64(rows):
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Month", "Teammate", "Queries", "Tokens", "Cost (USD)"])
+    for r in rows:
+        w.writerow([r["month"], r["user"], r["queries"], r["tokens"], f"{r['cost_usd']:.4f}"])
+    w.writerow(["ALL", "TOTAL", sum(r["queries"] for r in rows),
+                sum(r["tokens"] for r in rows), f"{sum(r['cost_usd'] for r in rows):.4f}"])
+    return base64.b64encode(buf.getvalue().encode()).decode()
+
+
 async def _run_spend_report():
     orgs = await db.organizations.find({}).to_list(1000)
     for org in orgs:
@@ -203,13 +217,14 @@ async def _run_spend_report():
         if not rows:
             continue
         html = _spend_report_html(rows)
+        attachments = [{"filename": "advisor-spend-all.csv", "content": _spend_csv_b64(rows)}]
         recips = await db.users.find(
             {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
         for r in recips:
-            await notifications.send_email(r["email"], "Monthly AI Advisor Spend Report", html)
+            await notifications.send_email(r["email"], "Monthly AI Advisor Spend Report", html, attachments=attachments)
         await notifications.create(
             org_id, "report", "Advisor spend report emailed",
-            f"Full advisor spend emailed to {len(recips)} admin(s)/exec(s).", ref="advisor-spend")
+            f"Full advisor spend (with CSV attachment) emailed to {len(recips)} admin(s)/exec(s).", ref="advisor-spend")
         logger.info(f"Advisor spend report emailed for org {org_id} to {len(recips)} recipients")
 
 
