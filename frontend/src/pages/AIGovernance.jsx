@@ -3,7 +3,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { ConfidenceBadge, FreshnessBadge, DataTypeBadge } from "@/components/badges";
-import { Loader2, Cpu, AlertOctagon, Ban, Eye } from "lucide-react";
+import { Loader2, Cpu, AlertOctagon, Ban, Eye, Bot, Sparkles, Cloud, ShieldCheck } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { AISystemModal } from "@/components/AISystemModal";
 
@@ -42,12 +42,39 @@ export default function AIGovernance() {
 
   const shadow = systems.filter((s) => s.status === "shadow");
 
+  const copilot = live?.copilot;
+  const openai = live?.openai;
+  const m365 = live?.m365;
+  const anyLicensed = (copilot?.live) || (openai?.live) || (m365?.live);
+  const LicTile = ({ icon: Icon, label, on, metric, unit, sub, testid }) => (
+    <div data-testid={testid} className={`rounded-lg p-4 border ${on ? "border-ai/30 bg-ai/5" : "border-border bg-secondary/30"}`}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2 text-sm font-head font-bold"><Icon className="w-4 h-4 text-ai" /> {label}</div>
+        <span className={`text-[9px] font-mono px-2 py-0.5 rounded-full ${on ? "bg-low/15 text-low" : "bg-secondary/60 text-muted-foreground"}`}>{on ? "LIVE" : "NOT CONNECTED"}</span>
+      </div>
+      <div className="font-head font-black text-2xl tracking-tight">{on && metric != null ? metric.toLocaleString() : "—"} <span className="text-xs font-mono font-normal text-muted-foreground">{on && metric != null ? unit : ""}</span></div>
+      <div className="text-[11px] text-muted-foreground mt-1">{on ? (sub || "Connected") : `Connect in Available Connectors to govern ${label} licenses.`}</div>
+    </div>
+  );
+
   return (
     <div className="rise space-y-5">
       <div>
         <h1 className="font-head font-black text-3xl tracking-tight">AI Governance Suite</h1>
         <p className="text-sm text-muted-foreground mt-1">{isExec ? "AI governance posture — sanctioned vs shadow AI and the governance actions awaiting decision." : "Inventory, NIST AI RMF mapping, model cards, evaluations & incident management. Sanctioned + shadow-AI discovery."}</p>
       </div>
+
+      {live && (
+        <div className="bg-card fact-border rounded-xl p-5" data-testid="ai-licenses-card">
+          <div className="flex items-center gap-2 mb-1"><ShieldCheck className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">AI Licenses &amp; Copilot Governance</h2></div>
+          <p className="text-[11px] text-muted-foreground mb-4">Licensed AI seats and models pulled from your connected tenants. {anyLicensed ? "" : "Connect Microsoft Copilot or ChatGPT to populate this."}</p>
+          <div className="grid sm:grid-cols-3 gap-3">
+            <LicTile icon={Bot} label="Microsoft Copilot" on={!!copilot?.live} metric={copilot?.seats} unit="seats licensed" sub={copilot?.seats != null ? `${copilot.seats} Copilot seats licensed` : "Connected — seats pending sync"} testid="lic-copilot" />
+            <LicTile icon={Sparkles} label="ChatGPT (OpenAI)" on={!!openai?.live} metric={openai?.model_count} unit="models available" sub={openai?.model_count != null ? `${openai.model_count} models available to govern` : "Connected — models pending sync"} testid="lic-openai" />
+            <LicTile icon={Cloud} label="Microsoft 365" on={!!m365?.live} metric={m365?.user_count} unit="licensed users" sub={m365?.risky_users != null ? `${m365.risky_users} risky user(s) flagged` : "Connected — users pending sync"} testid="lic-m365" />
+          </div>
+        </div>
+      )}
 
       {shadow.length > 0 && (
         <div className="ai-border rounded-lg p-4 flex items-center gap-3 bg-ai/5">

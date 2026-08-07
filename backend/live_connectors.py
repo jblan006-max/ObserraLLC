@@ -7,7 +7,7 @@ import re
 import httpx
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from bson import ObjectId
 
@@ -62,7 +62,7 @@ def _m365_public(m):
     return {"configured": True, "live": bool(m.get("live")), "tenant_id": m.get("tenant_id"),
             "client_id_masked": _mask(m.get("client_id")), "user_count": m.get("user_count"),
             "risky_users": m.get("risky_users"),
-            "status": m.get("status"), "checked_at": m.get("checked_at")}
+            "status": m.get("status"), "checked_at": m.get("checked_at"), "synced_at": m.get("synced_at")}
 
 
 def _sso_public(s):
@@ -77,7 +77,7 @@ def _openai_public(o):
         return {"configured": False, "live": False}
     return {"configured": True, "live": bool(o.get("live")), "api_key_masked": _mask(o.get("api_key")),
             "org": o.get("org"), "model_count": o.get("model_count"),
-            "status": o.get("status"), "checked_at": o.get("checked_at")}
+            "status": o.get("status"), "checked_at": o.get("checked_at"), "synced_at": o.get("synced_at")}
 
 
 def _copilot_public(c):
@@ -85,7 +85,7 @@ def _copilot_public(c):
         return {"configured": False, "live": False}
     return {"configured": True, "live": bool(c.get("live")), "tenant_id": c.get("tenant_id"),
             "client_id_masked": _mask(c.get("client_id")), "seats": c.get("seats"),
-            "status": c.get("status"), "checked_at": c.get("checked_at")}
+            "status": c.get("status"), "checked_at": c.get("checked_at"), "synced_at": c.get("synced_at")}
 
 
 def _teams_public(t):
@@ -131,15 +131,17 @@ async def _verify_m365(tenant_id, client_id, client_secret):
 @live_connectors_router.put("/live/m365")
 async def put_m365(body: M365Body, admin: dict = Depends(require_roles("admin"))):
     user_count = risky_users = None
+    synced_at = None
     status = "Connected — credentials saved"
     try:
         ok, user_count, risky_users, msg = await _verify_m365(body.tenant_id, body.client_id, body.client_secret)
         if ok:
-            status = msg
+            status, synced_at = msg, _now()
     except Exception:
         pass
     doc = {"tenant_id": body.tenant_id, "client_id": body.client_id, "client_secret": body.client_secret,
-           "live": True, "user_count": user_count, "risky_users": risky_users, "status": status, "checked_at": _now()}
+           "live": True, "user_count": user_count, "risky_users": risky_users, "status": status,
+           "checked_at": _now(), "synced_at": synced_at}
     await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"live_m365": doc}})
     await _log_audit(admin["org_id"], admin["email"], "connector.m365.configure", f"M365 connected: {status}")
     return _m365_public(doc)
@@ -155,19 +157,20 @@ async def del_m365(admin: dict = Depends(require_roles("admin"))):
 @live_connectors_router.put("/live/sso")
 async def put_sso(body: SSOBody, admin: dict = Depends(require_roles("admin"))):
     entity_id = body.entity_id
+    synced_at = None
     status = "Connected — SSO metadata saved"
     try:
         async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
             r = await c.get(body.metadata_url)
         if r.status_code == 200 and "EntityDescriptor" in r.text:
-            status = "Metadata validated — SSO ready"
+            status, synced_at = "Metadata validated — SSO ready", _now()
             m = re.search(r'entityID="([^"]+)"', r.text)
             if m and not entity_id:
                 entity_id = m.group(1)
     except Exception:
         pass
     doc = {"metadata_url": body.metadata_url, "entity_id": entity_id, "valid": True,
-           "status": status, "checked_at": _now()}
+           "status": status, "checked_at": _now(), "synced_at": synced_at}
     await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"live_sso": doc}})
     await _log_audit(admin["org_id"], admin["email"], "sso.configure", f"SSO connected: {status}")
     return _sso_public(doc)
@@ -200,15 +203,16 @@ async def _verify_openai(api_key, org=None):
 @live_connectors_router.put("/live/openai")
 async def put_openai(body: OpenAIBody, admin: dict = Depends(require_roles("admin"))):
     model_count = None
+    synced_at = None
     status = "Connected — API key saved"
     try:
         ok, model_count, msg = await _verify_openai(body.api_key, body.org)
         if ok:
-            status = msg
+            status, synced_at = msg, _now()
     except Exception:
         pass
     doc = {"api_key": body.api_key, "org": body.org, "live": True,
-           "model_count": model_count, "status": status, "checked_at": _now()}
+           "model_count": model_count, "status": status, "checked_at": _now(), "synced_at": synced_at}
     await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"live_openai": doc}})
     await _log_audit(admin["org_id"], admin["email"], "connector.openai.configure", f"ChatGPT connected: {status}")
     return _openai_public(doc)
@@ -251,15 +255,16 @@ async def _verify_copilot(tenant_id, client_id, client_secret):
 @live_connectors_router.put("/live/copilot")
 async def put_copilot(body: CopilotBody, admin: dict = Depends(require_roles("admin"))):
     seats = None
+    synced_at = None
     status = "Connected — credentials saved"
     try:
         ok, seats, msg = await _verify_copilot(body.tenant_id, body.client_id, body.client_secret)
         if ok:
-            status = msg
+            status, synced_at = msg, _now()
     except Exception:
         pass
     doc = {"tenant_id": body.tenant_id, "client_id": body.client_id, "client_secret": body.client_secret,
-           "live": True, "seats": seats, "status": status, "checked_at": _now()}
+           "live": True, "seats": seats, "status": status, "checked_at": _now(), "synced_at": synced_at}
     await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"live_copilot": doc}})
     await _log_audit(admin["org_id"], admin["email"], "connector.copilot.configure", f"Copilot connected: {status}")
     return _copilot_public(doc)
@@ -297,7 +302,6 @@ class TeamsShare(BaseModel):
 
 @live_connectors_router.post("/live/teams/share")
 async def share_to_teams(body: TeamsShare, admin: dict = Depends(require_roles("admin"))):
-    from fastapi import HTTPException
     org = await _org(admin["org_id"])
     t = org.get("live_teams") or {}
     if not t.get("valid") or not t.get("webhook_url"):
@@ -317,3 +321,68 @@ async def share_to_teams(body: TeamsShare, admin: dict = Depends(require_roles("
     if not ok:
         raise HTTPException(502, f"Teams webhook returned {r.status_code}")
     return {"ok": True, "channel": t.get("channel_name")}
+
+
+_LIVE_PUBLIC = {"m365": _m365_public, "copilot": _copilot_public, "openai": _openai_public,
+                "sso": _sso_public, "teams": _teams_public}
+
+
+@live_connectors_router.post("/live/{kind}/recheck")
+async def recheck_live(kind: str, admin: dict = Depends(require_roles("admin"))):
+    """Re-verify a live connector so admins can spot silent credential expiry.
+
+    Never disconnects — the connector stays live; only status/synced_at/metrics refresh."""
+    org = await _org(admin["org_id"])
+    key = f"live_{kind}"
+    doc = org.get(key)
+    if not doc:
+        raise HTTPException(404, "Connector not configured")
+    now = _now()
+    if kind == "m365":
+        try:
+            ok, uc, ru, msg = await _verify_m365(doc["tenant_id"], doc["client_id"], doc["client_secret"])
+        except Exception as e:
+            ok, uc, ru, msg = False, None, None, f"Re-check failed: {str(e)[:120]}"
+        doc["status"] = msg
+        if ok:
+            doc["synced_at"] = now
+            if uc is not None:
+                doc["user_count"] = uc
+            if ru is not None:
+                doc["risky_users"] = ru
+    elif kind == "copilot":
+        try:
+            ok, seats, msg = await _verify_copilot(doc["tenant_id"], doc["client_id"], doc["client_secret"])
+        except Exception as e:
+            ok, seats, msg = False, None, f"Re-check failed: {str(e)[:120]}"
+        doc["status"] = msg
+        if ok:
+            doc["synced_at"] = now
+            if seats is not None:
+                doc["seats"] = seats
+    elif kind == "openai":
+        try:
+            ok, mc, msg = await _verify_openai(doc["api_key"], doc.get("org"))
+        except Exception as e:
+            ok, mc, msg = False, None, f"Re-check failed: {str(e)[:120]}"
+        doc["status"] = msg
+        if ok:
+            doc["synced_at"] = now
+            if mc is not None:
+                doc["model_count"] = mc
+    elif kind == "sso":
+        try:
+            async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
+                r = await c.get(doc["metadata_url"])
+            if r.status_code == 200 and "EntityDescriptor" in r.text:
+                doc["status"], doc["synced_at"] = "Metadata validated — SSO ready", now
+            else:
+                doc["status"] = f"Metadata unreachable (HTTP {r.status_code})"
+        except Exception as e:
+            doc["status"] = f"Re-check failed: {str(e)[:120]}"
+    else:
+        raise HTTPException(400, "This connector cannot be re-checked")
+    doc["checked_at"] = now
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {key: doc}})
+    await _log_audit(admin["org_id"], admin["email"], f"connector.{kind}.recheck", doc.get("status", "re-checked"))
+    return _LIVE_PUBLIC[kind](doc)

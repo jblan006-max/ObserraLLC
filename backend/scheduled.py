@@ -16,7 +16,6 @@ from fastapi import APIRouter, Request, BackgroundTasks, HTTPException
 from db import db
 from kernel import notifications
 from ai_advisor import generate_board_report, spend_rows
-from live_connectors import _verify_m365
 from studio import _compose_report
 from reports import _report_html, build_board_report_pdf
 
@@ -233,6 +232,7 @@ async def weekly_drift_digest(request: Request, background_tasks: BackgroundTask
     background_tasks.add_task(_run_drift_digest, {"weekly"}, "Weekly")
     background_tasks.add_task(_run_teams_digest)
     background_tasks.add_task(_run_momentum_digest)
+    background_tasks.add_task(_run_connector_digest)
     return {"status": "accepted"}
 
 
@@ -351,42 +351,125 @@ async def weekly_studio_report(request: Request, background_tasks: BackgroundTas
 
 
 async def _run_connector_health():
+    """Daily best-effort re-verify of every LIVE credential connector (M365/Copilot/ChatGPT).
+
+    Connectors stay live (auto-connect model); this only refreshes synced_at/metrics and
+    alerts admins once when a previously-synced source stops responding (silent creds expiry)."""
     from datetime import datetime, timezone
+    from live_connectors import _verify_m365, _verify_copilot, _verify_openai
+    now = datetime.now(timezone.utc).isoformat()
     today = datetime.now(timezone.utc).date().isoformat()
-    orgs = await db.organizations.find({"live_m365": {"$exists": True}}).to_list(1000)
+    orgs = await db.organizations.find(
+        {"$or": [{"live_m365": {"$exists": True}}, {"live_copilot": {"$exists": True}},
+                 {"live_openai": {"$exists": True}}]}).to_list(1000)
     for org in orgs:
-        m = org.get("live_m365") or {}
-        if not m.get("tenant_id"):
-            continue
-        was_live = bool(m.get("live"))
-        try:
-            live, user_count, risky_users, status = await _verify_m365(m["tenant_id"], m["client_id"], m["client_secret"])
-        except Exception as e:
-            live, user_count, risky_users, status = False, None, None, f"Re-verify failed: {str(e)[:120]}"
-        m.update({"live": live, "status": status, "checked_at": datetime.now(timezone.utc).isoformat()})
-        if user_count is not None:
-            m["user_count"] = user_count
-        if risky_users is not None:
-            m["risky_users"] = risky_users
-        await db.organizations.update_one({"_id": org["_id"]}, {"$set": {"live_m365": m}})
         org_id = str(org["_id"])
-        if was_live and not live:
+        for kind, label in (("m365", "Microsoft 365"), ("copilot", "Microsoft Copilot"), ("openai", "ChatGPT (OpenAI)")):
+            d = org.get(f"live_{kind}")
+            if not d:
+                continue
+            had_sync = bool(d.get("synced_at"))
+            ok, status = False, ""
+            try:
+                if kind == "m365":
+                    ok, uc, ru, status = await _verify_m365(d["tenant_id"], d["client_id"], d["client_secret"])
+                    if ok:
+                        if uc is not None:
+                            d["user_count"] = uc
+                        if ru is not None:
+                            d["risky_users"] = ru
+                elif kind == "copilot":
+                    ok, seats, status = await _verify_copilot(d["tenant_id"], d["client_id"], d["client_secret"])
+                    if ok and seats is not None:
+                        d["seats"] = seats
+                else:
+                    ok, mc, status = await _verify_openai(d["api_key"], d.get("org"))
+                    if ok and mc is not None:
+                        d["model_count"] = mc
+            except Exception as e:
+                ok, status = False, f"Re-verify failed: {str(e)[:120]}"
+            d["checked_at"] = now
+            if status:
+                d["status"] = status
+            if ok:
+                d["synced_at"] = now
+            await db.organizations.update_one({"_id": org["_id"]}, {"$set": {f"live_{kind}": d}})
+            if had_sync and not ok:
+                recips = await db.users.find(
+                    {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
+                html = ("<div style=\"font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto\">"
+                        f"<h2 style=\"color:#0f1e3d\">{label} connector degraded</h2>"
+                        f"<p>The live {label} connection stopped responding on re-check — the credential/secret "
+                        "may have expired or permissions changed. The connector is still enabled but is no longer syncing real data.</p>"
+                        f"<p style=\"font-family:monospace;color:#b91c1c\">{status}</p>"
+                        "<p>Update the credentials in Available Connectors to restore the live sync.</p>"
+                        "<p style=\"font-size:11px;color:#9ca3af\">Obserra — Executive Protection &amp; Intelligence LLC</p></div>")
+                for r in recips:
+                    await notifications.send_email(r["email"], f"{label} connector degraded", html)
+                await notifications.create(
+                    org_id, "connector", f"{label} connector degraded",
+                    f"Live {label} re-verification failed: {status}", ref=f"live-{kind}",
+                    dedupe_key=f"{kind}-degraded:{today}")
+                logger.warning(f"{label} connector degraded for org {org_id}: {status}")
+
+
+def _connector_digest_html(rows):
+    trs = "".join(
+        f'<tr><td style="padding:7px 8px;border-bottom:1px solid #eee;font:400 13px Arial;color:#1f2937">{name}</td>'
+        f'<td style="padding:7px 8px;border-bottom:1px solid #eee;font:700 12px Arial;color:{color}">{state}</td>'
+        f'<td style="padding:7px 8px;border-bottom:1px solid #eee;font:400 12px Arial;color:#6b7280;text-align:right">{detail}</td></tr>'
+        for name, state, color, detail in rows)
+    return ('<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:auto;background:#fff"><tr><td style="padding:24px">'
+            '<div style="font:800 18px Arial;color:#0f1e3d">Weekly Connector Health Digest</div>'
+            '<div style="font:400 12px Arial;color:#6b7280;margin-bottom:14px">Obserra — Executive Protection &amp; Intelligence LLC</div>'
+            f'<table style="width:100%;border-collapse:collapse">{trs}</table>'
+            '<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:10px;font:400 10px Arial;color:#9ca3af">'
+            'Sign in → Available Connectors to manage credentials and re-check any degraded source.</div>'
+            '</td></tr></table>')
+
+
+async def _run_connector_digest():
+    orgs = await db.organizations.find({}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        try:
+            rows = []
+            live_specs = (("live_m365", "Microsoft 365", "user_count", "users"),
+                          ("live_copilot", "Microsoft Copilot", "seats", "seats"),
+                          ("live_openai", "ChatGPT (OpenAI)", "model_count", "models"),
+                          ("live_sso", "SSO / SAML", None, None),
+                          ("live_teams", "Microsoft Teams", None, None))
+            for key, name, metric, unit in live_specs:
+                d = org.get(key)
+                if not d:
+                    continue
+                on = bool(d.get("live") or d.get("valid"))
+                synced = d.get("synced_at")
+                if metric and d.get(metric) is not None:
+                    detail = f"{d[metric]} {unit} · synced" if synced else f"{d[metric]} {unit}"
+                else:
+                    detail = "syncing" if synced else "awaiting first sync"
+                rows.append((name, "LIVE" if on else "degraded", "#16a34a" if on else "#dc2626", detail))
+            cats = await db.enterprise_connectors.find({"org_id": org_id, "status": "connected"}).to_list(50)
+            for c in cats:
+                rows.append((c["name"], "connected", "#16a34a", c.get("category", "")))
+            if not rows:
+                continue
+            html = _connector_digest_html(rows)
             recips = await db.users.find(
                 {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
-            html = ("<div style=\"font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto\">"
-                    "<h2 style=\"color:#0f1e3d\">Microsoft 365 connector degraded</h2>"
-                    "<p>The live M365 connection failed re-verification and is now degraded — the client secret "
-                    "may have expired or the app permissions changed.</p>"
-                    f"<p style=\"font-family:monospace;color:#b91c1c\">{status}</p>"
-                    "<p>Update the credentials in Enterprise → Connectors to restore the live sync.</p>"
-                    "<p style=\"font-size:11px;color:#9ca3af\">Obserra — Executive Protection &amp; Intelligence LLC</p></div>")
+            if not recips:
+                continue
+            live_n = sum(1 for r in rows if r[1] in ("LIVE", "connected"))
             for r in recips:
-                await notifications.send_email(r["email"], "Microsoft 365 connector degraded", html)
+                await notifications.send_email(r["email"], f"Weekly Connector Digest — {live_n} live source(s)", html)
             await notifications.create(
-                org_id, "connector", "Microsoft 365 connector degraded",
-                f"Live M365 re-verification failed: {status}", ref="live-m365",
-                dedupe_key=f"m365-degraded:{today}")
-            logger.warning(f"M365 connector degraded for org {org_id}: {status}")
+                org_id, "connector", "Weekly connector digest sent",
+                f"Summary of {len(rows)} connector(s) ({live_n} live) emailed to {len(recips)} admin(s)/exec(s).",
+                ref="connector-digest")
+            logger.info(f"Connector digest sent for org {org_id}: {len(rows)} connectors")
+        except Exception as e:
+            logger.error(f"Connector digest failed for org {org_id}: {e}")
 
 
 @scheduled_router.post("/cron/connector-health")

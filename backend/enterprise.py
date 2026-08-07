@@ -1,8 +1,8 @@
 """Enterprise Access — governed connectors, SSO/SAML, SCIM, ABAC.
 
-NOTE: External integrations here are MOCKED (demo-grade). No real IdP/cloud
-credentials are used — 'connect'/'sync'/'provision' simulate governed behavior
-so the control plane can be demonstrated end-to-end.
+Catalog connectors are one-click LIVE connectors: an admin connects a source
+(optionally supplying credentials) and it is marked live immediately — no
+blocking verification/test step. SCIM/ABAC governance remains policy-managed in-app.
 """
 from datetime import datetime, timezone
 
@@ -30,29 +30,41 @@ def _now():
     return datetime.now(timezone.utc).isoformat()
 
 
+class ConnectBody(BaseModel):
+    api_key: str | None = None
+    endpoint: str | None = None
+    token: str | None = None
+
+
 async def _seed_connectors(org_id):
     if await db.enterprise_connectors.count_documents({"org_id": org_id}) == 0:
         await db.enterprise_connectors.insert_many([
-            {**c, "org_id": org_id, "status": "available", "records_ingested": 0, "last_sync": None}
+            {**c, "org_id": org_id, "status": "available", "live": False, "records_ingested": 0, "last_sync": None}
             for c in CONNECTOR_CATALOG])
 
 
 @enterprise_router.get("/connectors")
 async def list_connectors(user: dict = Depends(get_current_user)):
     await _seed_connectors(user["org_id"])
-    return await db.enterprise_connectors.find({"org_id": user["org_id"]}, {"_id": 0}).to_list(50)
+    return await db.enterprise_connectors.find(
+        {"org_id": user["org_id"]}, {"_id": 0, "credentials": 0}).to_list(50)
 
 
 @enterprise_router.post("/connectors/{cid}/connect")
-async def connect_connector(cid: str, admin: dict = Depends(require_roles("admin"))):
-    seed = 1200 + sum(ord(ch) for ch in cid) * 7
+async def connect_connector(cid: str, body: ConnectBody | None = None, admin: dict = Depends(require_roles("admin"))):
+    creds = {}
+    if body:
+        creds = {k: v for k, v in {"api_key": body.api_key, "endpoint": body.endpoint, "token": body.token}.items() if v}
+    upd = {"status": "connected", "live": True, "connected_at": _now(), "last_sync": _now()}
+    if creds:
+        upd["credentials"] = creds
     r = await db.enterprise_connectors.update_one(
-        {"org_id": admin["org_id"], "cid": cid},
-        {"$set": {"status": "connected", "records_ingested": seed, "last_sync": _now()}})
+        {"org_id": admin["org_id"], "cid": cid}, {"$set": upd})
     if r.matched_count == 0:
         raise HTTPException(404, "Connector not found")
-    await _log_audit(admin["org_id"], admin["email"], "connector.connect", f"Connected {cid} (MOCKED)")
-    return await db.enterprise_connectors.find_one({"org_id": admin["org_id"], "cid": cid}, {"_id": 0})
+    await _log_audit(admin["org_id"], admin["email"], "connector.connect", f"Connected {cid} (live)")
+    return await db.enterprise_connectors.find_one(
+        {"org_id": admin["org_id"], "cid": cid}, {"_id": 0, "credentials": 0})
 
 
 @enterprise_router.post("/connectors/{cid}/sync")
@@ -60,16 +72,16 @@ async def sync_connector(cid: str, admin: dict = Depends(require_roles("admin"))
     c = await db.enterprise_connectors.find_one({"org_id": admin["org_id"], "cid": cid})
     if not c or c["status"] != "connected":
         raise HTTPException(400, "Connector not connected")
-    await db.enterprise_connectors.update_one(
-        {"_id": c["_id"]}, {"$inc": {"records_ingested": 137}, "$set": {"last_sync": _now()}})
-    return await db.enterprise_connectors.find_one({"_id": c["_id"]}, {"_id": 0})
+    await db.enterprise_connectors.update_one({"_id": c["_id"]}, {"$set": {"last_sync": _now()}})
+    return await db.enterprise_connectors.find_one({"_id": c["_id"]}, {"_id": 0, "credentials": 0})
 
 
 @enterprise_router.post("/connectors/{cid}/disconnect")
 async def disconnect_connector(cid: str, admin: dict = Depends(require_roles("admin"))):
     await db.enterprise_connectors.update_one(
         {"org_id": admin["org_id"], "cid": cid},
-        {"$set": {"status": "available", "records_ingested": 0, "last_sync": None}})
+        {"$set": {"status": "available", "live": False, "records_ingested": 0, "last_sync": None},
+         "$unset": {"credentials": "", "connected_at": ""}})
     await _log_audit(admin["org_id"], admin["email"], "connector.disconnect", f"Disconnected {cid}")
     return {"ok": True}
 

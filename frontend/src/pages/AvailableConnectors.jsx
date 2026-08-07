@@ -8,6 +8,35 @@ const StatusPill = ({ ok, warn, off, children, testid }) => {
   return <span data-testid={testid} className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${cls}`}>{children}</span>;
 };
 
+function relTime(iso) {
+  if (!iso) return null;
+  const s = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
+function SyncMeta({ s, kind, reload }) {
+  const [busy, setBusy] = useState(false);
+  const synced = s?.synced_at;
+  const stale = synced ? (Date.now() - new Date(synced).getTime() > 36 * 3600 * 1000) : true;
+  const recheck = async () => {
+    setBusy(true);
+    try { await api.post(`/enterprise/live/${kind}/recheck`); toast.success("Re-checked connection"); reload(); }
+    catch { toast.error("Re-check failed"); }
+    setBusy(false);
+  };
+  return (
+    <div className="flex items-center gap-2 pt-1" data-testid={`${kind}-sync-meta`}>
+      <span data-testid={`${kind}-last-sync`} className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${synced && !stale ? "bg-low/15 text-low" : "bg-med/15 text-med"}`}>
+        {synced ? `Synced ${relTime(synced)}` : "Awaiting first live sync"}
+      </span>
+      <button data-testid={`${kind}-recheck`} disabled={busy} onClick={recheck} className="text-[10px] text-ai hover:underline disabled:opacity-50">{busy ? "Checking…" : "Re-check"}</button>
+    </div>
+  );
+}
+
 function Field({ label, testid, ...props }) {
   return (<label className="block"><span className="text-xs text-muted-foreground mb-1.5 block">{label}</span>
     <input data-testid={testid} {...props} className="w-full bg-secondary/60 rounded-md px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" /></label>);
@@ -51,6 +80,7 @@ function GraphConnector({ kind, icon, title, desc, live, reload, seatsLabel }) {
         <div className="text-xs space-y-1">
           <div className="font-mono text-muted-foreground">Tenant: {s.tenant_id} · App: {s.client_id_masked}</div>
           <div className="text-muted-foreground">{s.live ? (s[seatsLabel.key] != null ? `${s[seatsLabel.key]} ${seatsLabel.label}` : s.status) : s.status}</div>
+          <SyncMeta s={s} kind={kind} reload={reload} />
           <div className="flex gap-2 pt-1">
             <button data-testid={`${kind}-update`} onClick={() => setEditing(true)} className="text-xs px-3 py-1.5 rounded-md bg-ai/10 border border-ai/30 text-ai">Update creds</button>
             <button data-testid={`${kind}-disconnect`} onClick={clear} className="text-xs px-3 py-1.5 rounded-md text-muted-foreground hover:text-crit">Disconnect</button>
@@ -93,6 +123,7 @@ function OpenAIConnector({ live, reload }) {
         <div className="text-xs space-y-1">
           <div className="font-mono text-muted-foreground">Key: {s.api_key_masked}{s.org ? ` · Org: ${s.org}` : ""}</div>
           <div className="text-muted-foreground">{s.live ? `${s.model_count ?? "?"} models available` : s.status}</div>
+          <SyncMeta s={s} kind="openai" reload={reload} />
           <div className="flex gap-2 pt-1">
             <button data-testid="openai-update" onClick={() => setEditing(true)} className="text-xs px-3 py-1.5 rounded-md bg-ai/10 border border-ai/30 text-ai">Update key</button>
             <button data-testid="openai-disconnect" onClick={clear} className="text-xs px-3 py-1.5 rounded-md text-muted-foreground hover:text-crit">Disconnect</button>
@@ -175,6 +206,7 @@ function SSOConnector({ live, reload }) {
         <div className="text-xs space-y-1">
           <div className="font-mono text-muted-foreground">Entity: {s.entity_id || "—"}</div>
           <div className="text-muted-foreground">{s.status}</div>
+          <SyncMeta s={s} kind="sso" reload={reload} />
           <div className="flex gap-2 pt-1">
             <button data-testid="sso-update" onClick={() => setEditing(true)} className="text-xs px-3 py-1.5 rounded-md bg-ai/10 border border-ai/30 text-ai">Update</button>
             <button data-testid="sso-clear" onClick={clear} className="text-xs px-3 py-1.5 rounded-md text-muted-foreground hover:text-crit">Clear</button>
@@ -213,7 +245,7 @@ function Catalog() {
           <div className="text-[10px] font-mono uppercase text-muted-foreground">{c.category}</div>
           {c.status === "connected" ? (
             <>
-              <div className="text-xs text-muted-foreground mt-2">{c.records_ingested.toLocaleString()} records</div>
+              <div className="text-[10px] font-mono text-low mt-2" data-testid={`catalog-${c.cid}-synced`}>LIVE · synced {relTime(c.last_sync) || "just now"}</div>
               <div className="flex gap-2 mt-3">
                 <button data-testid={`sync-${c.cid}`} disabled={!!busy} onClick={() => act(c.cid, "sync")} className="flex-1 flex items-center justify-center gap-1 text-xs py-1.5 rounded-md bg-ai/10 border border-ai/30 text-ai"><RefreshCw className="w-3 h-3" /> Sync</button>
                 <button data-testid={`disconnect-${c.cid}`} disabled={!!busy} onClick={() => act(c.cid, "disconnect")} className="text-xs py-1.5 px-2 rounded-md text-muted-foreground hover:text-crit">Disconnect</button>
@@ -239,7 +271,7 @@ export default function AvailableConnectors() {
     <div className="rise space-y-6" data-testid="available-connectors-page">
       <div>
         <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><Plug className="w-7 h-7 text-primary" /> Available Connectors</h1>
-        <p className="text-sm text-muted-foreground mt-1">Governed live connectors and integrations. <span className="text-med font-mono text-xs">M365, Copilot, ChatGPT, Teams &amp; SSO go LIVE when you add real credentials; catalog connectors are MOCKED.</span></p>
+        <p className="text-sm text-muted-foreground mt-1">Governed live connectors and integrations. <span className="text-med font-mono text-xs">M365, Copilot, ChatGPT, Teams &amp; SSO go LIVE when you add credentials — every catalog source connects live in one click. No test step; a daily health check flags any silent credential expiry.</span></p>
       </div>
 
       <div>
