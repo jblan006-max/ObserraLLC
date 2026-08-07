@@ -113,6 +113,15 @@ Foundation: Tenant Management · Identity & RBAC | Data: Enterprise Asset Model 
 - **CSV Email Attachment**: confirmed the managed Resend proxy accepts Resend-style attachments ([{filename, content(base64)}], returns 202). notifications.send_email now takes an optional `attachments` param; the monthly-spend-report cron attaches a real advisor-spend-all.csv so finance can open it in Excel. Verified: cron 200 + "Advisor spend report emailed" log.
 - **Prompt Insights**: GET /api/advisor/prompts/insights (admin) tokenizes org prompts (stopword-filtered) and returns the top 12 recurring terms with counts. Advisor shows "Top prompt themes" chips; clicking a chip runs the prompt search. Verified: top·9, sentence·4, etc.; theme-click search works.
 
+## Session 2026-06 (Live Connectors + Bigram Themes + Audit Log)
+- **Live M365 connector (optional, per-org)**: new /app/backend/live_connectors.py (router at /api/enterprise). Admin enters Azure client_id/secret/tenant_id in Enterprise → Connectors → "Live Microsoft 365". Backend does a REAL Microsoft Graph client-credentials token fetch + users/$count; on success flips to LIVE with real user count, else stays configured/not-live with the real AADSTS error. No creds → mocked. Endpoints: GET /live, PUT/DELETE /live/m365. Verified against Microsoft (bogus→AADSTS700038 live:false).
+- **Live SSO (SAML) (optional, per-org)**: Enterprise → SSO → "Live SSO (SAML)". Admin pastes IdP metadata URL; backend fetches + validates (EntityDescriptor) and extracts entityID, marks Configured/ready. App login stays on Google/JWT — full SAML sign-in (ACS/assertion/JIT) intentionally deferred as its own phase (3b). Endpoints: PUT/DELETE /live/sso. Verified with MS federation metadata (valid + entityID).
+- **Bigram Themes**: /api/advisor/prompts/insights now returns two-word phrases (e.g. "top cyber", "highest residual"), falling back to unigrams if too few.
+- **Audit Log**: /api/advisor/prompts/search returns the stored AI answer; advisor search results are clickable to expand the full prompt + AI answer inline.
+
+## STILL PENDING (deferred, not blocked)
+- Full SAML login replacement (users actually sign in via IdP — ACS endpoint, assertion parsing, JIT provisioning) — its own phase, needs a real IdP to test.
+
 ## Implemented (as of 2026-06)
 - JWT auth (httpOnly cookies, brute-force lockout), org/role, tenant isolation
 - Passwordless QR login (start/approve/poll, 3-min single-use, cross-device)

@@ -16,6 +16,7 @@ from reports import reports_router
 from kernel.routes import kernel_router
 from scheduled import scheduled_router
 from enterprise import enterprise_router
+from live_connectors import live_connectors_router
 from agents import agents_router
 from tpr import tpr_router
 from insights import insights_router
@@ -40,6 +41,7 @@ app.include_router(tpr_router)
 app.include_router(insights_router)
 app.include_router(cyber_router)
 app.include_router(studio_router)
+app.include_router(live_connectors_router)
 
 app.add_middleware(
     CORSMiddleware,

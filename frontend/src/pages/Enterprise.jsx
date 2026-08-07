@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Building2, Loader2, Plug, KeyRound, Users, ShieldCheck, Trash2, Plus, RefreshCw, Palette } from "lucide-react";
+import { Building2, Loader2, Plug, KeyRound, Users, ShieldCheck, Trash2, Plus, RefreshCw, Palette, Cloud } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const TABS = [["connectors", "Connectors", Plug], ["sso", "SSO / SAML", KeyRound], ["scim", "SCIM", Users], ["abac", "ABAC", ShieldCheck], ["branding", "Branding", Palette]];
@@ -12,7 +12,7 @@ export default function Enterprise() {
     <div className="rise space-y-6">
       <div>
         <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><Building2 className="w-7 h-7 text-primary" /> Enterprise Access</h1>
-        <p className="text-sm text-muted-foreground mt-1">Governed connectors and enterprise identity. <span className="text-med font-mono text-xs">External integrations are MOCKED in this environment.</span></p>
+        <p className="text-sm text-muted-foreground mt-1">Governed connectors and enterprise identity. <span className="text-med font-mono text-xs">M365 &amp; SSO go LIVE when you add real credentials; others remain MOCKED.</span></p>
       </div>
       <div className="flex gap-1 border-b border-border">
         {TABS.map(([id, label, Icon]) => (
@@ -31,6 +31,92 @@ export default function Enterprise() {
   );
 }
 
+function LiveM365() {
+  const [s, setS] = useState(null);
+  const [f, setF] = useState({ tenant_id: "", client_id: "", client_secret: "" });
+  const [busy, setBusy] = useState(false);
+  const load = () => api.get("/enterprise/live").then((r) => setS(r.data.m365));
+  useEffect(() => { load(); }, []);
+  const save = async () => {
+    if (!f.tenant_id || !f.client_id || !f.client_secret) { toast.error("All M365 fields required"); return; }
+    setBusy(true);
+    try {
+      const { data } = await api.put("/enterprise/live/m365", f);
+      setS(data); setF({ tenant_id: "", client_id: "", client_secret: "" });
+      if (data.live) toast.success(`M365 LIVE · ${data.user_count ?? "?"} users`);
+      else toast.error(`Not live: ${data.status}`);
+    } catch { toast.error("Save failed"); }
+    setBusy(false);
+  };
+  const clear = async () => { await api.delete("/enterprise/live/m365"); load(); toast.success("M365 disconnected — reverted to mocked"); };
+  if (!s) return null;
+  return (
+    <div data-testid="live-m365" className="bg-card fact-border rounded-xl p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="font-head font-bold text-sm flex items-center gap-2"><Cloud className="w-4 h-4 text-ai" /> Live Microsoft 365 — auto-connect</div>
+        {s.configured
+          ? <span data-testid="m365-status" className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${s.live ? "bg-low/15 text-low" : "bg-med/15 text-med"}`}>{s.live ? "LIVE" : "NOT LIVE"}</span>
+          : <span data-testid="m365-status" className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-secondary/60 text-muted-foreground">MOCKED</span>}
+      </div>
+      {s.configured ? (
+        <div className="text-xs space-y-1">
+          <div className="font-mono text-muted-foreground">Tenant: {s.tenant_id} · App: {s.client_id_masked}</div>
+          <div className="text-muted-foreground">{s.live ? `${s.user_count ?? "?"} users synced from Microsoft Graph` : s.status}</div>
+          <div className="flex gap-2 pt-1">
+            <button data-testid="m365-update" disabled={busy} onClick={() => setS({ ...s, configured: false })} className="text-xs px-3 py-1.5 rounded-md bg-ai/10 border border-ai/30 text-ai">Update creds</button>
+            <button data-testid="m365-disconnect" onClick={clear} className="text-xs px-3 py-1.5 rounded-md text-muted-foreground hover:text-crit">Disconnect</button>
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <p className="text-[11px] text-muted-foreground">Enter your Azure app (client-credentials). When valid, the connector auto-goes LIVE and pulls a real user count from Microsoft Graph. Left blank, it stays mocked.</p>
+          <Field label="Tenant ID" testid="m365-tenant" value={f.tenant_id} onChange={(e) => setF({ ...f, tenant_id: e.target.value })} />
+          <Field label="Client ID" testid="m365-client" value={f.client_id} onChange={(e) => setF({ ...f, client_id: e.target.value })} />
+          <Field label="Client Secret" testid="m365-secret" value={f.client_secret} onChange={(e) => setF({ ...f, client_secret: e.target.value })} />
+          <button data-testid="m365-verify" disabled={busy} onClick={save} className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">{busy ? "Verifying…" : "Verify & go live"}</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LiveSSO() {
+  const [s, setS] = useState(null);
+  const [f, setF] = useState({ metadata_url: "", entity_id: "" });
+  const [busy, setBusy] = useState(false);
+  const load = () => api.get("/enterprise/live").then((r) => setS(r.data.sso));
+  useEffect(() => { load(); }, []);
+  const save = async () => {
+    if (!f.metadata_url) { toast.error("Metadata URL required"); return; }
+    setBusy(true);
+    try {
+      const { data } = await api.put("/enterprise/live/sso", f); setS(data);
+      if (data.valid) toast.success("SSO metadata validated — Configured / ready");
+      else toast.error(`Invalid: ${data.status}`);
+    } catch { toast.error("Save failed"); }
+    setBusy(false);
+  };
+  const clear = async () => { await api.delete("/enterprise/live/sso"); setF({ metadata_url: "", entity_id: "" }); load(); toast.success("SSO cleared"); };
+  if (!s) return null;
+  return (
+    <div data-testid="live-sso" className="bg-card fact-border rounded-xl p-6 max-w-xl space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="font-head font-bold text-sm flex items-center gap-2"><KeyRound className="w-4 h-4 text-ai" /> Live SSO (SAML) — auto-connect</div>
+        {s.configured
+          ? <span data-testid="sso-live-status" className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${s.valid ? "bg-low/15 text-low" : "bg-med/15 text-med"}`}>{s.valid ? "CONFIGURED / READY" : "INVALID"}</span>
+          : <span data-testid="sso-live-status" className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-secondary/60 text-muted-foreground">NOT SET</span>}
+      </div>
+      <p className="text-[11px] text-muted-foreground">Paste your IdP metadata URL. We validate it live and mark SSO ready. App login stays on Google/JWT until full SAML sign-in is enabled as its own phase.</p>
+      <Field label="IdP Metadata URL" testid="sso-metadata" value={f.metadata_url} onChange={(e) => setF({ ...f, metadata_url: e.target.value })} />
+      {s.configured && <div className="text-xs font-mono text-muted-foreground">Entity: {s.entity_id || "—"} · {s.status}</div>}
+      <div className="flex gap-2">
+        <button data-testid="sso-validate" disabled={busy} onClick={save} className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">{busy ? "Validating…" : "Validate & mark ready"}</button>
+        {s.configured && <button data-testid="sso-clear" onClick={clear} className="text-xs px-3 py-1.5 rounded-md text-muted-foreground hover:text-crit">Clear</button>}
+      </div>
+    </div>
+  );
+}
+
 function Connectors() {
   const [list, setList] = useState(null);
   const [busy, setBusy] = useState("");
@@ -44,7 +130,9 @@ function Connectors() {
   };
   if (!list) return <Spinner />;
   return (
-    <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div className="space-y-6">
+      <LiveM365 />
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
       {list.map((c) => (
         <div key={c.cid} data-testid={`connector-${c.cid}`} className="bg-card fact-border rounded-xl p-4">
           <div className="flex items-center justify-between mb-1">
@@ -67,6 +155,7 @@ function Connectors() {
           )}
         </div>
       ))}
+      </div>
     </div>
   );
 }
@@ -83,6 +172,7 @@ function SSO() {
   };
   if (!cfg) return <Spinner />;
   return (
+    <div className="space-y-6">
     <div data-testid="sso-form" className="bg-card fact-border rounded-xl p-6 max-w-xl space-y-4">
       <label className="flex items-center gap-2 text-sm cursor-pointer">
         <input data-testid="sso-enabled" type="checkbox" checked={cfg.enabled} onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })} /> Enable SAML 2.0 single sign-on
@@ -90,6 +180,8 @@ function SSO() {
       <Field label="Identity Provider Entity ID" testid="sso-entity" value={cfg.entity_id} onChange={(e) => setCfg({ ...cfg, entity_id: e.target.value })} />
       <Field label="IdP SSO URL" testid="sso-url" value={cfg.sso_url} onChange={(e) => setCfg({ ...cfg, sso_url: e.target.value })} />
       <button data-testid="sso-save" disabled={busy} onClick={save} className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">Save SSO</button>
+    </div>
+    <LiveSSO />
     </div>
   );
 }
