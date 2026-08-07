@@ -608,13 +608,17 @@ _CONTROL_SEED = [
 
 
 _CONTROL_FRAMEWORKS = {
-    "IAM-3": {"NIST 800-53": ["AC-2", "AC-6"], "CIS v8": ["5.4", "6.8"], "SOC 2": ["CC6.1", "CC6.3"], "SSDF": ["PO.5.1", "PO.5.2"], "PCI DSS": ["7.2", "8.2"], "ISO 27001": ["A.5.15", "A.8.2"]},
-    "VM-2": {"NIST 800-53": ["RA-5", "SI-2"], "CIS v8": ["7.1", "7.4"], "SOC 2": ["CC7.1"], "SSDF": ["RV.1", "RV.2", "RV.3"], "PCI DSS": ["6.3", "11.3"], "ISO 27001": ["A.8.8"]},
-    "AIG-1": {"NIST 800-53": ["PM-9", "SA-8"], "CIS v8": ["2.1"], "SOC 2": ["CC1.2"], "SSDF": ["PO.1.1", "PO.3.2"], "PCI DSS": [], "ISO 27001": ["A.5.1"]},
-    "DP-1": {"NIST 800-53": ["SC-28", "PL-8"], "CIS v8": ["3.1", "3.12"], "SOC 2": ["CC6.7"], "SSDF": ["PW.9.1"], "PCI DSS": ["3.2", "3.5"], "ISO 27001": ["A.8.11", "A.5.34"]},
-    "BCP-2": {"NIST 800-53": ["CP-9", "CP-10"], "CIS v8": ["11.1", "11.5"], "SOC 2": ["A1.2", "A1.3"], "SSDF": [], "PCI DSS": ["12.10"], "ISO 27001": ["A.8.13", "A.5.29"]},
-    "TPR-4": {"NIST 800-53": ["SR-3", "SR-6"], "CIS v8": ["15.1", "15.4"], "SOC 2": ["CC9.2"], "SSDF": ["PW.4.1", "PW.4.4"], "PCI DSS": ["12.8"], "ISO 27001": ["A.5.19", "A.5.20"]},
+    "IAM-3": {"NIST 800-53": ["AC-2", "AC-3", "AC-5", "AC-6", "IA-2", "IA-4", "IA-5"], "CIS v8": ["4.7", "5.1", "5.4", "6.1", "6.2", "6.5", "6.8"], "SOC 2": ["CC6.1", "CC6.2", "CC6.3"], "SSDF": ["PO.5.1", "PO.5.2", "PS.1.1"], "PCI DSS": ["7.2", "7.3", "8.2", "8.3", "8.5"], "ISO 27001": ["A.5.15", "A.5.16", "A.5.18", "A.8.2", "A.8.5"]},
+    "VM-2": {"NIST 800-53": ["RA-5", "SI-2", "SI-3", "CA-7"], "CIS v8": ["7.1", "7.2", "7.3", "7.4", "7.6", "7.7"], "SOC 2": ["CC7.1", "CC7.2"], "SSDF": ["RV.1.1", "RV.1.2", "RV.2.1", "RV.2.2", "RV.3.1"], "PCI DSS": ["6.3.1", "6.3.3", "11.3.1", "11.3.2"], "ISO 27001": ["A.8.8", "A.8.7"]},
+    "AIG-1": {"NIST 800-53": ["PM-9", "RA-3", "SA-8", "SA-11"], "CIS v8": ["2.1", "2.3", "16.1"], "SOC 2": ["CC1.2", "CC2.1", "CC5.1"], "SSDF": ["PO.1.1", "PO.1.2", "PO.3.2"], "PCI DSS": [], "ISO 27001": ["A.5.1", "A.5.2", "A.8.28"]},
+    "DP-1": {"NIST 800-53": ["SC-28", "SC-13", "PL-8", "PT-2", "PT-3"], "CIS v8": ["3.1", "3.3", "3.11", "3.12"], "SOC 2": ["CC6.7", "C1.1", "C1.2", "P4.1"], "SSDF": ["PW.9.1", "PW.9.2"], "PCI DSS": ["3.2", "3.3", "3.4", "3.5"], "ISO 27001": ["A.8.11", "A.8.12", "A.5.34"]},
+    "BCP-2": {"NIST 800-53": ["CP-9", "CP-10", "CP-4"], "CIS v8": ["11.1", "11.2", "11.3", "11.4", "11.5"], "SOC 2": ["A1.2", "A1.3"], "SSDF": [], "PCI DSS": ["12.10.1"], "ISO 27001": ["A.8.13", "A.8.14", "A.5.29", "A.5.30"]},
+    "TPR-4": {"NIST 800-53": ["SR-3", "SR-5", "SR-6", "SA-9"], "CIS v8": ["15.1", "15.2", "15.4", "15.5", "15.7"], "SOC 2": ["CC9.2"], "SSDF": ["PW.4.1", "PW.4.4", "PO.1.3"], "PCI DSS": ["12.8.1", "12.8.4", "12.8.5"], "ISO 27001": ["A.5.19", "A.5.20", "A.5.21", "A.5.22"]},
 }
+
+# Real classification (inherent criticality) of each Obserra control.
+_CONTROL_CRITICALITY = {"IAM-3": "Critical", "BCP-2": "Critical", "VM-2": "High",
+                        "DP-1": "High", "AIG-1": "Medium", "TPR-4": "Low"}
 
 # Canonical column order for the compliance crosswalk (the six frameworks Obserra maps to).
 FRAMEWORK_ORDER = ["NIST 800-53", "CIS v8", "SOC 2", "SSDF", "PCI DSS", "ISO 27001"]
@@ -626,6 +630,8 @@ FRAMEWORK_FULL = {
     "PCI DSS": "PCI DSS v4.0",
     "ISO 27001": "ISO/IEC 27001:2022 Annex A",
 }
+# Published size of each framework's control/requirement catalog (for honest coverage %).
+from compliance_catalog import CATALOG_COUNTS as FRAMEWORK_CATALOG  # noqa: E402
 
 
 def _control_status(c):
@@ -644,6 +650,7 @@ def _control_status(c):
         status = "Passing"
     return {**{k: v for k, v in c.items() if k != "org_id"}, "days_to_expiry": days_to_expiry,
             "stale": stale, "drift": drift, "status": status,
+            "criticality": c.get("criticality") or _CONTROL_CRITICALITY.get(c["control_id"], "Medium"),
             "frameworks": _CONTROL_FRAMEWORKS.get(c["control_id"], {}),
             "drift_delta": c["effectiveness"] - c.get("baseline", c["effectiveness"])}
 
@@ -713,23 +720,75 @@ async def controls_crosswalk(user: dict = Depends(get_current_user)):
         rows.append({
             "control_id": c["control_id"], "name": c["name"], "category": c.get("category"),
             "owner": c.get("owner"), "status": c["status"], "effectiveness": c["effectiveness"],
+            "criticality": c.get("criticality", "Medium"),
             "compliant": c["status"] == "Passing",
             "mappings": {k: fw.get(k, []) for k in FRAMEWORK_ORDER},
         })
     summary = []
     for k in FRAMEWORK_ORDER:
-        mapped = [r for r in rows if r["mappings"][k]]
-        compliant = sum(1 for r in mapped if r["compliant"])
-        total = len(mapped)
+        assessed = [r for r in rows if r["mappings"][k]]
+        compliant = sum(1 for r in assessed if r["compliant"])
+        refs = sorted({ref for r in assessed for ref in r["mappings"][k]})
+        catalog = FRAMEWORK_CATALOG.get(k, 0)
         summary.append({
-            "framework": k, "full_name": FRAMEWORK_FULL[k], "mapped_controls": total,
-            "compliant": compliant, "non_compliant": total - compliant,
-            "compliant_pct": round(compliant / total * 100) if total else 0,
-            "status": "Compliant" if total and compliant == total else ("Gaps" if total else "Not mapped"),
+            "framework": k, "full_name": FRAMEWORK_FULL[k],
+            "assessed_controls": len(assessed), "compliant": compliant,
+            "non_compliant": len(assessed) - compliant,
+            "compliant_pct": round(compliant / len(assessed) * 100) if assessed else 0,
+            "mapped_refs": refs, "mapped_ref_count": len(refs),
+            "catalog_controls": catalog,
+            "coverage_pct": round(len(refs) / catalog * 100, 1) if catalog else 0,
+            "status": "Compliant" if assessed and compliant == len(assessed) else ("Gaps" if assessed else "Not mapped"),
+        })
+    by_criticality = []
+    for t in ["Critical", "High", "Medium", "Low"]:
+        grp = [r for r in rows if r["criticality"] == t]
+        comp = sum(1 for r in grp if r["compliant"])
+        by_criticality.append({
+            "criticality": t, "controls": len(grp), "compliant": comp,
+            "non_compliant": len(grp) - comp,
+            "compliant_pct": round(comp / len(grp) * 100) if grp else 0,
         })
     return {"frameworks": FRAMEWORK_ORDER, "framework_full": FRAMEWORK_FULL,
-            "rows": rows, "summary": summary,
+            "rows": rows, "summary": summary, "by_criticality": by_criticality,
             "compliant_controls": sum(1 for r in rows if r["compliant"]), "total_controls": len(rows)}
+
+
+@api.get("/controls/framework/{framework}")
+async def controls_framework(framework: str, user: dict = Depends(get_current_user)):
+    """Every control of a single framework with Obserra's alignment verdict:
+    aligned (a mapped control is passing) / gap (mapped but not passing) / not_assessed."""
+    from compliance_catalog import CATALOGS
+    if framework not in CATALOGS:
+        raise HTTPException(404, "Unknown framework")
+    org_id = user["org_id"]
+    existing = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    if not existing:
+        await db.controls.insert_many([{**c, "org_id": org_id} for c in _CONTROL_SEED])
+        existing = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    statuses = [_control_status(c) for c in existing]
+    idx = {}
+    for c in statuses:
+        for ref in (c.get("frameworks") or {}).get(framework, []):
+            idx.setdefault(ref, []).append(
+                {"control_id": c["control_id"], "name": c["name"], "compliant": c["status"] == "Passing"})
+    controls, aligned, gap = [], 0, 0
+    for item in CATALOGS[framework]:
+        maps = idx.get(item["id"], [])
+        if maps:
+            if any(m["compliant"] for m in maps):
+                status, aligned = "aligned", aligned + 1
+            else:
+                status, gap = "gap", gap + 1
+        else:
+            status = "not_assessed"
+        controls.append({"id": item["id"], "group": item["group"], "status": status, "mapped_to": maps})
+    total = len(controls)
+    return {"framework": framework, "full_name": FRAMEWORK_FULL.get(framework, framework),
+            "total": total, "aligned": aligned, "gap": gap, "not_assessed": total - aligned - gap,
+            "coverage_pct": round((aligned + gap) / total * 100, 1) if total else 0,
+            "aligned_pct": round(aligned / total * 100, 1) if total else 0,
+            "controls": controls}
 
 
 async def _emit_drift_alerts(org_id, statuses):

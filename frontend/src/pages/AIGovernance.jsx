@@ -24,11 +24,13 @@ export default function AIGovernance() {
   const isExec = mode === "executive";
   const [systems, setSystems] = useState(null);
   const [incidents, setIncidents] = useState([]);
+  const [live, setLive] = useState(null);
   const [selected, setSelected] = useState(null);
 
   const load = () => {
     api.get("/ai-systems").then((r) => setSystems(r.data));
     api.get("/ai-incidents").then((r) => setIncidents(r.data));
+    api.get("/enterprise/live").then((r) => setLive(r.data)).catch(() => setLive(null));
   };
   useEffect(() => { load(); }, []);
 

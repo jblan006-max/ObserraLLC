@@ -1,0 +1,23 @@
+{
+  "summary": "Full retest of iteration_30 scope: (1) AI Governance page no longer crashes — ai-licenses-card + 3 tiles (lic-copilot/openai/m365) render showing NOT CONNECTED. (2) Backend GET /api/controls/crosswalk returns summary with assessed_controls/compliant/compliant_pct/mapped_ref_count/catalog_controls/coverage_pct; by_criticality has Critical/High/Medium/Low with pct; rows have real mapped IDs (IAM-3→AC-2, 5.1, etc.) and criticality. (3) GET /api/controls/framework/<fw> returns correct totals for all 6 frameworks (NIST 800-53=322, CIS v8=153, SOC 2=61, SSDF=42, PCI DSS=277, ISO 27001=93), AC-2 is 'aligned' with mapped_to including IAM-3, AC-1 is 'not_assessed', unknown fw → 404. (4) UI Crosswalk tab: all 6 crosswalk-summary-* cards render with 'X/Y assessed compliant · N of M catalog controls mapped · Z% coverage'; criticality strip crosswalk-criticality renders crit-tier-* + crit-pct-* (Critical 50%, High 50%, Medium 100%, Low 100%); default 'All frameworks' matrix crosswalk-table shows 6 rows w/ crosswalk-verdict-* + crosswalk-crit-*. (5) Framework browser: selecting NIST 800-53 shows 322 controls in scrollable framework-control-list with fw-total=322, fw-aligned=20, fw-gap=7, fw-unassessed=295; fw-control-AC-2 badge 'ALIGNED' referencing IAM-3, fw-control-AC-1 'NOT ASSESSED'. Search 'AC-2' narrows to 7 rows; unmatched search shows framework-empty. Reset to 'all' returns to matrix. Clicking summary card jumps to that framework. (6) Regression: /api/controls/compliance and /api/enterprise/live both 200. Backend pytest 12/12 pass.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter30_crosswalk_frameworks.py",
+    "/app/test_reports/pytest/iter30_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "compliance_catalog.py is clean and modular — catalog counts computed from real family sizes; loaded lazily inside /controls/framework via `from compliance_catalog import CATALOGS`, but /controls/crosswalk imports CATALOG_COUNTS at module top-level in routes.py which is fine.",
+    "Framework select uses `value={framework name}` while showing '<fw> — every control' labels. Playwright must use value=, not label='NIST 800-53'. Documented for next testers.",
+    "Crosswalk testid convention uses framework.replace(/[^a-zA-Z0-9]/g,'-') → 'NIST-800-53', 'CIS-v8', 'SOC-2', 'SSDF', 'PCI-DSS', 'ISO-27001' (preserves original case). Consistent with iteration_29 note.",
+    "framework-control-list is a max-h-[520px] overflow-auto div — scroll works. All 322 NIST rows are in DOM (no virtualization); if larger catalogs are added later, consider react-window."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter30_crosswalk_frameworks.py (new)"],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100% — all scoped selectors + flows verified"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (owner/admin, bypasses paywalls)",
+  "seed_data_creation": "None. No connectors enabled during this run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Framework select <option value='NIST 800-53'>NIST 800-53 — every control</option> — always use value= in playwright. Summary testids: crosswalk-summary-NIST-800-53 / CIS-v8 / SOC-2 / SSDF / PCI-DSS / ISO-27001. All 322 NIST catalog rows present in DOM (fw-control-<id>). Backend catalogs live in /app/backend/compliance_catalog.py."
+}
