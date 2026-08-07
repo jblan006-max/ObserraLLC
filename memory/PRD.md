@@ -1,3 +1,6 @@
+> [2026-06] HD official logo applied: Auth page shows crisp SVG eye mark (obserra-mark.svg) big & centered with OBSERRA wordmark + tagline beneath. PWA icons updated to logo-mark-192/512.png; apple-touch-icon → logo-mark-180.png.
+
+
 # Obserra EIOS — Product Requirements & Build Log
 
 ## Positioning
