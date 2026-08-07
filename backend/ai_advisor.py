@@ -7,6 +7,8 @@ from datetime import datetime, timezone
 
 from db import db
 from auth import get_current_user, require_active_subscription, require_roles
+from bson import ObjectId
+from kernel import notifications
 from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
 
 advisor_router = APIRouter(prefix="/api/advisor")
@@ -43,6 +45,43 @@ def _estimate_usage(model_key: str, prompt: str, system: str, response: str):
     rin, rout = COST_PER_MTOK.get(model_key, (5.0, 15.0))
     cost = round(in_tok / 1_000_000 * rin + out_tok / 1_000_000 * rout, 5)
     return {"input_tokens": in_tok, "output_tokens": out_tok, "total_tokens": in_tok + out_tok, "cost_usd": cost}
+
+
+def _month_key():
+    return datetime.now(timezone.utc).strftime("%Y-%m")
+
+
+async def _org_budget(org_id: str) -> float:
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)})
+    return float((org or {}).get("advisor_budget_usd") or 0)
+
+
+async def _month_spend(org_id: str) -> float:
+    mk = _month_key()
+    logs = await db.advisor_logs.find(
+        {"org_id": org_id, "usage": {"$exists": True}, "ts": {"$regex": f"^{mk}"}},
+        {"_id": 0, "usage": 1}).to_list(2000)
+    return round(sum(l["usage"]["cost_usd"] for l in logs), 4)
+
+
+async def _check_budget(org_id: str):
+    budget = await _org_budget(org_id)
+    if budget <= 0:
+        return
+    spent = await _month_spend(org_id)
+    pct = spent / budget * 100
+    mk = _month_key()
+    if pct >= 100:
+        await notifications.create(
+            org_id, "advisor_budget", "AI advisor budget exceeded",
+            f"Advisor spend ${spent} has exceeded the ${budget} monthly cap.",
+            ref="advisor-budget", dedupe_key=f"advisor-budget:{mk}:100")
+    elif pct >= 80:
+        await notifications.create(
+            org_id, "advisor_budget", "AI advisor budget nearing cap",
+            f"Advisor spend ${spent} is {round(pct)}% of the ${budget} monthly cap.",
+            ref="advisor-budget", dedupe_key=f"advisor-budget:{mk}:80")
+
 
 
 class AdvisorQuery(BaseModel):
@@ -123,6 +162,7 @@ async def advisor_chat(body: AdvisorQuery, user: dict = Depends(require_active_s
             {"org_id": org_id, "user": user["email"], "prompt": body.message},
             {"$set": {"response": resp_text, "usage": usage}}, upsert=False)
         yield f"data: {json.dumps({'done': True, 'model': f'{provider}/{model}', 'usage': usage})}\n\n"
+        await _check_budget(org_id)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -138,13 +178,30 @@ async def advisor_logs(user: dict = Depends(get_current_user)):
 async def advisor_usage(admin: dict = Depends(require_roles("admin"))):
     logs = await db.advisor_logs.find({"org_id": admin["org_id"], "usage": {"$exists": True}}, {"_id": 0}).sort("ts", -1).to_list(500)
     today = datetime.now(timezone.utc).date().isoformat()
+    mk = _month_key()
     total_tokens = sum(l["usage"]["total_tokens"] for l in logs)
     total_cost = round(sum(l["usage"]["cost_usd"] for l in logs), 4)
     today_cost = round(sum(l["usage"]["cost_usd"] for l in logs if l.get("ts", "").startswith(today)), 4)
+    month_cost = round(sum(l["usage"]["cost_usd"] for l in logs if l.get("ts", "").startswith(mk)), 4)
+    budget = await _org_budget(admin["org_id"])
+    pct = round(month_cost / budget * 100) if budget > 0 else 0
+    status = "off" if budget <= 0 else ("over" if pct >= 100 else ("warning" if pct >= 80 else "ok"))
     recent = [{"prompt": l["prompt"][:80], "user": l["user"], "model": l.get("model"), "ts": l.get("ts"),
                "tokens": l["usage"]["total_tokens"], "cost_usd": l["usage"]["cost_usd"]} for l in logs[:20]]
     return {"queries": len(logs), "total_tokens": total_tokens, "total_cost_usd": total_cost,
-            "today_cost_usd": today_cost, "recent": recent}
+            "today_cost_usd": today_cost, "month_cost_usd": month_cost, "budget_usd": budget,
+            "budget_pct": pct, "budget_status": status, "recent": recent}
+
+
+class BudgetBody(BaseModel):
+    monthly_usd: float
+
+
+@advisor_router.put("/budget")
+async def set_budget(body: BudgetBody, admin: dict = Depends(require_roles("admin"))):
+    val = max(0.0, round(body.monthly_usd, 2))
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"advisor_budget_usd": val}})
+    return {"monthly_usd": val}
 
 
 @advisor_router.post("/board-report")

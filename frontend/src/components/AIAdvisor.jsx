@@ -48,6 +48,8 @@ export function AIAdvisor() {
   const [working, setWorking] = useState(null);
   const [deep, setDeep] = useState(false);
   const [spend, setSpend] = useState(null);
+  const [budgetInput, setBudgetInput] = useState("");
+  const [savingBudget, setSavingBudget] = useState(false);
   const scrollRef = useRef(null);
   const sendRef = useRef(null);
 
@@ -102,6 +104,19 @@ export function AIAdvisor() {
   };
   sendRef.current = send;
 
+  const saveBudget = async () => {
+    const v = parseFloat(budgetInput);
+    if (isNaN(v) || v < 0) { toast.error("Enter a valid monthly budget"); return; }
+    setSavingBudget(true);
+    try {
+      await api.put("/advisor/budget", { monthly_usd: v });
+      const { data } = await api.get("/advisor/usage");
+      setSpend(data); setBudgetInput("");
+      toast.success(`Monthly advisor budget set to $${v.toFixed(2)}`);
+    } catch { toast.error("Could not save budget"); }
+    setSavingBudget(false);
+  };
+
   const suggestions = mode === "executive"
     ? ["Summarize our top enterprise risks for the board", "What is driving the AI Governance score?"]
     : ["Which risks need remediation this week?", "Detail the shadow AI exposure and fix it"];
@@ -136,6 +151,34 @@ export function AIAdvisor() {
               <button data-testid="advisor-close" onClick={() => setOpen(false)} className="p-1.5 rounded-md hover:bg-secondary"><X className="w-4 h-4" /></button>
             </div>
           </div>
+
+          {isAdmin && spend && (
+            <div data-testid="advisor-budget" className="px-5 py-2.5 border-b border-border space-y-1.5">
+              <div className="flex items-center justify-between text-[10px] font-mono">
+                <span className="uppercase tracking-wider text-muted-foreground">Monthly budget</span>
+                <span className={spend.budget_status === "over" ? "text-crit" : spend.budget_status === "warning" ? "text-med" : "text-ai"}>
+                  {spend.budget_usd > 0 ? `$${spend.month_cost_usd?.toFixed(2)} / $${spend.budget_usd?.toFixed(2)} · ${spend.budget_pct}%` : "no cap set"}
+                </span>
+              </div>
+              {spend.budget_usd > 0 && (
+                <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
+                  <div className={`h-full ${spend.budget_status === "over" ? "bg-crit" : spend.budget_status === "warning" ? "bg-med" : "bg-ai"}`} style={{ width: `${Math.min(spend.budget_pct, 100)}%` }} />
+                </div>
+              )}
+              {spend.budget_status === "over" && <div className="text-[10px] text-crit">Over the monthly cap — advisor spend has exceeded budget.</div>}
+              {spend.budget_status === "warning" && <div className="text-[10px] text-med">Nearing the monthly cap.</div>}
+              <div className="flex items-center gap-1.5 pt-0.5">
+                <input data-testid="advisor-budget-input" type="number" min="0" step="1"
+                  placeholder={spend.budget_usd > 0 ? `current $${spend.budget_usd}` : "set $ monthly cap"}
+                  value={budgetInput} onChange={(e) => setBudgetInput(e.target.value)}
+                  className="flex-1 bg-secondary/60 rounded-md px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ai" />
+                <button data-testid="advisor-budget-save" disabled={savingBudget} onClick={saveBudget}
+                  className="text-[11px] px-3 py-1 rounded-md bg-ai text-background font-bold disabled:opacity-50">
+                  {savingBudget ? "…" : "Set"}
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="px-5 py-2.5 border-b border-border flex flex-wrap gap-1.5">
             {WORKER_CHIPS.map((c) => (

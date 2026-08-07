@@ -20,3 +20,10 @@ crons:
     method: POST
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     enabled: true
+  - name: monthly-studio-report
+    description: "Composes and emails each org's scheduled Studio report to admins/execs on the 1st at 09:00 UTC"
+    cron: "0 9 1 * *"
+    endpoint: "{{BASE_URL}}/api/cron/monthly-studio-report"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

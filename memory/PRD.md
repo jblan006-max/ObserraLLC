@@ -84,6 +84,10 @@ Foundation: Tenant Management · Identity & RBAC | Data: Enterprise Asset Model 
 - Live M365 connector OAuth — needs Azure app client_id/client_secret/tenant_id + redirect URI
 - True SSO/SAML + SCIM — needs IdP metadata URL/XML + signing cert
 
+## Session 2026-06 (Spend Budget Alerts + Scheduled Studio Reports)
+- **Spend Budget Alerts**: admins set a monthly advisor budget (PUT /api/advisor/budget, stored on organizations.advisor_budget_usd). GET /api/advisor/usage now returns month_cost, budget, budget_pct, budget_status (off/ok/warning≥80%/over≥100%). Advisor panel shows a colored budget bar + inline cap editor (admin-only). Crossing 80%/100% creates a deduped in-app notification (advisor_budget) per month via _check_budget after each query.
+- **Scheduled Studio Reports**: admins toggle a monthly auto-email in Studio Report Builder (GET/PUT /api/studio/schedule → organizations.studio_schedule {enabled,title,sections}). New cron POST /api/cron/monthly-studio-report (1st, 09:00 UTC in .emergent/crons.yml) composes each enabled org's report (reuses _compose_report) and emails admins+execs via managed Resend + creates a delivery notification. compose_report refactored into reusable _compose_report(org_id,title,sections).
+
 ## Implemented (as of 2026-06)
 - JWT auth (httpOnly cookies, brute-force lockout), org/role, tenant isolation
 - Passwordless QR login (start/approve/poll, 3-min single-use, cross-device)

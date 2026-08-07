@@ -148,9 +148,7 @@ class ReportBody(BaseModel):
     sections: list[str]
 
 
-@studio_router.post("/report/compose")
-async def compose_report(body: ReportBody, user: dict = Depends(get_current_user)):
-    org_id = user["org_id"]
+async def _compose_report(org_id: str, title: str, sections: list[str]):
     m = await _metrics(org_id)
     risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(500)
     vendors = await db.vendors.find({"org_id": org_id}, {"_id": 0}).to_list(500)
@@ -166,7 +164,32 @@ async def compose_report(body: ReportBody, user: dict = Depends(get_current_user
         "vendor_risk": ("Third-Party Risk", [f"[{v['ref']}] {v['name']} — {v['risk_tier']} ({v['risk_score']}/100)" for v in hv] or ["No high-risk vendors."]),
         "controls": ("Control Posture", [f"Average control effectiveness: {m['control_effectiveness']}%", f"Open remediations: {m['open_remediations']}"]),
     }
-    blocks = [{"heading": builders[s][0], "lines": builders[s][1]} for s in body.sections if s in builders]
-    narrative = await _ai_narrative(org_id, body.title, blocks) if blocks else ""
-    return {"title": body.title, "generated_at": datetime.now(timezone.utc).isoformat(),
+    blocks = [{"heading": builders[s][0], "lines": builders[s][1]} for s in sections if s in builders]
+    narrative = await _ai_narrative(org_id, title, blocks) if blocks else ""
+    return {"title": title, "generated_at": datetime.now(timezone.utc).isoformat(),
             "ai_narrative": narrative, "model": "claude-opus-4-8", "blocks": blocks}
+
+
+@studio_router.post("/report/compose")
+async def compose_report(body: ReportBody, user: dict = Depends(get_current_user)):
+    return await _compose_report(user["org_id"], body.title, body.sections)
+
+
+class ScheduleBody(BaseModel):
+    enabled: bool = False
+    title: str = "Monthly Board Report"
+    sections: list[str] = []
+
+
+@studio_router.get("/schedule")
+async def get_schedule(admin: dict = Depends(require_roles("admin"))):
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])})
+    return (org or {}).get("studio_schedule") or {
+        "enabled": False, "title": "Monthly Board Report", "sections": [s["id"] for s in REPORT_SECTIONS]}
+
+
+@studio_router.put("/schedule")
+async def put_schedule(body: ScheduleBody, admin: dict = Depends(require_roles("admin"))):
+    sch = body.model_dump()
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"studio_schedule": sch}})
+    return sch

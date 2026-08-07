@@ -11,6 +11,7 @@ from fastapi import APIRouter, Request, BackgroundTasks, HTTPException
 from db import db
 from kernel import notifications
 from ai_advisor import generate_board_report
+from studio import _compose_report
 from reports import _report_html
 
 logger = logging.getLogger(__name__)
@@ -111,4 +112,48 @@ async def daily_drift_digest(request: Request, background_tasks: BackgroundTasks
     if not _authorized(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
     background_tasks.add_task(_run_drift_digest, {"daily"}, "Daily")
+    return {"status": "accepted"}
+
+
+def _studio_markdown(report: dict) -> str:
+    lines = []
+    if report.get("ai_narrative"):
+        lines += ["## Executive Narrative", report["ai_narrative"], ""]
+    for b in report.get("blocks", []):
+        lines.append(f"## {b['heading']}")
+        lines += b.get("lines", [])
+        lines.append("")
+    return "\n".join(lines)
+
+
+async def _run_monthly_studio_reports():
+    orgs = await db.organizations.find({"studio_schedule.enabled": True}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        sch = org.get("studio_schedule") or {}
+        sections = sch.get("sections") or []
+        if not sections:
+            continue
+        title = sch.get("title") or "Monthly Board Report"
+        try:
+            report = await _compose_report(org_id, title, sections)
+            html = _report_html(_studio_markdown(report), title)
+            recipients = await db.users.find(
+                {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}).to_list(200)
+            for r in recipients:
+                await notifications.send_email(r["email"], f"{title} — Obserra EIOS", html)
+            await notifications.create(
+                org_id, "report", "Scheduled Studio report delivered",
+                f"'{title}' emailed to {len(recipients)} executive(s)/admin(s).", ref="studio-report")
+            logger.info(f"Monthly studio report sent for org {org_id} to {len(recipients)} recipients")
+        except Exception as e:
+            logger.error(f"Monthly studio report failed for org {org_id}: {e}")
+
+
+@scheduled_router.post("/cron/monthly-studio-report")
+async def monthly_studio_report(request: Request, background_tasks: BackgroundTasks):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    if not _authorized(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    background_tasks.add_task(_run_monthly_studio_reports)
     return {"status": "accepted"}

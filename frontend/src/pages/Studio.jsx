@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { LayoutDashboard, FileText, Loader2, Save, Sparkles, Check, Download, Mail } from "lucide-react";
+import { LayoutDashboard, FileText, Loader2, Save, Sparkles, Check, Download, Mail, CalendarClock } from "lucide-react";
 
 const TABS = [["dashboard", "Dashboard Builder", LayoutDashboard], ["report", "Report Builder", FileText]];
 
@@ -67,14 +68,19 @@ function DashboardBuilder() {
 }
 
 function ReportBuilder() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [sections, setSections] = useState(null);
   const [picked, setPicked] = useState([]);
   const [title, setTitle] = useState("Custom Report");
   const [report, setReport] = useState(null);
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState("");
+  const [schedule, setSchedule] = useState(null);
+  const [savingSched, setSavingSched] = useState(false);
 
   useEffect(() => { api.get("/studio/report/sections").then((r) => { setSections(r.data); setPicked(r.data.map((s) => s.id)); }); }, []);
+  useEffect(() => { if (isAdmin) api.get("/studio/schedule").then((r) => setSchedule(r.data)).catch(() => {}); }, [isAdmin]);
   const toggle = (id) => setPicked((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
   const compose = async () => {
     if (picked.length === 0) { toast.error("Pick at least one section"); return; }
@@ -99,6 +105,15 @@ function ReportBuilder() {
     catch (e) { toast.error(e.response?.data?.detail ? "Email failed" : "Email failed"); }
     setExporting("");
   };
+  const saveSchedule = async (enabled) => {
+    setSavingSched(true);
+    try {
+      const { data } = await api.put("/studio/schedule", { enabled, title, sections: picked });
+      setSchedule(data);
+      toast.success(enabled ? "Monthly report scheduled to board" : "Schedule turned off");
+    } catch { toast.error("Could not save schedule"); }
+    setSavingSched(false);
+  };
   if (!sections) return <Spinner />;
 
   return (
@@ -119,6 +134,17 @@ function ReportBuilder() {
           })}
         </div>
         <button data-testid="report-compose" disabled={busy} onClick={compose} className="w-full inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">{busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Compose with AI</button>
+        {isAdmin && schedule && (
+          <div data-testid="report-schedule" className="pt-3 mt-1 border-t border-border/60 space-y-2">
+            <div className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-muted-foreground"><CalendarClock className="w-3.5 h-3.5" /> Monthly auto-email</div>
+            <p className="text-[11px] text-muted-foreground">Emails this report (current title + sections) to the board on the 1st of each month.</p>
+            <button data-testid="report-schedule-toggle" disabled={savingSched} onClick={() => saveSchedule(!schedule.enabled)}
+              className={`w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-md text-sm font-bold transition-colors disabled:opacity-50 ${schedule.enabled ? "bg-ai/15 text-ai border border-ai/30" : "bg-secondary/60 text-muted-foreground border border-border"}`}>
+              {savingSched ? <Loader2 className="w-4 h-4 animate-spin" /> : <CalendarClock className="w-4 h-4" />} {schedule.enabled ? "Scheduled — turn off" : "Schedule monthly to board"}
+            </button>
+            {schedule.enabled && <div className="text-[10px] font-mono text-ai">ON · "{schedule.title}" · {schedule.sections?.length || 0} section(s)</div>}
+          </div>
+        )}
       </div>
 
       <div className="bg-card fact-border rounded-xl p-6 min-h-[300px]" data-testid="report-output">
