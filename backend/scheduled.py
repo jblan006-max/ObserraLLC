@@ -17,7 +17,7 @@ from kernel import notifications
 from ai_advisor import generate_board_report, spend_rows
 from live_connectors import _verify_m365
 from studio import _compose_report
-from reports import _report_html
+from reports import _report_html, build_board_report_pdf
 
 logger = logging.getLogger(__name__)
 scheduled_router = APIRouter(prefix="/api")
@@ -39,11 +39,14 @@ async def _run_monthly_board_reports():
             recipients = await db.users.find(
                 {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}).to_list(200)
             html = _report_html(result["report"], "Monthly Executive Board Report")
+            pdf = await build_board_report_pdf(org_id, result["report"], "Monthly Executive Board Report")
+            attachments = [{"filename": "obserra-board-report.pdf",
+                            "content": base64.b64encode(pdf.getvalue()).decode()}]
             for r in recipients:
-                await notifications.send_email(r["email"], "Monthly Board Report — Obserra EIOS", html)
+                await notifications.send_email(r["email"], "Monthly Board Report — Obserra EIOS", html, attachments=attachments)
             await notifications.create(
                 org_id, "report", "Monthly board report delivered",
-                f"Emailed to {len(recipients)} executive(s)/admin(s).", ref="board-report")
+                f"Branded PDF (cover + charts) emailed to {len(recipients)} executive(s)/admin(s).", ref="board-report")
             logger.info(f"Monthly board report sent for org {org_id} to {len(recipients)} recipients")
         except Exception as e:
             logger.error(f"Monthly board report failed for org {org_id}: {e}")

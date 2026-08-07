@@ -23,12 +23,14 @@ _ASSETS = os.path.join(os.path.dirname(__file__), "assets")
 _BADGE = os.path.join(_ASSETS, "brand-badge.png")
 _WATERMARK = os.path.join(_ASSETS, "brand-watermark.png")
 _LOCKUP = os.path.join(_ASSETS, "brand-lockup.png")
+_LOCKUP_DARK = os.path.join(_ASSETS, "brand-lockup-dark.png")
 BRAND_IMG_URL = "https://customer-assets-39nsmqrw.emergentagent.net/job_cyber-dashboard-48/artifacts/5h8fj2gx_image.png"
 
 
 class ReportBody(BaseModel):
     report: str
     title: str = "Executive Board Report"
+    theme: str = "dark"
 
 
 def _trend_drawing(series):
@@ -60,8 +62,38 @@ def _trend_drawing(series):
         return None
 
 
+def _risk_bar_drawing(bars):
+    """Bar chart of top risks by residual score (0-25)."""
+    try:
+        from reportlab.graphics.shapes import Drawing, String
+        from reportlab.graphics.charts.barcharts import VerticalBarChart
+        bars = [b for b in (bars or []) if b.get("value")][:5]
+        if not bars:
+            return None
+        d = Drawing(460, 175)
+        d.add(String(38, 158, "Top Risks by Residual Score (/25)", fontName="Helvetica-Bold",
+                     fontSize=9, fillColor=colors.HexColor("#0f1e3d")))
+        bc = VerticalBarChart()
+        bc.x = 40; bc.y = 28; bc.width = 400; bc.height = 112
+        bc.data = [[b["value"] for b in bars]]
+        bc.categoryAxis.categoryNames = [b["label"] for b in bars]
+        bc.categoryAxis.labels.fontSize = 7
+        bc.valueAxis.valueMin = 0
+        bc.valueAxis.valueMax = 25
+        bc.valueAxis.valueStep = 5
+        bc.valueAxis.labels.fontSize = 7
+        bc.bars[0].fillColor = colors.HexColor("#1b6fb3")
+        bc.barWidth = 8
+        d.add(bc)
+        return d
+    except Exception as e:
+        logger.warning(f"risk bar chart skipped: {e}")
+        return None
+
+
 def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = None,
-               report_date: str = None, chart_series=None, takeaways=None) -> io.BytesIO:
+               report_date: str = None, chart_series=None, takeaways=None,
+               theme: str = "dark", risk_bars=None) -> io.BytesIO:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=LETTER, topMargin=0.9 * inch, bottomMargin=0.8 * inch)
     styles = getSampleStyleSheet()
@@ -90,10 +122,14 @@ def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = Non
             story.append(Paragraph(line[2:], h))
         else:
             story.append(Paragraph(re.sub(r"\*\*", "", line), body))
-    if chart_series:
-        d = _trend_drawing(chart_series)
+    if chart_series or risk_bars:
+        story += [Spacer(1, 10), Paragraph("Portfolio Trends", h)]
+        d = _trend_drawing(chart_series) if chart_series else None
         if d is not None:
-            story += [Spacer(1, 10), Paragraph("Portfolio Trends", h), d, Spacer(1, 4)]
+            story += [d, Spacer(1, 6)]
+        b = _risk_bar_drawing(risk_bars) if risk_bars else None
+        if b is not None:
+            story += [b, Spacer(1, 4)]
     if takeaways:
         story += [Spacer(1, 8), Paragraph("Key Takeaways &amp; Recommended Actions", h)]
         for t in takeaways:
@@ -117,22 +153,29 @@ def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = Non
 
     def _cover_page(canvas, _doc):
         pw, ph = LETTER
+        light = (theme == "light")
+        bg = "#ffffff" if light else "#081428"
+        lockup = _LOCKUP_DARK if light else _LOCKUP
+        title_col = "#0f1e3d" if light else "#F4F8FC"
+        org_col = "#0e7490" if light else "#56B8E9"
+        date_col = "#6b7280" if light else "#8AA0B8"
+        note_col = "#9ca3af" if light else "#5a708c"
         canvas.saveState()
-        canvas.setFillColor(colors.HexColor("#081428"))
+        canvas.setFillColor(colors.HexColor(bg))
         canvas.rect(0, 0, pw, ph, fill=1, stroke=0)
-        if os.path.exists(_LOCKUP):
+        if os.path.exists(lockup):
             lw = 4.8 * inch
             lh = lw * 287.0 / 1698.0
-            canvas.drawImage(_LOCKUP, (pw - lw) / 2, ph * 0.60, width=lw, height=lh,
+            canvas.drawImage(lockup, (pw - lw) / 2, ph * 0.60, width=lw, height=lh,
                              mask="auto", preserveAspectRatio=True)
-        canvas.setFillColor(colors.HexColor("#F4F8FC")); canvas.setFont("Helvetica-Bold", 24)
+        canvas.setFillColor(colors.HexColor(title_col)); canvas.setFont("Helvetica-Bold", 24)
         canvas.drawCentredString(pw / 2, ph * 0.50, title)
         if org_name:
-            canvas.setFillColor(colors.HexColor("#56B8E9")); canvas.setFont("Helvetica-Bold", 12)
+            canvas.setFillColor(colors.HexColor(org_col)); canvas.setFont("Helvetica-Bold", 12)
             canvas.drawCentredString(pw / 2, ph * 0.46, org_name)
-        canvas.setFillColor(colors.HexColor("#8AA0B8")); canvas.setFont("Helvetica", 10)
+        canvas.setFillColor(colors.HexColor(date_col)); canvas.setFont("Helvetica", 10)
         canvas.drawCentredString(pw / 2, ph * 0.43, report_date or datetime.now(timezone.utc).strftime("%B %d, %Y"))
-        canvas.setFont("Helvetica", 8)
+        canvas.setFillColor(colors.HexColor(note_col)); canvas.setFont("Helvetica", 8)
         canvas.drawCentredString(pw / 2, 0.6 * inch, "CONFIDENTIAL · PROPRIETARY · AUTHORIZED ACCESS ONLY")
         canvas.restoreState()
 
@@ -165,15 +208,15 @@ def _report_html(report: str, title: str) -> str:
             f'</td></tr></table>')
 
 
-@reports_router.post("/api/reports/pdf")
-async def report_pdf(body: ReportBody, user: dict = Depends(get_current_user)):
+async def build_board_report_pdf(org_id: str, report_text: str,
+                                 title: str = "Executive Board Report", theme: str = "dark") -> io.BytesIO:
     from routes import _fin
     from bson import ObjectId
-    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
     org_name = org.get("name")
-    risks = await db.risks.find({"org_id": user["org_id"]}, {"_id": 0}).to_list(500)
-    recs = await db.recommendations.find({"org_id": user["org_id"]}, {"_id": 0}).to_list(500)
-    health = await db.health_index.find_one({"org_id": user["org_id"]}, {"_id": 0}) or {}
+    risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    recs = await db.recommendations.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    health = await db.health_index.find_one({"org_id": org_id}, {"_id": 0}) or {}
     fins = [_fin(r) for r in risks]
     residual = sum(f["residual_ale"] for f in fins)
     inherent = sum(f["inherent_ale"] for f in fins)
@@ -187,6 +230,8 @@ async def report_pdf(body: ReportBody, user: dict = Depends(get_current_user)):
               for hh in health.get("history", [])]
     if series:
         series[-1]["exposure"] = round(residual)
+    risk_bars = [{"label": (r.get("ref") or (r.get("title", "") or "")[:14]), "value": r.get("residual", 0)}
+                 for r in top[:5]]
     extra = f"; prioritise '{top_title}'" if top_title else ""
     takeaways = [
         f"Portfolio residual exposure is ${residual/1e6:.1f}M, down {reduction}% from inherent — sustain the controls driving this reduction.",
@@ -196,8 +241,14 @@ async def report_pdf(body: ReportBody, user: dict = Depends(get_current_user)):
     if pending:
         takeaways.append(f"{len(pending)} recommendation(s) await executive authority — approve to release the projected risk reduction.")
     takeaways.append("Maintain evidence freshness and quarterly control testing to keep every figure audit-ready and board-defensible.")
-    buf = _build_pdf(body.report, body.title, cover=True, org_name=org_name,
-                     chart_series=series, takeaways=takeaways)
+    return _build_pdf(report_text, title, cover=True, org_name=org_name, theme=theme,
+                      chart_series=series, takeaways=takeaways, risk_bars=risk_bars)
+
+
+@reports_router.post("/api/reports/pdf")
+async def report_pdf(body: ReportBody, user: dict = Depends(get_current_user)):
+    theme = body.theme if body.theme in ("dark", "light") else "dark"
+    buf = await build_board_report_pdf(user["org_id"], body.report, body.title, theme)
     return StreamingResponse(buf, media_type="application/pdf",
                              headers={"Content-Disposition": 'attachment; filename="obserra-board-report.pdf"'})
 

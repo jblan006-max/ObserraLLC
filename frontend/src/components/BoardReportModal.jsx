@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, FileText, Loader2, Download, Sparkle, Mail, MessageSquare } from "lucide-react";
+import { X, FileText, Loader2, Download, Sparkle, Mail, MessageSquare, Sun, Moon } from "lucide-react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -22,6 +22,7 @@ export function BoardReportModal({ open, onClose }) {
   const [sharing, setSharing] = useState(false);
   const [report, setReport] = useState("");
   const [meta, setMeta] = useState(null);
+  const [theme, setTheme] = useState("dark");
 
   const shareTeams = async () => {
     setSharing(true);
@@ -45,7 +46,7 @@ export function BoardReportModal({ open, onClose }) {
 
   const downloadPdf = async () => {
     try {
-      const res = await api.post("/reports/pdf", { report, title: "Executive Board Report" }, { responseType: "blob" });
+      const res = await api.post("/reports/pdf", { report, title: "Executive Board Report", theme }, { responseType: "blob" });
       const url = URL.createObjectURL(res.data);
       const a = document.createElement("a"); a.href = url; a.download = "obserra-board-report.pdf"; a.click();
       URL.revokeObjectURL(url);
@@ -88,6 +89,14 @@ export function BoardReportModal({ open, onClose }) {
           <div className="flex items-center gap-2">
             {report && !loading && (
               <>
+                <div className="flex items-center rounded-md bg-secondary/60 p-0.5" data-testid="cover-theme-toggle" title="Cover theme">
+                  <button data-testid="theme-dark" onClick={() => setTheme("dark")} className={`px-2 py-1 rounded text-[11px] flex items-center gap-1 transition-colors ${theme === "dark" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                    <Moon className="w-3 h-3" /> Dark
+                  </button>
+                  <button data-testid="theme-light" onClick={() => setTheme("light")} className={`px-2 py-1 rounded text-[11px] flex items-center gap-1 transition-colors ${theme === "light" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                    <Sun className="w-3 h-3" /> Light
+                  </button>
+                </div>
                 <button data-testid="report-download" onClick={downloadPdf} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-secondary/60 hover:bg-secondary transition-colors">
                   <Download className="w-3.5 h-3.5" /> PDF
                 </button>
