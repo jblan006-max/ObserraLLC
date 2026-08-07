@@ -10,7 +10,7 @@ from fastapi import APIRouter, Request, BackgroundTasks, HTTPException
 
 from db import db
 from kernel import notifications
-from ai_advisor import generate_board_report
+from ai_advisor import generate_board_report, spend_rows
 from studio import _compose_report
 from reports import _report_html
 
@@ -171,4 +171,52 @@ async def weekly_studio_report(request: Request, background_tasks: BackgroundTas
     if not _authorized(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
     background_tasks.add_task(_run_studio_reports, {"weekly"})
+    return {"status": "accepted"}
+
+
+def _spend_report_html(rows):
+    trs = "".join(
+        f"<tr><td style='padding:6px;border-bottom:1px solid #eee'>{r['month']}</td>"
+        f"<td style='padding:6px;border-bottom:1px solid #eee'>{r['user']}</td>"
+        f"<td style='padding:6px;border-bottom:1px solid #eee;text-align:right'>{r['queries']}</td>"
+        f"<td style='padding:6px;border-bottom:1px solid #eee;text-align:right'>{r['tokens']}</td>"
+        f"<td style='padding:6px;border-bottom:1px solid #eee;text-align:right'>${r['cost_usd']:.4f}</td></tr>"
+        for r in rows)
+    total = sum(r["cost_usd"] for r in rows)
+    return ("<div style=\"font:400 14px Arial;color:#1f2937;max-width:680px;margin:auto\">"
+            "<h2 style=\"color:#0f1e3d\">AI Advisor — Monthly Spend Report</h2>"
+            f"<p>Full advisor spend per teammate. Total to date: <b>${total:.4f}</b>.</p>"
+            "<table style=\"border-collapse:collapse;width:100%;font-size:13px\">"
+            "<thead><tr style=\"background:#0f1e3d;color:#fff\">"
+            "<th style='padding:6px;text-align:left'>Month</th><th style='padding:6px;text-align:left'>Teammate</th>"
+            "<th style='padding:6px;text-align:right'>Queries</th><th style='padding:6px;text-align:right'>Tokens</th>"
+            "<th style='padding:6px;text-align:right'>Cost</th></tr></thead>"
+            f"<tbody>{trs}</tbody></table>"
+            "<p style=\"font-size:11px;color:#9ca3af\">Obserra — Executive Protection &amp; Intelligence LLC</p></div>")
+
+
+async def _run_spend_report():
+    orgs = await db.organizations.find({}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        rows = await spend_rows(org_id, "all")
+        if not rows:
+            continue
+        html = _spend_report_html(rows)
+        recips = await db.users.find(
+            {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
+        for r in recips:
+            await notifications.send_email(r["email"], "Monthly AI Advisor Spend Report", html)
+        await notifications.create(
+            org_id, "report", "Advisor spend report emailed",
+            f"Full advisor spend emailed to {len(recips)} admin(s)/exec(s).", ref="advisor-spend")
+        logger.info(f"Advisor spend report emailed for org {org_id} to {len(recips)} recipients")
+
+
+@scheduled_router.post("/cron/monthly-spend-report")
+async def monthly_spend_report(request: Request, background_tasks: BackgroundTasks):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    if not _authorized(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    background_tasks.add_task(_run_spend_report)
     return {"status": "accepted"}

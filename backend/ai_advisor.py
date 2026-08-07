@@ -263,9 +263,8 @@ async def advisor_usage(admin: dict = Depends(require_roles("admin"))):
             "alert_threshold": threshold, "trend": trend, "by_user": by_user, "recent": recent}
 
 
-@advisor_router.get("/usage/export")
-async def advisor_usage_export(scope: str = "month", admin: dict = Depends(require_roles("admin"))):
-    logs = await db.advisor_logs.find({"org_id": admin["org_id"], "usage": {"$exists": True}}, {"_id": 0}).sort("ts", -1).to_list(5000)
+async def spend_rows(org_id: str, scope: str = "all"):
+    logs = await db.advisor_logs.find({"org_id": org_id, "usage": {"$exists": True}}, {"_id": 0}).sort("ts", -1).to_list(5000)
     mk = _month_key()
     agg = {}
     for l in logs:
@@ -277,7 +276,13 @@ async def advisor_usage_export(scope: str = "month", admin: dict = Depends(requi
         e["cost_usd"] += l["usage"]["cost_usd"]
         e["queries"] += 1
         e["tokens"] += l["usage"]["total_tokens"]
-    rows = sorted(agg.values(), key=lambda x: (x["month"], -x["cost_usd"]))
+    return sorted(agg.values(), key=lambda x: (x["month"], -x["cost_usd"]))
+
+
+@advisor_router.get("/usage/export")
+async def advisor_usage_export(scope: str = "month", admin: dict = Depends(require_roles("admin"))):
+    mk = _month_key()
+    rows = await spend_rows(admin["org_id"], scope)
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["Month", "Teammate", "Queries", "Tokens", "Cost (USD)"])
@@ -298,6 +303,18 @@ async def advisor_user_prompts(member: str, admin: dict = Depends(require_roles(
     return [{"prompt": l["prompt"], "ts": l.get("ts"), "model": l.get("model"),
              "cost_usd": l["usage"]["cost_usd"], "tokens": l["usage"]["total_tokens"],
              "response": (l.get("response") or "")[:240]} for l in logs]
+
+
+@advisor_router.get("/prompts/search")
+async def search_prompts(q: str, admin: dict = Depends(require_roles("admin"))):
+    if not q or len(q.strip()) < 2:
+        return []
+    import re
+    rx = re.escape(q.strip())
+    logs = await db.advisor_logs.find(
+        {"org_id": admin["org_id"], "prompt": {"$regex": rx, "$options": "i"}}, {"_id": 0}).sort("ts", -1).to_list(30)
+    return [{"user": l["user"], "prompt": l["prompt"], "ts": l.get("ts"), "model": l.get("model"),
+             "cost_usd": (l.get("usage") or {}).get("cost_usd")} for l in logs]
 
 
 class BudgetBody(BaseModel):

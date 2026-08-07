@@ -105,6 +105,10 @@ Foundation: Tenant Management · Identity & RBAC | Data: Enterprise Asset Model 
 - **Teammate Drilldown**: GET /api/advisor/usage/prompts?member=<email> (admin) returns a teammate's 15 most recent advisor prompts (prompt, ts, model, cost, tokens, response snippet). Clicking a teammate in the advisor spend list expands an inline drilldown of their recent prompts.
 - **Full-History CSV**: GET /api/advisor/usage/export now accepts ?scope=all → aggregates spend per (month, teammate) across all history with an ALL/TOTAL row. Advisor shows two buttons: "This month" and "All months".
 
+## Session 2026-06 (Auto-Emailed Spend Report + Prompt Search)
+- **Auto-Emailed Spend Report**: new cron POST /api/cron/monthly-spend-report (1st, 09:30 UTC in crons.yml) emails each org's admins/execs a full per-teammate advisor spend HTML table (email pipeline is HTML-only, no file attachments) via managed Resend + creates a notification. Reuses spend_rows(org_id, scope) (also backs the CSV export). Verified: cron 200 + "Advisor spend report emailed" notification.
+- **Prompt Search**: GET /api/advisor/prompts/search?q=<term> (admin) regex-searches all advisor prompts in the org (case-insensitive, 30 max). Advisor panel adds a "Search all advisor prompts…" box (Enter to run) listing matches with teammate + date + cost. Verified: q=risk → 11 matches, UI renders.
+
 ## Implemented (as of 2026-06)
 - JWT auth (httpOnly cookies, brute-force lockout), org/role, tenant isolation
 - Passwordless QR login (start/approve/poll, 3-min single-use, cross-device)

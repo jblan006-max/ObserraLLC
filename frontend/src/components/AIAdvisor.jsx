@@ -52,6 +52,8 @@ export function AIAdvisor() {
   const [savingBudget, setSavingBudget] = useState(false);
   const [drillUser, setDrillUser] = useState(null);
   const [drillPrompts, setDrillPrompts] = useState([]);
+  const [searchQ, setSearchQ] = useState("");
+  const [searchResults, setSearchResults] = useState(null);
   const scrollRef = useRef(null);
   const sendRef = useRef(null);
 
@@ -166,6 +168,12 @@ export function AIAdvisor() {
     catch { toast.error("Could not load prompts"); }
   };
 
+  const searchPrompts = async (q) => {
+    if (!q || q.trim().length < 2) { setSearchResults(null); return; }
+    try { const { data } = await api.get("/advisor/prompts/search", { params: { q } }); setSearchResults(data); }
+    catch { toast.error("Search failed"); }
+  };
+
   const suggestions = mode === "executive"
     ? ["Summarize our top enterprise risks for the board", "What is driving the AI Governance score?"]
     : ["Which risks need remediation this week?", "Detail the shadow AI exposure and fix it"];
@@ -254,6 +262,25 @@ export function AIAdvisor() {
                   className="flex-1 inline-flex items-center justify-center gap-1.5 text-[11px] px-3 py-1.5 rounded-md bg-secondary/60 border border-border hover:bg-secondary text-muted-foreground transition-colors">
                   <Download className="w-3 h-3" /> All months
                 </button>
+              </div>
+              <div className="pt-1">
+                <input data-testid="advisor-prompt-search" placeholder="Search all advisor prompts…"
+                  value={searchQ}
+                  onChange={(e) => setSearchQ(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") searchPrompts(searchQ); }}
+                  className="w-full bg-secondary/60 rounded-md px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ai" />
+                {searchResults && (
+                  <div data-testid="advisor-search-results" className="mt-1 space-y-1 max-h-40 overflow-y-auto">
+                    {searchResults.length === 0 ? (
+                      <div className="text-[10px] text-muted-foreground">No matching prompts.</div>
+                    ) : searchResults.map((r, i) => (
+                      <div key={i} className="text-[10px] border-l border-ai/30 pl-2">
+                        <div className="text-foreground/90 truncate">{r.prompt}</div>
+                        <div className="font-mono text-muted-foreground">{r.user} · {new Date(r.ts).toLocaleDateString()}{r.cost_usd != null ? ` · $${r.cost_usd.toFixed(4)}` : ""}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
               {spend.trend?.length > 0 && (() => {
                 const max = Math.max(...spend.trend.map((t) => t.cost_usd), 0.0001);
