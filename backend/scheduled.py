@@ -4,6 +4,7 @@ Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
 """
 import os
 import io
+import sys
 import csv
 import base64
 import hmac
@@ -64,12 +65,19 @@ async def monthly_board_report(request: Request, background_tasks: BackgroundTas
 
 
 async def _refresh_guides():
+    # Offload to a fully detached OS process so the heavy Playwright capture never
+    # blocks the FastAPI event loop / worker threadpool.
     try:
-        from deploy import regenerate_guides
-        regenerate_guides(capture=True)
-        logger.info("Weekly guide refresh complete")
+        import subprocess
+        env = {**os.environ, "PLAYWRIGHT_BROWSERS_PATH": os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/pw-browsers")}
+        subprocess.Popen(
+            [sys.executable, "-c",
+             "import sys; sys.path.insert(0, '/app/backend'); from deploy import regenerate_guides; regenerate_guides(capture=True)"],
+            env=env, cwd="/app/backend",
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        logger.info("Weekly guide refresh launched (detached)")
     except Exception as e:
-        logger.error(f"Weekly guide refresh failed: {e}")
+        logger.error(f"Weekly guide refresh failed to launch: {e}")
 
 
 @scheduled_router.post("/cron/weekly-guide-refresh")
