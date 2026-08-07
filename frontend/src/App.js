@@ -21,6 +21,8 @@ import Settings from "@/pages/Settings";
 import AIAgents from "@/pages/AIAgents";
 import Enterprise from "@/pages/Enterprise";
 import VendorRisk from "@/pages/VendorRisk";
+import CyberRisk from "@/pages/CyberRisk";
+import Studio from "@/pages/Studio";
 import Benchmark from "@/pages/Benchmark";
 import AuthCallback from "@/pages/AuthCallback";
 import Reporting from "@/pages/Reporting";
@@ -67,6 +69,8 @@ function App() {
               <Route path="settings" element={<Settings />} />
               <Route path="agents" element={<AIAgents />} />
               <Route path="vendors" element={<VendorRisk />} />
+              <Route path="cyber-risk" element={<CyberRisk />} />
+              <Route path="studio" element={<Studio />} />
               <Route path="benchmark" element={<Benchmark />} />
               <Route path="enterprise" element={<Enterprise />} />
               <Route path="marketplace" element={<Marketplace />} />

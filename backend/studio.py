@@ -1,14 +1,38 @@
 """Studio — custom dashboard builder + report builder (composed on kernel data)."""
+import os
 from datetime import datetime, timezone
 
 from bson import ObjectId
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
+from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
 
 from auth import get_current_user
 from db import db
 
 studio_router = APIRouter(prefix="/api/studio")
+
+
+async def _ai_narrative(org_id: str, title: str, blocks: list[dict]) -> str:
+    context = "\n".join(f"{b['heading']}:\n" + "\n".join(f"  - {ln}" for ln in b["lines"]) for b in blocks)
+    chat = LlmChat(
+        api_key=os.environ["EMERGENT_LLM_KEY"],
+        session_id=f"studio-report-{org_id}",
+        system_message="You are a chief risk officer writing a concise executive narrative for a custom risk & AI governance report. Ground every statement strictly in the provided report data. Cite refs in square brackets when present. Do not invent facts.",
+    ).with_model("anthropic", "claude-sonnet-5")
+    prompt = (f"REPORT TITLE: {title}\n\nREPORT DATA:\n{context}\n\n"
+              "Write a single-paragraph executive narrative (<130 words) summarizing the posture, "
+              "the most important risk signals, and one clear recommended action. Plain prose, no headings.")
+    collected = []
+    try:
+        async for ev in chat.stream_message(UserMessage(text=prompt)):
+            if isinstance(ev, TextDelta):
+                collected.append(ev.content)
+            elif isinstance(ev, StreamDone):
+                break
+    except Exception as e:
+        collected.append(f"[narrative generation error: {e}]")
+    return "".join(collected).strip()
 
 
 async def _metrics(org_id):
@@ -97,4 +121,6 @@ async def compose_report(body: ReportBody, user: dict = Depends(get_current_user
         "controls": ("Control Posture", [f"Average control effectiveness: {m['control_effectiveness']}%", f"Open remediations: {m['open_remediations']}"]),
     }
     blocks = [{"heading": builders[s][0], "lines": builders[s][1]} for s in body.sections if s in builders]
-    return {"title": body.title, "generated_at": datetime.now(timezone.utc).isoformat(), "blocks": blocks}
+    narrative = await _ai_narrative(org_id, body.title, blocks) if blocks else ""
+    return {"title": body.title, "generated_at": datetime.now(timezone.utc).isoformat(),
+            "ai_narrative": narrative, "model": "claude-sonnet-5", "blocks": blocks}
