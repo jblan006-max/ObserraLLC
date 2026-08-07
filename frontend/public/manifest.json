@@ -9,7 +9,9 @@
   "background_color": "#0a0f1e",
   "theme_color": "#0a0f1e",
   "icons": [
-    { "src": "/logo-mark-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
-    { "src": "/logo-mark-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+    { "src": "/logo-mark-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/logo-mark-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/logo-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/logo-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

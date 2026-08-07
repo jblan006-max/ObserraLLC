@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate, useLocation, Navigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { AIAdvisor } from "@/components/AIAdvisor";
+import { OnboardingTour } from "@/components/OnboardingTour";
 import { NotificationBell } from "@/components/NotificationBell";
 import ForcePasswordReset from "@/pages/ForcePasswordReset";
 import { Footer } from "@/components/Footer";
@@ -187,6 +188,7 @@ export default function AppShell() {
       </div>
 
       <AIAdvisor />
+      <OnboardingTour />
     </div>
   );
 }
