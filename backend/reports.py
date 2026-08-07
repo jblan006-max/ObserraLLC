@@ -3,6 +3,7 @@ import io
 import re
 import logging
 import httpx
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -10,7 +11,7 @@ from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Image as RLImage
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Image as RLImage, PageBreak
 
 from db import db
 from auth import get_current_user
@@ -21,6 +22,7 @@ EMAIL_BASE_URL = "https://integrations.emergentagent.com"
 _ASSETS = os.path.join(os.path.dirname(__file__), "assets")
 _BADGE = os.path.join(_ASSETS, "brand-badge.png")
 _WATERMARK = os.path.join(_ASSETS, "brand-watermark.png")
+_LOCKUP = os.path.join(_ASSETS, "brand-lockup.png")
 BRAND_IMG_URL = "https://customer-assets-39nsmqrw.emergentagent.net/job_cyber-dashboard-48/artifacts/5h8fj2gx_image.png"
 
 
@@ -29,7 +31,37 @@ class ReportBody(BaseModel):
     title: str = "Executive Board Report"
 
 
-def _build_pdf(report: str, title: str) -> io.BytesIO:
+def _trend_drawing(series):
+    """Line chart of portfolio residual exposure ($M) over recent months."""
+    try:
+        from reportlab.graphics.shapes import Drawing, String
+        from reportlab.graphics.charts.linecharts import HorizontalLineChart
+        pts = [round(p.get("exposure", 0) / 1e6, 2) for p in series][-6:]
+        labels = [str(p.get("month", "")) for p in series][-6:]
+        if len(pts) < 2:
+            return None
+        d = Drawing(460, 170)
+        d.add(String(38, 152, "Portfolio Residual Exposure ($M)", fontName="Helvetica-Bold",
+                     fontSize=9, fillColor=colors.HexColor("#0f1e3d")))
+        lc = HorizontalLineChart()
+        lc.x = 40; lc.y = 24; lc.width = 400; lc.height = 116
+        lc.data = [pts]
+        lc.categoryAxis.categoryNames = labels
+        lc.categoryAxis.labels.fontSize = 7
+        lc.valueAxis.valueMin = 0
+        lc.valueAxis.labelTextFormat = "$%0.1fM"
+        lc.valueAxis.labels.fontSize = 7
+        lc.lines[0].strokeColor = colors.HexColor("#d9663a")
+        lc.lines[0].strokeWidth = 2.2
+        d.add(lc)
+        return d
+    except Exception as e:
+        logger.warning(f"trend chart skipped: {e}")
+        return None
+
+
+def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = None,
+               report_date: str = None, chart_series=None, takeaways=None) -> io.BytesIO:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=LETTER, topMargin=0.9 * inch, bottomMargin=0.8 * inch)
     styles = getSampleStyleSheet()
@@ -37,7 +69,10 @@ def _build_pdf(report: str, title: str) -> io.BytesIO:
     body = ParagraphStyle("b", parent=styles["BodyText"], fontSize=10, leading=15)
     title_s = ParagraphStyle("t", parent=styles["Title"], fontSize=18, textColor=colors.HexColor("#0f1e3d"))
     sub = ParagraphStyle("sub", parent=body, textColor=colors.grey)
+    bullet = ParagraphStyle("bl", parent=body, leftIndent=12, spaceAfter=4)
     story = []
+    if cover:
+        story.append(PageBreak())  # page 1 is painted by _cover_page
     if os.path.exists(_BADGE):
         badge = RLImage(_BADGE, width=0.6 * inch, height=0.6 * inch)
         badge.hAlign = "LEFT"
@@ -55,9 +90,18 @@ def _build_pdf(report: str, title: str) -> io.BytesIO:
             story.append(Paragraph(line[2:], h))
         else:
             story.append(Paragraph(re.sub(r"\*\*", "", line), body))
+    if chart_series:
+        d = _trend_drawing(chart_series)
+        if d is not None:
+            story += [Spacer(1, 10), Paragraph("Portfolio Trends", h), d, Spacer(1, 4)]
+    if takeaways:
+        story += [Spacer(1, 8), Paragraph("Key Takeaways &amp; Recommended Actions", h)]
+        for t in takeaways:
+            story.append(Paragraph(f"•&nbsp;&nbsp;{t}", bullet))
     story.append(Spacer(1, 16))
     story.append(Paragraph("Confidential — decision-support estimates; not legal, financial, regulatory, or security guarantees.",
                            ParagraphStyle("d", parent=body, fontSize=7, textColor=colors.grey)))
+
     def _brand_page(canvas, _doc):
         pw, ph = LETTER
         if os.path.exists(_WATERMARK):
@@ -70,7 +114,29 @@ def _build_pdf(report: str, title: str) -> io.BytesIO:
         canvas.setFillColor(colors.grey)
         canvas.drawCentredString(pw / 2, 0.5 * inch, "Obserra — Executive Protection & Intelligence LLC  ·  Confidential")
         canvas.restoreState()
-    doc.build(story, onFirstPage=_brand_page, onLaterPages=_brand_page)
+
+    def _cover_page(canvas, _doc):
+        pw, ph = LETTER
+        canvas.saveState()
+        canvas.setFillColor(colors.HexColor("#081428"))
+        canvas.rect(0, 0, pw, ph, fill=1, stroke=0)
+        if os.path.exists(_LOCKUP):
+            lw = 4.8 * inch
+            lh = lw * 287.0 / 1698.0
+            canvas.drawImage(_LOCKUP, (pw - lw) / 2, ph * 0.60, width=lw, height=lh,
+                             mask="auto", preserveAspectRatio=True)
+        canvas.setFillColor(colors.HexColor("#F4F8FC")); canvas.setFont("Helvetica-Bold", 24)
+        canvas.drawCentredString(pw / 2, ph * 0.50, title)
+        if org_name:
+            canvas.setFillColor(colors.HexColor("#56B8E9")); canvas.setFont("Helvetica-Bold", 12)
+            canvas.drawCentredString(pw / 2, ph * 0.46, org_name)
+        canvas.setFillColor(colors.HexColor("#8AA0B8")); canvas.setFont("Helvetica", 10)
+        canvas.drawCentredString(pw / 2, ph * 0.43, report_date or datetime.now(timezone.utc).strftime("%B %d, %Y"))
+        canvas.setFont("Helvetica", 8)
+        canvas.drawCentredString(pw / 2, 0.6 * inch, "CONFIDENTIAL · PROPRIETARY · AUTHORIZED ACCESS ONLY")
+        canvas.restoreState()
+
+    doc.build(story, onFirstPage=(_cover_page if cover else _brand_page), onLaterPages=_brand_page)
     buf.seek(0)
     return buf
 
@@ -101,7 +167,37 @@ def _report_html(report: str, title: str) -> str:
 
 @reports_router.post("/api/reports/pdf")
 async def report_pdf(body: ReportBody, user: dict = Depends(get_current_user)):
-    buf = _build_pdf(body.report, body.title)
+    from routes import _fin
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    org_name = org.get("name")
+    risks = await db.risks.find({"org_id": user["org_id"]}, {"_id": 0}).to_list(500)
+    recs = await db.recommendations.find({"org_id": user["org_id"]}, {"_id": 0}).to_list(500)
+    health = await db.health_index.find_one({"org_id": user["org_id"]}, {"_id": 0}) or {}
+    fins = [_fin(r) for r in risks]
+    residual = sum(f["residual_ale"] for f in fins)
+    inherent = sum(f["inherent_ale"] for f in fins)
+    reduction = round((inherent - residual) / inherent * 100) if inherent else 0
+    top = sorted(risks, key=lambda r: r.get("residual", 0), reverse=True)
+    top_title = top[0]["title"] if top else None
+    pending = [r for r in recs if r.get("status") == "Pending"]
+    crit = len([r for r in risks if r.get("residual", 0) >= 16])
+    cur = health.get("score", 69)
+    series = [{"month": hh["month"], "exposure": round(residual * (cur / max(1, hh["score"])))}
+              for hh in health.get("history", [])]
+    if series:
+        series[-1]["exposure"] = round(residual)
+    extra = f"; prioritise '{top_title}'" if top_title else ""
+    takeaways = [
+        f"Portfolio residual exposure is ${residual/1e6:.1f}M, down {reduction}% from inherent — sustain the controls driving this reduction.",
+    ]
+    if crit:
+        takeaways.append(f"{crit} critical risk(s) remain above tolerance{extra} for board-level decision this quarter.")
+    if pending:
+        takeaways.append(f"{len(pending)} recommendation(s) await executive authority — approve to release the projected risk reduction.")
+    takeaways.append("Maintain evidence freshness and quarterly control testing to keep every figure audit-ready and board-defensible.")
+    buf = _build_pdf(body.report, body.title, cover=True, org_name=org_name,
+                     chart_series=series, takeaways=takeaways)
     return StreamingResponse(buf, media_type="application/pdf",
                              headers={"Content-Disposition": 'attachment; filename="obserra-board-report.pdf"'})
 
