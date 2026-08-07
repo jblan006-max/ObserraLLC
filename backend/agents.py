@@ -94,9 +94,9 @@ class AgentCreate(BaseModel):
 
 @agents_router.post("")
 async def create_agent(body: AgentCreate, admin: dict = Depends(require_roles("admin"))):
-    counter = await db.counters.find_one_and_update(
-        {"_id": f"agents:{admin['org_id']}"}, {"$inc": {"seq": 1}}, upsert=True, return_document=True)
-    ref = f"AGT-{counter['seq'] + 3:03d}"
+    existing = await db.ai_agents.find({"org_id": admin["org_id"]}, {"ref": 1, "_id": 0}).to_list(500)
+    max_n = max((int(a["ref"].split("-")[1]) for a in existing if a.get("ref", "").startswith("AGT-")), default=0)
+    ref = f"AGT-{max_n + 1:03d}"
     doc = {"org_id": admin["org_id"], "ref": ref, **body.model_dump(), "status": "shadow",
            "guardrails": {"input_filtering": False, "output_filtering": False, "tool_allowlist": False, "human_in_loop": False},
            "last_redteam": None}

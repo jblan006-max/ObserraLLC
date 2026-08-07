@@ -53,6 +53,16 @@ Foundation: Tenant Management · Identity & RBAC | Data: Enterprise Asset Model 
 2. Real connectors: M365/Azure/AWS/Okta/CrowdStrike/Splunk/ServiceNow/Wiz; Enterprise SSO/SAML + SCIM; ABAC
 3. AI agent inventory + tool/permission governance; red-team / prompt-injection testing
 
+## Session 2026-06 (kernel-native app + enterprise) — verified iteration_7.json (backend 24/24, frontend 100%)
+- Remediation KPI Strip: GET /kernel/remediation-kpi (open/overdue/resolved) shown atop Platform Kernel page
+- Policy History: PATCH /policies logs {field,from,to,by,at} to policy_history; GET /policies/{id}/history; shown in policy modal
+- **AI Agent Governance (first kernel-native standalone app)**: /app/agents — agent inventory (asset model), tool/permission governance + tool_violations, guardrail toggles, deterministic red-team/prompt-injection suite (heuristic MOCKED). Composition proven: a critical red-team failure auto-opens a remediation workflow + agent_risk notification (Workflow + Notification + Audit engines). Endpoints: /api/agents CRUD + /api/agents/{ref}/redteam
+- **Enterprise Access** (/app/enterprise, admin): governed connectors (M365/Azure/AWS/Okta/CrowdStrike/Splunk/ServiceNow/Wiz) connect/sync/disconnect; SSO/SAML config; SCIM toggle+token; ABAC rules CRUD. ALL external integration MOCKED (demo-grade).
+
+## Roadmap remaining (P1/P2)
+- Real (live) connector OAuth + true SSO/SAML/SCIM with an IdP; production ABAC enforcement in request path
+- Additional kernel-native apps per vertical; benchmarking; white-label; custom dashboards/report builders
+
 
 ## Implemented (as of 2026-06)
 - JWT auth (httpOnly cookies, brute-force lockout), org/role, tenant isolation
