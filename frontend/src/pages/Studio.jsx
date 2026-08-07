@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { LayoutDashboard, FileText, Loader2, Save, Sparkles, Check } from "lucide-react";
+import { LayoutDashboard, FileText, Loader2, Save, Sparkles, Check, Download, Mail } from "lucide-react";
 
 const TABS = [["dashboard", "Dashboard Builder", LayoutDashboard], ["report", "Report Builder", FileText]];
 
@@ -72,6 +72,7 @@ function ReportBuilder() {
   const [title, setTitle] = useState("Custom Report");
   const [report, setReport] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState("");
 
   useEffect(() => { api.get("/studio/report/sections").then((r) => { setSections(r.data); setPicked(r.data.map((s) => s.id)); }); }, []);
   const toggle = (id) => setPicked((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
@@ -81,6 +82,22 @@ function ReportBuilder() {
     try { const { data } = await api.post("/studio/report/compose", { title, sections: picked }); setReport(data); toast.success("Report composed"); }
     catch { toast.error("Compose failed"); }
     setBusy(false);
+  };
+  const exportPdf = async () => {
+    setExporting("pdf");
+    try {
+      const { data } = await api.post("/studio/report/pdf", { title: report.title, ai_narrative: report.ai_narrative, blocks: report.blocks }, { responseType: "blob" });
+      const url = URL.createObjectURL(new Blob([data], { type: "application/pdf" }));
+      const a = document.createElement("a"); a.href = url; a.download = `${report.title.replace(/ /g, "-")}.pdf`; a.click(); URL.revokeObjectURL(url);
+      toast.success("PDF downloaded");
+    } catch { toast.error("Export failed"); }
+    setExporting("");
+  };
+  const emailBoard = async () => {
+    setExporting("email");
+    try { const { data } = await api.post("/studio/report/email", { title: report.title, ai_narrative: report.ai_narrative, blocks: report.blocks }); toast.success(`Emailed to ${data.to.length} board member(s)`); }
+    catch (e) { toast.error(e.response?.data?.detail ? "Email failed" : "Email failed"); }
+    setExporting("");
   };
   if (!sections) return <Spinner />;
 
@@ -109,9 +126,15 @@ function ReportBuilder() {
           <div className="text-sm text-muted-foreground flex items-center justify-center h-full">Pick sections and compose to preview your report.</div>
         ) : (
           <div className="space-y-5">
-            <div>
-              <h2 className="font-head font-black text-2xl">{report.title}</h2>
-              <div className="text-[10px] font-mono text-muted-foreground uppercase mt-1">Generated {new Date(report.generated_at).toLocaleString()} · {report.model}</div>
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div>
+                <h2 className="font-head font-black text-2xl">{report.title}</h2>
+                <div className="text-[10px] font-mono text-muted-foreground uppercase mt-1">Generated {new Date(report.generated_at).toLocaleString()} · {report.model}</div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button data-testid="report-export-pdf" disabled={!!exporting} onClick={exportPdf} className="inline-flex items-center gap-1.5 text-xs px-3 py-2 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 disabled:opacity-50">{exporting === "pdf" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Export PDF</button>
+                <button data-testid="report-email-board" disabled={!!exporting} onClick={emailBoard} className="inline-flex items-center gap-1.5 text-xs px-3 py-2 rounded-md bg-ai/10 border border-ai/30 text-ai hover:bg-ai/20 disabled:opacity-50">{exporting === "email" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />} Email board</button>
+              </div>
             </div>
             {report.ai_narrative && (
               <div className="bg-ai/5 border border-ai/20 rounded-lg p-4" data-testid="report-narrative">

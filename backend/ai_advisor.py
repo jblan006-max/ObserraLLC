@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from datetime import datetime, timezone
 
 from db import db
-from auth import get_current_user, require_active_subscription
+from auth import get_current_user, require_active_subscription, require_roles
 from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
 
 advisor_router = APIRouter(prefix="/api/advisor")
@@ -27,6 +27,22 @@ DEEP_ANALYSIS_DIRECTIVE = (
     "(reasoning, second-order effects, FACT vs ESTIMATE), **Recommendation** (prioritized, with "
     "confidence). Keep it tight and board-grade. Still emit at most one ACTION line if warranted."
 )
+
+
+# Approx cost per 1M tokens (input, output) in USD, by provider/model.
+COST_PER_MTOK = {
+    "anthropic/claude-opus-4-8": (15.0, 75.0),
+    "anthropic/claude-sonnet-5": (3.0, 15.0),
+    "gemini/gemini-3.1-pro-preview": (1.25, 5.0),
+}
+
+
+def _estimate_usage(model_key: str, prompt: str, system: str, response: str):
+    in_tok = (len(prompt) + len(system)) // 4
+    out_tok = len(response) // 4
+    rin, rout = COST_PER_MTOK.get(model_key, (5.0, 15.0))
+    cost = round(in_tok / 1_000_000 * rin + out_tok / 1_000_000 * rout, 5)
+    return {"input_tokens": in_tok, "output_tokens": out_tok, "total_tokens": in_tok + out_tok, "cost_usd": cost}
 
 
 class AdvisorQuery(BaseModel):
@@ -100,10 +116,13 @@ async def advisor_chat(body: AdvisorQuery, user: dict = Depends(require_active_s
                     break
         except Exception as e:
             yield f"data: {json.dumps({'delta': f'[advisor error: {str(e)}]'})}\n\n"
+        resp_text = "".join(collected)
+        sys_msg = SYSTEM_PROMPT + (DEEP_ANALYSIS_DIRECTIVE if body.deep else "")
+        usage = _estimate_usage(f"{provider}/{model}", full_prompt, sys_msg, resp_text)
         await db.advisor_logs.update_one(
             {"org_id": org_id, "user": user["email"], "prompt": body.message},
-            {"$set": {"response": "".join(collected)}}, upsert=False)
-        yield f"data: {json.dumps({'done': True, 'model': f'{provider}/{model}'})}\n\n"
+            {"$set": {"response": resp_text, "usage": usage}}, upsert=False)
+        yield f"data: {json.dumps({'done': True, 'model': f'{provider}/{model}', 'usage': usage})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
@@ -113,6 +132,19 @@ async def advisor_chat(body: AdvisorQuery, user: dict = Depends(require_active_s
 async def advisor_logs(user: dict = Depends(get_current_user)):
     logs = await db.advisor_logs.find({"org_id": user["org_id"]}, {"_id": 0}).sort("ts", -1).to_list(50)
     return logs
+
+
+@advisor_router.get("/usage")
+async def advisor_usage(admin: dict = Depends(require_roles("admin"))):
+    logs = await db.advisor_logs.find({"org_id": admin["org_id"], "usage": {"$exists": True}}, {"_id": 0}).sort("ts", -1).to_list(500)
+    today = datetime.now(timezone.utc).date().isoformat()
+    total_tokens = sum(l["usage"]["total_tokens"] for l in logs)
+    total_cost = round(sum(l["usage"]["cost_usd"] for l in logs), 4)
+    today_cost = round(sum(l["usage"]["cost_usd"] for l in logs if l.get("ts", "").startswith(today)), 4)
+    recent = [{"prompt": l["prompt"][:80], "user": l["user"], "model": l.get("model"), "ts": l.get("ts"),
+               "tokens": l["usage"]["total_tokens"], "cost_usd": l["usage"]["cost_usd"]} for l in logs[:20]]
+    return {"queries": len(logs), "total_tokens": total_tokens, "total_cost_usd": total_cost,
+            "today_cost_usd": today_cost, "recent": recent}
 
 
 @advisor_router.post("/board-report")

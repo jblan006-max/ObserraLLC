@@ -76,6 +76,14 @@ Foundation: Tenant Management · Identity & RBAC | Data: Enterprise Asset Model 
 - **Studio** (/app/studio): Dashboard Builder (toggle live kernel-metric widgets, saved per-user via /api/studio/dashboard) + Report Builder (pick sections → POST /api/studio/report/compose → AI Executive Narrative via Claude Opus 4.8 + section blocks).
 - **AI Advisor upgrade**: model upgraded to **Claude Opus 4.8** (executive+operational routes); new **Deep analysis mode** (advisor-deep-toggle → structured Signals/Analysis/Recommendation, deep flag on /api/advisor/chat); **slim always-visible header input bar** (header-advisor-input) that expands & sends to the advisor; advisor **auto-opens once per session** on login (cleared on logout). Obserra /logo.png retained as the advisor avatar.
 
+## Session 2026-06 (Studio Report Export + Advisor Cost Guardrails)
+- **Report Export**: Studio composed reports export to branded PDF (POST /api/studio/report/pdf, reuses reportlab _build_pdf) and email to the board = org admins+execs (POST /api/studio/report/email, managed Resend). UI buttons on Report Builder output.
+- **Advisor Cost Guardrails**: per-query token/cost estimated by provider/model rate table and stored in advisor_logs.usage; /api/advisor/chat done-event returns usage; GET /api/advisor/usage (admin) aggregates queries/total_tokens/total_cost/today_cost. Advisor header shows running spend chip + each answer shows its own token/cost (admin-only). Opus 4.8 rate $15/$75 per Mtok.
+
+## STILL MOCKED / BLOCKED (need user creds)
+- Live M365 connector OAuth — needs Azure app client_id/client_secret/tenant_id + redirect URI
+- True SSO/SAML + SCIM — needs IdP metadata URL/XML + signing cert
+
 ## Implemented (as of 2026-06)
 - JWT auth (httpOnly cookies, brute-force lockout), org/role, tenant isolation
 - Passwordless QR login (start/approve/poll, 3-min single-use, cross-device)

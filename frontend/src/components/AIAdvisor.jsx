@@ -38,7 +38,8 @@ const WORKER_CHIPS = [
 ];
 
 export function AIAdvisor() {
-  const { mode } = useAuth();
+  const { mode, user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState([]);
@@ -46,10 +47,13 @@ export function AIAdvisor() {
   const [modelTag, setModelTag] = useState("");
   const [working, setWorking] = useState(null);
   const [deep, setDeep] = useState(false);
+  const [spend, setSpend] = useState(null);
   const scrollRef = useRef(null);
   const sendRef = useRef(null);
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, streaming]);
+
+  useEffect(() => { if (open && isAdmin) api.get("/advisor/usage").then((r) => setSpend(r.data)).catch(() => {}); }, [open, isAdmin]);
 
   useEffect(() => {
     if (!sessionStorage.getItem("advisor-opened")) { setOpen(true); sessionStorage.setItem("advisor-opened", "1"); }
@@ -87,10 +91,12 @@ export function AIAdvisor() {
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           const p = JSON.parse(line.slice(6));
-          if (p.delta) setMessages((m) => { const c = [...m]; c[c.length - 1] = { role: "ai", text: c[c.length - 1].text + p.delta }; return c; });
+          if (p.delta) setMessages((m) => { const c = [...m]; c[c.length - 1] = { ...c[c.length - 1], role: "ai", text: c[c.length - 1].text + p.delta }; return c; });
           if (p.model) setModelTag(p.model);
+          if (p.usage) setMessages((m) => { const c = [...m]; c[c.length - 1] = { ...c[c.length - 1], usage: p.usage }; return c; });
         }
       }
+      if (isAdmin) api.get("/advisor/usage").then((r) => setSpend(r.data)).catch(() => {});
     } catch { setMessages((m) => { const c = [...m]; c[c.length - 1] = { role: "ai", text: "Advisor unavailable right now." }; return c; }); }
     setStreaming(false);
   };
@@ -115,6 +121,11 @@ export function AIAdvisor() {
               <div>
                 <div className="font-head font-bold text-ai">Obserra Advisor</div>
                 <div className="text-[10px] font-mono text-muted-foreground">{mode} · helper + worker · {modelTag || "claude-opus-4-8"}</div>
+                {isAdmin && spend && (
+                  <div data-testid="advisor-spend" className="text-[10px] font-mono text-ai mt-0.5">
+                    spend: ${spend.total_cost_usd?.toFixed(4)} · {spend.total_tokens?.toLocaleString()} tok · {spend.queries}q
+                  </div>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-1.5">
@@ -152,6 +163,9 @@ export function AIAdvisor() {
                   <div className={`inline-block max-w-[88%] text-sm leading-relaxed rounded-lg px-3.5 py-2.5 whitespace-pre-wrap ${m.role === "user" ? "bg-primary text-primary-foreground" : "bg-card ai-border text-foreground"}`}>
                     {m.role === "ai" ? renderRefs(parsed.text) : m.text}
                     {m.role === "ai" && streaming && i === messages.length - 1 && <Loader2 className="inline w-3 h-3 ml-1 animate-spin text-ai" />}
+                    {m.role === "ai" && m.usage && isAdmin && (
+                      <div data-testid="advisor-msg-cost" className="mt-1.5 text-[10px] font-mono text-muted-foreground">~{m.usage.total_tokens?.toLocaleString()} tok · ${m.usage.cost_usd?.toFixed(4)}</div>
+                    )}
                     {parsed.actions.map((a) => (
                       <button key={a.id} data-testid={`exec-${a.id}`} disabled={!!working} onClick={() => execute(a.id, a.label)}
                         className="mt-2 flex items-center gap-1.5 text-xs font-head font-bold px-3 py-1.5 rounded-md bg-ai text-background hover:opacity-90 transition-opacity disabled:opacity-50">

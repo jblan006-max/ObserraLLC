@@ -7,10 +7,56 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
 
-from auth import get_current_user
+from auth import get_current_user, require_roles
 from db import db
+from reports import _build_pdf, _report_html, EMAIL_BASE_URL
+from fastapi.responses import StreamingResponse
+from fastapi import HTTPException
+import httpx
 
 studio_router = APIRouter(prefix="/api/studio")
+
+
+class ReportExportBody(BaseModel):
+    title: str = "Custom Report"
+    ai_narrative: str = ""
+    blocks: list[dict] = []
+
+
+def _report_markdown(body: ReportExportBody) -> str:
+    md = []
+    if body.ai_narrative:
+        md += ["## Executive Narrative", body.ai_narrative, ""]
+    for b in body.blocks:
+        md.append(f"## {b.get('heading', '')}")
+        for ln in b.get("lines", []):
+            md.append(ln)
+        md.append("")
+    return "\n".join(md)
+
+
+@studio_router.post("/report/pdf")
+async def report_pdf(body: ReportExportBody, user: dict = Depends(get_current_user)):
+    buf = _build_pdf(_report_markdown(body), body.title)
+    fname = body.title.lower().replace(" ", "-")[:40] or "studio-report"
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename="{fname}.pdf"'})
+
+
+@studio_router.post("/report/email")
+async def report_email(body: ReportExportBody, admin: dict = Depends(require_roles("admin"))):
+    board = await db.users.find({"org_id": admin["org_id"], "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(100)
+    recipients = sorted({u["email"] for u in board} | {admin["email"]})
+    payload = {"to": recipients, "subject": f"{body.title} — Obserra EIOS Board Report",
+               "html": _report_html(_report_markdown(body), body.title), "from_name": os.environ["EMAIL_FROM_NAME"]}
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(f"{EMAIL_BASE_URL}/api/v1/email/send",
+                                     headers={"X-Email-Key": os.environ["EMERGENT_EMAIL_KEY"]}, json=payload)
+        resp.raise_for_status()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Failed to send email: {e}")
+    return {"status": "sent", "to": recipients}
 
 
 async def _ai_narrative(org_id: str, title: str, blocks: list[dict]) -> str:
