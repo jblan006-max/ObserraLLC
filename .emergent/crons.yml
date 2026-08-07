@@ -6,3 +6,10 @@ crons:
     method: POST
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     enabled: true
+  - name: weekly-drift-digest
+    description: "Emails owners/admins a weekly digest of open control-drift alerts every Monday 08:00 UTC"
+    cron: "0 8 * * 1"
+    endpoint: "{{BASE_URL}}/api/cron/weekly-drift-digest"
+    method: POST
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    enabled: true

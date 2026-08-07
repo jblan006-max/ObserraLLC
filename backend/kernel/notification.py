@@ -29,6 +29,13 @@ class NotificationEngine:
             i["id"] = str(i.pop("_id"))
         return items
 
+    async def get(self, org_id, notif_id):
+        from bson import ObjectId
+        n = await db.notifications.find_one({"_id": ObjectId(notif_id), "org_id": org_id})
+        if n:
+            n["id"] = str(n.pop("_id"))
+        return n
+
     async def unread_count(self, org_id):
         return await db.notifications.count_documents({"org_id": org_id, "read": False})
 

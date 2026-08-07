@@ -629,9 +629,9 @@ async def controls(user: dict = Depends(get_current_user)):
 
 async def _emit_drift_alerts(org_id, statuses):
     from kernel import notifications, policies
-    await policies.ensure_seed(org_id)
+    thresholds = await policies.thresholds(org_id)
     for c in statuses:
-        violations = policies.evaluate_control(c)
+        violations = policies.evaluate_control(c, thresholds)
         if not violations:
             continue
         reasons = "; ".join(f"{r} ({pid})" for pid, r in violations)

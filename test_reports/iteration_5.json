@@ -1,0 +1,25 @@
+{
+  "summary": "Comprehensive test of the 4 kernel-closing features (Remediation Workflows, Policy Authoring, Kernel Health Telemetry, Weekly Drift Digest cron) plus regression on prior features. Backend: 13/13 pytest tests PASS (new file test_kernel_closing.py). Frontend UI: verified all data-testids present and interactive — 15 kernel-sub-* cards, 15 kernel-records-* fields, policy-new-btn + policy-modal (admin), policy-edit-POL-CTRL-EFFECT + modal, notif-bell → notif-panel → click control_drift item opens remediation-modal, remediation-accept works. Operational user correctly hidden from nav-platform-kernel and policy new/edit buttons; 403 on POST/PATCH /api/policies verified. Cleanup performed: POL-CTRL-EFFECT reset to 55, all POL-CUSTOM-* deleted, all remediation workflows deleted, weekly-digest notifications deleted.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_kernel_closing.py",
+    "/app/test_reports/pytest/kernel_closing.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "kernel/health.py: risk_engine/control_engine 'last_run' hard-coded to 'live' string — inconsistent with numeric/timestamp fields elsewhere; could confuse UI parsers. Minor.",
+    "workflow.py start_remediation dedupe query uses status != 'resolved'; this is correct but any residual 'complete' workflows from onboarding type would not match because subject differs. OK.",
+    "policy.py create() generates policy_id from total org policy count — if any custom policy is deleted then created, IDs can collide (e.g. delete POL-CUSTOM-001 and next create is POL-CUSTOM-001 again). Consider UUID or a monotonic sequence.",
+    "scheduled.py _run_weekly_drift_digest catches per-org exceptions but not top-level DB errors — acceptable for cron.",
+    "kernel/routes.py remediate endpoint marks notification as read but does NOT set resolved:true until workflow is resolved — consistent with the assign flow but users may click the same notif twice; dedupe on workflow side handles it correctly."
+  ],
+  "updated_files": ["/app/backend/tests/test_kernel_closing.py"],
+  "success_rate": {"backend": "100% (13/13)", "frontend": "100% (verified: kernel-sub-* x15, kernel-records-* x15, policy-new-btn, policy-modal, policy-edit-POL-CTRL-EFFECT, policy-close, notif-bell, notif-panel, notif-item-* control_drift click opens remediation-modal, remediation-accept, remediation-assignee, remediation-assign, remediation-resolve, remediation-close, operational role gating on nav-platform-kernel + policy authoring)"},
+  "test_credentials": "Admin jblan2026@gmail.com / Obserra2026! ; Operational analyst@obserra.demo / Analyst2026! ; WEBHOOK_CRON_SECRET read from /app/backend/.env",
+  "seed_data_creation": "None persisted. Test file creates temporary POL-CUSTOM-*, remediation workflows, and triggers weekly-digest cron then cleans all in test_zzz_cleanup and via direct mongo cleanup post-run.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 4 new kernel-closing features working end-to-end. Backend regression file /app/backend/tests/test_kernel_closing.py can be re-run standalone. Note: test uses direct pymongo cleanup because there's no admin delete endpoint for policies/workflows — that's intentional per product design (audit trail). If any future test needs to reset threshold, use PATCH /api/policies/POL-CTRL-EFFECT threshold=55.",
+  "rca of the issue": "N/A — no issues found."
+}
