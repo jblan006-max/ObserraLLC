@@ -9,6 +9,7 @@ import os
 import time
 import json
 import secrets
+from datetime import datetime, timezone
 from urllib.parse import urlencode
 
 import httpx
@@ -34,13 +35,35 @@ def oidc_configured():
     return bool(os.environ.get("OIDC_DISCOVERY_URL") and os.environ.get("OIDC_CLIENT_ID") and os.environ.get("OIDC_CLIENT_SECRET"))
 
 
-async def _finish(provider, subject, email, name=None):
-    """Map the verified external identity to an existing Obserra user, then issue our session."""
+async def _jit_provision(provider, email, name, subject):
+    """First-time enterprise SSO user auto-joins their company org (matched by email domain)."""
+    domain = email.split("@")[-1].lower()
+    org = await db.organizations.find_one({"sso_domains": domain})
+    if not org:
+        import re as _re
+        from bson import ObjectId
+        peer = await db.users.find_one({"email": {"$regex": f"@{_re.escape(domain)}$"}})
+        if peer:
+            org = await db.organizations.find_one({"_id": ObjectId(peer["org_id"])})
+    if not org:
+        return None
+    doc = {"email": email.lower(), "name": name or email.split("@")[0], "role": "operational",
+           "org_id": str(org["_id"]), "created_at": datetime.now(timezone.utc).isoformat(),
+           "provisioned_via": provider, "identities": {provider: subject} if subject else {}}
+    res = await db.users.insert_one(doc)
+    await _log_audit(str(org["_id"]), email.lower(), "user.jit_provision", f"Auto-provisioned via {provider} SSO")
+    return await db.users.find_one({"_id": res.inserted_id})
+
+
+async def _finish(provider, subject, email, name=None, jit=False):
+    """Map the verified external identity to an Obserra user (JIT-provision on enterprise SSO), then issue our session."""
     user = None
     if email:
         user = await db.users.find_one({"email": email.lower()})
     if not user and subject:
         user = await db.users.find_one({f"identities.{provider}": subject})
+    if not user and jit and email:
+        user = await _jit_provision(provider, email, name, subject)
     if not user:
         return RedirectResponse(f"{FRONTEND}/?sso_error=no_account")
     if subject:
@@ -139,4 +162,4 @@ async def sso_callback(request: Request):
     except Exception:
         return RedirectResponse(f"{FRONTEND}/?sso_error=sso")
     claims = token.get("userinfo") or {}
-    return await _finish("oidc", claims.get("sub"), claims.get("email"), claims.get("name"))
+    return await _finish("oidc", claims.get("sub"), claims.get("email"), claims.get("name"), jit=True)

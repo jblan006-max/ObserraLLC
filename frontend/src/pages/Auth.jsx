@@ -37,8 +37,8 @@ export default function Auth() {
         <img alt="" src="https://images.unsplash.com/photo-1644088379091-d574269d422f?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200"
           className="absolute inset-0 w-full h-full object-cover opacity-[0.08]" />
         <NetworkBackground className="absolute inset-0 w-full h-full opacity-70" />
-        <div className="relative">
-          <img src="/logo.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-20 w-auto object-contain logo-pulse" />
+        <div className="relative flex justify-center">
+          <img src="/logo-white.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-40 xl:h-52 w-auto object-contain logo-pulse" />
         </div>
         <div className="relative space-y-6">
           <h1 className="font-head font-black text-5xl leading-[1.05] tracking-tight">
@@ -62,8 +62,8 @@ export default function Auth() {
 
       <div className="flex items-center justify-center p-6">
         <div className="w-full max-w-sm rise">
-          <div className="lg:hidden mb-8">
-            <img src="/logo.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-16 w-auto object-contain" />
+          <div className="lg:hidden mb-8 flex justify-center">
+            <img src="/logo-white.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-28 w-auto object-contain" />
           </div>
           <div className="flex gap-1 p-1 bg-secondary/50 rounded-lg mb-6 text-sm">
             {["login", "register"].map((t) => (

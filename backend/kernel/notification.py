@@ -8,20 +8,32 @@ from db import db
 
 logger = logging.getLogger(__name__)
 EMAIL_BASE_URL = "https://integrations.emergentagent.com"
+HIGH_PUSH = {"control_drift", "advisor_budget", "incident", "risk_critical", "vendor_risk"}
 
 
 class NotificationEngine:
+    async def _push(self, org_id, title, body):
+        try:
+            from push import push_to_org
+            await push_to_org(org_id, title, body)
+        except Exception as e:
+            logger.warning(f"push skipped: {e}")
+
     async def create(self, org_id, kind, title, body, ref=None, dedupe_key=None):
         now = datetime.now(timezone.utc).isoformat()
         doc = {"org_id": org_id, "kind": kind, "title": title, "body": body,
                "ref": ref, "read": False, "created_at": now}
         if dedupe_key:
             doc["dedupe_key"] = dedupe_key
-            await db.notifications.update_one(
+            res = await db.notifications.update_one(
                 {"org_id": org_id, "dedupe_key": dedupe_key},
                 {"$setOnInsert": doc}, upsert=True)
+            if res.upserted_id and kind in HIGH_PUSH:
+                await self._push(org_id, title, body)
             return
         await db.notifications.insert_one(doc)
+        if kind in HIGH_PUSH:
+            await self._push(org_id, title, body)
 
     async def list(self, org_id, limit=50):
         items = await db.notifications.find({"org_id": org_id}).sort("created_at", -1).to_list(limit)

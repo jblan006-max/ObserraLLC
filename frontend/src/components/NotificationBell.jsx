@@ -1,7 +1,9 @@
 import { useEffect, useState, useRef } from "react";
 import { api } from "@/lib/api";
-import { Bell, ShieldAlert, FileText, Users, CheckCheck } from "lucide-react";
+import { Bell, BellRing, ShieldAlert, FileText, Users, CheckCheck } from "lucide-react";
 import { RemediationModal } from "@/components/RemediationModal";
+import { enablePush, pushSupported } from "@/lib/push";
+import { toast } from "sonner";
 
 const ICON = { control_drift: ShieldAlert, report: FileText, team: Users };
 
@@ -9,7 +11,18 @@ export function NotificationBell() {
   const [data, setData] = useState({ items: [], unread: 0 });
   const [open, setOpen] = useState(false);
   const [remediation, setRemediation] = useState(null);
+  const [pushOn, setPushOn] = useState(false);
   const ref = useRef(null);
+
+  const doEnablePush = async () => {
+    try {
+      await enablePush();
+      setPushOn(true);
+      toast.success("Alerts enabled on this device");
+    } catch (e) {
+      toast.error(e.message === "Permission denied" ? "Notifications are blocked in your browser settings" : "Could not enable alerts here");
+    }
+  };
 
   const load = () => api.get("/notifications").then((r) => setData(r.data)).catch(() => {});
   useEffect(() => { load(); const t = setInterval(load, 25000); return () => clearInterval(t); }, []);
@@ -51,7 +64,14 @@ export function NotificationBell() {
           <div data-testid="notif-panel" className="absolute right-0 mt-2 w-80 max-h-[70vh] overflow-y-auto bg-card fact-border rounded-xl shadow-2xl z-50">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border sticky top-0 bg-card">
               <span className="font-head font-bold text-sm">Notifications</span>
-              <button data-testid="notif-mark-all" onClick={markAll} className="flex items-center gap-1 text-[11px] text-ai hover:underline"><CheckCheck className="w-3.5 h-3.5" /> Mark all read</button>
+              <div className="flex items-center gap-3">
+                {pushSupported() && (
+                  <button data-testid="notif-enable-push" onClick={doEnablePush} className="flex items-center gap-1 text-[11px] text-ai hover:underline">
+                    <BellRing className="w-3.5 h-3.5" /> {pushOn ? "Alerts on" : "Enable alerts"}
+                  </button>
+                )}
+                <button data-testid="notif-mark-all" onClick={markAll} className="flex items-center gap-1 text-[11px] text-ai hover:underline"><CheckCheck className="w-3.5 h-3.5" /> Mark all read</button>
+              </div>
             </div>
             {data.items.length === 0 ? (
               <div className="px-4 py-8 text-center text-xs text-muted-foreground">You're all caught up.</div>
