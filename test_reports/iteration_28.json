@@ -1,0 +1,25 @@
+{
+  "summary": "Frontend E2E for Obserra EIOS auto-connect connector flow. ALL scenarios PASS. (1) /app/connectors renders with 5 live connector cards (M365, Copilot, ChatGPT/OpenAI, Teams, SSO/SAML) plus catalog grid; page testid available-connectors-page confirmed. (2) Auto-connect with dummy credentials: filling any values and clicking Save & connect immediately flips status pills — m365-status=LIVE, copilot-status=LIVE, openai-status=LIVE, teams-status=READY, sso-live-status=READY. Success toasts ('SSO connected', etc.) shown; NO 'NOT LIVE' or 'Invalid' error state observed. All PUTs to /api/enterprise/live/{m365,copilot,openai,teams,sso} returned 200 with immediate live=true. (3) Disconnect/Clear controls (m365/copilot/openai/teams-disconnect, sso-clear) all revert pills to NOT SET (DELETE /api/enterprise/live/{kind} → 200). (4) Catalog connector Okta: connect-okta → mock connect (POST /api/enterprise/connectors/okta/connect 200) → disconnect-okta appears → disconnect reverts to connect-okta. (5) Settings sso-config-settings card renders Apple + OIDC + SAML sections. Saving Apple (apple-save) and Enterprise OIDC (oidc-save) with dummy values immediately shows 'CONNECTED · APPLE' and 'CONNECTED · OIDC' badges — no blocking Test step. Final state: all live connectors DISCONNECTED (all NOT SET) and Okta catalog reverted; owner org left clean.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "AvailableConnectors.jsx auto-connect behavior is correctly wired to backend PUT /api/enterprise/live/{kind}; status pill re-renders from GET /api/enterprise/live after save. No blocking verification step.",
+    "SsoCard.jsx apple-save and oidc-save persist config and immediately reflect 'Connected' badge without requiring apple-test/oidc-test buttons. Matches auto-connect intent.",
+    "Minor: login form does not activate submit on button.click() reliably across sessions; page.press('Enter') on the password input works consistently. Consider adding form onSubmit (may already exist) — but pressing Enter working means it does. Not a blocker; noting for test agents that Enter is the more reliable path.",
+    "Onboarding tour ([data-testid=tour-skip]) auto-launches on first login of a session and overlays the app — test scripts must dismiss it before interacting with connectors/settings."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a (skipped per request)", "frontend": "100%" },
+  "test_credentials": "Admin/Owner jblan2026@gmail.com / Obserra2026! (works, hardcoded owner override).",
+  "seed_data_creation": "None. Created & then removed dummy credentials for all 5 live connectors and 1 catalog connector (Okta). Apple + OIDC SSO configs left as saved (dummy Team ID / Services ID / Key ID / dummy p8 for Apple; dummy discovery URL/client id/secret for OIDC) — the owner may want to Remove these via Settings if the dummy values pollute anything. Live connectors are ALL cleaned back to NOT SET.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Available Connectors route is /app/connectors (nested under /app). Login: fill email/password and press Enter on password field (auth-submit click sometimes intercepted by tour on fresh sessions). Onboarding tour auto-shows on login; dismiss via [data-testid=tour-skip] before interacting. All 5 live connectors save via PUT /api/enterprise/live/{m365|copilot|openai|teams|sso} and always return live/valid=true (best-effort real fetch wrapped in try/except server-side). Settings SSO card testids: apple-team-id, apple-service-id, apple-key-id, apple-p8, apple-save, oidc-discovery, oidc-client-id, oidc-client-secret, oidc-save, saml-metadata, saml-save.",
+  "rca of the issue": "N/A — no bugs found. Auto-connect behavior implemented correctly across all 5 live connectors, catalog mocks, and Settings SSO card."
+}
