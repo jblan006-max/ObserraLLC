@@ -44,8 +44,8 @@ Obserra EIOS — subscription-gated enterprise SaaS. Two flagship apps on one pl
 ## Testing
 - iteration_2.json: 23/23 new-feature backend tests pass, 45/46 suite (1 expected shadow-AI flake). Reports email 500 (invalid regex) fixed. Stripe checkout verified.
 
-## Backlog (from stakeholder vision — prioritized, NOT yet built)
-- P0: Financial risk quantification ($ exposure model), Predictive risk + decision What-if simulation, Enterprise Knowledge Graph (BU↔Assets↔Data↔Vendors↔AI↔Controls↔Risks↔Regs), full clickable Evidence Intelligence (Metric→Calc→Source→Evidence→Control→Risk→Framework→Owner)
+## Backlog (from stakeholder vision — prioritized)
+- P0 ✅ DONE (2026-06): Financial risk quantification (FAIR ALE per risk + executive rollup), Decision What-if Simulation, Enterprise Knowledge Graph (BU↔AI↔data↔vendors↔risks↔regs with NL-preset traversal), clickable Evidence Intelligence drill-down (Metric→Calc→Source→Evidence→Control→Risk→Framework→Owner + FAIR ALE)
 - P1: Continuous Control Monitoring (evidence expiry/drift), more native frameworks (NIST CSF 2.0, 800-53, SSDF, ISO 27001, SOC2, HIPAA, PCI, CMMC, GDPR, DORA, MITRE ATLAS), AI agent inventory + permission/tool governance, red-team/prompt-injection testing
 - P1: Real connectors (M365/Azure/AWS/GCP/Okta/CrowdStrike/Sentinel/Splunk/ServiceNow/Wiz/Qualys...), Enterprise SSO/SAML + SCIM, ABAC
 - P2: White-label, custom dashboards/frameworks/scoring, workflow + report builders, scheduled reports, Excel/Word exports, regulatory examination packages, Teams/Slack alerts, mobile exec view, benchmarking

@@ -125,6 +125,8 @@ export default function Decisions() {
           ))}
         </div>
       </div>
+
+      <SimulationModal risk={simRisk} onClose={() => setSimRisk(null)} />
     </div>
   );
 }
