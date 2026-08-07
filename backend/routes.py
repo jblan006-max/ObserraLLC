@@ -608,12 +608,23 @@ _CONTROL_SEED = [
 
 
 _CONTROL_FRAMEWORKS = {
-    "IAM-3": {"NIST CSF 2.0": ["PR.AA-01", "PR.AA-05"], "NIST 800-53": ["AC-2", "AC-6"], "ISO 27001": ["A.5.15", "A.8.2"], "SOC 2": ["CC6.1", "CC6.3"], "CISA CPG": ["2.A", "2.E"]},
-    "VM-2": {"NIST CSF 2.0": ["ID.RA-01", "PR.PS-02"], "NIST 800-53": ["RA-5", "SI-2"], "ISO 27001": ["A.8.8"], "SOC 2": ["CC7.1"], "CISA CPG": ["1.E", "4.C"]},
-    "AIG-1": {"NIST CSF 2.0": ["GV.OC-01"], "NIST 800-53": ["PM-9", "SA-8"], "ISO 27001": ["A.5.1"], "SOC 2": ["CC1.2"], "CISA CPG": ["2.K"]},
-    "DP-1": {"NIST CSF 2.0": ["PR.DS-01"], "NIST 800-53": ["SC-28", "PL-8"], "ISO 27001": ["A.8.11", "A.5.34"], "SOC 2": ["CC6.7"], "CISA CPG": ["2.K"]},
-    "BCP-2": {"NIST CSF 2.0": ["RC.RP-01", "PR.IP-04"], "NIST 800-53": ["CP-9", "CP-10"], "ISO 27001": ["A.8.13", "A.5.29"], "SOC 2": ["A1.2", "A1.3"], "CISA CPG": ["5.A"]},
-    "TPR-4": {"NIST CSF 2.0": ["GV.SC-01", "ID.SC-04"], "NIST 800-53": ["SR-3", "SR-6"], "ISO 27001": ["A.5.19", "A.5.20"], "SOC 2": ["CC9.2"], "CISA CPG": ["4.C"]},
+    "IAM-3": {"NIST 800-53": ["AC-2", "AC-6"], "CIS v8": ["5.4", "6.8"], "SOC 2": ["CC6.1", "CC6.3"], "SSDF": ["PO.5.1", "PO.5.2"], "PCI DSS": ["7.2", "8.2"], "ISO 27001": ["A.5.15", "A.8.2"]},
+    "VM-2": {"NIST 800-53": ["RA-5", "SI-2"], "CIS v8": ["7.1", "7.4"], "SOC 2": ["CC7.1"], "SSDF": ["RV.1", "RV.2", "RV.3"], "PCI DSS": ["6.3", "11.3"], "ISO 27001": ["A.8.8"]},
+    "AIG-1": {"NIST 800-53": ["PM-9", "SA-8"], "CIS v8": ["2.1"], "SOC 2": ["CC1.2"], "SSDF": ["PO.1.1", "PO.3.2"], "PCI DSS": [], "ISO 27001": ["A.5.1"]},
+    "DP-1": {"NIST 800-53": ["SC-28", "PL-8"], "CIS v8": ["3.1", "3.12"], "SOC 2": ["CC6.7"], "SSDF": ["PW.9.1"], "PCI DSS": ["3.2", "3.5"], "ISO 27001": ["A.8.11", "A.5.34"]},
+    "BCP-2": {"NIST 800-53": ["CP-9", "CP-10"], "CIS v8": ["11.1", "11.5"], "SOC 2": ["A1.2", "A1.3"], "SSDF": [], "PCI DSS": ["12.10"], "ISO 27001": ["A.8.13", "A.5.29"]},
+    "TPR-4": {"NIST 800-53": ["SR-3", "SR-6"], "CIS v8": ["15.1", "15.4"], "SOC 2": ["CC9.2"], "SSDF": ["PW.4.1", "PW.4.4"], "PCI DSS": ["12.8"], "ISO 27001": ["A.5.19", "A.5.20"]},
+}
+
+# Canonical column order for the compliance crosswalk (the six frameworks Obserra maps to).
+FRAMEWORK_ORDER = ["NIST 800-53", "CIS v8", "SOC 2", "SSDF", "PCI DSS", "ISO 27001"]
+FRAMEWORK_FULL = {
+    "NIST 800-53": "NIST SP 800-53 Rev. 5",
+    "CIS v8": "CIS Critical Security Controls v8",
+    "SOC 2": "AICPA SOC 2 (Trust Services Criteria)",
+    "SSDF": "NIST SSDF (SP 800-218)",
+    "PCI DSS": "PCI DSS v4.0",
+    "ISO 27001": "ISO/IEC 27001:2022 Annex A",
 }
 
 
@@ -683,6 +694,42 @@ async def controls_compliance(user: dict = Depends(get_current_user)):
     gaps.sort(key=lambda g: (_SEV.get(g["status"], 3), g["effectiveness"]))
     return {"frameworks": out, "overall": overall, "gaps": gaps,
             "total_controls": len(statuses), "passing": sum(1 for c in statuses if c["status"] == "Passing")}
+
+
+@api.get("/controls/crosswalk")
+async def controls_crosswalk(user: dict = Depends(get_current_user)):
+    """Exact control-by-control mapping of Obserra controls to NIST 800-53, CIS v8,
+    SOC 2, SSDF, PCI DSS and ISO 27001 — with a compliant vs non-compliant verdict per
+    control (a control is compliant only when its status is Passing)."""
+    org_id = user["org_id"]
+    existing = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    if not existing:
+        await db.controls.insert_many([{**c, "org_id": org_id} for c in _CONTROL_SEED])
+        existing = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    statuses = [_control_status(c) for c in existing]
+    rows = []
+    for c in statuses:
+        fw = c.get("frameworks") or {}
+        rows.append({
+            "control_id": c["control_id"], "name": c["name"], "category": c.get("category"),
+            "owner": c.get("owner"), "status": c["status"], "effectiveness": c["effectiveness"],
+            "compliant": c["status"] == "Passing",
+            "mappings": {k: fw.get(k, []) for k in FRAMEWORK_ORDER},
+        })
+    summary = []
+    for k in FRAMEWORK_ORDER:
+        mapped = [r for r in rows if r["mappings"][k]]
+        compliant = sum(1 for r in mapped if r["compliant"])
+        total = len(mapped)
+        summary.append({
+            "framework": k, "full_name": FRAMEWORK_FULL[k], "mapped_controls": total,
+            "compliant": compliant, "non_compliant": total - compliant,
+            "compliant_pct": round(compliant / total * 100) if total else 0,
+            "status": "Compliant" if total and compliant == total else ("Gaps" if total else "Not mapped"),
+        })
+    return {"frameworks": FRAMEWORK_ORDER, "framework_full": FRAMEWORK_FULL,
+            "rows": rows, "summary": summary,
+            "compliant_controls": sum(1 for r in rows if r["compliant"]), "total_controls": len(rows)}
 
 
 async def _emit_drift_alerts(org_id, statuses):

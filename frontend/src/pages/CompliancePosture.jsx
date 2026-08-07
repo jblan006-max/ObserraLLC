@@ -1,24 +1,16 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
-import { ShieldCheck, Loader2, AlertTriangle, ArrowRight } from "lucide-react";
+import { ShieldCheck, Loader2, AlertTriangle, ArrowRight, CheckCircle2, XCircle, Grid3x3 } from "lucide-react";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 const col = (v) => (v >= 75 ? "142 70% 45%" : v >= 55 ? "35 90% 55%" : "0 84% 60%");
-const STATUS_COL = { "Failing": "0 84% 60%", "Evidence Stale": "35 90% 55%", "Drifting": "266 85% 66%" };
+const STATUS_COL = { "Failing": "0 84% 60%", "Evidence Stale": "35 90% 55%", "Drifting": "266 85% 66%", "Passing": "142 70% 45%" };
 const fade = { hidden: { opacity: 0, y: 12 }, show: (i) => ({ opacity: 1, y: 0, transition: { delay: i * 0.05, duration: 0.4 } }) };
 
-export default function CompliancePosture() {
-  const [d, setD] = useState(null);
-  useEffect(() => { api.get("/controls/compliance").then((r) => setD(r.data)).catch(() => setD({ frameworks: [], gaps: [] })); }, []);
-  if (!d) return <div className="flex items-center justify-center h-96"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
-
+function Posture({ d }) {
   return (
-    <div className="rise space-y-8" data-testid="compliance-posture-page">
-      <div>
-        <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><ShieldCheck className="w-7 h-7 text-primary" /> Compliance Posture</h1>
-        <p className="text-sm text-muted-foreground mt-1">Leadership view of alignment across NIST CSF 2.0, NIST 800-53, ISO 27001, SOC 2 &amp; CISA CPG — and the gaps to close first.</p>
-      </div>
-
+    <div className="space-y-8">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         <motion.div custom={0} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-4 bg-card fact-border rounded-xl p-6 flex flex-col items-center justify-center text-center">
           <div className="text-xs text-muted-foreground mb-1">Overall alignment</div>
@@ -73,6 +65,117 @@ export default function CompliancePosture() {
           </div>
         )}
       </motion.div>
+    </div>
+  );
+}
+
+function Crosswalk({ x }) {
+  return (
+    <div className="space-y-6" data-testid="crosswalk-panel">
+      {/* Per-framework compliant vs not summary */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        {x.summary.map((s) => {
+          const ok = s.status === "Compliant";
+          return (
+            <div key={s.framework} data-testid={`crosswalk-summary-${s.framework.replace(/[^a-zA-Z0-9]/g, "-")}`}
+              className={`rounded-xl p-4 border ${ok ? "border-low/30 bg-low/5" : "border-high/30 bg-high/5"}`}>
+              <div className="flex items-center justify-between">
+                <div className="font-head font-bold text-sm">{s.framework}</div>
+                {ok ? <CheckCircle2 className="w-4 h-4 text-low" /> : <XCircle className="w-4 h-4 text-high" />}
+              </div>
+              <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">{s.full_name}</div>
+              <div className="font-head font-black text-2xl tracking-tight mt-2" style={{ color: `hsl(${col(s.compliant_pct)})` }}>{s.compliant_pct}%</div>
+              <div className="text-[11px] text-muted-foreground">{s.compliant} of {s.mapped_controls} mapped controls compliant</div>
+              <span className={`inline-block mt-2 text-[9px] font-mono px-2 py-0.5 rounded-full ${ok ? "bg-low/15 text-low" : "bg-high/15 text-high"}`}>{s.status}</span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Exact control-by-control crosswalk matrix */}
+      <div className="bg-card fact-border rounded-xl p-5 overflow-x-auto">
+        <div className="flex items-center gap-2 mb-4"><Grid3x3 className="w-4 h-4 text-primary" /><h2 className="font-head font-bold text-lg">Control crosswalk — exact framework mapping</h2></div>
+        <table className="w-full border-collapse text-sm min-w-[880px]" data-testid="crosswalk-table">
+          <thead>
+            <tr className="text-left">
+              <th className="py-2 pr-3 text-xs font-mono uppercase tracking-wider text-muted-foreground sticky left-0 bg-card">Control</th>
+              <th className="py-2 px-2 text-xs font-mono uppercase tracking-wider text-muted-foreground">Status</th>
+              {x.frameworks.map((f) => (
+                <th key={f} className="py-2 px-2 text-xs font-mono uppercase tracking-wider text-muted-foreground">{f}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {x.rows.map((r) => (
+              <tr key={r.control_id} data-testid={`crosswalk-row-${r.control_id}`} className="border-t border-border align-top">
+                <td className="py-3 pr-3 sticky left-0 bg-card">
+                  <div className="flex items-center gap-2">
+                    {r.compliant ? <CheckCircle2 className="w-4 h-4 text-low shrink-0" /> : <XCircle className="w-4 h-4 text-high shrink-0" />}
+                    <div>
+                      <div className="font-mono text-[11px] text-muted-foreground">{r.control_id}</div>
+                      <div className="font-medium text-[13px] leading-tight">{r.name}</div>
+                      <div className="text-[10px] text-muted-foreground">{r.category}</div>
+                    </div>
+                  </div>
+                </td>
+                <td className="py-3 px-2">
+                  <span data-testid={`crosswalk-verdict-${r.control_id}`} className="text-[10px] font-mono px-2 py-0.5 rounded-full" style={{ background: `hsl(${STATUS_COL[r.status] || "0 84% 60%"} / 0.15)`, color: `hsl(${STATUS_COL[r.status] || "0 84% 60%"})` }}>
+                    {r.compliant ? "Compliant" : "Non-compliant"}
+                  </span>
+                  <div className="text-[10px] text-muted-foreground mt-1">{r.status} · {r.effectiveness}%</div>
+                </td>
+                {x.frameworks.map((f) => {
+                  const ids = r.mappings[f] || [];
+                  return (
+                    <td key={f} className="py-3 px-2">
+                      {ids.length === 0 ? (
+                        <span className="text-[10px] text-muted-foreground/60 italic">n/a</span>
+                      ) : (
+                        <div className="flex flex-wrap gap-1">
+                          {ids.map((id) => (
+                            <span key={id} className={`text-[9px] font-mono px-1.5 py-0.5 rounded-sm border ${r.compliant ? "bg-low/10 text-low border-low/20" : "bg-high/10 text-high border-high/20"}`}>{id}</span>
+                          ))}
+                        </div>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p className="text-[11px] text-muted-foreground mt-3">A control is <span className="text-low font-medium">Compliant</span> only when its continuous-monitoring status is Passing; <span className="text-high font-medium">Non-compliant</span> covers Failing, Drifting or stale-evidence controls. "n/a" = the control is not in scope for that framework.</p>
+      </div>
+    </div>
+  );
+}
+
+export default function CompliancePosture() {
+  const [d, setD] = useState(null);
+  const [x, setX] = useState(null);
+  useEffect(() => {
+    api.get("/controls/compliance").then((r) => setD(r.data)).catch(() => setD({ frameworks: [], gaps: [] }));
+    api.get("/controls/crosswalk").then((r) => setX(r.data)).catch(() => setX({ frameworks: [], rows: [], summary: [] }));
+  }, []);
+  if (!d) return <div className="flex items-center justify-center h-96"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
+
+  return (
+    <div className="rise space-y-6" data-testid="compliance-posture-page">
+      <div>
+        <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><ShieldCheck className="w-7 h-7 text-primary" /> Compliance Posture</h1>
+        <p className="text-sm text-muted-foreground mt-1">Alignment and an exact control crosswalk across NIST 800-53, CIS v8, SOC 2, SSDF, PCI DSS &amp; ISO 27001 — showing what's compliant versus what isn't.</p>
+      </div>
+
+      <Tabs defaultValue="posture">
+        <TabsList className="bg-card">
+          <TabsTrigger value="posture" data-testid="tab-posture">Posture &amp; Gaps</TabsTrigger>
+          <TabsTrigger value="crosswalk" data-testid="tab-crosswalk">Control Crosswalk</TabsTrigger>
+        </TabsList>
+        <TabsContent value="posture" className="mt-5"><Posture d={d} /></TabsContent>
+        <TabsContent value="crosswalk" className="mt-5">
+          {x ? <Crosswalk x={x} /> : <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

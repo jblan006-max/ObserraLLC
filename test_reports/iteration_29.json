@@ -1,0 +1,43 @@
+{
+  "summary": "Backend + Frontend E2E for Obserra EIOS. Backend crosswalk + recheck + compliance regression: 9/9 pytest pass. Compliance UI (/app/compliance): Posture + Crosswalk tabs work; 6 summary cards render (data-testid crosswalk-summary-NIST-800-53 / CIS-v8 / SOC-2 / SSDF / PCI-DSS / ISO-27001 — uppercase, punctuation replaced with '-'); crosswalk-table has 6 rows with per-control verdicts (Compliant/Non-compliant) and 'n/a' shown for empty PCI/SSDF cells. Available Connectors (/app/connectors): openai auto-connects LIVE with 'Awaiting first live sync' badge; openai-recheck keeps LIVE; catalog connect-aws → 'LIVE · synced just now' (data-testid catalog-aws-synced), sync-aws updates, disconnect-aws reverts to Connect. No 'MOCKED'/'records ingested' fabricated text. CRITICAL BUG: AI Governance page (/app/ai-governance) throws 'ReferenceError: live is not defined' — entire page crashes, ai-licenses-card never renders. Root cause: AIGovernance.jsx references `live?.copilot`, `live?.openai`, `live?.m365` and `{live && ...}` (lines 45-48, 67) but the `live` state is never declared or fetched. Missing useState + api.get('/enterprise/live') call.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/enterprise/live/teams/recheck", "issue": "Returns 400 'This connector cannot be re-checked'. Teams is a webhook connector and AvailableConnectors.jsx correctly does NOT render a teams-recheck button — but review spec implied all 5 live connectors expose recheck. Not a blocker; behavior is intentionally omitted in UI."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AIGovernance.jsx", "issue": "ReferenceError: live is not defined — page crashes on load. `live` variable is used at lines 45-48 (const copilot=live?.copilot; openai=live?.openai; m365=live?.m365; anyLicensed=...) and line 67 ({live && <ai-licenses-card>...}) but is never declared via useState nor populated via api.get('/enterprise/live'). Must add: `const [live,setLive]=useState(null);` and in load() also `api.get('/enterprise/live').then(r=>setLive(r.data));`.", "selector": "[data-testid=ai-licenses-card]", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [
+      {"flow": "AI Governance → Copilot/OpenAI/M365 license tiles", "issue": "Because AIGovernance page crashes, the entire AI licenses card (lic-copilot / lic-openai / lic-m365) never renders regardless of whether connectors are LIVE.", "affected_selectors": ["[data-testid=ai-licenses-card]", "[data-testid=lic-copilot]", "[data-testid=lic-openai]", "[data-testid=lic-m365]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_crosswalk_and_connectors.py",
+    "/app/test_reports/pytest/crosswalk_results.xml"
+  ],
+  "action_items": [
+    "FIX AIGovernance.jsx: add `const [live, setLive] = useState(null);` and call `api.get('/enterprise/live').then(r => setLive(r.data));` inside load(). This will restore the entire AI Governance page + AI Licenses & Copilot Governance card.",
+    "(Optional/spec-alignment) If teams-recheck is expected per spec, add a recheck branch for 'teams' in /app/backend/live_connectors.py:recheck_live (currently only m365/copilot/openai/sso are handled)."
+  ],
+  "critical_code_review_comments": [
+    "AIGovernance.jsx uses `live` state without declaring it — clear regression from a refactor. Blocks the whole AI Governance route with a React uncaught runtime error overlay.",
+    "Backend GET /api/controls/crosswalk cleanly returns {frameworks, framework_full, rows, summary, compliant_controls, total_controls}. Summary correctly excludes rows with empty mapping from per-framework totals (SSDF excludes BCP-2, PCI DSS excludes AIG-1). row.compliant matches (status=='Passing').",
+    "Backend GET /api/controls/compliance now aggregates across the 6 crosswalk frameworks — verified all 6 names present, no legacy CSF-only shape.",
+    "CompliancePosture.jsx testid convention: `crosswalk-summary-<framework>` uses `framework.replace(/[^a-zA-Z0-9]/g,'-')`, producing UPPERCASE ids (e.g. 'crosswalk-summary-NIST-800-53', 'crosswalk-summary-CIS-v8'). Task spec examples read lowercase — clarify convention or normalize toLowerCase() for consistency.",
+    "AvailableConnectors auto-connect + recheck-stays-live works for all 4 UI-recheckable kinds (m365/copilot/openai/sso). Catalog one-click live (aws) works end-to-end; no fabricated record counts observed."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_crosswalk_and_connectors.py (new)"
+  ],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "75% — Compliance + Connectors pass; AI Governance page fully broken"},
+  "test_credentials": "Admin/Owner jblan2026@gmail.com / Obserra2026! (login by pressing Enter on password field; dismiss tour-skip).",
+  "seed_data_creation": "Test created + immediately disconnected: openai live connector (dummy sk-testdummy) and aws catalog connector. All disconnected before end of run. Owner org left clean.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "AIGovernance.jsx is missing a `live` useState + api.get('/enterprise/live') call — once main agent fixes, retest data-testid=ai-licenses-card and its 3 tiles (lic-copilot/lic-openai/lic-m365). Verify: connecting Copilot via /app/connectors flips lic-copilot to LIVE. Crosswalk testid naming is uppercase-with-dashes (NIST-800-53, CIS-v8, SOC-2, SSDF, PCI-DSS, ISO-27001). Teams has no recheck (webhook connector).",
+  "rca of the issue": "AIGovernance.jsx references `live` variable (lines 45-48, 67) but never declares state nor fetches /api/enterprise/live. React throws ReferenceError on component render. Reproduction: login as admin → navigate to /app/ai-governance → red 'Uncaught runtime errors: live is not defined' overlay appears. Fix: import/copy the pattern used in AvailableConnectors.jsx — add `const [live,setLive] = useState(null);` and inside load() add `api.get('/enterprise/live').then(r=>setLive(r.data));`."
+}
