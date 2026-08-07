@@ -99,3 +99,28 @@ async def assess_vendor(ref: str, admin: dict = Depends(require_roles("admin")))
             f"{v['name']} scored {sc}/100 — {v['data_access']} access, {v['attestation']}% attested, {v['incidents']} incident(s).",
             ref=ref, dedupe_key=f"vendor:{ref}:{sc}")
     return {"ref": ref, "risk_score": sc, "risk_tier": tier}
+
+
+class VendorNote(BaseModel):
+    kind: str = "note"
+    text: str
+
+
+@tpr_router.get("/{ref}/history")
+async def vendor_history(ref: str, user: dict = Depends(get_current_user)):
+    return await db.vendor_notes.find(
+        {"org_id": user["org_id"], "ref": ref}, {"_id": 0}).sort("ts", -1).to_list(100)
+
+
+@tpr_router.post("/{ref}/notes")
+async def add_vendor_note(ref: str, body: VendorNote, user: dict = Depends(get_current_user)):
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Note text required")
+    kind = body.kind if body.kind in ("note", "evidence", "remediation") else "note"
+    doc = {"org_id": user["org_id"], "ref": ref, "kind": kind, "text": text,
+           "author": user.get("name") or user["email"], "ts": datetime.now(timezone.utc).isoformat()}
+    await db.vendor_notes.insert_one(doc)
+    await _log_audit(user["org_id"], user["email"], "vendor.note", f"{ref}: {kind}")
+    doc.pop("_id", None)
+    return doc

@@ -1,22 +1,47 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useUrlState } from "@/hooks/useUrlState";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { Building, Loader2, Layers, ShieldAlert, PlayCircle, Search, X } from "lucide-react";
+import { Building, Loader2, Layers, ShieldAlert, PlayCircle, Search, X, Plus } from "lucide-react";
 
 const TIER = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 90% 55%", Low: "142 70% 45%" };
+const KIND_COLOR = { remediation: "#3b82f6", evidence: "#22c55e", note: "#94a3b8" };
 
 export default function VendorRisk() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState("");
-  const [q, setQ] = useState("");
-  const [tierF, setTierF] = useState("all");
+  const [q, setQ] = useUrlState("q", "");
+  const [tierF, setTierF] = useUrlState("tierF", "all");
   const [selected, setSelected] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [noteText, setNoteText] = useState("");
+  const [noteKind, setNoteKind] = useState("remediation");
+  const [noteBusy, setNoteBusy] = useState(false);
 
   const load = () => api.get("/vendors").then((r) => setData(r.data));
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (!selected) { setHistory([]); return; }
+    setNoteText("");
+    api.get(`/vendors/${selected.ref}/history`).then((r) => setHistory(r.data)).catch(() => setHistory([]));
+  }, [selected]);
+
+  const addNote = async () => {
+    if (!noteText.trim() || !selected) return;
+    setNoteBusy(true);
+    try {
+      await api.post(`/vendors/${selected.ref}/notes`, { kind: noteKind, text: noteText.trim() });
+      setNoteText("");
+      const r = await api.get(`/vendors/${selected.ref}/history`);
+      setHistory(r.data);
+      toast.success("Added to vendor log");
+    } catch { toast.error("Could not add to log"); }
+    setNoteBusy(false);
+  };
 
   const assess = async (ref) => {
     setBusy(ref);
@@ -108,6 +133,28 @@ export default function VendorRisk() {
             <div className="flex justify-between gap-2"><span className="text-muted-foreground">Incidents</span><span className={selected.incidents > 0 ? "text-crit" : ""}>{selected.incidents}</span></div>
           </div>
           {isAdmin && <button data-testid="vendor-detail-assess" disabled={!!busy} onClick={() => assess(selected.ref)} className="w-full text-xs px-3 py-2 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">{busy === selected.ref ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />} Re-assess vendor</button>}
+          <div className="pt-2 border-t border-border/60 space-y-2" data-testid="vendor-history">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Remediation &amp; evidence log</div>
+            <select data-testid="vendor-note-kind" value={noteKind} onChange={(e) => setNoteKind(e.target.value)} className="w-full bg-secondary/60 rounded-md px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary">
+              <option value="remediation">Remediation action</option>
+              <option value="evidence">Evidence</option>
+              <option value="note">Note</option>
+            </select>
+            <textarea data-testid="vendor-note-text" value={noteText} onChange={(e) => setNoteText(e.target.value)} rows={2} placeholder="Log a remediation action or attach evidence…" className="w-full bg-secondary/60 rounded-md px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary resize-none" />
+            <button data-testid="vendor-note-add" disabled={noteBusy || !noteText.trim()} onClick={addNote} className="w-full text-xs px-3 py-1.5 rounded-md bg-ai/10 border border-ai/30 text-ai hover:bg-ai/20 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">{noteBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add to log</button>
+            <div className="space-y-1.5 max-h-52 overflow-y-auto" data-testid="vendor-history-list">
+              {history.length === 0 ? <p className="text-[11px] text-muted-foreground">No entries yet.</p> : history.map((h, i) => (
+                <div key={i} data-testid="vendor-history-item" className="text-[11px] bg-secondary/30 rounded-md p-2 space-y-0.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono uppercase text-[9px] px-1.5 py-0.5 rounded-sm" style={{ background: `${KIND_COLOR[h.kind]}26`, color: KIND_COLOR[h.kind] }}>{h.kind}</span>
+                    <span className="text-muted-foreground">{new Date(h.ts).toLocaleDateString()}</span>
+                  </div>
+                  <div>{h.text}</div>
+                  <div className="text-[10px] text-muted-foreground">{h.author}</div>
+                </div>
+              ))}
+            </div>
+          </div>
         </aside>
       )}
       </div>

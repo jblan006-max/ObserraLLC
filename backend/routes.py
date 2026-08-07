@@ -690,6 +690,31 @@ async def _emit_drift_alerts(org_id, statuses):
             dedupe_key=f"drift:{c['control_id']}:{c['evidence_expires'][:10]}:{c['effectiveness']}")
 
 
+class ControlNote(BaseModel):
+    kind: str = "note"
+    text: str
+
+
+@api.get("/controls/{control_id}/history")
+async def control_history(control_id: str, user: dict = Depends(get_current_user)):
+    return await db.control_notes.find(
+        {"org_id": user["org_id"], "control_id": control_id}, {"_id": 0}).sort("ts", -1).to_list(100)
+
+
+@api.post("/controls/{control_id}/notes")
+async def add_control_note(control_id: str, body: ControlNote, user: dict = Depends(get_current_user)):
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "Note text required")
+    kind = body.kind if body.kind in ("note", "evidence", "remediation") else "note"
+    doc = {"org_id": user["org_id"], "control_id": control_id, "kind": kind, "text": text,
+           "author": user.get("name") or user["email"], "ts": datetime.now(timezone.utc).isoformat()}
+    await db.control_notes.insert_one(doc)
+    await _audit(user["org_id"], user["email"], "control.note", f"{control_id}: {kind}")
+    doc.pop("_id", None)
+    return doc
+
+
 @api.get("/financials/trend")
 async def financials_trend(user: dict = Depends(get_current_user)):
     risks = await db.risks.find({"org_id": user["org_id"]}, {"_id": 0}).to_list(500)

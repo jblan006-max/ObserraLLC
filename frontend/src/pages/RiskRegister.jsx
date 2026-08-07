@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useUrlState } from "@/hooks/useUrlState";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { EvidenceLineageModal } from "@/components/EvidenceLineageModal";
@@ -19,8 +20,8 @@ export default function RiskRegister() {
   const [lineage, setLineage] = useState(null);
   const [evidence, setEvidence] = useState(null);
   const [selected, setSelected] = useState(null);
-  const [q, setQ] = useState("");
-  const [cat, setCat] = useState("all");
+  const [q, setQ] = useUrlState("q", "");
+  const [cat, setCat] = useUrlState("cat", "all");
 
   const load = () => api.get("/risks").then((r) => setRisks(r.data));
   useEffect(() => { load(); }, []);

@@ -1,22 +1,47 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useUrlState } from "@/hooks/useUrlState";
 import { toast } from "sonner";
-import { ShieldCheck, Loader2, AlertTriangle, Clock, FileDown, TrendingDown, Search, X } from "lucide-react";
+import { ShieldCheck, Loader2, AlertTriangle, Clock, FileDown, TrendingDown, Search, X, Plus } from "lucide-react";
 
 const statusHsl = { Passing: "142 70% 45%", Drifting: "35 90% 55%", Failing: "0 84% 60%", "Evidence Stale": "15 80% 55%" };
+const KIND_COLOR = { remediation: "#3b82f6", evidence: "#22c55e", note: "#94a3b8" };
 
 export default function ControlMonitoring() {
   const [controls, setControls] = useState(null);
   const [compliance, setCompliance] = useState(null);
   const [busy, setBusy] = useState("");
-  const [q, setQ] = useState("");
-  const [statusF, setStatusF] = useState("all");
+  const [q, setQ] = useUrlState("q", "");
+  const [statusF, setStatusF] = useUrlState("statusF", "all");
   const [selected, setSelected] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [noteText, setNoteText] = useState("");
+  const [noteKind, setNoteKind] = useState("remediation");
+  const [noteBusy, setNoteBusy] = useState(false);
 
   useEffect(() => {
     api.get("/controls").then((r) => setControls(r.data));
     api.get("/controls/compliance").then((r) => setCompliance(r.data.frameworks)).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!selected) { setHistory([]); return; }
+    setNoteText("");
+    api.get(`/controls/${selected.control_id}/history`).then((r) => setHistory(r.data)).catch(() => setHistory([]));
+  }, [selected]);
+
+  const addNote = async () => {
+    if (!noteText.trim() || !selected) return;
+    setNoteBusy(true);
+    try {
+      await api.post(`/controls/${selected.control_id}/notes`, { kind: noteKind, text: noteText.trim() });
+      setNoteText("");
+      const r = await api.get(`/controls/${selected.control_id}/history`);
+      setHistory(r.data);
+      toast.success("Added to control log");
+    } catch { toast.error("Could not add to log"); }
+    setNoteBusy(false);
+  };
 
   const pack = async (id) => {
     setBusy(id);
@@ -170,6 +195,28 @@ export default function ControlMonitoring() {
             <div className="flex justify-between gap-2"><span className="text-muted-foreground">Evidence</span><span className={selected.stale ? "text-crit" : ""}>{selected.stale ? `expired ${-selected.days_to_expiry}d` : `${selected.days_to_expiry}d left`}</span></div>
           </div>
           <button data-testid="control-detail-pack" disabled={busy === selected.control_id} onClick={() => pack(selected.control_id)} className="w-full text-xs px-3 py-2 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">{busy === selected.control_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />} Evidence pack</button>
+          <div className="pt-2 border-t border-border/60 space-y-2" data-testid="control-history">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Remediation &amp; evidence log</div>
+            <select data-testid="control-note-kind" value={noteKind} onChange={(e) => setNoteKind(e.target.value)} className="w-full bg-secondary/60 rounded-md px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary">
+              <option value="remediation">Remediation action</option>
+              <option value="evidence">Evidence</option>
+              <option value="note">Note</option>
+            </select>
+            <textarea data-testid="control-note-text" value={noteText} onChange={(e) => setNoteText(e.target.value)} rows={2} placeholder="Log a remediation action or attach evidence…" className="w-full bg-secondary/60 rounded-md px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary resize-none" />
+            <button data-testid="control-note-add" disabled={noteBusy || !noteText.trim()} onClick={addNote} className="w-full text-xs px-3 py-1.5 rounded-md bg-ai/10 border border-ai/30 text-ai hover:bg-ai/20 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">{noteBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add to log</button>
+            <div className="space-y-1.5 max-h-52 overflow-y-auto" data-testid="control-history-list">
+              {history.length === 0 ? <p className="text-[11px] text-muted-foreground">No entries yet.</p> : history.map((h, i) => (
+                <div key={i} data-testid="control-history-item" className="text-[11px] bg-secondary/30 rounded-md p-2 space-y-0.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-mono uppercase text-[9px] px-1.5 py-0.5 rounded-sm" style={{ background: `${KIND_COLOR[h.kind]}26`, color: KIND_COLOR[h.kind] }}>{h.kind}</span>
+                    <span className="text-muted-foreground">{new Date(h.ts).toLocaleDateString()}</span>
+                  </div>
+                  <div>{h.text}</div>
+                  <div className="text-[10px] text-muted-foreground">{h.author}</div>
+                </div>
+              ))}
+            </div>
+          </div>
         </aside>
       )}
       </div>

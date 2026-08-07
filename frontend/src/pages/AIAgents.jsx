@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useUrlState } from "@/hooks/useUrlState";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { Bot, Loader2, X, ShieldCheck, ShieldAlert, Zap, Layers, PlayCircle, CheckCircle2, XCircle, Search } from "lucide-react";
@@ -16,8 +17,8 @@ export default function AIAgents() {
   const isAdmin = user?.role === "admin";
   const [data, setData] = useState(null);
   const [active, setActive] = useState(null);
-  const [q, setQ] = useState("");
-  const [statusF, setStatusF] = useState("all");
+  const [q, setQ] = useUrlState("q", "");
+  const [statusF, setStatusF] = useUrlState("statusF", "all");
 
   const load = () => api.get("/agents").then((r) => setData(r.data));
   useEffect(() => { load(); }, []);

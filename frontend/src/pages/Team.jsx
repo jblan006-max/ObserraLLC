@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
+import { useUrlState } from "@/hooks/useUrlState";
 import { toast } from "sonner";
 import { Users, UserPlus, Loader2, Trash2, Copy, KeyRound, Search } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -14,8 +15,8 @@ export default function Team() {
   const [busy, setBusy] = useState(false);
   const [invited, setInvited] = useState(null);
   const navigate = useNavigate();
-  const [q, setQ] = useState("");
-  const [roleF, setRoleF] = useState("all");
+  const [q, setQ] = useUrlState("q", "");
+  const [roleF, setRoleF] = useUrlState("roleF", "all");
   const shownMembers = (members || []).filter((m) => (roleF === "all" || m.role === roleF) && `${m.name} ${m.email}`.toLowerCase().includes(q.toLowerCase()));
 
   const load = () => api.get("/auth/team/members").then((r) => setMembers(r.data)).catch(() => navigate("/app"));

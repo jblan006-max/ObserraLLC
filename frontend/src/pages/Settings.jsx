@@ -110,6 +110,15 @@ export default function Settings() {
     } catch (e) { toast.error(e.response?.data?.detail || "Could not send email"); }
     setEmailBusy(false);
   };
+  const [allBusy, setAllBusy] = useState(false);
+  const emailAll = async () => {
+    setAllBusy(true);
+    try {
+      const { data } = await api.post("/deploy/email-docs-all");
+      toast.success(`Guide + package emailed to ${data.count} recipient(s)`);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not send to list"); }
+    setAllBusy(false);
+  };
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -332,6 +341,12 @@ export default function Settings() {
                 </span>
               ))}
             </div>
+          )}
+          {book.length > 0 && (
+            <button data-testid="email-docs-all" disabled={allBusy} onClick={emailAll}
+              className="w-full sm:w-auto px-4 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50 hover:opacity-90 transition-opacity">
+              {allBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send to whole IT list ({book.length})
+            </button>
           )}
           <p className="text-xs text-muted-foreground">Emails the guide (PDF) + on-premise package (zip) as attachments. Prefer a guided video? Use the built-in walkthrough via <span className="text-foreground">Guided Tour → Replay tour</span> above — it narrates Executive vs Operational mode in-app.</p>
         </div>

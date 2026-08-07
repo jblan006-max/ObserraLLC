@@ -129,16 +129,8 @@ async def set_deploy_recipients(body: RecipientsBody, user: dict = Depends(get_c
     return {"recipients": valid}
 
 
-@deploy_router.post("/email-docs")
-async def email_docs(body: EmailDocsBody, user: dict = Depends(get_current_user)):
-    if user.get("role") != "admin":
-        raise HTTPException(403, "Only admins can email the deployment docs")
+def _doc_attachments():
     import base64
-    import re
-    to = (body.to or "").strip()
-    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", to):
-        raise HTTPException(400, "Enter a valid email address")
-    from kernel import notifications
     attachments = []
     if os.path.exists(_GUIDE_PDF):
         with open(_GUIDE_PDF, "rb") as f:
@@ -147,13 +139,51 @@ async def email_docs(body: EmailDocsBody, user: dict = Depends(get_current_user)
     if os.path.isdir(_ONPREM):
         attachments.append({"filename": "obserra-onprem-deploy.zip",
                             "content": base64.b64encode(_build_onprem_zip()).decode()})
-    html = ("<div style='font:400 14px Arial;color:#0f1e3d'>"
+    return attachments
+
+
+def _docs_html(sender_email):
+    return ("<div style='font:400 14px Arial;color:#0f1e3d'>"
             "<h2 style='font:800 20px Arial;color:#0f1e3d'>Obserra EIOS — Install &amp; Deployment</h2>"
             "<p>Attached you'll find the <b>Install &amp; User Guide</b> (PDF) and the "
             "<b>on-premise deployment package</b> (zip).</p>"
             "<ul><li>Self-host with Docker: unzip and follow <code>INSTALL.md</code>.</li>"
             "<li>Install the app on any device straight from the browser (PWA) — no app store needed.</li></ul>"
-            f"<p style='color:#6b7280'>Sent by {user['email']} via Obserra EIOS.</p></div>")
+            f"<p style='color:#6b7280'>Sent by {sender_email} via Obserra EIOS.</p></div>")
+
+
+@deploy_router.post("/email-docs")
+async def email_docs(body: EmailDocsBody, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can email the deployment docs")
+    import re
+    to = (body.to or "").strip()
+    if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", to):
+        raise HTTPException(400, "Enter a valid email address")
+    from kernel import notifications
     await notifications.send_email(to, "Obserra EIOS — Install Guide & Deployment Package",
-                                   html, attachments=attachments)
+                                   _docs_html(user["email"]), attachments=_doc_attachments())
     return {"status": "sent", "to": to}
+
+
+@deploy_router.post("/email-docs-all")
+async def email_docs_all(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can email the deployment docs")
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    recipients = org.get("deploy_recipients") or []
+    if not recipients:
+        raise HTTPException(400, "No saved IT recipients — add some to the distribution list first")
+    from kernel import notifications
+    attachments = _doc_attachments()
+    html = _docs_html(user["email"])
+    sent = []
+    for to in recipients:
+        try:
+            await notifications.send_email(to, "Obserra EIOS — Install Guide & Deployment Package",
+                                           html, attachments=attachments)
+            sent.append(to)
+        except Exception:
+            pass
+    return {"status": "sent", "count": len(sent), "recipients": sent}

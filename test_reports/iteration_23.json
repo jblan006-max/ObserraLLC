@@ -1,0 +1,28 @@
+{
+  "summary": "Iteration 23 — full E2E test of the three final P0 features (Shareable Filters URL sync, Two-Pane Deep Actions with note/evidence log on Controls & Vendors, Recipients One-Tap Send). Backend: 8/8 pytest passing in /app/backend/tests/test_iter23_p0_features.py — GET /api/controls/{id}/history, POST /api/controls/{id}/notes (kind persisted, invalid kind falls back to 'note', empty text returns 400, _id excluded), GET /api/vendors/{ref}/history + POST /api/vendors/{ref}/notes (same guarantees), POST /api/deploy/email-docs-all returns 400 when recipients empty and 200 {status:'sent', count:1} after saving 1 recipient. Frontend (1920x1080, admin session): (1) URL-state sync verified on /app/controls (?q=iam), /app/agents (?q=test), /app/team (?q=admin), /app/vendors (?q=data), /app/risks (?q=cyber) — value restored on reload for every page. (2) Control Monitoring detail pane: clicking a row opens control-detail-pane, control-history block renders, selecting 'remediation' kind + typing text + Add-to-log increments control-history-list from 7→8 and shows 'Added to control log' toast. (3) Vendor Risk detail pane: vendor-detail-pane opens with vendor-history block + vendor-detail-assess visible for admin, adding an 'evidence' note increments vendor-history-list from 2→3. (4) Settings: email-docs-all button hidden when recipients-book is empty, appears with label 'Send to whole IT list (1)' after saving one chip, clicking it shows toast 'Guide + package emailed to 1 recipient(s)'. No JSX/webpack errors, no infinite spinners on any of the 5 pages.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter23_p0_features.py",
+    "/app/test_reports/pytest/iter23_results.xml"
+  ],
+  "action_items": [
+    "Docs/PRD nit: the review request references route '/app/risk-register' but the actual React route is '/app/risks' (see App.js line 67). No code change needed — just clarify the route in any recipients/docs mentioning the risk register page."
+  ],
+  "critical_code_review_comments": [
+    "useUrlState.js uses setSp(prev => ...) with replace:true — correct pattern; no history spam and both browser reload and direct-URL entry restore the filter as designed.",
+    "email-docs-all silently swallows per-recipient send failures (`except Exception: pass`) and only counts successes — good UX-wise, but per-recipient failures are not logged/audited. Consider adding an audit entry with failed_recipients count for observability.",
+    "Control/vendor notes endpoints validate kind against a small whitelist and default to 'note' — good defense; empty text is 400 as expected. Both properly exclude Mongo _id from response.",
+    "Detail panes correctly gated to md/lg widths (hidden md:block) so mobile users use the card list — no overlay issues at 1920px."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter23_p0_features.py"
+  ],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (5/5 URL-sync pages + control notes + vendor notes + email-docs-all)"},
+  "test_credentials": "Admin jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md).",
+  "seed_data_creation": "During testing added and then removed a recipients-book chip 'e2e-iter23@obserra.demo'. A few TEST_iter23 control_notes / vendor_notes were inserted (visible at top of history-lists for the first control and first vendor of the seeded org). Safe test-prefixed data — can be purged later if desired.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Actual React route for the Cyber Risk Register is /app/risks (NOT /app/risk-register). Deploy recipients endpoint is /api/deploy/recipients (GET/PUT) — NOT /api/settings/deploy-recipients. Vendors list endpoint returns {composition, vendors:[...]} not a bare array. To open a detail pane without triggering inner action buttons, click ~30px from the row's left edge. Toast selector that worked: query for [role=status], [data-sonner-toast], .toast, [class*=toast]. Login via Enter key on the password field is reliable (auth-submit button occasionally flaky).",
+  "rca of the issue": "No new bugs found in this iteration. All three P0 features are functionally correct end-to-end. Only 'issue' is a minor documentation mismatch: review request mentions '/app/risk-register' but code uses '/app/risks'."
+}
