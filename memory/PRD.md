@@ -43,6 +43,15 @@ Obserra EIOS — subscription-gated enterprise SaaS. Two flagship apps on one pl
 
 ## Testing
 - iteration_2.json: 23/23 new-feature backend tests pass, 45/46 suite (1 expected shadow-AI flake). Reports email 500 (invalid regex) fixed. Stripe checkout verified.
+- iteration_3.json (2026-06): 8/8 session features verified. Backend 16/16 (AI enum 422/200, concurrency-safe DEC-ref counter, team invite/list/delete admin gating, connector sync, controls, evidence-pack PDF, financials/trend, graph-ask). Frontend 100% (login screensaver canvas+logo-pulse, sync ticker, admin-only Team nav+invite+temp password, Control Monitoring, Graph Q&A, ALE Trend, RiskRegister full-row click). Fixed LOW UX: Team.jsx now redirects non-admins to /app on 403.
+
+## Session 2026-06 additions (verified)
+- Continuous Control Monitoring page (evidence expiry/drift/maturity/effectiveness + per-control evidence-pack PDF across frameworks)
+- Graph Q&A (POST /advisor/graph-ask NL question → answer + node highlight) + presets
+- Portfolio ALE Trend chart on Reporting (GET /financials/trend)
+- P2 fixes: AISystemUpdate enum validation (field_validator); concurrency-safe DEC-ref via db.counters $inc upsert
+- RiskRegister: entire row clickable → evidence lineage (stopPropagation on $ button + status)
+- P1 polish: Login Screensaver (animated NetworkBackground canvas + pulsing logo), Connector Sync Ticker (mocked live Entra/Tenable/CASB), Team Invites (admin-only invite/list/remove, inline temp password)
 
 ## Backlog (from stakeholder vision — prioritized)
 - P0 ✅ DONE (2026-06): Financial risk quantification (FAIR ALE per risk + executive rollup), Decision What-if Simulation, Enterprise Knowledge Graph (BU↔AI↔data↔vendors↔risks↔regs with NL-preset traversal), clickable Evidence Intelligence drill-down (Metric→Calc→Source→Evidence→Control→Risk→Framework→Owner + FAIR ALE)

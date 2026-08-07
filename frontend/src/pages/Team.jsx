@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Users, UserPlus, Loader2, Trash2, Copy, KeyRound } from "lucide-react";
@@ -12,8 +13,9 @@ export default function Team() {
   const [form, setForm] = useState({ name: "", email: "", role: "operational" });
   const [busy, setBusy] = useState(false);
   const [invited, setInvited] = useState(null);
+  const navigate = useNavigate();
 
-  const load = () => api.get("/auth/team/members").then((r) => setMembers(r.data));
+  const load = () => api.get("/auth/team/members").then((r) => setMembers(r.data)).catch(() => navigate("/app"));
   useEffect(() => { load(); }, []);
 
   const invite = async (e) => {
