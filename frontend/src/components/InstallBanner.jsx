@@ -1,9 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, X } from "lucide-react";
 
+const SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
+
 export const InstallBanner = () => {
-  const [promptEvent, setPromptEvent] = useState(null);
+  const promptRef = useRef(null);
   const [visible, setVisible] = useState(false);
+  const [entered, setEntered] = useState(false);
 
   useEffect(() => {
     const isStandalone =
@@ -11,41 +14,63 @@ export const InstallBanner = () => {
       window.navigator.standalone === true;
     if (isStandalone || localStorage.getItem("obserra-install-dismissed")) return;
 
+    const laterAt = Number(localStorage.getItem("obserra-install-later") || 0);
+    if (laterAt && Date.now() - laterAt < SNOOZE_MS) return;
+
     const handler = (e) => {
       e.preventDefault();
-      setPromptEvent(e);
+      promptRef.current = e;
       setVisible(true);
+      requestAnimationFrame(() => requestAnimationFrame(() => setEntered(true)));
     };
     window.addEventListener("beforeinstallprompt", handler);
     return () => window.removeEventListener("beforeinstallprompt", handler);
   }, []);
 
-  const install = async () => {
-    if (!promptEvent) return;
-    promptEvent.prompt();
-    await promptEvent.userChoice;
-    setPromptEvent(null);
-    setVisible(false);
+  const close = (cb) => {
+    setEntered(false);
+    setTimeout(() => {
+      setVisible(false);
+      cb?.();
+    }, 300);
   };
 
-  const dismiss = () => {
-    localStorage.setItem("obserra-install-dismissed", "1");
-    setVisible(false);
+  const install = async () => {
+    if (!promptRef.current) return;
+    promptRef.current.prompt();
+    await promptRef.current.userChoice;
+    promptRef.current = null;
+    close();
   };
+
+  const later = () => close(() => localStorage.setItem("obserra-install-later", String(Date.now())));
+  const dismiss = () => close(() => localStorage.setItem("obserra-install-dismissed", "1"));
 
   if (!visible) return null;
 
   return (
     <div
       data-testid="install-banner"
-      className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[9998] w-[calc(100%-2rem)] max-w-md rise"
+      className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[9998] w-[calc(100%-2rem)] max-w-md"
+      style={{
+        transition: "opacity 300ms ease-out, transform 300ms cubic-bezier(0.16,1,0.3,1)",
+        opacity: entered ? 1 : 0,
+        transform: `translateX(-50%) translateY(${entered ? "0" : "16px"})`,
+      }}
     >
       <div className="flex items-center gap-3 rounded-xl border border-border bg-secondary/95 backdrop-blur-md px-4 py-3 shadow-2xl">
-        <img src="/obserra-mark-flat.svg" alt="" className="h-9 w-9 rounded-md flex-shrink-0" />
+        <img src="/obserra-mark-flat.svg" alt="" className="h-9 w-9 flex-shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="text-sm font-semibold text-foreground">Install Obserra</div>
           <div className="text-xs text-muted-foreground truncate">Add to your home screen for one-tap access.</div>
         </div>
+        <button
+          data-testid="install-banner-later"
+          onClick={later}
+          className="text-xs font-medium text-muted-foreground hover:text-foreground transition-colors px-1"
+        >
+          Later
+        </button>
         <button
           data-testid="install-banner-install"
           onClick={install}
