@@ -65,7 +65,7 @@ export default function Auth() {
         <div className="w-full max-w-sm rise">
           <div className="lg:hidden mb-8 flex flex-col items-center text-center gap-4">
             <img src="/brand-mark.png" alt="Obserra mark" className="h-24 w-auto object-contain drop-shadow-[0_6px_20px_rgba(86,184,233,0.25)]" />
-            <img src="/brand-wordmark.png" alt="OBSERRA — Executive Protection & Intelligence LLC" className="h-10 w-auto object-contain" />
+            <img src="/brand-wordmark.png" alt="OBSERRA — Executive Protection & Intelligence LLC" className="h-14 w-auto object-contain" />
           </div>
           <div className="flex gap-1 p-1 bg-secondary/50 rounded-lg mb-6 text-sm">
             {["login", "register"].map((t) => (

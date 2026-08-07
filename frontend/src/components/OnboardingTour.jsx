@@ -1,22 +1,22 @@
 import { useEffect, useLayoutEffect, useState, useCallback } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { Presentation, Wrench, Eye, ListChecks, ArrowRight, ArrowLeft } from "lucide-react";
+import { ArrowRight, ArrowLeft } from "lucide-react";
 
 const EXEC_STEPS = [
-  { icon: Eye, accent: "text-ai", title: "Welcome to Obserra",
+  { title: "Welcome to Obserra",
     body: "One evidence-grounded platform, viewed at two altitudes. Every metric carries its source, freshness and confidence — switch altitude anytime from the toggle in the top bar." },
-  { icon: Presentation, accent: "text-primary", title: "Executive Mode", spotlight: true,
+  { title: "Executive Mode", spotlight: true,
     body: "The boardroom view — highlighted above. KPIs are framed in dollar-impact and posture: financial exposure, risk reduction and compliance readiness, so leadership sees what matters without the noise." },
-  { icon: Wrench, accent: "text-ai", title: "Operational Mode", spotlight: true,
+  { title: "Operational Mode", spotlight: true,
     body: "Flip the same toggle to Operational for live counts and signals — open risks, control gaps and connector health — so your team can act on specifics in real time." },
 ];
 
 const OPS_STEPS = [
-  { icon: Eye, accent: "text-ai", title: "Welcome to Obserra",
+  { title: "Welcome to Obserra",
     body: "This is your operational cockpit. Every metric is evidence-grounded and carries its source and freshness, so you always know what you're acting on." },
-  { icon: Wrench, accent: "text-ai", title: "Operational Mode", spotlight: true,
+  { title: "Operational Mode", spotlight: true,
     body: "The toggle above keeps you in Operational view — live counts and signals for open risks, control gaps and connector health. This is your day-to-day working surface." },
-  { icon: ListChecks, accent: "text-primary", title: "Where you'll work",
+  { title: "Where you'll work",
     body: "Jump into the Risk Register, Control Monitoring and Situation Room from the sidebar to triage, investigate and remediate. The Advisor can execute remediations for you too." },
 ];
 
@@ -69,7 +69,6 @@ export const OnboardingTour = () => {
 
   if (!open) return null;
   const s = steps[step];
-  const Icon = s.icon;
   const last = step === steps.length - 1;
   const hole = spotlight && rect
     ? { top: rect.top - 8, left: rect.left - 8, width: rect.width + 16, height: rect.height + 16 }
@@ -92,8 +91,8 @@ export const OnboardingTour = () => {
             <div className="h-full bg-ai transition-all duration-300" style={{ width: `${((step + 1) / steps.length) * 100}%` }} />
           </div>
           <div className="p-7">
-            <div className={`inline-flex items-center justify-center w-12 h-12 rounded-xl bg-secondary/60 ${s.accent} mb-5`}>
-              <Icon className="w-6 h-6" />
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-xl bg-secondary/60 mb-5 p-2">
+              <img src="/brand-mark.png" alt="Obserra" className="w-full h-full object-contain" />
             </div>
             <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mb-1">
               Step {step + 1} of {steps.length} · {isOps ? "Operational" : "Executive"} tour
