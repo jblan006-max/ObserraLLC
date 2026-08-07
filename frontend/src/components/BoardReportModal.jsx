@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { X, FileText, Loader2, Download, Sparkle, Mail, MessageSquare, Sun, Moon } from "lucide-react";
+import { X, FileText, Loader2, Download, Sparkle, Mail, MessageSquare, Sun, Moon, Presentation } from "lucide-react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -44,11 +44,12 @@ export function BoardReportModal({ open, onClose }) {
     setEmailing(false);
   };
 
-  const downloadPdf = async () => {
+  const downloadPdf = async (layout = "report") => {
     try {
-      const res = await api.post("/reports/pdf", { report, title: "Executive Board Report", theme }, { responseType: "blob" });
+      const res = await api.post("/reports/pdf", { report, title: "Executive Board Report", theme, layout }, { responseType: "blob" });
       const url = URL.createObjectURL(res.data);
-      const a = document.createElement("a"); a.href = url; a.download = "obserra-board-report.pdf"; a.click();
+      const a = document.createElement("a"); a.href = url;
+      a.download = layout === "deck" ? "obserra-board-deck.pdf" : "obserra-board-report.pdf"; a.click();
       URL.revokeObjectURL(url);
     } catch { toast.error("Could not generate PDF"); }
   };
@@ -97,8 +98,11 @@ export function BoardReportModal({ open, onClose }) {
                     <Sun className="w-3 h-3" /> Light
                   </button>
                 </div>
-                <button data-testid="report-download" onClick={downloadPdf} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-secondary/60 hover:bg-secondary transition-colors">
+                <button data-testid="report-download" onClick={() => downloadPdf("report")} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-secondary/60 hover:bg-secondary transition-colors">
                   <Download className="w-3.5 h-3.5" /> PDF
+                </button>
+                <button data-testid="report-download-deck" onClick={() => downloadPdf("deck")} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-secondary/60 hover:bg-secondary transition-colors">
+                  <Presentation className="w-3.5 h-3.5" /> Deck
                 </button>
                 <button data-testid="report-email" onClick={emailReport} disabled={emailing} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-primary/15 border border-primary/30 hover:bg-primary/25 transition-colors disabled:opacity-50">
                   {emailing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />} Email me

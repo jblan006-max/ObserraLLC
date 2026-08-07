@@ -31,6 +31,7 @@ class ReportBody(BaseModel):
     report: str
     title: str = "Executive Board Report"
     theme: str = "dark"
+    layout: str = "report"
 
 
 def _trend_drawing(series):
@@ -93,7 +94,7 @@ def _risk_bar_drawing(bars):
 
 def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = None,
                report_date: str = None, chart_series=None, takeaways=None,
-               theme: str = "dark", risk_bars=None) -> io.BytesIO:
+               theme: str = "dark", risk_bars=None, exec_summary: str = None) -> io.BytesIO:
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=LETTER, topMargin=0.9 * inch, bottomMargin=0.8 * inch)
     styles = getSampleStyleSheet()
@@ -112,6 +113,12 @@ def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = Non
     story += [Paragraph(title, title_s),
               Paragraph("Obserra — Executive Protection &amp; Intelligence LLC", sub),
               HRFlowable(width="100%", color=colors.HexColor("#1b3a8a")), Spacer(1, 10)]
+    if exec_summary:
+        summary_s = ParagraphStyle("summary", parent=body, fontSize=10.5, leading=15,
+                                   textColor=colors.HexColor("#0f1e3d"),
+                                   backColor=colors.HexColor("#eef6fb"), borderColor=colors.HexColor("#12b4d6"),
+                                   borderWidth=0.6, borderPadding=8, spaceBefore=2, spaceAfter=2)
+        story += [Paragraph(f"<b>Executive Summary.</b> {exec_summary}", summary_s), Spacer(1, 12)]
     for line in report.split("\n"):
         line = line.strip()
         if not line:
@@ -208,12 +215,37 @@ def _report_html(report: str, title: str) -> str:
             f'</td></tr></table>')
 
 
-async def build_board_report_pdf(org_id: str, report_text: str,
-                                 title: str = "Executive Board Report", theme: str = "dark") -> io.BytesIO:
+def _extract_exec_summary(text: str) -> str:
+    if not text:
+        return ""
+    lines = text.split("\n")
+    buf, capture = [], False
+    for ln in lines:
+        s = ln.strip()
+        if s.startswith("## "):
+            if capture:
+                break
+            capture = s[3:].lower().startswith("executive summary")
+            continue
+        if capture and s:
+            buf.append(s)
+    body = " ".join(buf)
+    if not body:
+        for ln in lines:
+            s = ln.strip()
+            if s and not s.startswith("#"):
+                body = s
+                break
+    body = re.sub(r"\[[^\]]+\]", "", body)
+    body = re.sub(r"\*\*", "", body).strip()
+    sents = re.split(r"(?<=[.!?])\s+", body)
+    return " ".join(sents[:2]).strip()
+
+
+async def _board_metrics(org_id: str, report_text: str = "") -> dict:
     from routes import _fin
     from bson import ObjectId
     org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
-    org_name = org.get("name")
     risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(500)
     recs = await db.recommendations.find({"org_id": org_id}, {"_id": 0}).to_list(500)
     health = await db.health_index.find_one({"org_id": org_id}, {"_id": 0}) or {}
@@ -241,16 +273,166 @@ async def build_board_report_pdf(org_id: str, report_text: str,
     if pending:
         takeaways.append(f"{len(pending)} recommendation(s) await executive authority — approve to release the projected risk reduction.")
     takeaways.append("Maintain evidence freshness and quarterly control testing to keep every figure audit-ready and board-defensible.")
-    return _build_pdf(report_text, title, cover=True, org_name=org_name, theme=theme,
-                      chart_series=series, takeaways=takeaways, risk_bars=risk_bars)
+    return {
+        "org_name": org.get("name"), "residual": residual, "reduction": reduction,
+        "crit": crit, "pending": len(pending), "series": series, "risk_bars": risk_bars,
+        "takeaways": takeaways, "exec_summary": _extract_exec_summary(report_text),
+    }
+
+
+async def build_board_report_pdf(org_id: str, report_text: str,
+                                 title: str = "Executive Board Report", theme: str = "dark") -> io.BytesIO:
+    m = await _board_metrics(org_id, report_text)
+    return _build_pdf(report_text, title, cover=True, org_name=m["org_name"], theme=theme,
+                      chart_series=m["series"], takeaways=m["takeaways"], risk_bars=m["risk_bars"],
+                      exec_summary=m["exec_summary"])
+
+
+def _wrap(text, font, size, max_w, canvas):
+    words, lines, cur = text.split(), [], ""
+    for w in words:
+        t = (cur + " " + w).strip()
+        if canvas.stringWidth(t, font, size) <= max_w:
+            cur = t
+        else:
+            if cur:
+                lines.append(cur)
+            cur = w
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+async def build_board_deck_pdf(org_id: str, report_text: str,
+                               title: str = "Executive Board Report", theme: str = "dark") -> io.BytesIO:
+    from reportlab.pdfgen import canvas as pdfcanvas
+    from reportlab.lib.pagesizes import landscape
+    from reportlab.graphics import renderPDF
+    m = await _board_metrics(org_id, report_text)
+    pw, ph = landscape(LETTER)
+    buf = io.BytesIO()
+    c = pdfcanvas.Canvas(buf, pagesize=(pw, ph))
+    NAVY, INK, AI, GREY = (colors.HexColor("#081428"), colors.HexColor("#0f1e3d"),
+                           colors.HexColor("#12b4d6"), colors.HexColor("#6b7280"))
+    light = (theme == "light")
+
+    def footer():
+        c.setFont("Helvetica", 7); c.setFillColor(GREY)
+        c.drawCentredString(pw / 2, 0.4 * inch, "Obserra — Executive Protection & Intelligence LLC  ·  Confidential")
+
+    def content_header(slide_title):
+        c.setFillColor(colors.white); c.rect(0, 0, pw, ph, fill=1, stroke=0)
+        c.setFillColor(NAVY); c.rect(0, ph - 74, pw, 74, fill=1, stroke=0)
+        if os.path.exists(_BADGE):
+            c.drawImage(_BADGE, 34, ph - 62, width=46, height=46, mask="auto")
+        c.setFillColor(colors.white); c.setFont("Helvetica-Bold", 20)
+        c.drawString(96, ph - 48, slide_title)
+        if os.path.exists(_WATERMARK):
+            ww = 3.4 * inch; wh = ww * 530.0 / 890.0
+            c.drawImage(_WATERMARK, (pw - ww) / 2, (ph - wh) / 2 - 30, width=ww, height=wh,
+                        mask="auto", preserveAspectRatio=True)
+
+    # Slide 1 — cover
+    c.setFillColor(colors.white if light else NAVY); c.rect(0, 0, pw, ph, fill=1, stroke=0)
+    lockup = _LOCKUP_DARK if light else _LOCKUP
+    if os.path.exists(lockup):
+        lw = 5.6 * inch; lh = lw * 287.0 / 1698.0
+        c.drawImage(lockup, (pw - lw) / 2, ph * 0.58, width=lw, height=lh, mask="auto", preserveAspectRatio=True)
+    c.setFillColor(INK if light else colors.white); c.setFont("Helvetica-Bold", 30)
+    c.drawCentredString(pw / 2, ph * 0.44, title)
+    if m["org_name"]:
+        c.setFillColor(colors.HexColor("#0e7490") if light else AI); c.setFont("Helvetica-Bold", 14)
+        c.drawCentredString(pw / 2, ph * 0.38, m["org_name"])
+    c.setFillColor(GREY if light else colors.HexColor("#8AA0B8")); c.setFont("Helvetica", 11)
+    c.drawCentredString(pw / 2, ph * 0.34, datetime.now(timezone.utc).strftime("%B %d, %Y"))
+    c.setFont("Helvetica", 8)
+    c.drawCentredString(pw / 2, 0.5 * inch, "CONFIDENTIAL · PROPRIETARY · AUTHORIZED ACCESS ONLY")
+    c.showPage()
+
+    # Slide 2 — key metrics
+    content_header("Enterprise Snapshot")
+    cards = [(f"${m['residual']/1e6:.1f}M", "Residual Exposure"),
+             (f"{m['reduction']}%", "Risk Reduction"),
+             (str(m["crit"]), "Critical Risks"),
+             (str(m["pending"]), "Pending Approvals")]
+    cw, gap, chh = 3.0 * inch, 0.4 * inch, 1.5 * inch
+    x0 = (pw - (cw * 2 + gap)) / 2
+    y0 = ph * 0.30
+    for i, (big, lab) in enumerate(cards):
+        cx = x0 + (i % 2) * (cw + gap)
+        cy = y0 + (1 - i // 2) * (chh + 0.3 * inch)
+        c.setFillColor(colors.HexColor("#f1f6fb")); c.roundRect(cx, cy, cw, chh, 10, fill=1, stroke=0)
+        c.setFillColor(AI); c.setFont("Helvetica-Bold", 34); c.drawString(cx + 20, cy + chh - 52, big)
+        c.setFillColor(GREY); c.setFont("Helvetica", 12); c.drawString(cx + 20, cy + 20, lab)
+    footer(); c.showPage()
+
+    # Slide 3 — exposure trend
+    content_header("Portfolio Exposure Trend")
+    d = _trend_drawing(m["series"])
+    if d is not None:
+        renderPDF.draw(d, c, (pw - 460) / 2, ph * 0.28)
+    footer(); c.showPage()
+
+    # Slide 4 — top risks
+    content_header("Top Risks by Residual Score")
+    d2 = _risk_bar_drawing(m["risk_bars"])
+    if d2 is not None:
+        renderPDF.draw(d2, c, (pw - 460) / 2, ph * 0.28)
+    footer(); c.showPage()
+
+    # Slide 5 — takeaways
+    content_header("Key Takeaways & Recommended Actions")
+    y = ph - 130
+    for t in m["takeaways"]:
+        c.setFillColor(AI); c.setFont("Helvetica-Bold", 16); c.drawString(60, y, "•")
+        c.setFillColor(INK); c.setFont("Helvetica", 13)
+        for ln in _wrap(t, "Helvetica", 13, pw - 160, c):
+            c.drawString(84, y, ln); y -= 20
+        y -= 10
+    footer(); c.showPage()
+
+    c.save(); buf.seek(0)
+    return buf
+
+
+class RecipientsBody(BaseModel):
+    emails: list = []
+
+
+@reports_router.get("/api/reports/recipients")
+async def get_recipients(user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    autos = await db.users.find({"org_id": user["org_id"], "role": {"$in": ["admin", "executive"]}},
+                                {"_id": 0, "email": 1}).to_list(200)
+    return {"extra": org.get("report_recipients", []), "auto": [u["email"] for u in autos]}
+
+
+@reports_router.put("/api/reports/recipients")
+async def set_recipients(body: RecipientsBody, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can manage report recipients")
+    from bson import ObjectId
+    emails = []
+    for e in body.emails:
+        e = (e or "").strip().lower()
+        if e and re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", e) and e not in emails:
+            emails.append(e)
+    await db.organizations.update_one({"_id": ObjectId(user["org_id"])}, {"$set": {"report_recipients": emails}})
+    return {"extra": emails}
 
 
 @reports_router.post("/api/reports/pdf")
 async def report_pdf(body: ReportBody, user: dict = Depends(get_current_user)):
     theme = body.theme if body.theme in ("dark", "light") else "dark"
-    buf = await build_board_report_pdf(user["org_id"], body.report, body.title, theme)
+    if body.layout == "deck":
+        buf = await build_board_deck_pdf(user["org_id"], body.report, body.title, theme)
+        fname = "obserra-board-deck.pdf"
+    else:
+        buf = await build_board_report_pdf(user["org_id"], body.report, body.title, theme)
+        fname = "obserra-board-report.pdf"
     return StreamingResponse(buf, media_type="application/pdf",
-                             headers={"Content-Disposition": 'attachment; filename="obserra-board-report.pdf"'})
+                             headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 @reports_router.post("/api/reports/email")

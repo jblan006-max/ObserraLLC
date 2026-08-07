@@ -38,15 +38,17 @@ async def _run_monthly_board_reports():
             result = await generate_board_report(org_id, by="scheduler@obserra")
             recipients = await db.users.find(
                 {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}).to_list(200)
+            emails = {r["email"] for r in recipients}
+            emails |= {e for e in (org.get("report_recipients") or []) if e}
             html = _report_html(result["report"], "Monthly Executive Board Report")
             pdf = await build_board_report_pdf(org_id, result["report"], "Monthly Executive Board Report")
             attachments = [{"filename": "obserra-board-report.pdf",
                             "content": base64.b64encode(pdf.getvalue()).decode()}]
-            for r in recipients:
-                await notifications.send_email(r["email"], "Monthly Board Report — Obserra EIOS", html, attachments=attachments)
+            for email in emails:
+                await notifications.send_email(email, "Monthly Board Report — Obserra EIOS", html, attachments=attachments)
             await notifications.create(
                 org_id, "report", "Monthly board report delivered",
-                f"Branded PDF (cover + charts) emailed to {len(recipients)} executive(s)/admin(s).", ref="board-report")
+                f"Branded PDF (cover + charts) emailed to {len(emails)} recipient(s).", ref="board-report")
             logger.info(f"Monthly board report sent for org {org_id} to {len(recipients)} recipients")
         except Exception as e:
             logger.error(f"Monthly board report failed for org {org_id}: {e}")
