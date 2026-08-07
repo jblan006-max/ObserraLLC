@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from auth import get_current_user, require_roles, _log_audit
 from db import db
+from bson import ObjectId
 from kernel import notifications, workflows
 
 cyber_router = APIRouter(prefix="/api/cyber")
@@ -26,9 +27,12 @@ async def overview(user: dict = Depends(get_current_user)):
     coverage = round(sum(c.get("effectiveness", 0) for c in controls) / len(controls)) if controls else 0
     open_risks = sum(1 for r in risks if r.get("status") == "Open")
     top = sorted(risks, key=lambda r: r.get("residual", 0), reverse=True)[:5]
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    m365 = org.get("live_m365") or {}
+    live_users = m365.get("user_count") if m365.get("live") else None
     return {"composition": COMPOSITION, "posture_score": posture, "mitigation_pct": mitigation,
             "control_coverage": coverage, "open_risks": open_risks, "total_risks": len(risks),
-            "risks": top}
+            "live_m365_users": live_users, "risks": top}
 
 
 @cyber_router.post("/risks/{ref}/treat")

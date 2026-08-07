@@ -122,6 +122,14 @@ Foundation: Tenant Management · Identity & RBAC | Data: Enterprise Asset Model 
 ## STILL PENDING (deferred, not blocked)
 - Full SAML login replacement (users actually sign in via IdP — ACS endpoint, assertion parsing, JIT provisioning) — its own phase, needs a real IdP to test.
 
+## Session 2026-06 (Connector Health Cron + M365 Data Pull + Spend Governance Page)
+- **Connector Health Cron**: new POST /api/cron/connector-health (daily 07:30 UTC) re-verifies each org's LIVE M365 creds via Microsoft Graph; flips live_m365 to degraded and emails admins/execs + creates a deduped "Microsoft 365 connector degraded" notification when creds expire. Verified: 401 noauth / 200 auth.
+- **M365 Data Pull**: /api/cyber/overview now returns live_m365_users (real Graph user count when M365 is LIVE, else None); CyberRisk page shows an "M365 LIVE · N users" chip in the composition row.
+- **Spend Governance Page**: new admin page /app/spend-governance (nav "AI Spend") — full dashboard for advisor budget/cap, auto-pause, alert threshold, month/total spend, 6-month sparkline, per-teammate spend, CSV export (month/all), prompt theme chips, and searchable prompt audit log with inline AI answers. Verified via screenshot + search/audit flow.
+
+## DEFERRED (needs a real test IdP — not built)
+- Full SAML Sign-In (ACS endpoint, assertion parsing, JIT provisioning) — large auth integration; requires integration_expert playbook + a live Okta/Azure test IdP to verify safely. NOT implemented; app login remains Google/JWT.
+
 ## Implemented (as of 2026-06)
 - JWT auth (httpOnly cookies, brute-force lockout), org/role, tenant isolation
 - Passwordless QR login (start/approve/poll, 3-min single-use, cross-device)

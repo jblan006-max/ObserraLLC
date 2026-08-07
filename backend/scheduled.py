@@ -14,6 +14,7 @@ from fastapi import APIRouter, Request, BackgroundTasks, HTTPException
 from db import db
 from kernel import notifications
 from ai_advisor import generate_board_report, spend_rows
+from live_connectors import _verify_m365
 from studio import _compose_report
 from reports import _report_html
 
@@ -174,6 +175,52 @@ async def weekly_studio_report(request: Request, background_tasks: BackgroundTas
     if not _authorized(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
     background_tasks.add_task(_run_studio_reports, {"weekly"})
+    return {"status": "accepted"}
+
+
+async def _run_connector_health():
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).date().isoformat()
+    orgs = await db.organizations.find({"live_m365": {"$exists": True}}).to_list(1000)
+    for org in orgs:
+        m = org.get("live_m365") or {}
+        if not m.get("tenant_id"):
+            continue
+        was_live = bool(m.get("live"))
+        try:
+            live, user_count, status = await _verify_m365(m["tenant_id"], m["client_id"], m["client_secret"])
+        except Exception as e:
+            live, user_count, status = False, None, f"Re-verify failed: {str(e)[:120]}"
+        m.update({"live": live, "status": status, "checked_at": datetime.now(timezone.utc).isoformat()})
+        if user_count is not None:
+            m["user_count"] = user_count
+        await db.organizations.update_one({"_id": org["_id"]}, {"$set": {"live_m365": m}})
+        org_id = str(org["_id"])
+        if was_live and not live:
+            recips = await db.users.find(
+                {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
+            html = ("<div style=\"font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto\">"
+                    "<h2 style=\"color:#0f1e3d\">Microsoft 365 connector degraded</h2>"
+                    "<p>The live M365 connection failed re-verification and is now degraded — the client secret "
+                    "may have expired or the app permissions changed.</p>"
+                    f"<p style=\"font-family:monospace;color:#b91c1c\">{status}</p>"
+                    "<p>Update the credentials in Enterprise → Connectors to restore the live sync.</p>"
+                    "<p style=\"font-size:11px;color:#9ca3af\">Obserra — Executive Protection &amp; Intelligence LLC</p></div>")
+            for r in recips:
+                await notifications.send_email(r["email"], "Microsoft 365 connector degraded", html)
+            await notifications.create(
+                org_id, "connector", "Microsoft 365 connector degraded",
+                f"Live M365 re-verification failed: {status}", ref="live-m365",
+                dedupe_key=f"m365-degraded:{today}")
+            logger.warning(f"M365 connector degraded for org {org_id}: {status}")
+
+
+@scheduled_router.post("/cron/connector-health")
+async def connector_health(request: Request, background_tasks: BackgroundTasks):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    if not _authorized(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    background_tasks.add_task(_run_connector_health)
     return {"status": "accepted"}
 
 
