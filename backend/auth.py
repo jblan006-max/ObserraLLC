@@ -2,6 +2,8 @@ import os
 import jwt
 import bcrypt
 import secrets
+import hashlib
+from pymongo import ReturnDocument
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 from fastapi import APIRouter, HTTPException, Request, Response, Depends
@@ -77,6 +79,35 @@ def require_roles(*roles):
     return checker
 
 
+def subscription_active(org: dict) -> bool:
+    if not org:
+        return False
+    status = org.get("subscription_status")
+    plan = org.get("plan")
+    if plan in ("team", "enterprise") and status == "active":
+        cpe = org.get("current_period_end")
+        if not cpe:
+            return True
+        try:
+            return datetime.fromisoformat(cpe) > datetime.now(timezone.utc)
+        except Exception:
+            return True
+    if plan == "trial" or status == "trialing":
+        te = org.get("trial_end")
+        try:
+            return bool(te) and datetime.fromisoformat(te) > datetime.now(timezone.utc)
+        except Exception:
+            return False
+    return False
+
+
+async def require_active_subscription(user: dict = Depends(get_current_user)):
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])})
+    if not subscription_active(org):
+        raise HTTPException(status_code=402, detail="Subscription required")
+    return user
+
+
 from pydantic import BaseModel, EmailStr
 
 
@@ -106,7 +137,9 @@ async def register(body: RegisterBody, response: Response):
         raise HTTPException(status_code=400, detail="Email already registered")
     org = await db.organizations.insert_one({
         "name": body.org_name or f"{body.name}'s Organization",
-        "plan": "trial", "entitlements": ["risk_register", "ai_governance"],
+        "plan": "trial", "subscription_status": "trialing",
+        "trial_end": (datetime.now(timezone.utc) + timedelta(days=14)).isoformat(),
+        "entitlements": ["risk_register", "ai_governance"],
         "created_at": datetime.now(timezone.utc).isoformat(),
     })
     org_id = str(org.inserted_id)
@@ -178,6 +211,67 @@ async def refresh_token(request: Request, response: Response):
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
+def _qr_digest(v: str) -> str:
+    return hashlib.sha256(v.encode()).hexdigest()
+
+
+class QRApproveBody(BaseModel):
+    qr_token: str
+
+
+class QRPollBody(BaseModel):
+    poll_token: str
+
+
+@auth_router.post("/qr/start")
+async def qr_start():
+    qr = secrets.token_urlsafe(24)
+    poll = secrets.token_urlsafe(24)
+    created = datetime.now(timezone.utc)
+    expires = created + timedelta(minutes=3)
+    await db.qr_sessions.insert_one({
+        "qrHash": _qr_digest(qr), "pollHash": _qr_digest(poll), "status": "pending",
+        "approvedBy": None, "createdAt": created, "expireAt": expires,
+    })
+    frontend = os.environ["FRONTEND_URL"].rstrip("/")
+    return {"qr_token": qr, "poll_token": poll, "expires_at": expires.isoformat(),
+            "approve_url": f"{frontend}/qr-approve/{qr}"}
+
+
+@auth_router.post("/qr/approve")
+async def qr_approve(body: QRApproveBody, user: dict = Depends(get_current_user)):
+    doc = await db.qr_sessions.find_one_and_update(
+        {"qrHash": _qr_digest(body.qr_token), "status": "pending",
+         "expireAt": {"$gt": datetime.now(timezone.utc)}},
+        {"$set": {"status": "approved", "approvedBy": user["id"],
+                  "approvedName": user.get("name"), "approvedAt": datetime.now(timezone.utc)}},
+        return_document=ReturnDocument.AFTER)
+    if not doc:
+        raise HTTPException(status_code=410, detail="QR code expired, used, or invalid")
+    return {"status": "approved"}
+
+
+@auth_router.post("/qr/poll")
+async def qr_poll(body: QRPollBody, response: Response):
+    now = datetime.now(timezone.utc)
+    doc = await db.qr_sessions.find_one_and_update(
+        {"pollHash": _qr_digest(body.poll_token), "status": "approved", "expireAt": {"$gt": now}},
+        {"$set": {"status": "claimed", "claimedAt": now}},
+        return_document=ReturnDocument.AFTER)
+    if doc:
+        user = await db.users.find_one({"_id": ObjectId(doc["approvedBy"])})
+        access = create_access_token(str(user["_id"]), user["email"])
+        refresh = create_refresh_token(str(user["_id"]))
+        set_auth_cookies(response, access, refresh)
+        return {"status": "claimed", "user": _public_user(user)}
+    pending = await db.qr_sessions.find_one(
+        {"pollHash": _qr_digest(body.poll_token), "status": {"$in": ["pending", "approved"]},
+         "expireAt": {"$gt": now}}, {"status": 1})
+    if pending:
+        return {"status": pending["status"]}
+    raise HTTPException(status_code=410, detail="Session expired or invalid")
+
+
 async def seed_admin():
     email = os.environ["ADMIN_EMAIL"].lower()
     password = os.environ["ADMIN_PASSWORD"]
@@ -185,6 +279,7 @@ async def seed_admin():
     if existing is None:
         org = await db.organizations.insert_one({
             "name": "Obserra — Executive Protection & Intelligence LLC", "plan": "enterprise",
+            "subscription_status": "active",
             "entitlements": ["risk_register", "ai_governance"],
             "created_at": datetime.now(timezone.utc).isoformat(),
         })

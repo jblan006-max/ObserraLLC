@@ -1,7 +1,12 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { NavLink, Outlet, useNavigate, useLocation, Navigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { AIAdvisor } from "@/components/AIAdvisor";
-import { ShieldHalf, LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation, Wrench } from "lucide-react";
+import { Footer } from "@/components/Footer";
+import {
+  LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
+  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock,
+} from "lucide-react";
 
 function DualModeToggle() {
   const { mode, switchMode } = useAuth();
@@ -21,18 +26,50 @@ function DualModeToggle() {
 
 const NAV = [
   { to: "/app", label: "Overview", icon: LayoutDashboard, end: true },
+  { to: "/app/situation-room", label: "Situation Room", icon: Radar, ent: "situation_room" },
   { to: "/app/risks", label: "Risk Register", icon: ListChecks },
   { to: "/app/ai-governance", label: "AI Governance", icon: Cpu },
+  { to: "/app/assets", label: "Asset Intelligence", icon: Boxes, ent: "asset_intelligence" },
   { to: "/app/decisions", label: "Recommendations", icon: GitBranch },
+  { to: "/app/reporting", label: "Evidence & Reporting", icon: FileBarChart, ent: "evidence_reporting" },
   { to: "/app/audit", label: "Audit Log", icon: ScrollText },
+  { to: "/app/marketplace", label: "Marketplace", icon: Store },
   { to: "/app/billing", label: "Billing", icon: CreditCard },
 ];
 
-export default function AppShell() {
-  const { user, logout } = useAuth();
+function Paywall() {
   const navigate = useNavigate();
+  return (
+    <div className="flex items-center justify-center h-[70vh]">
+      <div className="max-w-md text-center bg-card fact-border rounded-xl p-8 rise">
+        <Lock className="w-10 h-10 text-med mx-auto mb-4" />
+        <h1 className="font-head font-black text-2xl">Subscription required</h1>
+        <p className="text-sm text-muted-foreground mt-2 mb-6">Your trial or subscription is inactive. Choose a plan to restore access to your risk and AI governance intelligence.</p>
+        <button data-testid="paywall-cta" onClick={() => navigate("/app/billing")} className="px-6 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm">View plans</button>
+      </div>
+    </div>
+  );
+}
+
+export default function AppShell() {
+  const { user, sub, logout } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [paywall, setPaywall] = useState(false);
+
+  useEffect(() => {
+    const h = () => setPaywall(true);
+    window.addEventListener("eios-paywall", h);
+    return () => window.removeEventListener("eios-paywall", h);
+  }, []);
 
   const doLogout = async () => { await logout(); navigate("/"); };
+  const ents = sub?.entitlements || [];
+  const enterprise = sub?.plan === "enterprise";
+  const owns = (ent) => !ent || enterprise || ents.includes(ent);
+  const allowedWhenInactive = ["/app/billing", "/app/marketplace"];
+  const inactive = (sub && !sub.active) || paywall;
+  const blocked = inactive && !allowedWhenInactive.includes(location.pathname);
 
   return (
     <div className="min-h-screen grain flex">
@@ -40,37 +77,53 @@ export default function AppShell() {
         <div className="flex items-center px-4 h-16 border-b border-border">
           <img src="/logo.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-9 w-auto object-contain" />
         </div>
-        <nav className="flex-1 p-3 space-y-1">
-          {NAV.map((n) => (
-            <NavLink key={n.to} to={n.to} end={n.end} data-testid={`nav-${n.label.toLowerCase().replace(/ /g, "-")}`}
-              className={({ isActive }) => `flex items-center gap-3 px-3 py-2.5 rounded-md text-sm transition-colors duration-200 ${
-                isActive ? "bg-primary/15 text-foreground border border-primary/30" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}`}>
-              <n.icon className="w-4 h-4" /> {n.label}
-            </NavLink>
-          ))}
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+          {NAV.map((n) => {
+            const locked = !owns(n.ent);
+            return (
+              <NavLink key={n.to} to={locked ? "/app/marketplace" : n.to} end={n.end}
+                data-testid={`nav-${n.label.toLowerCase().replace(/ &/g, "").replace(/ /g, "-")}`}
+                className={({ isActive }) => `flex items-center justify-between gap-3 px-3 py-2.5 rounded-md text-sm transition-colors duration-200 ${
+                  isActive && !locked ? "bg-primary/15 text-foreground border border-primary/30" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}`}>
+                <span className="flex items-center gap-3"><n.icon className="w-4 h-4" /> {n.label}</span>
+                {locked && <Lock className="w-3 h-3 text-muted-foreground" />}
+              </NavLink>
+            );
+          })}
         </nav>
         <div className="p-3 border-t border-border">
+          {sub && (
+            <div className="mb-2 px-2 py-1.5 rounded-md bg-secondary/40 text-[10px] font-mono flex items-center gap-1.5">
+              <span className={`w-1.5 h-1.5 rounded-full ${sub.active ? "bg-low" : "bg-crit"}`} />
+              <span className="uppercase text-muted-foreground">{sub.plan}</span>
+              {sub.plan === "trial" && sub.trial_end && <span className="text-muted-foreground flex items-center gap-1 ml-auto"><Clock className="w-3 h-3" />trial</span>}
+            </div>
+          )}
           <div className="px-2 py-1 mb-2">
             <div className="text-sm font-medium truncate">{user?.name}</div>
             <div className="text-[10px] font-mono text-muted-foreground uppercase">{user?.role}</div>
           </div>
-          <button data-testid="logout-btn" onClick={doLogout}
-            className="flex items-center gap-2 w-full px-3 py-2 rounded-md text-sm text-muted-foreground hover:text-crit hover:bg-crit/10 transition-colors duration-200">
+          <button data-testid="logout-btn" onClick={doLogout} className="flex items-center gap-2 w-full px-3 py-2 rounded-md text-sm text-muted-foreground hover:text-crit hover:bg-crit/10 transition-colors duration-200">
             <LogOut className="w-4 h-4" /> Sign out
           </button>
+          <a data-testid="visit-site-link-nav" href="https://www.obserrallc.com/" target="_blank" rel="noopener noreferrer"
+            className="flex items-center gap-2 w-full px-3 py-2 mt-1 rounded-md text-xs text-muted-foreground hover:text-ai transition-colors duration-200">
+            <Globe className="w-3.5 h-3.5" /> obserrallc.com
+          </a>
         </div>
       </aside>
 
       <div className="flex-1 flex flex-col min-w-0">
         <header className="sticky top-0 z-30 h-16 flex items-center justify-between px-6 border-b border-border/40 backdrop-blur-xl bg-background/70">
-          <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest">
-            Obserra — Executive Protection &amp; Intelligence LLC
+          <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest truncate">
+            {sub?.org_name || "Obserra — Executive Protection & Intelligence LLC"}
           </div>
           <DualModeToggle />
         </header>
         <main className="flex-1 p-6 lg:p-8 max-w-[1500px] w-full">
-          <Outlet />
+          {blocked ? <Paywall /> : <Outlet />}
         </main>
+        <Footer />
       </div>
 
       <AIAdvisor />

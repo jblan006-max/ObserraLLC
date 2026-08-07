@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from datetime import datetime, timezone
 
 from db import db
-from auth import get_current_user
+from auth import get_current_user, require_active_subscription
 from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
 
 advisor_router = APIRouter(prefix="/api/advisor")
@@ -44,18 +44,22 @@ async def _build_context(org_id: str) -> str:
     return json.dumps(ctx, default=str)
 
 
-SYSTEM_PROMPT = """You are the Obserra EIOS Evidence-Grounded Advisor for enterprise cyber-risk and AI governance.
+SYSTEM_PROMPT = """You are the Obserra EIOS Advisor — an evidence-grounded HELPER and WORKER for enterprise cyber-risk and AI governance.
 RULES:
 - Ground EVERY claim in the provided ENTERPRISE CONTEXT. Cite specific refs (e.g. CR-001, AI-002) in square brackets.
-- Clearly separate FACT (from connected systems), ESTIMATE (modeled), PREDICTION (forward-looking), and RECOMMENDATION.
+- Separate FACT (connected systems), ESTIMATE (modeled), PREDICTION (forward-looking), and RECOMMENDATION.
 - Attach a confidence level (High/Medium/Low) to recommendations and note data freshness when relevant.
 - Executive mode: concise, business-impact framed, board-ready. Operational mode: control-level detail, remediation steps.
 - Never fabricate data not present in the context. If unknown, say so.
-Format with short markdown. Prefix recommendations with 'RECOMMENDATION:'."""
+WORKER MODE — you can execute remediation through connected integrations (Entra ID, Tenable, Defender/CASB).
+When a remediation is appropriate and grounded in a cited risk, add it on its OWN final line exactly as:
+ACTION: <action_id> — <short human label>
+Valid action_ids ONLY: entra_enforce_pim (CR-001), entra_enforce_mfa (CR-005), tenable_patch_critical (CR-002), casb_quarantine_shadow (CR-004).
+Suggest at most one ACTION per reply. Use short markdown. Prefix advice with 'RECOMMENDATION:'."""
 
 
 @advisor_router.post("/chat")
-async def advisor_chat(body: AdvisorQuery, user: dict = Depends(get_current_user)):
+async def advisor_chat(body: AdvisorQuery, user: dict = Depends(require_active_subscription)):
     org_id = user["org_id"]
     context = await _build_context(org_id)
     provider, model = MODEL_ROUTES.get(body.mode, MODEL_ROUTES["executive"])
@@ -98,3 +102,34 @@ async def advisor_chat(body: AdvisorQuery, user: dict = Depends(get_current_user
 async def advisor_logs(user: dict = Depends(get_current_user)):
     logs = await db.advisor_logs.find({"org_id": user["org_id"]}, {"_id": 0}).sort("ts", -1).to_list(50)
     return logs
+
+
+@advisor_router.post("/board-report")
+async def board_report(user: dict = Depends(require_active_subscription)):
+    org_id = user["org_id"]
+    context = await _build_context(org_id)
+    chat = LlmChat(
+        api_key=os.environ["EMERGENT_LLM_KEY"],
+        session_id=f"board-{org_id}",
+        system_message="You are a chief risk officer producing a concise, board-ready enterprise risk & AI governance report. Ground every statement in the provided context and cite refs in square brackets.",
+    ).with_model("anthropic", "claude-sonnet-5")
+    prompt = (f"ENTERPRISE CONTEXT (JSON):\n{context}\n\n"
+              "Write a board report in markdown with these sections and nothing else: "
+              "## Executive Summary, ## Top Enterprise Risks, ## AI Governance Posture, "
+              "## Key Recommendations, ## Decisions Required. "
+              "Cite refs like [CR-001]. Separate FACT vs ESTIMATE. Keep under 380 words.")
+    collected = []
+    try:
+        async for ev in chat.stream_message(UserMessage(text=prompt)):
+            if isinstance(ev, TextDelta):
+                collected.append(ev.content)
+            elif isinstance(ev, StreamDone):
+                break
+    except Exception as e:
+        collected.append(f"[report generation error: {e}]")
+    report = "".join(collected)
+    now = datetime.now(timezone.utc).isoformat()
+    await db.reports.insert_one({"org_id": org_id, "report": report,
+                                 "model": "anthropic/claude-sonnet-5", "generated_at": now, "by": user["email"]})
+    return {"report": report, "model": "claude-sonnet-5", "generated_at": now}
+

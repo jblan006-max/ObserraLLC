@@ -10,13 +10,17 @@ import AIGovernance from "@/pages/AIGovernance";
 import Decisions from "@/pages/Decisions";
 import AuditLog from "@/pages/AuditLog";
 import Billing from "@/pages/Billing";
+import Marketplace from "@/pages/Marketplace";
+import SituationRoom from "@/pages/SituationRoom";
+import AssetIntelligence from "@/pages/AssetIntelligence";
+import Reporting from "@/pages/Reporting";
 import PaymentSuccess from "@/pages/PaymentSuccess";
+import QRApprove from "@/pages/QRApprove";
 import { Loader2 } from "lucide-react";
 
 function Gate({ children }) {
   const { user } = useAuth();
-  if (user === null)
-    return <div className="min-h-screen flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
+  if (user === null) return <div className="min-h-screen flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
   if (!user) return <Navigate to="/" replace />;
   return children;
 }
@@ -34,13 +38,18 @@ function App() {
         <BrowserRouter>
           <Routes>
             <Route path="/" element={<Landing />} />
+            <Route path="/qr-approve/:token" element={<QRApprove />} />
             <Route path="/payment/success" element={<Gate><PaymentSuccess /></Gate>} />
             <Route path="/app" element={<Gate><AppShell /></Gate>}>
               <Route index element={<Overview />} />
+              <Route path="situation-room" element={<SituationRoom />} />
               <Route path="risks" element={<RiskRegister />} />
               <Route path="ai-governance" element={<AIGovernance />} />
+              <Route path="assets" element={<AssetIntelligence />} />
               <Route path="decisions" element={<Decisions />} />
+              <Route path="reporting" element={<Reporting />} />
               <Route path="audit" element={<AuditLog />} />
+              <Route path="marketplace" element={<Marketplace />} />
               <Route path="billing" element={<Billing />} />
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />

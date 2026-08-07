@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { formatApiErrorDetail } from "@/lib/api";
+import { QRLogin } from "@/components/QRLogin";
 import { ShieldHalf, Loader2 } from "lucide-react";
 
 export default function Auth() {
@@ -9,6 +10,7 @@ export default function Auth() {
   const [form, setForm] = useState({ email: "", password: "", name: "", org_name: "" });
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showQR, setShowQR] = useState(false);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -31,7 +33,7 @@ export default function Auth() {
         <img alt="" src="https://images.unsplash.com/photo-1644088379091-d574269d422f?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200"
           className="absolute inset-0 w-full h-full object-cover opacity-[0.10]" />
         <div className="relative">
-          <img src="/logo.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-11 w-auto object-contain" />
+          <img src="/logo.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-20 w-auto object-contain" />
         </div>
         <div className="relative space-y-6">
           <h1 className="font-head font-black text-5xl leading-[1.05] tracking-tight">
@@ -46,13 +48,17 @@ export default function Auth() {
             <span className="px-2 py-1 rounded-sm ai-border text-ai">Evidence-backed AI</span>
           </div>
         </div>
-        <div className="relative text-xs font-mono text-muted-foreground">Multi-tenant · Immutable audit · Board-ready</div>
+        <div className="relative flex items-center gap-3 text-xs font-mono text-muted-foreground">
+          <span>Multi-tenant · Immutable audit · Board-ready</span>
+          <a data-testid="visit-site-link" href="https://www.obserrallc.com/" target="_blank" rel="noopener noreferrer"
+            className="text-ai hover:underline">Visit us at obserrallc.com →</a>
+        </div>
       </div>
 
       <div className="flex items-center justify-center p-6">
         <div className="w-full max-w-sm rise">
           <div className="lg:hidden mb-8">
-            <img src="/logo.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-10 w-auto object-contain" />
+            <img src="/logo.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-16 w-auto object-contain" />
           </div>
           <div className="flex gap-1 p-1 bg-secondary/50 rounded-lg mb-6 text-sm">
             {["login", "register"].map((t) => (
@@ -64,6 +70,14 @@ export default function Auth() {
             ))}
           </div>
 
+          {tab === "login" && (
+            <button type="button" data-testid="qr-toggle" onClick={() => setShowQR((v) => !v)}
+              className="w-full text-xs text-ai hover:underline mb-4">
+              {showQR ? "← Use email & password" : "⌁ Sign in with QR code (passwordless)"}
+            </button>
+          )}
+
+          {tab === "login" && showQR ? <QRLogin /> : (
           <form onSubmit={submit} className="space-y-4">
             {tab === "register" && (
               <>
@@ -82,11 +96,16 @@ export default function Auth() {
               {tab === "login" ? "Sign in" : "Create account"}
             </button>
           </form>
+          )}
 
-          {tab === "login" && (
-            <p className="mt-6 text-xs text-muted-foreground text-center">
-              Demo: <span className="font-mono text-foreground">jblan2026@gmail.com</span> / <span className="font-mono text-foreground">Obserra2026!</span>
-            </p>
+          {tab === "login" && !showQR && (
+            <>
+              <p className="mt-6 text-xs text-muted-foreground text-center">
+                Demo: <span className="font-mono text-foreground">jblan2026@gmail.com</span> / <span className="font-mono text-foreground">Obserra2026!</span>
+              </p>
+              <a data-testid="visit-site-link-mobile" href="https://www.obserrallc.com/" target="_blank" rel="noopener noreferrer"
+                className="mt-3 block text-center text-xs text-ai hover:underline">Visit us at obserrallc.com →</a>
+            </>
           )}
         </div>
       </div>

@@ -247,7 +247,7 @@ class TestBilling:
         assert r.status_code == 200
         plans = r.json()
         assert len(plans) == 2
-        keys = {p["lookup_key"] for p in plans}
+        keys = {p["monthly"]["lookup_key"] for p in plans}
         assert "eios_team_monthly" in keys and "eios_enterprise_monthly" in keys
 
     def test_checkout_and_status(self, admin_session):
