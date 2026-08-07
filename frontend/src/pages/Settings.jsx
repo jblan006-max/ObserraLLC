@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { api, API } from "@/lib/api";
 import { toast } from "sonner";
-import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw, Image as ImageIcon, Server, Package, FileText } from "lucide-react";
+import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw, Image as ImageIcon, Server, Package, FileText, RefreshCw } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const OPTIONS = [
@@ -75,6 +75,16 @@ export default function Settings() {
       URL.revokeObjectURL(url);
     } catch (e) { toast.error(e.response?.data?.detail || "Download failed"); }
     setDlBusy("");
+  };
+
+  const [regenBusy, setRegenBusy] = useState(false);
+  const regenGuides = async () => {
+    setRegenBusy(true);
+    try {
+      await api.post("/deploy/regenerate-guides");
+      toast.success("Guides regenerated from the latest screenshots");
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not regenerate"); }
+    setRegenBusy(false);
   };
 
   useEffect(() => {
@@ -271,6 +281,10 @@ export default function Settings() {
             <button data-testid="download-guide-docx" disabled={dlBusy} onClick={() => downloadFile("/deploy/guide.docx", "Obserra-Install-and-User-Guide.docx", "docx")}
               className="px-4 py-2.5 rounded-md border border-primary/40 text-foreground hover:bg-primary/10 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
               {dlBusy === "docx" ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4 text-primary" />} Install &amp; User Guide (Word)
+            </button>
+            <button data-testid="regenerate-guides" disabled={regenBusy} onClick={regenGuides}
+              className="px-4 py-2.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-primary/40 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
+              {regenBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Regenerate guides
             </button>
           </div>
           <p className="text-xs text-muted-foreground">Prefer a guided video? Use the built-in walkthrough via <span className="text-foreground">Guided Tour → Replay tour</span> above — it narrates Executive vs Operational mode in-app.</p>

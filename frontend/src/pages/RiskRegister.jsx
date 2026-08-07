@@ -44,7 +44,7 @@ export default function RiskRegister() {
         <p className="text-sm text-muted-foreground mt-1">{isExec ? "Business-impact view of the cyber risk register — exposure and residual severity by risk (read-only)." : "Taxonomy, inherent vs residual scoring, ownership, treatment & KRIs. Click any row for evidence lineage."}</p>
       </div>
 
-      <div className="flex flex-wrap gap-3">
+      <div className="flex flex-wrap gap-3 sticky top-16 z-20 -mx-4 px-4 sm:mx-0 sm:px-0 py-2 bg-background/90 backdrop-blur">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
           <input data-testid="risk-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search risks…"
@@ -58,7 +58,41 @@ export default function RiskRegister() {
         </Select>
       </div>
 
-      <div className="bg-card fact-border rounded-lg overflow-x-auto">
+      <div className="md:hidden space-y-3" data-testid="risk-cards-mobile">
+        {filtered.map((r) => (
+          <div key={r.ref} data-testid={`risk-card-${r.ref}`} onClick={() => setLineage(r.ref)}
+            className="bg-card fact-border rounded-lg p-4 space-y-2 active:bg-secondary/40 transition-colors">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="font-mono text-[11px] text-ai">{r.ref}</div>
+                <div className="font-medium text-sm">{r.title}</div>
+                <div className="text-[11px] text-high">{r.business_impact}</div>
+              </div>
+              <div className="shrink-0" onClick={(e) => e.stopPropagation()}>
+                {isExec ? (
+                  <span className="text-[10px] px-2 py-0.5 rounded-md bg-secondary/60">{r.status}</span>
+                ) : (
+                  <Select value={r.status} onValueChange={(v) => updateStatus(r.ref, v)}>
+                    <SelectTrigger className="w-28 h-8 text-xs bg-secondary/60"><SelectValue /></SelectTrigger>
+                    <SelectContent>{STATUS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                  </Select>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+              <span>{r.category}</span>
+              <span className="flex items-center gap-1">Inh <ScorePill value={r.inherent} /></span>
+              <span className="flex items-center gap-1">Res <ScorePill value={r.residual} /></span>
+            </div>
+            <button data-testid={`evidence-m-${r.ref}`} onClick={(e) => { e.stopPropagation(); setEvidence(r.ref); }}
+              className="flex items-center gap-1 text-xs font-mono text-high">
+              <DollarSign className="w-3 h-3" />{Math.round((SLE_BY_IMPACT[r.impact] || 1e6) * (r.likelihood / 5) * (r.residual / r.inherent) / 1000)}k exposure <Info className="w-3 h-3 opacity-60" />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="hidden md:block bg-card fact-border rounded-lg overflow-x-auto">
         <table className="w-full text-sm min-w-[900px]">
           <thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border">
             <tr>

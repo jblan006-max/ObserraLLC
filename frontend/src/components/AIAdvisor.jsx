@@ -213,7 +213,7 @@ export function AIAdvisor() {
   return (
     <>
       {showHint && !open && (
-        <div data-testid="advisor-hint" className="fixed bottom-24 right-6 z-40 w-60 rise">
+        <div data-testid="advisor-hint" className="fixed bottom-[92px] right-4 sm:right-6 z-40 w-[min(15rem,calc(100vw-2rem))] rise">
           <div className="relative rounded-xl bg-popover border border-ai/30 shadow-xl p-3.5 text-xs leading-relaxed text-foreground">
             <button data-testid="advisor-hint-dismiss" onClick={dismissHint}
               className="absolute top-2 right-2 p-0.5 rounded hover:bg-secondary text-muted-foreground"><X className="w-3.5 h-3.5" /></button>

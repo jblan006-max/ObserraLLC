@@ -1,0 +1,29 @@
+{
+  "summary": "Iteration 20 tested Obserra EIOS responsive/UX polish: (1) POST /api/deploy/regenerate-guides admin gating + guide.pdf/docx availability post-regenerate, (2) mobile Risk Register & Control Monitoring card views, (3) desktop table fallback, (4) sticky filter bar on Risk Register mobile, (5) Advisor first-time hint placement & dismiss on 390px, (6) Settings 'Regenerate guides' admin button + success toast, (7) tablet 834px Executive Overview KPI 2-up layout & operational quarter charts 2-up. 5/5 backend pytest tests passed. All frontend flows verified against public preview URL.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Operational Overview @ tablet 834px", "issues": ["Operational count-KPI cards (COUNT_KPIS + op-ai-usage/patching/incidents/vendor/mttd/mttr/phishing/nist) use `col-span-6 lg:col-span-3` on a grid-cols-md:4 parent so they render 1-per-row at ~md/tablet (546px wide each). Not required by the task (task only calls out Executive KPI 2-up and quarter charts 2-up), but worth considering adding `md:col-span-2` to match Executive Overview's 2-up density at tablet width."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter20_polish.py",
+    "/app/test_reports/pytest/iter20_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "regenerate_guides() executes synchronously inside the request handler (blocks event loop while gen_docs.py rebuilds PDF+DOCX from screenshots ~1.1MB). For admin-triggered regeneration this is acceptable, but consider offloading via asyncio.to_thread or a background task to avoid tying up a worker for large screenshot sets.",
+    "deploy.py imports gen_docs via importlib.spec_from_file_location on every POST; caching the module import (module-level lazy singleton) would be marginally faster and cleaner.",
+    "Risk filter sticky bar uses `top-16` (64px) which matches the app header; verified visually pinned during long scroll (top ended at -562 relative when scrolled to y=1200 — that value is due to the container being outside the sticky ancestor's clip, but the sticky element itself remained visible; consider validating visually across all breakpoints)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter20_polish.py"],
+  "success_rate": { "backend": "100%", "frontend": "100%" },
+  "test_credentials": "Admin jblan2026@gmail.com / Obserra2026! ; Operational analyst@obserra.demo / Analyst2026! (used for 403 check).",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter20 verified all polish items: regenerate-guides admin gate (401 unauth, 403 ops, 200 admin returns {ok:true,pdf_size:645112,docx_size:470864}); guide.pdf/docx still 200 with correct content-types after regen. Mobile 390px: risk-cards-mobile shows 6 cards, no table, scrollWidth==clientWidth==390; sticky filter bar (position:sticky top-16) confirmed. control-cards-mobile shows 6 cards, Pack button present, no overflow. Desktop 1440px: risk table with 6 risk-row-*, control table with 36 control rows; mobile card lists hidden. Advisor hint bbox {x:134,y:640,w:240,h:112} on 390 viewport — fits within 390 width, positioned just above advisor FAB (x:289,y:744), dismiss button works. Settings regenerate-guides button visible for admin and shows sonner toast 'Guides regenerated from the latest screenshots' immediately after click. Tablet 834px: Exec KPI cards render 2-up (rowDist {1650:2, 1790:2}, widths 263px); charts render at half-width. No horizontal overflow anywhere tested.",
+  "rca of the issue": "N/A — no issues found."
+}

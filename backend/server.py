@@ -94,6 +94,12 @@ async def startup():
     await db.notifications.create_index([("org_id", 1), ("dedupe_key", 1)])
     await seed_admin()
     try:
+        from deploy import regenerate_guides
+        regenerate_guides()
+        logger.info("Install/User guides regenerated")
+    except Exception as e:
+        logger.warning(f"Guide regeneration skipped: {e}")
+    try:
         setup_catalog()
         logger.info("Stripe catalog ready")
     except Exception as e:

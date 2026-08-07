@@ -197,10 +197,17 @@ def build_docx(path):
     d.save(path)
 
 
-if __name__ == "__main__":
+def generate_all():
+    """Regenerate both guides from the current screenshots. Returns paths + sizes."""
     pdf_path = os.path.join(OUT, "Obserra-Install-and-User-Guide.pdf")
     docx_path = os.path.join(OUT, "Obserra-Install-and-User-Guide.docx")
     build_pdf(pdf_path)
     build_docx(docx_path)
-    print("PDF:", pdf_path, os.path.getsize(pdf_path))
-    print("DOCX:", docx_path, os.path.getsize(docx_path))
+    return {"pdf": pdf_path, "docx": docx_path,
+            "pdf_size": os.path.getsize(pdf_path), "docx_size": os.path.getsize(docx_path)}
+
+
+if __name__ == "__main__":
+    r = generate_all()
+    print("PDF:", r["pdf"], os.path.getsize(r["pdf"]))
+    print("DOCX:", r["docx"], os.path.getsize(r["docx"]))

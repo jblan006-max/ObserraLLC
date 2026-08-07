@@ -57,3 +57,24 @@ async def guide_docx(user: dict = Depends(get_current_user)):
         _GUIDE_DOCX,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         filename="Obserra-Install-and-User-Guide.docx")
+
+
+def regenerate_guides():
+    """(Re)build the PDF + Word guides from the current screenshots."""
+    import importlib.util
+    gp = os.path.join(_ROOT, "scripts", "gen_docs.py")
+    spec = importlib.util.spec_from_file_location("gen_docs", gp)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.generate_all()
+
+
+@deploy_router.post("/regenerate-guides")
+async def regenerate(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can regenerate the guides")
+    try:
+        res = regenerate_guides()
+        return {"ok": True, "pdf_size": res["pdf_size"], "docx_size": res["docx_size"]}
+    except Exception as e:
+        raise HTTPException(500, f"Could not regenerate guides: {e}")
