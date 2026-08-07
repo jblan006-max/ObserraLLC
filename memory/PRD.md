@@ -101,6 +101,10 @@ Foundation: Tenant Management · Identity & RBAC | Data: Enterprise Asset Model 
 - **Spend Alert Threshold**: org flag advisor_alert_threshold (default 80). Advisor budget panel adds 75/80/90% buttons; PUT /api/advisor/budget accepts alert_threshold; /api/advisor/usage returns alert_threshold and computes warning status at the chosen %. _check_budget now fires the warning notification AND a heads-up email to admins/execs at the threshold (deduped per month via advisor_alert_notified), plus the existing 100% auto-pause email. set_budget $unset's both notified flags on change.
 - **Exportable Usage Report**: GET /api/advisor/usage/export → CSV (Month, Teammate, Queries, Tokens, Cost) of current-month per-teammate advisor spend + TOTAL row. "Download spend CSV" button in the advisor.
 
+## Session 2026-06 (Teammate Drilldown + Full-History CSV)
+- **Teammate Drilldown**: GET /api/advisor/usage/prompts?member=<email> (admin) returns a teammate's 15 most recent advisor prompts (prompt, ts, model, cost, tokens, response snippet). Clicking a teammate in the advisor spend list expands an inline drilldown of their recent prompts.
+- **Full-History CSV**: GET /api/advisor/usage/export now accepts ?scope=all → aggregates spend per (month, teammate) across all history with an ALL/TOTAL row. Advisor shows two buttons: "This month" and "All months".
+
 ## Implemented (as of 2026-06)
 - JWT auth (httpOnly cookies, brute-force lockout), org/role, tenant isolation
 - Passwordless QR login (start/approve/poll, 3-min single-use, cross-device)

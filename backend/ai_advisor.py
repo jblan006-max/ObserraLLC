@@ -264,26 +264,40 @@ async def advisor_usage(admin: dict = Depends(require_roles("admin"))):
 
 
 @advisor_router.get("/usage/export")
-async def advisor_usage_export(admin: dict = Depends(require_roles("admin"))):
-    logs = await db.advisor_logs.find({"org_id": admin["org_id"], "usage": {"$exists": True}}, {"_id": 0}).sort("ts", -1).to_list(2000)
+async def advisor_usage_export(scope: str = "month", admin: dict = Depends(require_roles("admin"))):
+    logs = await db.advisor_logs.find({"org_id": admin["org_id"], "usage": {"$exists": True}}, {"_id": 0}).sort("ts", -1).to_list(5000)
     mk = _month_key()
-    bu = {}
+    agg = {}
     for l in logs:
-        if l.get("ts", "").startswith(mk):
-            e = bu.setdefault(l["user"], {"user": l["user"], "cost_usd": 0.0, "queries": 0, "tokens": 0})
-            e["cost_usd"] += l["usage"]["cost_usd"]
-            e["queries"] += 1
-            e["tokens"] += l["usage"]["total_tokens"]
-    rows = sorted(bu.values(), key=lambda x: x["cost_usd"], reverse=True)
+        m = l.get("ts", "")[:7]
+        if scope != "all" and m != mk:
+            continue
+        k = (m, l["user"])
+        e = agg.setdefault(k, {"month": m, "user": l["user"], "cost_usd": 0.0, "queries": 0, "tokens": 0})
+        e["cost_usd"] += l["usage"]["cost_usd"]
+        e["queries"] += 1
+        e["tokens"] += l["usage"]["total_tokens"]
+    rows = sorted(agg.values(), key=lambda x: (x["month"], -x["cost_usd"]))
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["Month", "Teammate", "Queries", "Tokens", "Cost (USD)"])
     for r in rows:
-        w.writerow([mk, r["user"], r["queries"], r["tokens"], f"{r['cost_usd']:.4f}"])
-    w.writerow([mk, "TOTAL", sum(r["queries"] for r in rows), sum(r["tokens"] for r in rows), f"{sum(r['cost_usd'] for r in rows):.4f}"])
+        w.writerow([r["month"], r["user"], r["queries"], r["tokens"], f"{r['cost_usd']:.4f}"])
+    w.writerow(["ALL" if scope == "all" else mk, "TOTAL", sum(r["queries"] for r in rows),
+                sum(r["tokens"] for r in rows), f"{sum(r['cost_usd'] for r in rows):.4f}"])
     buf.seek(0)
+    fname = f"advisor-spend-{'all-history' if scope == 'all' else mk}.csv"
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
-                             headers={"Content-Disposition": f'attachment; filename="advisor-spend-{mk}.csv"'})
+                             headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@advisor_router.get("/usage/prompts")
+async def advisor_user_prompts(member: str, admin: dict = Depends(require_roles("admin"))):
+    logs = await db.advisor_logs.find(
+        {"org_id": admin["org_id"], "user": member, "usage": {"$exists": True}}, {"_id": 0}).sort("ts", -1).to_list(15)
+    return [{"prompt": l["prompt"], "ts": l.get("ts"), "model": l.get("model"),
+             "cost_usd": l["usage"]["cost_usd"], "tokens": l["usage"]["total_tokens"],
+             "response": (l.get("response") or "")[:240]} for l in logs]
 
 
 class BudgetBody(BaseModel):

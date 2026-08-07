@@ -50,6 +50,8 @@ export function AIAdvisor() {
   const [spend, setSpend] = useState(null);
   const [budgetInput, setBudgetInput] = useState("");
   const [savingBudget, setSavingBudget] = useState(false);
+  const [drillUser, setDrillUser] = useState(null);
+  const [drillPrompts, setDrillPrompts] = useState([]);
   const scrollRef = useRef(null);
   const sendRef = useRef(null);
 
@@ -148,13 +150,20 @@ export function AIAdvisor() {
     setSavingBudget(false);
   };
 
-  const exportUsageCsv = async () => {
+  const exportUsageCsv = async (scope = "month") => {
     try {
-      const { data } = await api.get("/advisor/usage/export", { responseType: "blob" });
+      const { data } = await api.get("/advisor/usage/export", { params: { scope }, responseType: "blob" });
       const url = URL.createObjectURL(new Blob([data], { type: "text/csv" }));
-      const a = document.createElement("a"); a.href = url; a.download = "advisor-spend.csv"; a.click(); URL.revokeObjectURL(url);
+      const a = document.createElement("a"); a.href = url; a.download = scope === "all" ? "advisor-spend-all.csv" : "advisor-spend.csv"; a.click(); URL.revokeObjectURL(url);
       toast.success("Spend CSV downloaded");
     } catch { toast.error("Export failed"); }
+  };
+
+  const openDrill = async (u) => {
+    if (drillUser === u) { setDrillUser(null); return; }
+    setDrillUser(u); setDrillPrompts([]);
+    try { const { data } = await api.get("/advisor/usage/prompts", { params: { member: u } }); setDrillPrompts(data); }
+    catch { toast.error("Could not load prompts"); }
   };
 
   const suggestions = mode === "executive"
@@ -236,10 +245,16 @@ export function AIAdvisor() {
                   ))}
                 </div>
               </div>
-              <button data-testid="advisor-export-csv" onClick={exportUsageCsv}
-                className="w-full inline-flex items-center justify-center gap-1.5 text-[11px] px-3 py-1.5 rounded-md bg-secondary/60 border border-border hover:bg-secondary text-muted-foreground transition-colors">
-                <Download className="w-3 h-3" /> Download spend CSV
-              </button>
+              <div className="flex items-center gap-1.5">
+                <button data-testid="advisor-export-csv" onClick={() => exportUsageCsv("month")}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 text-[11px] px-3 py-1.5 rounded-md bg-secondary/60 border border-border hover:bg-secondary text-muted-foreground transition-colors">
+                  <Download className="w-3 h-3" /> This month
+                </button>
+                <button data-testid="advisor-export-csv-all" onClick={() => exportUsageCsv("all")}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 text-[11px] px-3 py-1.5 rounded-md bg-secondary/60 border border-border hover:bg-secondary text-muted-foreground transition-colors">
+                  <Download className="w-3 h-3" /> All months
+                </button>
+              </div>
               {spend.trend?.length > 0 && (() => {
                 const max = Math.max(...spend.trend.map((t) => t.cost_usd), 0.0001);
                 return (
@@ -261,9 +276,24 @@ export function AIAdvisor() {
                   <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1">This month by teammate</div>
                   <div className="space-y-0.5">
                     {spend.by_user.slice(0, 4).map((u) => (
-                      <div key={u.user} data-testid={`by-user-${u.user}`} className="flex items-center justify-between text-[10px] font-mono">
-                        <span className="truncate text-muted-foreground max-w-[58%]">{u.user}</span>
-                        <span className="text-ai">${u.cost_usd.toFixed(4)} · {u.queries}q</span>
+                      <div key={u.user}>
+                        <button data-testid={`by-user-${u.user}`} onClick={() => openDrill(u.user)}
+                          className={`w-full flex items-center justify-between text-[10px] font-mono px-1 py-0.5 rounded transition-colors ${drillUser === u.user ? "bg-ai/10" : "hover:bg-secondary/60"}`}>
+                          <span className="truncate text-muted-foreground max-w-[58%]">{u.user}</span>
+                          <span className="text-ai">${u.cost_usd.toFixed(4)} · {u.queries}q</span>
+                        </button>
+                        {drillUser === u.user && (
+                          <div data-testid={`drill-${u.user}`} className="mt-1 mb-1.5 pl-2 border-l border-ai/30 space-y-1">
+                            {drillPrompts.length === 0 ? (
+                              <div className="text-[10px] text-muted-foreground">Loading recent prompts…</div>
+                            ) : drillPrompts.map((p, i) => (
+                              <div key={i} className="text-[10px]">
+                                <div className="text-foreground/90 truncate">{p.prompt}</div>
+                                <div className="font-mono text-muted-foreground">{new Date(p.ts).toLocaleDateString()} · ${p.cost_usd.toFixed(4)} · {p.tokens} tok</div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     ))}
                   </div>
