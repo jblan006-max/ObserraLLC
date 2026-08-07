@@ -76,7 +76,7 @@ export default function ControlMonitoring() {
                   {c.frameworks && Object.keys(c.frameworks).length > 0 && (
                     <div className="flex flex-wrap gap-1 mt-1 max-w-[220px]">
                       {Object.entries(c.frameworks).map(([fw, refs]) => (
-                        <span key={fw} title={refs.join(", ")} className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm bg-ai/10 text-ai border border-ai/20">{fw}</span>
+                        <span key={fw} data-testid={`control-framework-tag-${fw.replace(/[^a-zA-Z0-9]/g, "-")}`} title={refs.join(", ")} className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm bg-ai/10 text-ai border border-ai/20">{fw}</span>
                       ))}
                     </div>
                   )}

@@ -205,7 +205,7 @@ function Catalog() {
   return (
     <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
       {list.map((c) => (
-        <div key={c.cid} data-testid={`connector-${c.cid}`} className="bg-card fact-border rounded-xl p-4">
+        <div key={c.cid} data-testid={`catalog-connector-${c.cid}`} className="bg-card fact-border rounded-xl p-4">
           <div className="flex items-center justify-between mb-1">
             <div className="font-head font-bold text-sm">{c.name}</div>
             <span className={`w-2 h-2 rounded-full ${c.status === "connected" ? "bg-low" : "bg-muted-foreground/40"}`} style={c.status === "connected" ? { boxShadow: "0 0 6px hsl(142 70% 45%)" } : {}} />

@@ -180,3 +180,19 @@ Evidence-Grounded Executive Intelligence · Cyber+AI+Enterprise Risk in one · E
 
 ## Credentials
 admin: jblan2026@gmail.com / Obserra2026! (enterprise, active) · operational: analyst@obserra.demo / Analyst2026!
+
+## Session 2026-06 (dual-mode split + connectors + hardening) — DONE & VERIFIED
+- **Dashboards genuinely split** Executive (strategic $-impact: residual/avoided exposure, risk-reduction %, risk-adjusted, posture trend, top risks by business impact, decisions required, Board Report) vs Operational (count KPIs + AI usage & policy violations, patching coverage, incidents/remediations, MTTD/MTTR, NIST maturity, vendor risk, phishing click-rate + quarterly trend charts). Backend `metrics.py` → GET /api/metrics/dashboard {executive, operational}.
+- **Dashboard reorder**: live charts/data first → Status cards → connectors/admin (connector health removed from dashboard).
+- **Strategic/operational lens** applied to Cyber Risk (hide Treat in exec), Risk Register (read-only status badge in exec), AI Governance (exec shows "Governance decision required" vs sanction button).
+- **Available Connectors page** (/app/connectors, admin nav): live M365, **Copilot**, **ChatGPT/OpenAI**, **Teams (report share)**, SSO + catalog. Backend live_connectors.py PUT/DELETE openai/copilot/teams + POST /enterprise/live/teams/share. Removed connectors from Enterprise page + Overview.
+- **Board Report → Share to Teams** button (report-share-teams), gated 400 when Teams unconfigured.
+- **Forecast budget alert** (ai_advisor._check_budget emails admins when projected month-end spend crosses cap, deduped per month) + **M365 risk-signal ingest** into cyber posture score (bounded ≤10pt penalty; live_risk_penalty).
+- **Security hardening**: security response headers middleware (CSP, HSTS, X-Frame-Options DENY, X-Content-Type-Options, Referrer-Policy, Permissions-Policy) in server.py; password complexity policy (≥12 chars upper/lower/digit/symbol) on register + change-password (auth.validate_password_policy).
+- **Control-library framework mapping**: routes._CONTROL_FRAMEWORKS maps each control to NIST CSF 2.0 / NIST 800-53 / ISO 27001 / SOC 2 / CISA CPG; GET /api/controls/compliance returns per-framework coverage; ControlMonitoring shows compliance panel + per-control framework tags.
+- Testing: iteration_10.json — backend 100% (10/10 pytest), frontend 92%; the one HIGH bug (Cyber Risk Treat not gated by mode) fixed post-report.
+
+## Backlog / remaining
+- Full SAML sign-in (ACS/assertion) — DEFERRED: needs real IdP metadata + signing cert from user. SSO live connector (metadata validation) exists.
+- Optional: enforce rate limiting beyond login brute-force; raise header mode-toggle z-index (advisor overlay can intercept clicks on small viewports).
+

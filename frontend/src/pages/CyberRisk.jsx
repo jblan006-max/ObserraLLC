@@ -72,7 +72,7 @@ export default function CyberRisk() {
                 <td className="px-4 py-3">{r.status}</td>
                 <td className="px-4 py-3"><span className="px-2 py-0.5 rounded-sm text-[10px] font-mono font-bold" style={{ background: `hsl(${TIER(r.residual)} / 0.15)`, color: `hsl(${TIER(r.residual)})` }}>{r.residual}/25</span></td>
                 <td className="px-4 py-3 text-right">
-                  {isAdmin && <button data-testid={`treat-${r.ref}`} disabled={!!busy} onClick={() => treat(r.ref)} className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 disabled:opacity-50">{busy === r.ref ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />} Treat</button>}
+                  {isAdmin && !isExec ? <button data-testid={`treat-${r.ref}`} disabled={!!busy} onClick={() => treat(r.ref)} className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 disabled:opacity-50">{busy === r.ref ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />} Treat</button> : <span className="text-[11px] text-muted-foreground">—</span>}
                 </td>
               </tr>
             ))}
