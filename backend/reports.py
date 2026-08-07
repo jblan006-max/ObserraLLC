@@ -113,6 +113,50 @@ def _resolve_brand(org):
             "watermark": _WATERMARK, "footer": "Obserra — Executive Protection & Intelligence LLC"}
 
 
+def _paint_cover(canvas, pw, ph, title, org_name, report_date, theme, brand):
+    light = (theme == "light")
+    bg = "#ffffff" if light else "#081428"
+    lockup = brand["lockup_dark"] if light else brand["lockup"]
+    title_col = "#0f1e3d" if light else "#F4F8FC"
+    org_col = "#0e7490" if light else "#56B8E9"
+    date_col = "#6b7280" if light else "#8AA0B8"
+    note_col = "#9ca3af" if light else "#5a708c"
+    canvas.saveState()
+    canvas.setFillColor(colors.HexColor(bg))
+    canvas.rect(0, 0, pw, ph, fill=1, stroke=0)
+    if lockup and os.path.exists(lockup):
+        lw = 4.8 * inch
+        lh = 1.3 * inch
+        canvas.drawImage(lockup, (pw - lw) / 2, ph * 0.58, width=lw, height=lh,
+                         mask="auto", preserveAspectRatio=True, anchor="c")
+    canvas.setFillColor(colors.HexColor(title_col)); canvas.setFont("Helvetica-Bold", 24)
+    canvas.drawCentredString(pw / 2, ph * 0.50, title)
+    if org_name:
+        canvas.setFillColor(colors.HexColor(org_col)); canvas.setFont("Helvetica-Bold", 12)
+        canvas.drawCentredString(pw / 2, ph * 0.46, org_name)
+    canvas.setFillColor(colors.HexColor(date_col)); canvas.setFont("Helvetica", 10)
+    canvas.drawCentredString(pw / 2, ph * 0.43, report_date or datetime.now(timezone.utc).strftime("%B %d, %Y"))
+    canvas.setFillColor(colors.HexColor(note_col)); canvas.setFont("Helvetica", 8)
+    canvas.drawCentredString(pw / 2, 0.6 * inch, "CONFIDENTIAL · PROPRIETARY · AUTHORIZED ACCESS ONLY")
+    canvas.restoreState()
+
+
+def _cover_preview_png(brand, org_name, theme) -> bytes:
+    """Render just the branded board-report cover page to a PNG thumbnail."""
+    import pymupdf
+    from reportlab.pdfgen import canvas as _pdfcanvas
+    buf = io.BytesIO()
+    c = _pdfcanvas.Canvas(buf, pagesize=LETTER)
+    pw, ph = LETTER
+    _paint_cover(c, pw, ph, "Executive Board Report", org_name, None, theme, brand)
+    c.showPage(); c.save(); buf.seek(0)
+    doc = pymupdf.open(stream=buf.read(), filetype="pdf")
+    pix = doc[0].get_pixmap(matrix=pymupdf.Matrix(1.4, 1.4))
+    png = pix.tobytes("png")
+    doc.close()
+    return png
+
+
 def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = None,
                report_date: str = None, chart_series=None, takeaways=None,
                theme: str = "dark", risk_bars=None, exec_summary: str = None, brand=None) -> io.BytesIO:
@@ -182,31 +226,7 @@ def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = Non
 
     def _cover_page(canvas, _doc):
         pw, ph = LETTER
-        light = (theme == "light")
-        bg = "#ffffff" if light else "#081428"
-        lockup = brand["lockup_dark"] if light else brand["lockup"]
-        title_col = "#0f1e3d" if light else "#F4F8FC"
-        org_col = "#0e7490" if light else "#56B8E9"
-        date_col = "#6b7280" if light else "#8AA0B8"
-        note_col = "#9ca3af" if light else "#5a708c"
-        canvas.saveState()
-        canvas.setFillColor(colors.HexColor(bg))
-        canvas.rect(0, 0, pw, ph, fill=1, stroke=0)
-        if lockup and os.path.exists(lockup):
-            lw = 4.8 * inch
-            lh = 1.3 * inch
-            canvas.drawImage(lockup, (pw - lw) / 2, ph * 0.58, width=lw, height=lh,
-                             mask="auto", preserveAspectRatio=True, anchor="c")
-        canvas.setFillColor(colors.HexColor(title_col)); canvas.setFont("Helvetica-Bold", 24)
-        canvas.drawCentredString(pw / 2, ph * 0.50, title)
-        if org_name:
-            canvas.setFillColor(colors.HexColor(org_col)); canvas.setFont("Helvetica-Bold", 12)
-            canvas.drawCentredString(pw / 2, ph * 0.46, org_name)
-        canvas.setFillColor(colors.HexColor(date_col)); canvas.setFont("Helvetica", 10)
-        canvas.drawCentredString(pw / 2, ph * 0.43, report_date or datetime.now(timezone.utc).strftime("%B %d, %Y"))
-        canvas.setFillColor(colors.HexColor(note_col)); canvas.setFont("Helvetica", 8)
-        canvas.drawCentredString(pw / 2, 0.6 * inch, "CONFIDENTIAL · PROPRIETARY · AUTHORIZED ACCESS ONLY")
-        canvas.restoreState()
+        _paint_cover(canvas, pw, ph, title, org_name, report_date, theme, brand)
 
     doc.build(story, onFirstPage=(_cover_page if cover else _brand_page), onLaterPages=_brand_page)
     buf.seek(0)
@@ -475,6 +495,18 @@ async def get_branding(user: dict = Depends(get_current_user)):
     rb = org.get("report_branding") or {}
     return {"enabled": bool(rb.get("enabled")), "company_name": rb.get("company_name", ""),
             "has_logo": bool(rb.get("logo"))}
+
+
+@reports_router.get("/api/reports/branding/preview")
+async def branding_preview(theme: str = "dark", user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    brand = _resolve_brand(org)
+    cover_org = brand["name"] if brand.get("watermark") is None else org.get("name")
+    theme = "light" if theme == "light" else "dark"
+    png = _cover_preview_png(brand, cover_org, theme)
+    return StreamingResponse(io.BytesIO(png), media_type="image/png",
+                             headers={"Cache-Control": "no-store"})
 
 
 @reports_router.put("/api/reports/branding")

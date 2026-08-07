@@ -1,8 +1,8 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
-import { api } from "@/lib/api";
+import { api, API } from "@/lib/api";
 import { toast } from "sonner";
-import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw } from "lucide-react";
+import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw, Image as ImageIcon } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const OPTIONS = [
@@ -60,6 +60,9 @@ export default function Settings() {
   const [brand, setBrand] = useState({ enabled: false, company_name: "", has_logo: false });
   const [brandLogo, setBrandLogo] = useState("");
   const [brandBusy, setBrandBusy] = useState(false);
+  const [previewTheme, setPreviewTheme] = useState("dark");
+  const [previewBust, setPreviewBust] = useState(Date.now());
+  const previewSrc = `${API}/reports/branding/preview?theme=${previewTheme}&t=${previewBust}`;
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -88,7 +91,7 @@ export default function Settings() {
       const { data } = await api.put("/reports/branding", {
         enabled: brand.enabled, company_name: brand.company_name, logo: brandLogo || "",
       });
-      setBrand(data); setBrandLogo("");
+      setBrand(data); setBrandLogo(""); setPreviewBust(Date.now());
       toast.success("Report branding saved");
     } catch (e) { toast.error(e.response?.data?.detail || "Could not save branding"); }
     setBrandBusy(false);
@@ -98,7 +101,7 @@ export default function Settings() {
     setBrandBusy(true);
     try {
       const { data } = await api.put("/reports/branding", { enabled: false, company_name: "", remove_logo: true });
-      setBrand(data); setBrandLogo("");
+      setBrand(data); setBrandLogo(""); setPreviewBust(Date.now());
       toast.success("Reset to Obserra branding");
     } catch (e) { toast.error(e.response?.data?.detail || "Could not reset"); }
     setBrandBusy(false);
@@ -203,6 +206,25 @@ export default function Settings() {
               className="px-5 py-2.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-primary/40 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
               <RotateCcw className="w-4 h-4" /> Remove logo / Reset to Obserra
             </button>
+          </div>
+
+          <div className="pt-2 border-t border-border" data-testid="branding-preview">
+            <div className="flex items-center justify-between mb-2">
+              <div className="flex items-center gap-2 text-xs font-head font-bold text-muted-foreground uppercase tracking-wide">
+                <ImageIcon className="w-3.5 h-3.5 text-ai" /> Live cover preview
+              </div>
+              <div className="inline-flex rounded-md border border-border overflow-hidden">
+                {["dark", "light"].map((t) => (
+                  <button key={t} data-testid={`preview-theme-${t}`} onClick={() => setPreviewTheme(t)}
+                    className={`px-3 py-1 text-xs font-head font-bold capitalize transition-colors ${previewTheme === t ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+                    {t}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground mb-2">Reflects the current saved branding. Save changes to update this thumbnail.</p>
+            <img key={previewSrc} data-testid="branding-preview-img" src={previewSrc} alt="Board report cover preview"
+              className="w-full max-w-xs rounded-lg border border-border shadow-sm bg-secondary/40" />
           </div>
         </div>
       )}

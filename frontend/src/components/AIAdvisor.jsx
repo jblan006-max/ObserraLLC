@@ -4,9 +4,15 @@ import { API, api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
-const AVATAR = (cls = "w-6 h-6") => (
+const MARK = (cls = "w-6 h-6") => (
   <span className={`inline-flex items-center justify-center ${cls} align-middle shrink-0`}>
     <img src="/brand-mark.png" alt="Obserra" className="h-full w-full object-contain" />
+  </span>
+);
+
+const AVATAR = (cls = "w-6 h-6") => (
+  <span className={`inline-flex items-center justify-center ${cls} rounded-full shrink-0`} style={{ backgroundColor: "#0f1e3d" }}>
+    <img src="/brand-mark.png" alt="Obserra" className="h-3/5 w-3/5 object-contain" />
   </span>
 );
 
@@ -58,6 +64,17 @@ export function AIAdvisor() {
   const [auditOpen, setAuditOpen] = useState(null);
   const scrollRef = useRef(null);
   const sendRef = useRef(null);
+  const hintKey = `obserra-advisor-hint-${user?.id || user?.email || "anon"}`;
+  const [showHint, setShowHint] = useState(false);
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && !localStorage.getItem(hintKey)) setShowHint(true);
+  }, [hintKey]);
+
+  const dismissHint = () => {
+    setShowHint(false);
+    try { localStorage.setItem(hintKey, "1"); } catch {}
+  };
 
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, streaming]);
 
@@ -189,10 +206,22 @@ export function AIAdvisor() {
 
   return (
     <>
-      <button data-testid="advisor-toggle" onClick={() => setOpen(true)}
+      {showHint && !open && (
+        <div data-testid="advisor-hint" className="fixed bottom-24 right-6 z-40 w-60 rise">
+          <div className="relative rounded-xl bg-popover border border-ai/30 shadow-xl p-3.5 text-xs leading-relaxed text-foreground">
+            <button data-testid="advisor-hint-dismiss" onClick={dismissHint}
+              className="absolute top-2 right-2 p-0.5 rounded hover:bg-secondary text-muted-foreground"><X className="w-3.5 h-3.5" /></button>
+            <div className="font-head font-bold text-ai mb-1 pr-4">Meet your Advisor</div>
+            Ask board-level questions — financial exposure, top risks, and the decisions that need your sign-off.
+            <div className="absolute -bottom-1.5 right-8 w-3 h-3 rotate-45 bg-popover border-r border-b border-ai/30" />
+          </div>
+        </div>
+      )}
+      <button data-testid="advisor-toggle" onClick={() => { setOpen(true); dismissHint(); }}
         style={{ backgroundColor: "#0f1e3d" }}
         className="fixed bottom-6 right-6 z-40 flex flex-col items-center gap-1 px-4 py-3 rounded-2xl font-head font-bold text-xs shadow-lg ring-1 ring-white/10 hover:-translate-y-0.5 transition-transform duration-200">
-        {AVATAR("w-8 h-8")} <span className="text-white">Advisor</span>
+        {showHint && <span className="absolute inset-0 rounded-2xl ring-2 ring-ai/60 animate-ping pointer-events-none" />}
+        {MARK("w-8 h-8")} <span className="text-white">Advisor</span>
       </button>
 
       {open && (
