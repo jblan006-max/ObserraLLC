@@ -46,6 +46,45 @@ export default function Settings() {
     setRecBusy(false);
   };
 
+  const [testBusy, setTestBusy] = useState(false);
+  const sendTest = async () => {
+    setTestBusy(true);
+    try {
+      const { data } = await api.post("/reports/test-email");
+      toast.success(`Test board report sent to ${data.to}`);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not send test"); }
+    setTestBusy(false);
+  };
+
+  const [brand, setBrand] = useState({ enabled: false, company_name: "", has_logo: false });
+  const [brandLogo, setBrandLogo] = useState("");
+  const [brandBusy, setBrandBusy] = useState(false);
+
+  useEffect(() => {
+    if (!isAdmin) return;
+    api.get("/reports/branding").then(({ data }) => setBrand(data)).catch(() => {});
+  }, [isAdmin]);
+
+  const onLogoPick = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setBrandLogo(reader.result);
+    reader.readAsDataURL(file);
+  };
+
+  const saveBranding = async () => {
+    setBrandBusy(true);
+    try {
+      const { data } = await api.put("/reports/branding", {
+        enabled: brand.enabled, company_name: brand.company_name, logo: brandLogo || "",
+      });
+      setBrand(data); setBrandLogo("");
+      toast.success("Report branding saved");
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not save branding"); }
+    setBrandBusy(false);
+  };
+
   const save = async () => {
     setBusy(true);
     try {
@@ -101,9 +140,44 @@ export default function Settings() {
           <textarea data-testid="recipients-input" value={recips} onChange={(e) => setRecips(e.target.value)}
             placeholder="board.chair@example.com, ciso@example.com"
             className="w-full min-h-[80px] rounded-lg bg-secondary/40 border border-border p-3 text-sm text-foreground focus:outline-none focus:border-primary/50" />
-          <button data-testid="recipients-save" disabled={recBusy} onClick={saveRecipients}
+          <div className="flex items-center gap-3 flex-wrap">
+            <button data-testid="recipients-save" disabled={recBusy} onClick={saveRecipients}
+              className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
+              {recBusy && <Loader2 className="w-4 h-4 animate-spin" />} Save recipients
+            </button>
+            <button data-testid="send-test-report" disabled={testBusy} onClick={sendTest}
+              className="px-5 py-2.5 rounded-md border border-primary/40 text-foreground hover:bg-primary/10 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
+              {testBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Mail className="w-4 h-4 text-primary" />} Send me a test now
+            </button>
+          </div>
+        </div>
+      )}
+
+      {isAdmin && (
+        <div className="bg-card fact-border rounded-xl p-6 space-y-4" data-testid="report-branding-settings">
+          <div className="flex items-center gap-2"><SettingsIcon className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Report Branding</h2></div>
+          <p className="text-sm text-muted-foreground">Board reports use Obserra branding by default. Turn on custom branding to put your own company name and logo on generated PDFs and decks.</p>
+          <label className="flex items-center gap-3 text-sm cursor-pointer">
+            <input type="checkbox" data-testid="branding-enabled" checked={brand.enabled}
+              onChange={(e) => setBrand({ ...brand, enabled: e.target.checked })} className="w-4 h-4 accent-primary" />
+            <span>Use custom company branding on reports</span>
+          </label>
+          <div>
+            <label className="text-xs text-muted-foreground">Company name</label>
+            <input data-testid="branding-name" value={brand.company_name}
+              onChange={(e) => setBrand({ ...brand, company_name: e.target.value })}
+              placeholder="Acme Corp — Security & Risk"
+              className="mt-1 w-full rounded-lg bg-secondary/40 border border-border p-2.5 text-sm text-foreground focus:outline-none focus:border-primary/50" />
+          </div>
+          <div>
+            <label className="text-xs text-muted-foreground">Company logo (PNG, transparent recommended){brand.has_logo ? " — a logo is on file" : ""}</label>
+            <input type="file" accept="image/png,image/jpeg" data-testid="branding-logo" onChange={onLogoPick}
+              className="mt-1 block w-full text-xs text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary file:text-primary-foreground file:px-3 file:py-1.5 file:text-xs file:font-medium" />
+            {brandLogo && <img src={brandLogo} alt="logo preview" className="mt-2 h-12 w-auto object-contain bg-secondary/40 rounded p-1" />}
+          </div>
+          <button data-testid="branding-save" disabled={brandBusy} onClick={saveBranding}
             className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
-            {recBusy && <Loader2 className="w-4 h-4 animate-spin" />} Save recipients
+            {brandBusy && <Loader2 className="w-4 h-4 animate-spin" />} Save branding
           </button>
         </div>
       )}

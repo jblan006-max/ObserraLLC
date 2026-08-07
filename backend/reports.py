@@ -92,9 +92,31 @@ def _risk_bar_drawing(bars):
         return None
 
 
+def _resolve_brand(org):
+    rb = (org or {}).get("report_branding") or {}
+    if rb.get("enabled") and rb.get("logo"):
+        import base64 as _b64, tempfile
+        data = rb["logo"]
+        if "," in data:
+            data = data.split(",", 1)[1]
+        try:
+            path = os.path.join(tempfile.gettempdir(), f"brand_{org.get('_id')}.png")
+            with open(path, "wb") as f:
+                f.write(_b64.b64decode(data))
+            name = (rb.get("company_name") or "").strip() or "Confidential"
+            return {"name": name, "badge": path, "lockup": path, "lockup_dark": path,
+                    "watermark": None, "footer": name}
+        except Exception as e:
+            logger.warning(f"custom brand failed: {e}")
+    return {"name": "Obserra — Executive Protection & Intelligence LLC",
+            "badge": _BADGE, "lockup": _LOCKUP, "lockup_dark": _LOCKUP_DARK,
+            "watermark": _WATERMARK, "footer": "Obserra — Executive Protection & Intelligence LLC"}
+
+
 def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = None,
                report_date: str = None, chart_series=None, takeaways=None,
-               theme: str = "dark", risk_bars=None, exec_summary: str = None) -> io.BytesIO:
+               theme: str = "dark", risk_bars=None, exec_summary: str = None, brand=None) -> io.BytesIO:
+    brand = brand or _resolve_brand(None)
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=LETTER, topMargin=0.9 * inch, bottomMargin=0.8 * inch)
     styles = getSampleStyleSheet()
@@ -106,12 +128,12 @@ def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = Non
     story = []
     if cover:
         story.append(PageBreak())  # page 1 is painted by _cover_page
-    if os.path.exists(_BADGE):
-        badge = RLImage(_BADGE, width=0.6 * inch, height=0.6 * inch)
+    if brand["badge"] and os.path.exists(brand["badge"]):
+        badge = RLImage(brand["badge"], width=0.6 * inch, height=0.6 * inch)
         badge.hAlign = "LEFT"
         story += [badge, Spacer(1, 6)]
     story += [Paragraph(title, title_s),
-              Paragraph("Obserra — Executive Protection &amp; Intelligence LLC", sub),
+              Paragraph(brand["name"].replace("&", "&amp;"), sub),
               HRFlowable(width="100%", color=colors.HexColor("#1b3a8a")), Spacer(1, 10)]
     if exec_summary:
         summary_s = ParagraphStyle("summary", parent=body, fontSize=10.5, leading=15,
@@ -147,22 +169,22 @@ def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = Non
 
     def _brand_page(canvas, _doc):
         pw, ph = LETTER
-        if os.path.exists(_WATERMARK):
+        if brand["watermark"] and os.path.exists(brand["watermark"]):
             wm_w = 4.6 * inch
             wm_h = wm_w * 530.0 / 890.0
-            canvas.drawImage(_WATERMARK, (pw - wm_w) / 2, (ph - wm_h) / 2,
+            canvas.drawImage(brand["watermark"], (pw - wm_w) / 2, (ph - wm_h) / 2,
                              width=wm_w, height=wm_h, mask="auto", preserveAspectRatio=True)
         canvas.saveState()
         canvas.setFont("Helvetica", 7)
         canvas.setFillColor(colors.grey)
-        canvas.drawCentredString(pw / 2, 0.5 * inch, "Obserra — Executive Protection & Intelligence LLC  ·  Confidential")
+        canvas.drawCentredString(pw / 2, 0.5 * inch, f"{brand['footer']}  ·  Confidential")
         canvas.restoreState()
 
     def _cover_page(canvas, _doc):
         pw, ph = LETTER
         light = (theme == "light")
         bg = "#ffffff" if light else "#081428"
-        lockup = _LOCKUP_DARK if light else _LOCKUP
+        lockup = brand["lockup_dark"] if light else brand["lockup"]
         title_col = "#0f1e3d" if light else "#F4F8FC"
         org_col = "#0e7490" if light else "#56B8E9"
         date_col = "#6b7280" if light else "#8AA0B8"
@@ -170,11 +192,11 @@ def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = Non
         canvas.saveState()
         canvas.setFillColor(colors.HexColor(bg))
         canvas.rect(0, 0, pw, ph, fill=1, stroke=0)
-        if os.path.exists(lockup):
+        if lockup and os.path.exists(lockup):
             lw = 4.8 * inch
-            lh = lw * 287.0 / 1698.0
-            canvas.drawImage(lockup, (pw - lw) / 2, ph * 0.60, width=lw, height=lh,
-                             mask="auto", preserveAspectRatio=True)
+            lh = 1.3 * inch
+            canvas.drawImage(lockup, (pw - lw) / 2, ph * 0.58, width=lw, height=lh,
+                             mask="auto", preserveAspectRatio=True, anchor="c")
         canvas.setFillColor(colors.HexColor(title_col)); canvas.setFont("Helvetica-Bold", 24)
         canvas.drawCentredString(pw / 2, ph * 0.50, title)
         if org_name:
@@ -277,15 +299,17 @@ async def _board_metrics(org_id: str, report_text: str = "") -> dict:
         "org_name": org.get("name"), "residual": residual, "reduction": reduction,
         "crit": crit, "pending": len(pending), "series": series, "risk_bars": risk_bars,
         "takeaways": takeaways, "exec_summary": _extract_exec_summary(report_text),
+        "brand": _resolve_brand(org),
     }
 
 
 async def build_board_report_pdf(org_id: str, report_text: str,
                                  title: str = "Executive Board Report", theme: str = "dark") -> io.BytesIO:
     m = await _board_metrics(org_id, report_text)
-    return _build_pdf(report_text, title, cover=True, org_name=m["org_name"], theme=theme,
+    cover_org = m["brand"]["name"] if m["brand"].get("watermark") is None else m["org_name"]
+    return _build_pdf(report_text, title, cover=True, org_name=cover_org, theme=theme,
                       chart_series=m["series"], takeaways=m["takeaways"], risk_bars=m["risk_bars"],
-                      exec_summary=m["exec_summary"])
+                      exec_summary=m["exec_summary"], brand=m["brand"])
 
 
 def _wrap(text, font, size, max_w, canvas):
@@ -309,40 +333,46 @@ async def build_board_deck_pdf(org_id: str, report_text: str,
     from reportlab.lib.pagesizes import landscape
     from reportlab.graphics import renderPDF
     m = await _board_metrics(org_id, report_text)
+    brand = m["brand"]
     pw, ph = landscape(LETTER)
     buf = io.BytesIO()
     c = pdfcanvas.Canvas(buf, pagesize=(pw, ph))
     NAVY, INK, AI, GREY = (colors.HexColor("#081428"), colors.HexColor("#0f1e3d"),
                            colors.HexColor("#12b4d6"), colors.HexColor("#6b7280"))
     light = (theme == "light")
+    SLIDE_BG = colors.HexColor("#ffffff") if light else colors.HexColor("#0c1a33")
+    TEXT = INK if light else colors.HexColor("#F4F8FC")
+    CARD_BG = colors.HexColor("#f1f6fb") if light else colors.HexColor("#12233f")
+    LABEL = GREY if light else colors.HexColor("#8AA0B8")
 
     def footer():
         c.setFont("Helvetica", 7); c.setFillColor(GREY)
-        c.drawCentredString(pw / 2, 0.4 * inch, "Obserra — Executive Protection & Intelligence LLC  ·  Confidential")
+        c.drawCentredString(pw / 2, 0.4 * inch, f"{brand['footer']}  ·  Confidential")
 
     def content_header(slide_title):
-        c.setFillColor(colors.white); c.rect(0, 0, pw, ph, fill=1, stroke=0)
+        c.setFillColor(SLIDE_BG); c.rect(0, 0, pw, ph, fill=1, stroke=0)
         c.setFillColor(NAVY); c.rect(0, ph - 74, pw, 74, fill=1, stroke=0)
-        if os.path.exists(_BADGE):
-            c.drawImage(_BADGE, 34, ph - 62, width=46, height=46, mask="auto")
+        if brand["badge"] and os.path.exists(brand["badge"]):
+            c.drawImage(brand["badge"], 34, ph - 64, width=48, height=48, mask="auto", preserveAspectRatio=True, anchor="c")
         c.setFillColor(colors.white); c.setFont("Helvetica-Bold", 20)
         c.drawString(96, ph - 48, slide_title)
-        if os.path.exists(_WATERMARK):
+        if brand["watermark"] and os.path.exists(brand["watermark"]):
             ww = 3.4 * inch; wh = ww * 530.0 / 890.0
-            c.drawImage(_WATERMARK, (pw - ww) / 2, (ph - wh) / 2 - 30, width=ww, height=wh,
+            c.drawImage(brand["watermark"], (pw - ww) / 2, (ph - wh) / 2 - 30, width=ww, height=wh,
                         mask="auto", preserveAspectRatio=True)
 
     # Slide 1 — cover
     c.setFillColor(colors.white if light else NAVY); c.rect(0, 0, pw, ph, fill=1, stroke=0)
-    lockup = _LOCKUP_DARK if light else _LOCKUP
-    if os.path.exists(lockup):
-        lw = 5.6 * inch; lh = lw * 287.0 / 1698.0
-        c.drawImage(lockup, (pw - lw) / 2, ph * 0.58, width=lw, height=lh, mask="auto", preserveAspectRatio=True)
+    lockup = brand["lockup_dark"] if light else brand["lockup"]
+    if lockup and os.path.exists(lockup):
+        lw = 5.6 * inch; lh = 1.5 * inch
+        c.drawImage(lockup, (pw - lw) / 2, ph * 0.56, width=lw, height=lh, mask="auto", preserveAspectRatio=True, anchor="c")
     c.setFillColor(INK if light else colors.white); c.setFont("Helvetica-Bold", 30)
     c.drawCentredString(pw / 2, ph * 0.44, title)
-    if m["org_name"]:
+    cover_org = brand["name"] if brand.get("watermark") is None else m["org_name"]
+    if cover_org:
         c.setFillColor(colors.HexColor("#0e7490") if light else AI); c.setFont("Helvetica-Bold", 14)
-        c.drawCentredString(pw / 2, ph * 0.38, m["org_name"])
+        c.drawCentredString(pw / 2, ph * 0.38, cover_org)
     c.setFillColor(GREY if light else colors.HexColor("#8AA0B8")); c.setFont("Helvetica", 11)
     c.drawCentredString(pw / 2, ph * 0.34, datetime.now(timezone.utc).strftime("%B %d, %Y"))
     c.setFont("Helvetica", 8)
@@ -361,23 +391,27 @@ async def build_board_deck_pdf(org_id: str, report_text: str,
     for i, (big, lab) in enumerate(cards):
         cx = x0 + (i % 2) * (cw + gap)
         cy = y0 + (1 - i // 2) * (chh + 0.3 * inch)
-        c.setFillColor(colors.HexColor("#f1f6fb")); c.roundRect(cx, cy, cw, chh, 10, fill=1, stroke=0)
+        c.setFillColor(CARD_BG); c.roundRect(cx, cy, cw, chh, 10, fill=1, stroke=0)
         c.setFillColor(AI); c.setFont("Helvetica-Bold", 34); c.drawString(cx + 20, cy + chh - 52, big)
-        c.setFillColor(GREY); c.setFont("Helvetica", 12); c.drawString(cx + 20, cy + 20, lab)
+        c.setFillColor(LABEL); c.setFont("Helvetica", 12); c.drawString(cx + 20, cy + 20, lab)
     footer(); c.showPage()
 
     # Slide 3 — exposure trend
     content_header("Portfolio Exposure Trend")
     d = _trend_drawing(m["series"])
     if d is not None:
-        renderPDF.draw(d, c, (pw - 460) / 2, ph * 0.28)
+        px = (pw - 500) / 2; py = ph * 0.26
+        c.setFillColor(colors.white); c.roundRect(px, py, 500, 210, 10, fill=1, stroke=0)
+        renderPDF.draw(d, c, px + 20, py + 20)
     footer(); c.showPage()
 
     # Slide 4 — top risks
     content_header("Top Risks by Residual Score")
     d2 = _risk_bar_drawing(m["risk_bars"])
     if d2 is not None:
-        renderPDF.draw(d2, c, (pw - 460) / 2, ph * 0.28)
+        px = (pw - 500) / 2; py = ph * 0.26
+        c.setFillColor(colors.white); c.roundRect(px, py, 500, 210, 10, fill=1, stroke=0)
+        renderPDF.draw(d2, c, px + 20, py + 20)
     footer(); c.showPage()
 
     # Slide 5 — takeaways
@@ -385,7 +419,7 @@ async def build_board_deck_pdf(org_id: str, report_text: str,
     y = ph - 130
     for t in m["takeaways"]:
         c.setFillColor(AI); c.setFont("Helvetica-Bold", 16); c.drawString(60, y, "•")
-        c.setFillColor(INK); c.setFont("Helvetica", 13)
+        c.setFillColor(TEXT); c.setFont("Helvetica", 13)
         for ln in _wrap(t, "Helvetica", 13, pw - 160, c):
             c.drawString(84, y, ln); y -= 20
         y -= 10
@@ -420,6 +454,58 @@ async def set_recipients(body: RecipientsBody, user: dict = Depends(get_current_
             emails.append(e)
     await db.organizations.update_one({"_id": ObjectId(user["org_id"])}, {"$set": {"report_recipients": emails}})
     return {"extra": emails}
+
+
+class BrandingBody(BaseModel):
+    enabled: bool = False
+    company_name: str = ""
+    logo: str = ""
+
+
+@reports_router.get("/api/reports/branding")
+async def get_branding(user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    rb = org.get("report_branding") or {}
+    return {"enabled": bool(rb.get("enabled")), "company_name": rb.get("company_name", ""),
+            "has_logo": bool(rb.get("logo"))}
+
+
+@reports_router.put("/api/reports/branding")
+async def set_branding(body: BrandingBody, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can manage report branding")
+    from bson import ObjectId
+    update = {"report_branding.enabled": bool(body.enabled),
+              "report_branding.company_name": (body.company_name or "").strip()[:120]}
+    if body.logo:
+        data = body.logo.split(",", 1)[1] if "," in body.logo else body.logo
+        if len(data) > 2_000_000:
+            raise HTTPException(400, "Logo too large (max ~1.5MB)")
+        update["report_branding.logo"] = data
+    await db.organizations.update_one({"_id": ObjectId(user["org_id"])}, {"$set": update})
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    rb = org.get("report_branding") or {}
+    return {"enabled": bool(rb.get("enabled")), "company_name": rb.get("company_name", ""),
+            "has_logo": bool(rb.get("logo"))}
+
+
+@reports_router.post("/api/reports/test-email")
+async def report_test_email(user: dict = Depends(get_current_user)):
+    if user.get("role") not in ("admin", "executive"):
+        raise HTTPException(403, "Only admins/executives can send a test report")
+    import base64
+    from ai_advisor import generate_board_report
+    from kernel import notifications
+    result = await generate_board_report(user["org_id"], by=user["email"])
+    report_text = result["report"] if isinstance(result, dict) else str(result)
+    html = _report_html(report_text, "Board Report Preview")
+    pdf = await build_board_report_pdf(user["org_id"], report_text, "Executive Board Report")
+    attachments = [{"filename": "obserra-board-report.pdf",
+                    "content": base64.b64encode(pdf.getvalue()).decode()}]
+    await notifications.send_email(user["email"], "Your Board Report Preview — Obserra EIOS",
+                                   html, attachments=attachments)
+    return {"status": "sent", "to": user["email"]}
 
 
 @reports_router.post("/api/reports/pdf")
