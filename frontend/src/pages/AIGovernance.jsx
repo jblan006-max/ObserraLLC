@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { ConfidenceBadge, FreshnessBadge, DataTypeBadge } from "@/components/badges";
 import { Loader2, Cpu, AlertOctagon, Ban, Eye } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { AISystemModal } from "@/components/AISystemModal";
 
 const riskClassColor = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 90% 55%", Low: "142 70% 45%" };
 
@@ -20,6 +21,7 @@ function EvalBar({ label, value }) {
 export default function AIGovernance() {
   const [systems, setSystems] = useState(null);
   const [incidents, setIncidents] = useState([]);
+  const [selected, setSelected] = useState(null);
 
   const load = () => {
     api.get("/ai-systems").then((r) => setSystems(r.data));
@@ -60,8 +62,8 @@ export default function AIGovernance() {
         <TabsContent value="inventory" className="mt-4">
           <div className="grid md:grid-cols-2 gap-4">
             {systems.map((s) => (
-              <div key={s.ref} data-testid={`ai-system-${s.ref}`}
-                className={`rounded-lg p-5 ${s.status === "shadow" ? "ai-border" : "bg-card fact-border"}`}>
+              <div key={s.ref} data-testid={`ai-system-${s.ref}`} onClick={() => setSelected(s)}
+                className={`rounded-lg p-5 cursor-pointer hover:-translate-y-0.5 transition-transform duration-200 ${s.status === "shadow" ? "ai-border" : "bg-card fact-border"}`}>
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <div className="flex items-center gap-2">
@@ -80,7 +82,7 @@ export default function AIGovernance() {
                 </div>
 
                 {s.status === "shadow" ? (
-                  <button data-testid={`sanction-${s.ref}`} onClick={() => sanction(s.ref)}
+                  <button data-testid={`sanction-${s.ref}`} onClick={(e) => { e.stopPropagation(); sanction(s.ref); }}
                     className="w-full py-2 rounded-md bg-ai text-background font-head font-bold text-sm hover:opacity-90 transition-opacity">
                     Bring under governance
                   </button>
@@ -120,6 +122,8 @@ export default function AIGovernance() {
           ))}
         </TabsContent>
       </Tabs>
+
+      <AISystemModal system={selected} onClose={() => setSelected(null)} onChanged={load} />
     </div>
   );
 }

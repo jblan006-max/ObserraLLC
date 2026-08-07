@@ -96,6 +96,31 @@ async def update_ai_system(ref: str, body: AISystemUpdate, user: dict = Depends(
     return await db.ai_systems.find_one({"org_id": user["org_id"], "ref": ref}, {"_id": 0})
 
 
+class GovernBody(BaseModel):
+    action: str
+
+
+@api.post("/ai-systems/{ref}/govern")
+async def govern_ai_system(ref: str, body: GovernBody, user: dict = Depends(get_current_user)):
+    sys = await db.ai_systems.find_one({"org_id": user["org_id"], "ref": ref})
+    if not sys:
+        raise HTTPException(404, "Not found")
+    mapping = {
+        "kill": {"status": "killed", "mode": "block", "msg": f"Kill switch engaged for {sys['name']} — all traffic blocked."},
+        "restrict": {"status": "restricted", "mode": "restrict", "msg": f"{sys['name']} restricted — human approval required per request."},
+        "sanction": {"status": "sanctioned", "mode": "observe", "msg": f"{sys['name']} sanctioned and brought under governance."},
+        "rollback": {"status": sys.get("status", "sanctioned"), "mode": "warn", "msg": f"{sys['name']} rolled back to previous approved model version."},
+    }
+    m = mapping.get(body.action)
+    if not m:
+        raise HTTPException(400, "Unknown governance action")
+    await db.ai_systems.update_one({"org_id": user["org_id"], "ref": ref},
+        {"$set": {"status": m["status"], "governance_mode": m["mode"]}})
+    await _audit(user["org_id"], user["email"], "ai.govern", m["msg"])
+    updated = await db.ai_systems.find_one({"org_id": user["org_id"], "ref": ref}, {"_id": 0})
+    return {"message": m["msg"], "system": updated}
+
+
 @api.get("/ai-incidents")
 async def list_incidents(user: dict = Depends(get_current_user)):
     return await db.ai_incidents.find({"org_id": user["org_id"]}, {"_id": 0}).sort("opened", -1).to_list(500)
