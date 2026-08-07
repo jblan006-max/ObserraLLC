@@ -1,0 +1,128 @@
+{
+  "theme": "dark",
+  "design_archetype": "Enterprise High-Trust / Board-Ready",
+  "typography": {
+    "headings": {
+      "family": "Chivo",
+      "weights": ["400", "700"],
+      "classes": "font-['Chivo'] font-bold tracking-tight text-foreground",
+      "rules": "Used exclusively for executive metrics, section titles, and high-level KPIs. No 'Inter' or generic sans for headings."
+    },
+    "body": {
+      "family": "IBM Plex Sans",
+      "weights": ["400", "500"],
+      "classes": "font-['IBM_Plex_Sans'] text-sm leading-relaxed text-muted-foreground",
+      "rules": "Optimized for dense operational tables and logs. Left-aligned."
+    },
+    "mono": {
+      "family": "IBM Plex Mono",
+      "classes": "font-mono text-xs tracking-wider",
+      "rules": "Use for hashes, UUIDs, model versions, and code."
+    }
+  },
+  "colors": {
+    "background": "hsl(222, 40%, 6%)",
+    "foreground": "hsl(210, 40%, 90%)",
+    "card": "hsl(215, 38%, 10%)",
+    "card_foreground": "hsl(210, 40%, 90%)",
+    "border": "hsl(215, 30%, 18%)",
+    "primary": "hsl(225, 70%, 50%)",
+    "primary_foreground": "hsl(0, 0%, 100%)",
+    "semantic": {
+      "critical": "hsl(0, 84%, 60%)",
+      "high": "hsl(15, 80%, 55%)",
+      "medium": "hsl(35, 90%, 55%)",
+      "low": "hsl(142, 70%, 45%)",
+      "ai_insight": "hsl(190, 90%, 50%)"
+    },
+    "rules": "Never use pure black. Use tinted deep blue-grays. Accent colors must strictly map to risk severities or AI insight."
+  },
+  "visual_enhancers": {
+    "badges": {
+      "confidence": "Render as a miniature horizontal bar chart or percentage alongside the metric. Colors shift from green (high) to amber (low).",
+      "freshness": "Render with a clock icon. 'Live' = green pulse; '>24h' = muted gray.",
+      "source": "Small database or document icon with tooltips showing system of origin."
+    },
+    "data_distinction": {
+      "fact": "Solid 1px border around the metric or cell, high-contrast text.",
+      "estimate": "Dashed 1px border, muted text color.",
+      "ai_recommendation": "Subtle 1px glowing cyan border (hsl(190, 90%, 50%)) or subtle left-accent line to clearly demarcate AI-generated content."
+    },
+    "surfaces": {
+      "cards": "Flat background (hsl(215, 38%, 10%)), 1px subtle border (hsl(215, 30%, 18%)), NO shadow. Inner padding p-6.",
+      "glass": "Use for sticky headers only: backdrop-blur-xl bg-background/70 border-b border-border/40."
+    }
+  },
+  "grids": {
+    "executive_mode": {
+      "type": "bento",
+      "classes": "grid grid-cols-1 md:grid-cols-4 lg:grid-cols-12 gap-6",
+      "rules": "Asymmetrical focus. The Health Index takes col-span-full lg:col-span-8 row-span-2. Sub-metrics take col-span-4."
+    },
+    "operational_mode": {
+      "type": "high_density",
+      "classes": "grid grid-cols-1 lg:grid-cols-4 gap-4",
+      "rules": "Strict, dense rows. Tables take col-span-full. Every pixel utilized."
+    }
+  },
+  "layouts": {
+    "navigation": "Top or left persistent navigation with the Executive/Operational Mode Toggle centrally placed or highly prominent. Includes breadcrumbs for deep evidence lineage.",
+    "spacing": "Use p-6 to p-8 inside cards. The main wrapper must have generous padding to let the bento grid breathe.",
+    "alignment": "KPI numbers left-aligned. Tables left-aligned. Only empty states can be center-aligned."
+  },
+  "motion": {
+    "transitions": "transition-all duration-200 ease-out",
+    "hover": "-translate-y-[2px] shadow-lg border-primary/50",
+    "ai_pulse": "animate-pulse for AI active generating states, using subtle cyan."
+  },
+  "accessibility": {
+    "contrast": "Text must pass WCAG AA against dark backgrounds. Use hsl(210, 40%, 90%) for body, hsl(210, 40%, 98%) for headers.",
+    "testing": "All actionable items must have data-testid attributes (e.g., data-testid='mode-toggle-button', data-testid='kpi-health-index')."
+  },
+  "media": {
+    "icons": "Use @phosphor-icons/react for dense dashboard metrics.",
+    "charts": "Use Recharts (customized via Shadcn) for trend lines and gauges. Use strict semantic colors for series."
+  },
+  "3d_libraries": {
+    "evidence_lineage": "Use React Flow for mapping Evidence Lineage (source -> observation -> recommendation -> decision -> action). It provides the exact node-based structure needed for root-cause trees."
+  },
+  "component_name": {
+    "DualModeToggle": "A high-end segmented control that switches the entire dashboard context.",
+    "EnterpriseHealthGauge": "A customized semi-circle gauge chart showing the component score breakdown.",
+    "RiskRegisterTable": "A dense data table with inherent vs residual heat scoring (semantic colors mapped to cells).",
+    "MetricCard": "Displays KPI, trend, and the mandatory source/freshness/confidence badges.",
+    "AIAdvisorChat": "A side-panel or floating chat interface showing AI recommendations with explicit citation badges."
+  },
+  "image_urls": [
+    {
+      "url": "https://images.unsplash.com/photo-1644088379091-d574269d422f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1OTV8MHwxfHNlYXJjaHwxfHxkYXJrJTIwbmV0d29yayUyMGNvbm5lY3Rpb25zJTIwYWJzdHJhY3R8ZW58MHx8fHwxNzg2MDcwNzI5fDA&ixlib=rb-4.1.0&q=85",
+      "category": "background",
+      "description": "Abstract dark blue network data connection, to be used sparingly with heavy opacity (opacity-10) behind the Executive login or empty state."
+    }
+  ],
+  "instructions_to_main_agent": {
+    "1": "You MUST configure Tailwind with the provided HSL color variables.",
+    "2": "Initialize Shadcn UI and overwrite standard card/table/badge components to remove generic Vercel looks. Make them flat with sharp 1px borders.",
+    "3": "Install `lucide-react` or `@phosphor-icons/react` for detailed enterprise dashboard iconography.",
+    "4": "Implement the 'Dual-Mode toggle' at the root layout state, which conditionally renders either the ExecutiveBoard or OperationalBoard components.",
+    "5": "Do NOT use pure transparent backgrounds for any cards, popovers, or tables.",
+    "6": "Data generation: Mock rich enterprise data to populate the Risk Register, Health Index, and AI Model Inventory. The data should reflect a cyber-security / AI governance context.",
+    "7": "Integrate 'Fact vs Estimate vs AI-Recommendation' styling rules across all rendered metrics."
+  },
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. In frontend design, this creates what users call the 'AI slop' aesthetic. Avoid this: make creative, distinctive frontends that surprise and delight.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "You MUST NOT apply universal transition. Eg: transition: all. This results in breaking transforms. Always add transitions for specific interactive elements.",
+    "You MUST NOT center align the app container, ie do not add .App { text-align: center; } in the css file.",
+    "Always use modern button styles like pill-shaped, or sharp button with interaction animations & color relevant to the app style.",
+    "NEVER: use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons.",
+    "Every interaction needs micro-animations - hover states, transitions, parallax effects, and entrance animations. Static = dead.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Subtle grain textures, noise overlays, custom cursors, selection states, and loading animations: separates good from extraordinary.",
+    "All interactive and key informational elements MUST include a data-testid attribute to facilitate robust automated testing.",
+    "Use `sonner` for toasts. Sonner component are located in `/app/src/components/ui/sonner.tsx`."
+  ]
+}
