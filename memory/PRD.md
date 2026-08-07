@@ -36,6 +36,12 @@ Foundation: Tenant Management · Identity & RBAC | Data: Enterprise Asset Model 
 - Scheduled Board Reports: monthly cron (1st, 08:00 UTC) generates + emails board packet to admins/execs per org
 - Control Drift Alerts: /controls evaluates policies → deduped in-app notifications to owners
 
+## Session 2026-06 (kernel loop-closers) — verified iteration_5.json (backend 13/13, frontend 100%)
+- Remediation Workflows: tap a drift alert in the bell → opens a remediation workflow (accept→assign→resolve); resolving auto-marks the control's drift notifications resolved. Endpoints: POST /notifications/{id}/remediate, POST /workflows/{id}/action, GET /workflows/{id}
+- Policy Authoring (admin): New/Edit policy modal on Platform Kernel page (POST /policies, PATCH /policies/{id}); tuning POL-CTRL-EFFECT threshold changes drift flagging; non-admins 403. Custom policy IDs use monotonic db.counters (collision-safe)
+- Kernel Health Telemetry: GET /kernel/health returns real per-subsystem records/last_run/error_rate/status; surfaced on each subsystem card
+- Weekly Drift Digest: Monday 08:00 UTC cron (POST /cron/weekly-drift-digest) emails admins/execs the open drift alerts (.emergent/crons.yml now has 2 crons)
+
 
 ## Implemented (as of 2026-06)
 - JWT auth (httpOnly cookies, brute-force lockout), org/role, tenant isolation

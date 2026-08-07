@@ -62,8 +62,9 @@ class PolicyEngine:
         return v
 
     async def create(self, org_id, data):
-        n = await db.policies.count_documents({"org_id": org_id}) + 1
-        policy_id = f"POL-CUSTOM-{n:03d}"
+        counter = await db.counters.find_one_and_update(
+            {"_id": f"policies:{org_id}"}, {"$inc": {"seq": 1}}, upsert=True, return_document=True)
+        policy_id = f"POL-CUSTOM-{counter['seq']:03d}"
         doc = {"org_id": org_id, "policy_id": policy_id, "name": data["name"],
                "statement": data["statement"], "framework": data.get("framework", "Custom"),
                "severity": data.get("severity", "Medium"), "enforced": data.get("enforced", True),
