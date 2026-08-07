@@ -18,9 +18,24 @@ Obserra EIOS — subscription-gated enterprise SaaS. Two flagship apps on one pl
 
 ## Architecture
 - Frontend: React + Tailwind + shadcn/ui + framer-motion + recharts + reactflow + qrcode.react
-- Backend: FastAPI (auth.py, routes.py, ai_advisor.py, payments.py, reports.py, seed_data.py, db.py)
-- DB: MongoDB, org-scoped multi-tenant, immutable audit_logs, TTL qr_sessions
+- Backend: FastAPI. Shared **cybersecurity kernel** at `/app/backend/kernel/` (manifest.py = 15 subsystems; notification.py, policy.py, workflow.py = 3 new engines; routes.py = kernel API). Domain apps sit above it (auth.py, routes.py, ai_advisor.py, payments.py, reports.py, scheduled.py, seed_data.py, db.py)
+- DB: MongoDB, org-scoped multi-tenant, immutable audit_logs, TTL qr_sessions, collections: notifications, policies, workflows, counters
 - Personas: admin, executive, operational
+- Scheduling: platform cron via `/app/.emergent/crons.yml` → `/api/cron/*` (Bearer WEBHOOK_CRON_SECRET)
+
+## Shared Kernel subsystems (15)
+Foundation: Tenant Management · Identity & RBAC | Data: Enterprise Asset Model · Enterprise Knowledge Graph · Evidence Store | Analytics: Risk Engine · Control Engine · **Policy Engine** | Orchestration: **Workflow Engine** · Connector Framework | Intelligence: AI Context Engine · Obserrian AI | Assurance: Audit Ledger · Reporting Engine · **Notification Engine**
+
+## Session 2026-06 (kernel + 4 features) — verified iteration_4.json (backend 13/13, frontend 100%)
+- Shared cybersecurity kernel formalized (`kernel/` package) + Platform Kernel admin page (/app/kernel) showing subsystem health, policies, workflows
+- Policy Engine: 5 seeded governance policies, evaluated continuously against controls
+- Workflow Engine: onboarding workflow (invited→password_set→active)
+- Notification Engine: in-app bell + managed Resend email
+- Force Password Reset: invited users gated behind first-login "Set your password" screen (POST /api/auth/change-password, must_change_password flag)
+- Team Onboarding Email: invite now emails a sign-in link via Resend + starts onboarding workflow
+- Scheduled Board Reports: monthly cron (1st, 08:00 UTC) generates + emails board packet to admins/execs per org
+- Control Drift Alerts: /controls evaluates policies → deduped in-app notifications to owners
+
 
 ## Implemented (as of 2026-06)
 - JWT auth (httpOnly cookies, brute-force lockout), org/role, tenant isolation

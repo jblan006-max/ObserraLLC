@@ -26,7 +26,6 @@ def _authorized(request: Request) -> bool:
 
 async def _run_monthly_board_reports():
     orgs = await db.organizations.find({}).to_list(1000)
-    from bson import ObjectId
     for org in orgs:
         org_id = str(org["_id"])
         try:
