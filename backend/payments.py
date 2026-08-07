@@ -117,9 +117,10 @@ async def plans():
 
 @payments_router.get("/api/modules")
 async def modules(user: dict = Depends(get_current_user)):
+    from auth import is_owner
     org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])})
     ents = set(org.get("entitlements", []))
-    enterprise = org.get("plan") == "enterprise"
+    enterprise = org.get("plan") == "enterprise" or is_owner(user)
     cfg = await db.app_config.find_one({"_id": "pricing"}) or {}
     ov = cfg.get("packs", {})
     out = []

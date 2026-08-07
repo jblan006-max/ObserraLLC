@@ -350,8 +350,12 @@ async def run_action(body: ActionRun, user: dict = Depends(require_active_subscr
 
 @api.get("/subscription")
 async def subscription(user: dict = Depends(get_current_user)):
-    from auth import subscription_active
+    from auth import subscription_active, is_owner, ALL_ENTITLEMENTS
     org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])})
+    if is_owner(user):
+        return {"plan": "enterprise", "status": "active", "active": True, "trial_end": None,
+                "current_period_end": None, "billing_interval": "year",
+                "entitlements": ALL_ENTITLEMENTS, "org_name": org.get("name")}
     return {"plan": org.get("plan"), "status": org.get("subscription_status"),
             "active": subscription_active(org), "trial_end": org.get("trial_end"),
             "current_period_end": org.get("current_period_end"),

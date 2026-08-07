@@ -29,33 +29,56 @@ function DualModeToggle() {
   );
 }
 
-const NAV = [
-  { to: "/app", label: "Overview", icon: LayoutDashboard, end: true },
-  { to: "/app/situation-room", label: "Situation Room", icon: Radar, ent: "cyber_risk" },
-  { to: "/app/risks", label: "Risk Register", icon: ListChecks, ent: "cyber_risk" },
-  { to: "/app/ai-governance", label: "AI Governance", icon: Cpu, ent: "ai_governance" },
-  { to: "/app/controls", label: "Control Monitoring", icon: ShieldCheck, ent: "cyber_risk" },
-  { to: "/app/compliance", label: "Compliance Posture", icon: ShieldCheck, ent: "reporting_board" },
-  { to: "/app/snapshot", label: "Exec Snapshot", icon: Smartphone, ent: "reporting_board" },
-  { to: "/app/assets", label: "Asset Intelligence", icon: Boxes, ent: "asset_intelligence" },
-  { to: "/app/knowledge-graph", label: "Knowledge Graph", icon: Network },
-  { to: "/app/decisions", label: "Recommendations", icon: GitBranch },
-  { to: "/app/reporting", label: "Evidence & Reporting", icon: FileBarChart, ent: "reporting_board" },
-  { to: "/app/audit", label: "Audit Log", icon: ScrollText, ent: "audit_evidence" },
-  { to: "/app/agents", label: "AI Agents", icon: Bot, ent: "ai_governance" },
-  { to: "/app/vendors", label: "Third-Party Risk", icon: Building, ent: "third_party_risk" },
-  { to: "/app/cyber-risk", label: "Cyber Risk", icon: ShieldAlert, ent: "cyber_risk" },
-  { to: "/app/studio", label: "Studio", icon: Sparkles },
-  { to: "/app/benchmark", label: "Benchmarking", icon: BarChart3 },
-  { to: "/app/kernel", label: "Platform Kernel", icon: Layers, admin: true },
-  { to: "/app/team", label: "Team", icon: Users, admin: true },
-  { to: "/app/enterprise", label: "Enterprise", icon: Building2, admin: true },
-  { to: "/app/connectors", label: "Available Connectors", icon: Plug, admin: true },
-  { to: "/app/spend-governance", label: "AI Spend", icon: Wallet, admin: true },
-  { to: "/app/settings", label: "Settings", icon: Settings },
-  { to: "/app/marketplace", label: "Marketplace", icon: Store },
-  { to: "/app/billing", label: "Billing", icon: CreditCard },
+const NAV_SECTIONS = [
+  { section: null, items: [
+    { to: "/app", label: "Overview", icon: LayoutDashboard, end: true },
+  ]},
+  { section: "AI Governance", ent: "ai_governance", cat: true, color: "ai", items: [
+    { to: "/app/ai-governance", label: "AI Governance", icon: Cpu },
+    { to: "/app/agents", label: "AI Agents", icon: Bot },
+  ]},
+  { section: "Cyber Risk", ent: "cyber_risk", cat: true, color: "crit", items: [
+    { to: "/app/situation-room", label: "Situation Room", icon: Radar },
+    { to: "/app/risks", label: "Risk Register", icon: ListChecks },
+    { to: "/app/controls", label: "Control Monitoring", icon: ShieldCheck },
+    { to: "/app/cyber-risk", label: "Cyber Risk", icon: ShieldAlert },
+  ]},
+  { section: "Third-Party Risk", ent: "third_party_risk", cat: true, color: "high", items: [
+    { to: "/app/vendors", label: "Third-Party Risk", icon: Building },
+  ]},
+  { section: "Asset Intelligence", ent: "asset_intelligence", cat: true, color: "primary", items: [
+    { to: "/app/assets", label: "Asset Intelligence", icon: Boxes },
+  ]},
+  { section: "Audit & Evidence", ent: "audit_evidence", cat: true, color: "med", items: [
+    { to: "/app/audit", label: "Audit Log", icon: ScrollText },
+  ]},
+  { section: "Reporting & Board", ent: "reporting_board", cat: true, color: "low", items: [
+    { to: "/app/compliance", label: "Compliance Posture", icon: ShieldCheck },
+    { to: "/app/snapshot", label: "Exec Snapshot", icon: Smartphone },
+    { to: "/app/reporting", label: "Evidence & Reporting", icon: FileBarChart },
+  ]},
+  { section: "Dashboards", items: [
+    { to: "/app/knowledge-graph", label: "Knowledge Graph", icon: Network },
+    { to: "/app/decisions", label: "Recommendations", icon: GitBranch },
+    { to: "/app/studio", label: "Studio", icon: Sparkles },
+    { to: "/app/benchmark", label: "Benchmarking", icon: BarChart3 },
+  ]},
+  { section: "Admin", admin: true, items: [
+    { to: "/app/kernel", label: "Platform Kernel", icon: Layers },
+    { to: "/app/team", label: "Team", icon: Users },
+    { to: "/app/enterprise", label: "Enterprise", icon: Building2 },
+    { to: "/app/connectors", label: "Available Connectors", icon: Plug },
+    { to: "/app/spend-governance", label: "AI Spend", icon: Wallet },
+  ]},
+  { section: "Account", items: [
+    { to: "/app/settings", label: "Settings", icon: Settings },
+    { to: "/app/marketplace", label: "Marketplace", icon: Store },
+    { to: "/app/billing", label: "Billing", icon: CreditCard },
+  ]},
 ];
+
+const NAV = NAV_SECTIONS.flatMap((s) =>
+  s.items.map((it) => ({ ...it, ent: it.ent ?? s.ent, admin: it.admin ?? s.admin })));
 
 function Paywall() {
   const navigate = useNavigate();
@@ -71,6 +94,15 @@ function Paywall() {
   );
 }
 
+const CAT_STYLE = {
+  ai: { text: "text-ai", dot: "bg-ai", border: "border-ai/30", glow: "bg-ai/5" },
+  crit: { text: "text-crit", dot: "bg-crit", border: "border-crit/30", glow: "bg-crit/5" },
+  high: { text: "text-high", dot: "bg-high", border: "border-high/30", glow: "bg-high/5" },
+  primary: { text: "text-primary", dot: "bg-primary", border: "border-primary/30", glow: "bg-primary/5" },
+  med: { text: "text-med", dot: "bg-med", border: "border-med/30", glow: "bg-med/5" },
+  low: { text: "text-low", dot: "bg-low", border: "border-low/30", glow: "bg-low/5" },
+};
+
 function SidebarInner({ user, sub, owns, doLogout, onNav, onClose }) {
   return (
     <>
@@ -78,17 +110,39 @@ function SidebarInner({ user, sub, owns, doLogout, onNav, onClose }) {
         <img src="/brand-lockup.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-7 w-auto object-contain" />
         {onClose && <button data-testid="mobile-nav-close" onClick={onClose} className="md:hidden p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/50"><X className="w-5 h-5" /></button>}
       </div>
-      <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-        {NAV.filter((n) => !n.admin || user?.role === "admin").map((n) => {
-          const locked = !owns(n.ent);
+      <nav className="flex-1 p-3 space-y-4 overflow-y-auto">
+        {NAV_SECTIONS.filter((s) => !s.admin || user?.role === "admin").map((sec, si) => {
+          const cs = sec.cat ? CAT_STYLE[sec.color] : null;
           return (
-            <NavLink key={n.to} to={n.to} end={n.end} onClick={onNav}
-              data-testid={`nav-${n.label.toLowerCase().replace(/ &/g, "").replace(/ /g, "-")}`}
-              className={({ isActive }) => `flex items-center justify-between gap-3 px-3 py-2.5 rounded-md text-sm transition-colors duration-200 ${
-                isActive && !locked ? "bg-primary/15 text-foreground border border-primary/30" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}`}>
-              <span className="flex items-center gap-3"><n.icon className="w-4 h-4" /> {n.label}</span>
-              {locked && <Lock className="w-3 h-3 text-muted-foreground" />}
-            </NavLink>
+            <div key={sec.section || si} className="space-y-1">
+              {sec.section && (
+                cs ? (
+                  <div className={`flex items-center gap-2 px-3 py-1.5 mb-1 rounded-md border ${cs.border} ${cs.glow}`}>
+                    <span className={`w-1.5 h-1.5 rounded-full ${cs.dot} shadow-[0_0_6px] shadow-current`} />
+                    <span className={`text-[11px] font-head font-black uppercase tracking-[0.12em] ${cs.text}`}>{sec.section}</span>
+                  </div>
+                ) : (
+                  <div className="px-3 pt-1 pb-1 text-[10px] font-mono font-bold uppercase tracking-[0.14em] text-muted-foreground/50">
+                    {sec.section}
+                  </div>
+                )
+              )}
+              <div className={cs ? `ml-2.5 pl-2 border-l ${cs.border} space-y-1` : "space-y-1"}>
+                {sec.items.map((n) => {
+                  const ent = n.ent ?? sec.ent;
+                  const locked = !owns(ent);
+                  return (
+                    <NavLink key={n.to} to={n.to} end={n.end} onClick={onNav}
+                      data-testid={`nav-${n.label.toLowerCase().replace(/ &/g, "").replace(/ /g, "-")}`}
+                      className={({ isActive }) => `flex items-center justify-between gap-3 px-3 py-2.5 rounded-md text-sm transition-colors duration-200 ${
+                        isActive && !locked ? "bg-primary/15 text-foreground border border-primary/30" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}`}>
+                      <span className="flex items-center gap-3"><n.icon className="w-4 h-4" /> {n.label}</span>
+                      {locked && <Lock className="w-3 h-3 text-muted-foreground" />}
+                    </NavLink>
+                  );
+                })}
+              </div>
+            </div>
           );
         })}
       </nav>

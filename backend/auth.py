@@ -14,6 +14,14 @@ from db import db
 JWT_ALGORITHM = "HS256"
 auth_router = APIRouter(prefix="/api/auth")
 
+# Owner accounts get permanent, all-access entitlements with no payment required.
+OWNER_EMAILS = {e.strip().lower() for e in os.environ.get("OWNER_EMAILS", "jblan2026@gmail.com").split(",") if e.strip()}
+ALL_ENTITLEMENTS = ["ai_governance", "cyber_risk", "third_party_risk", "asset_intelligence", "audit_evidence", "reporting_board", "risk_register"]
+
+
+def is_owner(user: dict) -> bool:
+    return bool(user) and str(user.get("email", "")).lower() in OWNER_EMAILS
+
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
@@ -75,7 +83,10 @@ async def get_current_user(request: Request) -> dict:
         user = await db.users.find_one({"_id": ObjectId(payload["sub"])})
         if not user:
             raise HTTPException(status_code=401, detail="User not found")
-        return _public_user(user)
+        pub = _public_user(user)
+        if is_owner(pub):
+            pub["role"] = "admin"
+        return pub
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
     except jwt.InvalidTokenError:
@@ -113,6 +124,8 @@ def subscription_active(org: dict) -> bool:
 
 
 async def require_active_subscription(user: dict = Depends(get_current_user)):
+    if is_owner(user):
+        return user
     org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])})
     if not subscription_active(org):
         raise HTTPException(status_code=402, detail="Subscription required")

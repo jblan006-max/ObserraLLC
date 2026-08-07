@@ -19,3 +19,7 @@
 - Twice, large `search_replace` edits to `reports.py` went stale in-memory (404s); fix = re-apply + `sudo supervisorctl restart backend`, verify via curl.
 - Board branding logo b64 payload uses /app/frontend/public/logo-mark-192.png in tests — keep that asset.
 - Non-blocking polish backlog: validate logo MIME/magic bytes; return dropped invalid emails to UI; explicit "Remove logo"; consider splitting reports.py PDF helpers.
+
+## 2026-08-07 — Sidebar categories + Owner all-access
+- Left nav regrouped into labeled sections: 6 paid categories (AI Governance, Cyber Risk, Third-Party Risk, Asset Intelligence, Audit & Evidence, Reporting & Board) each rendered with a distinct accent color header (ai/crit/high/primary/med/low), colored dot, and a matching colored left-border wrapping the nested dashboards to signal dependency. Plus muted General "Dashboards", "Admin", "Account" sections. (`AppShell.jsx` NAV_SECTIONS + CAT_STYLE)
+- Owner full unrestricted access: `OWNER_EMAILS` (default jblan2026@gmail.com) in `auth.py`. `is_owner()` forces role=admin in get_current_user, bypasses require_active_subscription, and `/api/subscription` + `/api/modules` return enterprise plan + all entitlements + all modules owned — hardcoded on login, no payment ever required.
