@@ -102,3 +102,34 @@ async def report_email(body: ReportBody, user: dict = Depends(get_current_user))
 @reports_router.get("/api/reports")
 async def list_reports(user: dict = Depends(get_current_user)):
     return await db.reports.find({"org_id": user["org_id"]}, {"_id": 0}).sort("generated_at", -1).to_list(50)
+
+
+class PackBody(BaseModel):
+    control_id: str
+
+
+@reports_router.post("/api/reports/evidence-pack")
+async def evidence_pack(body: PackBody, user: dict = Depends(get_current_user)):
+    from routes import _FW_BY_CAT
+    c = await db.controls.find_one({"org_id": user["org_id"], "control_id": body.control_id})
+    if not c:
+        raise HTTPException(404, "Control not found")
+    fws = _FW_BY_CAT.get(c["category"], ["NIST CSF 2.0"])
+    lines = [f"# Audit Evidence Pack — {c['control_id']}", "",
+             "## Control",
+             f"{c['control_id']} — {c['name']} ({c['category']})",
+             f"Owner: {c['owner']}",
+             f"Effectiveness: {c['effectiveness']}%  ·  Maturity: {c['maturity']}/5",
+             f"Last tested: {c['last_tested'][:10]}  ·  Evidence expires: {c['evidence_expires'][:10]}", "",
+             "## Cross-Framework Coverage"]
+    for fw in fws:
+        lines.append(f"- {fw}: control {c['control_id']} satisfies the applicable requirement family; evidence attached.")
+    lines += ["", "## Evidence",
+              f"- Continuous control-monitoring telemetry for {c['category']}",
+              f"- Owner attestation by {c['owner']}",
+              f"- Linked risk: {c.get('related_risk') or 'n/a'}", "",
+              "## Assurance",
+              "Evidence collected from connected sources; freshness, confidence and reliability tracked in-platform. Implementing this one control cascades coverage across all frameworks listed above."]
+    buf = _build_pdf("\n".join(lines), f"Audit Evidence Pack — {c['control_id']}")
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename="evidence-pack-{c["control_id"]}.pdf"'})

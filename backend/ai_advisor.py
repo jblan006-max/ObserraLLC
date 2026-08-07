@@ -133,3 +133,43 @@ async def board_report(user: dict = Depends(require_active_subscription)):
                                  "model": "anthropic/claude-sonnet-5", "generated_at": now, "by": user["email"]})
     return {"report": report, "model": "claude-sonnet-5", "generated_at": now}
 
+
+from routes import _build_graph
+
+
+class GraphAsk(BaseModel):
+    question: str
+
+
+@advisor_router.post("/graph-ask")
+async def graph_ask(body: GraphAsk, user: dict = Depends(require_active_subscription)):
+    g = await _build_graph(user["org_id"])
+    q = body.question.lower()
+    highlight = set()
+    for n in g["nodes"]:
+        if n["id"].lower() in q or (len(n["label"]) > 3 and n["label"].lower() in q):
+            highlight.add(n["id"])
+    if "confiden" in q or "pii" in q:
+        highlight.add("D-CONF")
+    if "financ" in q:
+        highlight.add("D-FIN")
+    if "vendor" in q or "third" in q or "suppl" in q:
+        highlight |= {n["id"] for n in g["nodes"] if n["type"] == "vendor"}
+    if "shadow" in q:
+        highlight |= {n["id"] for n in g["nodes"] if n["type"] == "ai" and n["meta"].get("status") == "shadow"}
+    if "critical" in q or "risk" in q:
+        highlight |= {n["id"] for n in g["nodes"] if n["type"] == "risk" and n["meta"].get("residual", 0) >= 16}
+    chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"graph-{user['org_id']}",
+                   system_message="Answer STRICTLY from the provided knowledge graph JSON. Cite node ids in [brackets]. Be concise (<120 words). Never invent nodes or facts.").with_model("anthropic", "claude-sonnet-5")
+    prompt = f"KNOWLEDGE GRAPH JSON:\n{json.dumps(g)[:7000]}\n\nQUESTION: {body.question}"
+    collected = []
+    try:
+        async for ev in chat.stream_message(UserMessage(text=prompt)):
+            if isinstance(ev, TextDelta):
+                collected.append(ev.content)
+            elif isinstance(ev, StreamDone):
+                break
+    except Exception as e:
+        collected.append(f"[graph answer error: {e}]")
+    return {"answer": "".join(collected), "highlight": list(highlight)}
+

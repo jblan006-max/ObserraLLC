@@ -1,5 +1,5 @@
 import random
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -423,11 +423,11 @@ async def simulate(body: SimulateBody, user: dict = Depends(get_current_user)):
 
 
 # ---------- Evidence drill-down ----------
-_FW_BY_CAT = {"Identity & Access": ["NIST CSF 2.0", "ISO/IEC 27001", "SOC 2"],
-              "Vulnerability Mgmt": ["NIST SP 800-53", "PCI DSS"],
-              "AI Governance": ["NIST AI RMF", "EU AI Act", "ISO/IEC 42001"],
-              "Third Party": ["SOC 2", "DORA"], "Resilience": ["ISO/IEC 27001", "DORA"],
-              "Data Protection": ["GDPR", "HIPAA"]}
+_FW_BY_CAT = {"Identity & Access": ["NIST CSF 2.0", "NIST SP 800-53", "SOC 2", "ISO/IEC 27001"],
+              "Vulnerability Mgmt": ["NIST SP 800-53", "NIST SSDF", "ISO/IEC 27001", "SOC 2"],
+              "AI Governance": ["NIST AI RMF", "EU AI Act", "ISO/IEC 42001", "NIST SSDF"],
+              "Third Party": ["SOC 2", "ISO/IEC 27001", "GDPR"], "Resilience": ["ISO/IEC 27001", "NIST CSF 2.0", "SOC 2"],
+              "Data Protection": ["GDPR", "ISO/IEC 27001", "SOC 2", "NIST SP 800-53"]}
 _CTRL_BY_CAT = {"Identity & Access": "IAM-3 Privileged Access Management",
                 "Vulnerability Mgmt": "VM-2 Timely Remediation", "AI Governance": "AIG-1 AI Use Governance",
                 "Third Party": "TPR-4 Vendor Attestation", "Resilience": "BCP-2 DR Testing",
@@ -558,4 +558,64 @@ async def knowledge_graph_query(body: GraphQuery, user: dict = Depends(get_curre
     else:
         raise HTTPException(400, "Unknown preset")
     return {"highlight": list(highlight), "matches": matches, "explanation": explanation}
+
+
+# ---------- Continuous Control Monitoring ----------
+def _d(n):
+    return (datetime.now(timezone.utc) + timedelta(days=n)).isoformat()
+
+
+_CONTROL_SEED = [
+    {"control_id": "IAM-3", "name": "Privileged Access Management", "category": "Identity & Access", "framework": "NIST CSF 2.0", "effectiveness": 78, "maturity": 3, "owner": "Dana Ops", "last_tested": _d(-12), "evidence_expires": _d(20), "related_risk": "CR-001", "baseline": 82},
+    {"control_id": "VM-2", "name": "Timely Vulnerability Remediation", "category": "Vulnerability Mgmt", "framework": "NIST SP 800-53", "effectiveness": 61, "maturity": 2, "owner": "Sam Vuln", "last_tested": _d(-40), "evidence_expires": _d(-5), "related_risk": "CR-002", "baseline": 72},
+    {"control_id": "AIG-1", "name": "AI Use Governance", "category": "AI Governance", "framework": "NIST AI RMF", "effectiveness": 66, "maturity": 2, "owner": "AI Gov Board", "last_tested": _d(-8), "evidence_expires": _d(35), "related_risk": "CR-004", "baseline": 64},
+    {"control_id": "DP-1", "name": "Data Minimization", "category": "Data Protection", "framework": "GDPR", "effectiveness": 81, "maturity": 3, "owner": "Priya GRC", "last_tested": _d(-20), "evidence_expires": _d(60), "related_risk": None, "baseline": 80},
+    {"control_id": "BCP-2", "name": "DR / Backup Restoration Testing", "category": "Resilience", "framework": "ISO/IEC 27001", "effectiveness": 52, "maturity": 2, "owner": "Ops Team", "last_tested": _d(-182), "evidence_expires": _d(-30), "related_risk": "CR-006", "baseline": 69},
+    {"control_id": "TPR-4", "name": "Vendor Attestation Review", "category": "Third Party", "framework": "SOC 2", "effectiveness": 70, "maturity": 3, "owner": "Priya GRC", "last_tested": _d(-25), "evidence_expires": _d(10), "related_risk": "CR-003", "baseline": 74},
+]
+
+
+def _control_status(c):
+    now = datetime.now(timezone.utc)
+    exp = datetime.fromisoformat(c["evidence_expires"])
+    days_to_expiry = (exp - now).days
+    stale = days_to_expiry < 0
+    drift = c["effectiveness"] < c.get("baseline", c["effectiveness"]) - 5
+    if stale:
+        status = "Evidence Stale"
+    elif c["effectiveness"] < 55:
+        status = "Failing"
+    elif drift:
+        status = "Drifting"
+    else:
+        status = "Passing"
+    return {**{k: v for k, v in c.items() if k != "org_id"}, "days_to_expiry": days_to_expiry,
+            "stale": stale, "drift": drift, "status": status,
+            "drift_delta": c["effectiveness"] - c.get("baseline", c["effectiveness"])}
+
+
+@api.get("/controls")
+async def controls(user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    existing = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    if not existing:
+        await db.controls.insert_many([{**c, "org_id": org_id} for c in _CONTROL_SEED])
+        existing = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    return [_control_status(c) for c in existing]
+
+
+@api.get("/financials/trend")
+async def financials_trend(user: dict = Depends(get_current_user)):
+    risks = await db.risks.find({"org_id": user["org_id"]}, {"_id": 0}).to_list(500)
+    total = sum(_fin(r)["residual_ale"] for r in risks)
+    health = await db.health_index.find_one({"org_id": user["org_id"]}, {"_id": 0})
+    hist = health.get("history", []) if health else []
+    cur = health.get("score", 69) if health else 69
+    series = []
+    for h in hist:
+        ratio = cur / max(1, h["score"])  # lower past health -> higher past exposure
+        series.append({"month": h["month"], "exposure": round(total * ratio)})
+    if series:
+        series[-1]["exposure"] = round(total)
+    return {"series": series, "current": round(total)}
 

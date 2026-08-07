@@ -9,9 +9,11 @@ const riskClassColor = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 
 
 const FRAMEWORKS = [
   { name: "NIST AI RMF", controls: ["Govern", "Map", "Measure", "Manage"] },
-  { name: "ISO/IEC 42001", controls: ["AI Policy", "Impact Assessment", "Lifecycle Ctrl", "Monitoring"] },
-  { name: "EU AI Act", controls: ["Risk Class", "Transparency", "Human Oversight", "Event Logging"] },
+  { name: "ISO/IEC 42001", controls: ["AI Policy", "Impact Assessment", "Lifecycle", "Monitoring"] },
+  { name: "EU AI Act", controls: ["Risk Class", "Transparency", "Human Oversight", "Logging"] },
   { name: "OWASP LLM Top 10", controls: ["Prompt Injection", "Data Leakage", "Output Handling", "Model DoS"] },
+  { name: "NIST SSDF", controls: ["Secure Dev", "Supply Chain", "Review"] },
+  { name: "SOC 2 · ISO 27001 · GDPR", controls: ["Access", "Confidentiality", "Data Protection"] },
 ];
 
 function coverage(system) {

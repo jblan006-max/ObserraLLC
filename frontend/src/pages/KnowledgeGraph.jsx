@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import ReactFlow, { Background, Controls } from "reactflow";
 import "reactflow/dist/style.css";
 import { api } from "@/lib/api";
-import { Network, Loader2, Sparkle } from "lucide-react";
+import { Network, Loader2, Sparkle, Send } from "lucide-react";
 
 const TYPE = {
   ai: { color: "190 90% 50%", x: 3 }, data: { color: "280 70% 60%", x: 5 },
@@ -21,6 +21,18 @@ export default function KnowledgeGraph() {
   const [highlight, setHighlight] = useState(null);
   const [explanation, setExplanation] = useState("");
   const [busy, setBusy] = useState("");
+  const [question, setQuestion] = useState("");
+  const [asking, setAsking] = useState(false);
+
+  const ask = async () => {
+    if (!question.trim()) return;
+    setAsking(true);
+    try {
+      const { data } = await api.post("/advisor/graph-ask", { question });
+      setHighlight(new Set(data.highlight)); setExplanation(data.answer);
+    } catch { setExplanation("Could not answer that from the graph."); }
+    setAsking(false);
+  };
 
   useEffect(() => { api.get("/knowledge-graph").then((r) => setGraph(r.data)); }, []);
 
@@ -78,6 +90,17 @@ export default function KnowledgeGraph() {
           </button>
         ))}
         {highlight && <button onClick={() => { setHighlight(null); setExplanation(""); }} className="text-xs px-3 py-2 rounded-md bg-secondary/60 hover:bg-secondary">Clear</button>}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <input data-testid="kg-ask-input" value={question} onChange={(e) => setQuestion(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") ask(); }}
+          placeholder="Ask the graph… e.g. which AI systems touch confidential data via risky vendors?"
+          className="flex-1 bg-card border border-border rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-ai" />
+        <button data-testid="kg-ask-btn" onClick={ask} disabled={asking}
+          className="flex items-center gap-1.5 px-4 py-2.5 rounded-md bg-ai text-background font-head font-bold text-sm hover:opacity-90 transition-opacity disabled:opacity-50">
+          {asking ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Ask
+        </button>
       </div>
 
       {explanation && <div data-testid="kg-explanation" className="ai-border rounded-lg p-3 text-sm text-foreground bg-ai/5">{explanation}</div>}
