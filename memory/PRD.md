@@ -42,6 +42,17 @@ Foundation: Tenant Management · Identity & RBAC | Data: Enterprise Asset Model 
 - Kernel Health Telemetry: GET /kernel/health returns real per-subsystem records/last_run/error_rate/status; surfaced on each subsystem card
 - Weekly Drift Digest: Monday 08:00 UTC cron (POST /cron/weekly-drift-digest) emails admins/execs the open drift alerts (.emergent/crons.yml now has 2 crons)
 
+## Session 2026-06 (enhancements) — verified iteration_6.json (backend 14/14, frontend 100%)
+- Remediation SLAs: remediation workflows get due_at (created+7d); RemediationModal + Kernel workflow list show Due/Overdue badges
+- Assignee Directory: GET /api/members powers a teammate dropdown in RemediationModal (replaces free text)
+- Policy Simulation: POST /api/policies/simulate → live "would flag N of M controls" preview while an admin edits a threshold policy
+- Digest Preferences: PATCH /api/auth/preferences (weekly/daily/off) + Settings page; weekly & daily crons filter recipients by cadence; .emergent/crons.yml now has 3 crons
+
+## ROADMAP (P0/P1 — queued by user, in order)
+1. First standalone app formally composed on the kernel (prove the layering)
+2. Real connectors: M365/Azure/AWS/Okta/CrowdStrike/Splunk/ServiceNow/Wiz; Enterprise SSO/SAML + SCIM; ABAC
+3. AI agent inventory + tool/permission governance; red-team / prompt-injection testing
+
 
 ## Implemented (as of 2026-06)
 - JWT auth (httpOnly cookies, brute-force lockout), org/role, tenant isolation
