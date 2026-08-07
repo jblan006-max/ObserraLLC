@@ -63,3 +63,10 @@
 - Access Expiry: AccessBody.expires_on stores an expiry + revert value; daily-drift-digest cron runs _run_access_expiry to auto-revert lapsed grants (clears pin) and email the teammate. Access modal has an expiry date picker; member rows show an expiry badge.
 - Monthly Access Review digest: monthly-board-report cron runs _run_access_review, emailing admins a per-pack seat snapshot.
 - Fix: repaired a corrupted duplicated tail in auth.py seed_admin (IndentationError) and re-applied team_members/set_member_access.
+
+## 2026-08-07 — Connectors auto-connect on save (no blocking test)
+- All 5 live connectors (M365, Copilot, ChatGPT/OpenAI, Teams, SAML/SSO) now go LIVE/READY the instant an admin saves credentials — `live_connectors.py` PUT handlers always set `live=True`/`valid=True`. Real data (Graph user/risky counts, Copilot seats, OpenAI model count, SAML entity_id) is still pulled best-effort but wrapped in try/except so an unreachable/failed check never blocks the connection. Status text now "Connected — …".
+- Frontend `AvailableConnectors.jsx`: buttons relabeled "Save & connect" / "Connecting…"; toasts report "connected" (no more "NOT LIVE"/"Invalid" error path for saved creds).
+- Apple + Enterprise OIDC + SAML in Settings (`SsoCard.jsx`) already save-and-enable instantly (Test connection is optional); `/api/auth/providers` reflects configured state immediately.
+- Catalog connectors (Okta/AWS/Azure/CrowdStrike/Splunk/ServiceNow/Wiz) remain one-click MOCKED demos (no credential fields).
+- Verified iteration_28: frontend 100% — all pills flip LIVE/READY on save with dummy creds, disconnect reverts to NOT SET, Settings SSO badges show Connected without Test. Owner org left clean.
