@@ -92,6 +92,11 @@ Foundation: Tenant Management · Identity & RBAC | Data: Enterprise Asset Model 
 - **Budget Auto-Pause**: org flag advisor_auto_pause; PUT /api/advisor/budget accepts optional auto_pause; when on and month spend ≥ cap, /api/advisor/chat returns 429 (_is_paused guard). /api/advisor/usage returns auto_pause + paused. Advisor panel adds an "Auto-pause at cap" On/Off toggle + paused banner; UI catches 429 and shows the paused message. Verified: paused=true → chat 429.
 - **Schedule Cadence**: studio_schedule.cadence (weekly/monthly/quarterly). _run_studio_reports(cadences) filters orgs by cadence. Monthly cron (1st 09:00) runs {monthly} + {quarterly} on Jan/Apr/Jul/Oct; new weekly cron (Mon 09:00) runs {weekly} — both in .emergent/crons.yml. Report Builder adds a Weekly/Monthly/Quarterly selector. Verified: weekly cron 200 + delivery notification.
 
+## Session 2026-06 (Spend Trend Sparkline + Per-User Spend + Auto-Pause Email)
+- **Spend Trend Sparkline**: /api/advisor/usage now returns `trend` (last 6 months of advisor cost via _last_n_months) — rendered as a 6-bar sparkline beside the advisor budget bar (admin-only).
+- **Per-User Spend**: /api/advisor/usage returns `by_user` (current-month cost + query count per teammate, desc) — rendered as a "This month by teammate" list in the advisor.
+- **Auto-Pause Email**: when month spend crosses 100% and auto_pause is on, _check_budget emails admins/execs a heads-up (once per month via organizations.advisor_pause_notified; reuses Resend). set_budget $unset's the notified flag so a future breach re-notifies. (Email path wired + compiles; live send not explicitly triggered.)
+
 ## Implemented (as of 2026-06)
 - JWT auth (httpOnly cookies, brute-force lockout), org/role, tenant isolation
 - Passwordless QR login (start/approve/poll, 3-min single-use, cross-device)

@@ -204,6 +204,35 @@ export function AIAdvisor() {
                   {savingBudget ? "…" : "Set"}
                 </button>
               </div>
+              {spend.trend?.length > 0 && (() => {
+                const max = Math.max(...spend.trend.map((t) => t.cost_usd), 0.0001);
+                return (
+                  <div data-testid="advisor-trend" className="pt-1">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1">6-month spend</div>
+                    <div className="flex items-end gap-1 h-9">
+                      {spend.trend.map((t) => (
+                        <div key={t.month} className="flex-1 flex flex-col items-center gap-0.5" title={`${t.month}: $${t.cost_usd.toFixed(2)}`}>
+                          <div className="w-full bg-ai/60 rounded-sm transition-[height] duration-300" style={{ height: `${Math.max(2, (t.cost_usd / max) * 26)}px` }} />
+                          <span className="text-[8px] font-mono text-muted-foreground">{t.month.slice(5)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+              {spend.by_user?.length > 0 && (
+                <div data-testid="advisor-by-user" className="pt-1">
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1">This month by teammate</div>
+                  <div className="space-y-0.5">
+                    {spend.by_user.slice(0, 4).map((u) => (
+                      <div key={u.user} data-testid={`by-user-${u.user}`} className="flex items-center justify-between text-[10px] font-mono">
+                        <span className="truncate text-muted-foreground max-w-[58%]">{u.user}</span>
+                        <span className="text-ai">${u.cost_usd.toFixed(4)} · {u.queries}q</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 

@@ -76,6 +76,19 @@ async def _is_paused(org_id: str) -> bool:
     return await _month_spend(org_id) >= budget
 
 
+def _last_n_months(n=6):
+    now = datetime.now(timezone.utc)
+    y, m = now.year, now.month
+    keys = []
+    for _ in range(n):
+        keys.append(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m == 0:
+            m = 12
+            y -= 1
+    return list(reversed(keys))
+
+
 async def _check_budget(org_id: str):
     budget = await _org_budget(org_id)
     if budget <= 0:
@@ -88,6 +101,19 @@ async def _check_budget(org_id: str):
             org_id, "advisor_budget", "AI advisor budget exceeded",
             f"Advisor spend ${spent} has exceeded the ${budget} monthly cap.",
             ref="advisor-budget", dedupe_key=f"advisor-budget:{mk}:100")
+        org = await _org_settings(org_id)
+        if org.get("advisor_auto_pause") and org.get("advisor_pause_notified") != mk:
+            recips = await db.users.find(
+                {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
+            html = ("<div style=\"font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto\">"
+                    "<h2 style=\"color:#0f1e3d\">AI Advisor auto-paused</h2>"
+                    f"<p>Advisor spend of <b>${spent}</b> has reached the <b>${budget}</b> monthly cap, "
+                    "so the Obserra Advisor is paused for the rest of this month.</p>"
+                    "<p>Raise or turn off the cap in the Advisor panel to resume immediately.</p>"
+                    "<p style=\"font-size:11px;color:#9ca3af\">Obserra — Executive Protection &amp; Intelligence LLC</p></div>")
+            for r in recips:
+                await notifications.send_email(r["email"], "AI Advisor auto-paused — monthly cap reached", html)
+            await db.organizations.update_one({"_id": ObjectId(org_id)}, {"$set": {"advisor_pause_notified": mk}})
     elif pct >= 80:
         await notifications.create(
             org_id, "advisor_budget", "AI advisor budget nearing cap",
@@ -205,10 +231,20 @@ async def advisor_usage(admin: dict = Depends(require_roles("admin"))):
     paused = budget > 0 and auto_pause and month_cost >= budget
     recent = [{"prompt": l["prompt"][:80], "user": l["user"], "model": l.get("model"), "ts": l.get("ts"),
                "tokens": l["usage"]["total_tokens"], "cost_usd": l["usage"]["cost_usd"]} for l in logs[:20]]
+    trend = [{"month": k, "cost_usd": round(sum(l["usage"]["cost_usd"] for l in logs if l.get("ts", "").startswith(k)), 4)}
+             for k in _last_n_months(6)]
+    bu = {}
+    for l in logs:
+        if l.get("ts", "").startswith(mk):
+            e = bu.setdefault(l["user"], {"user": l["user"], "cost_usd": 0.0, "queries": 0})
+            e["cost_usd"] += l["usage"]["cost_usd"]
+            e["queries"] += 1
+    by_user = sorted(({**v, "cost_usd": round(v["cost_usd"], 4)} for v in bu.values()),
+                     key=lambda x: x["cost_usd"], reverse=True)
     return {"queries": len(logs), "total_tokens": total_tokens, "total_cost_usd": total_cost,
             "today_cost_usd": today_cost, "month_cost_usd": month_cost, "budget_usd": budget,
             "budget_pct": pct, "budget_status": status, "auto_pause": auto_pause, "paused": paused,
-            "recent": recent}
+            "trend": trend, "by_user": by_user, "recent": recent}
 
 
 class BudgetBody(BaseModel):
@@ -222,7 +258,8 @@ async def set_budget(body: BudgetBody, admin: dict = Depends(require_roles("admi
     update = {"advisor_budget_usd": val}
     if body.auto_pause is not None:
         update["advisor_auto_pause"] = bool(body.auto_pause)
-    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": update})
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])},
+                                      {"$set": update, "$unset": {"advisor_pause_notified": ""}})
     return {"monthly_usd": val, "auto_pause": update.get("advisor_auto_pause")}
 
 
@@ -297,4 +334,3 @@ async def graph_ask(body: GraphAsk, user: dict = Depends(require_active_subscrip
     except Exception as e:
         collected.append(f"[graph answer error: {e}]")
     return {"answer": "".join(collected), "highlight": list(highlight)}
-
