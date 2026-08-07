@@ -170,7 +170,7 @@ function Branding() {
   useEffect(() => { api.get("/branding").then((r) => setB(r.data)); }, []);
   const save = async () => {
     setBusy(true);
-    try { const { data } = await api.put("/branding", b); setB(data); document.documentElement.style.setProperty("--brand-accent", data.accent); document.title = data.display_name; toast.success("Branding saved"); }
+    try { const { data } = await api.put("/branding", b); setB(data); const { applyBranding } = await import("@/lib/brand"); applyBranding(data); toast.success("Branding saved — chrome restyled"); }
     catch { toast.error("Save failed"); }
     setBusy(false);
   };

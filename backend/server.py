@@ -19,6 +19,8 @@ from enterprise import enterprise_router
 from agents import agents_router
 from tpr import tpr_router
 from insights import insights_router
+from cyber import cyber_router
+from studio import studio_router
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -36,6 +38,8 @@ app.include_router(enterprise_router)
 app.include_router(agents_router)
 app.include_router(tpr_router)
 app.include_router(insights_router)
+app.include_router(cyber_router)
+app.include_router(studio_router)
 
 app.add_middleware(
     CORSMiddleware,
