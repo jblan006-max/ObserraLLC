@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useUrlState } from "@/hooks/useUrlState";
 import { toast } from "sonner";
-import { Users, UserPlus, Loader2, Trash2, Copy, KeyRound, Search, SlidersHorizontal } from "lucide-react";
+import { Users, UserPlus, Loader2, Trash2, Copy, KeyRound, Search, SlidersHorizontal, Pencil, History } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const ROLE_LABEL = { admin: "Admin", executive: "Executive", operational: "Operational" };
@@ -63,10 +63,16 @@ export default function Team() {
   const [accessSel, setAccessSel] = useState([]);
   const [accessAll, setAccessAll] = useState(true);
   const [accessBusy, setAccessBusy] = useState(false);
+  const [selected, setSelected] = useState([]);
+  const [bulkMode, setBulkMode] = useState("all");
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [accessHistory, setAccessHistory] = useState([]);
   const openAccess = (m) => {
     setAccessFor(m);
     setAccessAll(m.module_access == null);
     setAccessSel(m.module_access || CATS.map((c) => c.id));
+    setAccessHistory([]);
+    api.get(`/auth/team/${m.id}/access-history`).then((r) => setAccessHistory(r.data || [])).catch(() => {});
   };
   const toggleCat = (id) => setAccessSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   const saveAccess = async () => {
@@ -85,6 +91,33 @@ export default function Team() {
       const { data } = await api.post("/auth/access-presets", { name, module_access: accessAll ? null : accessSel });
       setPresets(data || []); toast.success(`Preset '${name}' saved`);
     } catch { toast.error("Could not save preset"); }
+  };
+  const renamePreset = async (p) => {
+    const name = window.prompt("Rename preset", p.name);
+    if (!name || name === p.name) return;
+    try {
+      await api.post("/auth/access-presets", { name, module_access: p.module_access });
+      await api.delete(`/auth/access-presets/${encodeURIComponent(p.name)}`);
+      const { data } = await api.get("/auth/access-presets");
+      setPresets(data || []); toast.success("Preset renamed");
+    } catch { toast.error("Could not rename preset"); }
+  };
+  const deletePreset = async (p) => {
+    if (!window.confirm(`Delete preset '${p.name}'?`)) return;
+    try { await api.delete(`/auth/access-presets/${encodeURIComponent(p.name)}`); setPresets((s) => s.filter((x) => x.name !== p.name)); toast.success("Preset deleted"); }
+    catch { toast.error("Could not delete preset"); }
+  };
+  const toggleSelect = (id) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  const applyBulk = async () => {
+    setBulkBusy(true);
+    let module_access = null;
+    if (bulkMode !== "all") { const p = presets.find((x) => x.name === bulkMode); module_access = p ? p.module_access : null; }
+    try {
+      const { data } = await api.post("/auth/team/bulk-access", { user_ids: selected, module_access });
+      toast.success(`Access updated for ${data.updated} teammate(s)`);
+      setSelected([]); load();
+    } catch { toast.error("Could not apply bulk access"); }
+    setBulkBusy(false);
   };
 
   return (
@@ -155,6 +188,24 @@ export default function Team() {
         </div>
       )}
 
+      <div data-testid="preset-manager" className="bg-card fact-border rounded-xl p-5 space-y-3">
+        <div className="flex items-center gap-2"><SlidersHorizontal className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Access Presets</h2></div>
+        {presets.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No presets yet. Open a teammate's Access dialog and use "Save as preset" to create reusable templates (e.g. Auditor = Audit &amp; Reporting only).</p>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            {presets.map((p) => (
+              <div key={p.name} data-testid={`preset-${p.name}`} className="flex items-center gap-2 bg-secondary/50 border border-border rounded-lg px-3 py-1.5">
+                <span className="text-sm font-medium">{p.name}</span>
+                <span className="text-[10px] font-mono text-muted-foreground">{p.module_access == null ? "all" : `${p.module_access.length} cat`}</span>
+                <button data-testid={`preset-rename-${p.name}`} onClick={() => renamePreset(p)} className="text-muted-foreground hover:text-ai transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
+                <button data-testid={`preset-delete-${p.name}`} onClick={() => deletePreset(p)} className="text-muted-foreground hover:text-crit transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {!members ? <div className="flex items-center justify-center h-40"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div> : (
         <>
         <div className="flex flex-wrap gap-2" data-testid="member-filters">
@@ -166,10 +217,25 @@ export default function Team() {
             <option value="all">All roles</option><option value="admin">Admin</option><option value="executive">Executive</option><option value="operational">Operational</option>
           </select>
         </div>
+        {selected.length > 0 && (
+          <div data-testid="bulk-access-bar" className="flex flex-wrap items-center gap-3 bg-ai/5 ai-border rounded-lg p-3">
+            <span className="text-sm font-medium">{selected.length} selected</span>
+            <select data-testid="bulk-access-mode" value={bulkMode} onChange={(e) => setBulkMode(e.target.value)} className="bg-secondary/60 rounded-md px-3 py-2 text-sm outline-none">
+              <option value="all">All access</option>
+              {presets.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+            </select>
+            <button data-testid="bulk-apply" disabled={bulkBusy} onClick={applyBulk}
+              className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
+              {bulkBusy && <Loader2 className="w-4 h-4 animate-spin" />} Apply to selected
+            </button>
+            <button onClick={() => setSelected([])} className="text-xs text-muted-foreground hover:text-foreground">Clear</button>
+          </div>
+        )}
         <div className="md:hidden space-y-3" data-testid="member-cards-mobile">
           {shownMembers.map((m) => (
             <div key={m.id} data-testid={`member-card-${m.id}`} className="bg-card fact-border rounded-xl p-4 flex items-center justify-between gap-3">
-              <div className="min-w-0">
+              <input type="checkbox" data-testid={`select-m-${m.id}`} className="accent-primary w-4 h-4 shrink-0" checked={selected.includes(m.id)} onChange={() => toggleSelect(m.id)} />
+              <div className="min-w-0 flex-1">
                 <div className="font-medium text-sm truncate">{m.name}</div>
                 <div className="text-xs text-muted-foreground font-mono truncate">{m.email}</div>
                 <span className="inline-block mt-1 px-2 py-0.5 rounded-sm text-[10px] font-mono font-bold" style={{ background: `hsl(${ROLE_COLOR[m.role]} / 0.15)`, color: `hsl(${ROLE_COLOR[m.role]})` }}>{ROLE_LABEL[m.role] || m.role}</span>
@@ -186,11 +252,12 @@ export default function Team() {
         <div className="hidden md:block bg-card fact-border rounded-xl overflow-x-auto">
           <table className="w-full text-sm min-w-[560px]">
             <thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border">
-              <tr><th className="text-left px-4 py-3">Member</th><th className="text-left px-4 py-3">Email</th><th className="text-left px-4 py-3">Role</th><th className="text-left px-4 py-3">Access</th><th className="text-right px-4 py-3">Actions</th></tr>
+              <tr><th className="px-3 py-3 w-8"></th><th className="text-left px-4 py-3">Member</th><th className="text-left px-4 py-3">Email</th><th className="text-left px-4 py-3">Role</th><th className="text-left px-4 py-3">Access</th><th className="text-right px-4 py-3">Actions</th></tr>
             </thead>
             <tbody>
               {shownMembers.map((m) => (
                 <tr key={m.id} data-testid={`member-${m.id}`} className="border-b border-border/60 hover:bg-secondary/40 transition-colors">
+                  <td className="px-3 py-3"><input type="checkbox" data-testid={`select-${m.id}`} className="accent-primary w-4 h-4" checked={selected.includes(m.id)} onChange={() => toggleSelect(m.id)} /></td>
                   <td className="px-4 py-3 font-medium">{m.name}</td>
                   <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{m.email}</td>
                   <td className="px-4 py-3">
@@ -242,6 +309,16 @@ export default function Team() {
                 </label>
               ))}
             </div>
+            {accessHistory.length > 0 && (
+              <div data-testid="access-history" className="border-t border-border pt-3 space-y-1.5 max-h-40 overflow-y-auto">
+                <div className="flex items-center gap-1.5 text-xs font-mono uppercase tracking-wider text-muted-foreground"><History className="w-3.5 h-3.5" /> Recent changes</div>
+                {accessHistory.map((h, i) => (
+                  <div key={i} className="text-xs text-muted-foreground leading-snug">
+                    <span className="text-foreground">{h.detail}</span> · by {h.actor} · {new Date(h.ts).toLocaleString()}
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <button data-testid="save-as-preset" onClick={saveAsPreset} className="mr-auto px-4 py-2 rounded-md text-sm border border-border text-muted-foreground hover:text-ai hover:border-ai/40 transition-colors">Save as preset</button>
               <button onClick={() => setAccessFor(null)} className="px-4 py-2 rounded-md text-sm text-muted-foreground hover:bg-secondary/60 transition-colors">Cancel</button>

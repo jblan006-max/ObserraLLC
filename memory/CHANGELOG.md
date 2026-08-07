@@ -36,3 +36,10 @@
 - Invite With Access: InviteBody + team_invite accept module_access; invite form lets admins pick All / a preset / custom categories up front.
 - Collapse All: sidebar top control toggles all sections collapsed/expanded (ChevronUp/Down), persisted to localStorage.
 - Billing Seats & Access: GET /api/billing/access-summary (admin) → per-pack owned + seat_count/total_members; new card on Billing lists all 6 packs with "X of N teammates". Verified via curl + screenshot.
+
+## 2026-08-07 — Preset manager, seat drill-down, access history, bulk access, access-change emails
+- Preset Manager: Team page "Access Presets" card lists saved presets with rename (POST new + DELETE old) and delete.
+- Bulk Access: member selection checkboxes (desktop + mobile) + a bulk bar; POST /api/auth/team/bulk-access applies an access preset/all to many teammates at once.
+- Access Audit Trail: _log_audit now stores a `target` field; GET /api/auth/team/{id}/access-history returns team.access/team.invite entries for that member, shown as "Recent changes" in the access modal.
+- Seat Drill-Down: Billing seats rows are expandable to show the exact teammates who hold each pack's access (uses access-summary `seats`).
+- Access-change emails: _notify_access_change emails the teammate (managed Resend) + in-app notification whenever their dashboard access changes (single or bulk). Verified via curl (set/bulk/history) + screenshots.

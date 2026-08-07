@@ -147,9 +147,10 @@ class LoginBody(BaseModel):
     password: str
 
 
-async def _log_audit(org_id, actor, action, detail=""):
+async def _log_audit(org_id, actor, action, detail="", target=None):
     await db.audit_logs.insert_one({
         "org_id": org_id, "actor": actor, "action": action, "detail": detail,
+        "target": target,
         "ts": datetime.now(timezone.utc).isoformat(),
     })
 
@@ -353,6 +354,42 @@ class PreferencesBody(BaseModel):
 
 CATEGORY_IDS = ["ai_governance", "cyber_risk", "third_party_risk", "asset_intelligence", "audit_evidence", "reporting_board"]
 
+CATEGORY_NAMES = {
+    "ai_governance": "AI Governance", "cyber_risk": "Cyber Risk",
+    "third_party_risk": "Third-Party Risk", "asset_intelligence": "Asset Intelligence",
+    "audit_evidence": "Audit & Evidence", "reporting_board": "Reporting & Board",
+}
+
+
+def _access_summary_text(ma):
+    if ma is None:
+        return "all access"
+    if not ma:
+        return "no categories"
+    return ", ".join(CATEGORY_NAMES.get(c, c) for c in ma)
+
+
+async def _notify_access_change(org_id, member, ma, actor):
+    """Email the teammate (managed Resend) when their dashboard access changes."""
+    try:
+        from kernel import notifications
+        summary = _access_summary_text(ma)
+        frontend = os.environ["FRONTEND_URL"].rstrip("/")
+        html = (
+            '<table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;margin:auto;background:#ffffff">'
+            '<tr><td style="padding:28px 24px">'
+            '<div style="font:800 20px Arial;color:#0f1e3d">Obserra — Executive Protection &amp; Intelligence LLC</div>'
+            f'<div style="font:400 14px Arial;color:#1f2937;margin-top:14px;line-height:1.6">Hi {member.get("name") or member["email"]},<br><br>'
+            f'Your Obserra dashboard access was updated. You can now reach: <b>{summary}</b>.</div>'
+            f'<div style="margin:22px 0"><a href="{frontend}/app" style="background:#1b3a8a;color:#fff;font:700 14px Arial;text-decoration:none;padding:12px 22px;border-radius:8px">Open Obserra EIOS</a></div>'
+            '</td></tr></table>'
+        )
+        await notifications.send_email(member["email"], "Your Obserra dashboard access changed", html)
+        await notifications.create(org_id, "team", "Access updated",
+                                   f"{member['email']} access changed by {actor} → {summary}", ref=member["email"])
+    except Exception as e:
+        import logging; logging.getLogger(__name__).error(f"access-change notify failed: {e}")
+
 
 class AccessBody(BaseModel):
     module_access: list[str] | None = None
@@ -378,8 +415,46 @@ async def set_member_access(user_id: str, body: AccessBody, admin: dict = Depend
     op = {"$set": {"module_access": ma}} if ma is not None else {"$unset": {"module_access": ""}}
     await db.users.update_one({"_id": ObjectId(user_id)}, op)
     await _log_audit(admin["org_id"], admin["email"], "team.access",
-                     f"Set dashboard access for {member['email']}: {ma if ma is not None else 'all'}")
+                     f"Set dashboard access: {_access_summary_text(ma)}", target=member["email"])
+    await _notify_access_change(admin["org_id"], member, ma, admin["email"])
     return {"ok": True, "module_access": ma}
+
+
+class BulkAccessBody(BaseModel):
+    user_ids: list[str]
+    module_access: list[str] | None = None
+
+
+@auth_router.post("/team/bulk-access")
+async def bulk_set_access(body: BulkAccessBody, admin: dict = Depends(require_roles("admin"))):
+    """Apply the same dashboard access to several teammates at once."""
+    ma = None if body.module_access is None else [c for c in body.module_access if c in CATEGORY_IDS]
+    updated = 0
+    for uid in body.user_ids:
+        try:
+            oid = ObjectId(uid)
+        except Exception:
+            continue
+        member = await db.users.find_one({"_id": oid, "org_id": admin["org_id"]})
+        if not member:
+            continue
+        op = {"$set": {"module_access": ma}} if ma is not None else {"$unset": {"module_access": ""}}
+        await db.users.update_one({"_id": oid}, op)
+        await _log_audit(admin["org_id"], admin["email"], "team.access",
+                         f"Bulk set access: {_access_summary_text(ma)}", target=member["email"])
+        await _notify_access_change(admin["org_id"], member, ma, admin["email"])
+        updated += 1
+    return {"ok": True, "updated": updated, "module_access": ma}
+
+
+@auth_router.get("/team/{user_id}/access-history")
+async def access_history(user_id: str, admin: dict = Depends(require_roles("admin"))):
+    member = await db.users.find_one({"_id": ObjectId(user_id), "org_id": admin["org_id"]})
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    return await db.audit_logs.find(
+        {"org_id": admin["org_id"], "target": member["email"], "action": {"$in": ["team.access", "team.invite"]}},
+        {"_id": 0}).sort("ts", -1).to_list(50)
 
 
 class PresetBody(BaseModel):
@@ -429,7 +504,7 @@ async def team_invite(body: InviteBody, admin: dict = Depends(require_roles("adm
     if body.module_access is not None:
         doc["module_access"] = [c for c in body.module_access if c in CATEGORY_IDS]
     res = await db.users.insert_one(doc)
-    await _log_audit(admin["org_id"], admin["email"], "team.invite", f"Invited {email} as {body.role}")
+    await _log_audit(admin["org_id"], admin["email"], "team.invite", f"Invited {email} as {body.role}", target=email)
     # Kernel: start onboarding workflow + send welcome email (managed Resend)
     try:
         from kernel import workflows, notifications

@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { Loader2, Check, Sparkle, Clock, ExternalLink, Users } from "lucide-react";
+import { Loader2, Check, Sparkle, Clock, ExternalLink, Users, ChevronUp, ChevronDown } from "lucide-react";
 
 export default function Billing() {
   const { sub, refreshSub, user } = useAuth();
   const isAdmin = user?.role === "admin";
   const [plans, setPlans] = useState(null);
   const [summary, setSummary] = useState(null);
+  const [openPack, setOpenPack] = useState(null);
   const [interval, setIntervalSel] = useState("monthly");
   const [busy, setBusy] = useState("");
   const [mods, setMods] = useState([]);
@@ -84,13 +85,25 @@ export default function Billing() {
           <p className="text-sm text-muted-foreground -mt-1">Which teammates can reach each paid pack right now.</p>
           <div>
             {summary.map((s) => (
-              <div key={s.id} data-testid={`seat-row-${s.id}`} className="flex items-center justify-between gap-3 py-2.5 border-b border-border/50 last:border-0">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${s.owned ? "bg-low" : "bg-muted-foreground/40"}`} />
-                  <span className="text-sm font-medium truncate">{s.name}</span>
-                  {!s.owned && <span className="text-[10px] font-mono uppercase text-muted-foreground border border-border rounded px-1.5 py-0.5 shrink-0">not owned</span>}
-                </div>
-                <div className="text-sm text-muted-foreground shrink-0">{s.owned ? `${s.seat_count} of ${s.total_members} teammates` : "—"}</div>
+              <div key={s.id} className="border-b border-border/50 last:border-0">
+                <button data-testid={`seat-row-${s.id}`} onClick={() => s.owned && setOpenPack(openPack === s.id ? null : s.id)}
+                  className={`w-full flex items-center justify-between gap-3 py-2.5 text-left ${s.owned ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${s.owned ? "bg-low" : "bg-muted-foreground/40"}`} />
+                    <span className="text-sm font-medium truncate">{s.name}</span>
+                    {!s.owned && <span className="text-[10px] font-mono uppercase text-muted-foreground border border-border rounded px-1.5 py-0.5 shrink-0">not owned</span>}
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0 text-sm text-muted-foreground">
+                    {s.owned ? `${s.seat_count} of ${s.total_members} teammates` : "—"}
+                    {s.owned && (openPack === s.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />)}
+                  </div>
+                </button>
+                {openPack === s.id && s.owned && (
+                  <div data-testid={`seat-detail-${s.id}`} className="pb-3 pl-3.5 flex flex-wrap gap-1.5">
+                    {s.seats.length === 0 ? <span className="text-xs text-muted-foreground">No teammates have this access yet.</span> :
+                      s.seats.map((u) => <span key={u.email} className="text-xs bg-secondary/60 rounded-full px-2.5 py-1">{u.name || u.email}</span>)}
+                  </div>
+                )}
               </div>
             ))}
           </div>
