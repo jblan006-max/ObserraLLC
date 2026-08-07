@@ -112,18 +112,22 @@ export default function Auth() {
                 <div className="h-px flex-1 bg-border" /><span className="text-[10px] font-mono uppercase text-muted-foreground">or</span><div className="h-px flex-1 bg-border" />
               </div>
               {/* REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH */}
-              <button type="button" data-testid="google-signin" onClick={() => {
-                const redirectUrl = window.location.origin + "/app";
-                window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
-              }} className="w-full py-2.5 rounded-md bg-white text-gray-800 font-head font-bold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-opacity">
-                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="" className="w-4 h-4" /> Continue with Google
-              </button>
+              {!providers.hide_social && (
+                <>
+                  <button type="button" data-testid="google-signin" onClick={() => {
+                    const redirectUrl = window.location.origin + "/app";
+                    window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+                  }} className="w-full py-2.5 rounded-md bg-white text-gray-800 font-head font-bold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-opacity">
+                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="" className="w-4 h-4" /> Continue with Google
+                  </button>
 
-              <button type="button" data-testid="apple-signin"
-                onClick={() => providers.apple ? (window.location.href = `${API}/auth/apple`) : setErr("Apple Sign In isn't attached yet. An admin can connect it under Enterprise → Available Connectors, then this button signs you in with your Apple ID instantly.")}
-                className="w-full mt-2 py-2.5 rounded-md bg-black text-white font-head font-bold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-opacity">
-                <Apple className="w-4 h-4" /> Continue with Apple
-              </button>
+                  <button type="button" data-testid="apple-signin"
+                    onClick={() => providers.apple ? (window.location.href = `${API}/auth/apple`) : setErr("Apple Sign In isn't attached yet. An admin can connect it under Enterprise → Available Connectors, then this button signs you in with your Apple ID instantly.")}
+                    className="w-full mt-2 py-2.5 rounded-md bg-black text-white font-head font-bold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-opacity">
+                    <Apple className="w-4 h-4" /> Continue with Apple
+                  </button>
+                </>
+              )}
 
               <button type="button" data-testid="sso-signin"
                 onClick={() => providers.sso ? (window.location.href = `${API}/auth/sso`) : setErr("Enterprise SSO isn't attached yet. An admin can connect your Okta/Azure IdP under Enterprise → Available Connectors, then this button signs you in with your company account.")}

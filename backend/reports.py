@@ -32,6 +32,8 @@ class ReportBody(BaseModel):
     title: str = "Executive Board Report"
     theme: str = "dark"
     layout: str = "report"
+    cover_date: str = None
+    version: str = None
 
 
 def _norm_hex(v):
@@ -126,7 +128,7 @@ def _resolve_brand(org):
             "watermark": _WATERMARK, "footer": "Obserra — Executive Protection & Intelligence LLC"}
 
 
-def _paint_cover(canvas, pw, ph, title, org_name, report_date, theme, brand):
+def _paint_cover(canvas, pw, ph, title, org_name, report_date, theme, brand, version=None):
     light = (theme == "light")
     bg = "#ffffff" if light else "#081428"
     lockup = brand["lockup_dark"] if light else brand["lockup"]
@@ -171,7 +173,7 @@ def _cover_preview_png(brand, org_name, theme) -> bytes:
 
 
 def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = None,
-               report_date: str = None, chart_series=None, takeaways=None,
+               report_date: str = None, version: str = None, chart_series=None, takeaways=None,
                theme: str = "dark", risk_bars=None, exec_summary: str = None, brand=None) -> io.BytesIO:
     brand = brand or _resolve_brand(None)
     buf = io.BytesIO()
@@ -239,7 +241,7 @@ def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = Non
 
     def _cover_page(canvas, _doc):
         pw, ph = LETTER
-        _paint_cover(canvas, pw, ph, title, org_name, report_date, theme, brand)
+        _paint_cover(canvas, pw, ph, title, org_name, report_date, theme, brand, version=version)
 
     doc.build(story, onFirstPage=(_cover_page if cover else _brand_page), onLaterPages=_brand_page)
     buf.seek(0)
@@ -337,10 +339,12 @@ async def _board_metrics(org_id: str, report_text: str = "") -> dict:
 
 
 async def build_board_report_pdf(org_id: str, report_text: str,
-                                 title: str = "Executive Board Report", theme: str = "dark") -> io.BytesIO:
+                                 title: str = "Executive Board Report", theme: str = "dark",
+                                 report_date: str = None, version: str = None) -> io.BytesIO:
     m = await _board_metrics(org_id, report_text)
     cover_org = m["brand"]["name"] if m["brand"].get("watermark") is None else m["org_name"]
     return _build_pdf(report_text, title, cover=True, org_name=cover_org, theme=theme,
+                      report_date=report_date, version=version,
                       chart_series=m["series"], takeaways=m["takeaways"], risk_bars=m["risk_bars"],
                       exec_summary=m["exec_summary"], brand=m["brand"])
 
@@ -361,7 +365,8 @@ def _wrap(text, font, size, max_w, canvas):
 
 
 async def build_board_deck_pdf(org_id: str, report_text: str,
-                               title: str = "Executive Board Report", theme: str = "dark") -> io.BytesIO:
+                               title: str = "Executive Board Report", theme: str = "dark",
+                               report_date: str = None, version: str = None) -> io.BytesIO:
     from reportlab.pdfgen import canvas as pdfcanvas
     from reportlab.lib.pagesizes import landscape
     from reportlab.graphics import renderPDF
@@ -380,7 +385,7 @@ async def build_board_deck_pdf(org_id: str, report_text: str,
 
     def footer():
         c.setFont("Helvetica", 7); c.setFillColor(GREY)
-        c.drawCentredString(pw / 2, 0.4 * inch, f"{brand['footer']}  ·  Confidential")
+        c.drawCentredString(pw / 2, 0.4 * inch, f"{brand['footer']}  ·  Confidential" + (f"  ·  {version}" if version else ""))
 
     def content_header(slide_title):
         c.setFillColor(SLIDE_BG); c.rect(0, 0, pw, ph, fill=1, stroke=0)
@@ -573,10 +578,12 @@ async def report_test_email(user: dict = Depends(get_current_user)):
 async def report_pdf(body: ReportBody, user: dict = Depends(get_current_user)):
     theme = body.theme if body.theme in ("dark", "light") else "dark"
     if body.layout == "deck":
-        buf = await build_board_deck_pdf(user["org_id"], body.report, body.title, theme)
+        buf = await build_board_deck_pdf(user["org_id"], body.report, body.title, theme,
+                                         report_date=body.cover_date, version=body.version)
         fname = "obserra-board-deck.pdf"
     else:
-        buf = await build_board_report_pdf(user["org_id"], body.report, body.title, theme)
+        buf = await build_board_report_pdf(user["org_id"], body.report, body.title, theme,
+                                           report_date=body.cover_date, version=body.version)
         fname = "obserra-board-report.pdf"
     return StreamingResponse(buf, media_type="application/pdf",
                              headers={"Content-Disposition": f'attachment; filename="{fname}"'})

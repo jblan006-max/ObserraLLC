@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { api, API } from "@/lib/api";
 import { toast } from "sonner";
-import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw, Image as ImageIcon, Server, Package, FileText, RefreshCw, Send, Bookmark, X } from "lucide-react";
+import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw, Image as ImageIcon, Server, Package, FileText, RefreshCw, Send, Bookmark, X, Lock } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const OPTIONS = [
@@ -133,6 +133,17 @@ export default function Settings() {
     } catch (e) { toast.error(e.response?.data?.detail || "Could not save directory"); }
     setOwnerBusy(false);
   };
+  const [hideSocial, setHideSocial] = useState(false);
+  const [authBusy, setAuthBusy] = useState(false);
+  useEffect(() => { if (!isAdmin) return; api.get("/settings/auth-ui").then((r) => setHideSocial(!!r.data.hide_social)).catch(() => {}); }, [isAdmin]);
+  const saveAuthUI = async (val) => {
+    setHideSocial(val); setAuthBusy(true);
+    try {
+      await api.put("/settings/auth-ui", { hide_social: val });
+      toast.success(val ? "Google & Apple hidden on the login screen" : "Google & Apple shown on the login screen");
+    } catch { toast.error("Could not update login screen"); setHideSocial(!val); }
+    setAuthBusy(false);
+  };
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -248,6 +259,19 @@ export default function Settings() {
               {ownerBusy && <Loader2 className="w-4 h-4 animate-spin" />} Save owner directory
             </button>
           )}
+        </div>
+      )}
+
+      {isAdmin && (
+        <div className="bg-card fact-border rounded-xl p-6 space-y-4" data-testid="login-screen-settings">
+          <div className="flex items-center gap-2"><Lock className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Login Screen</h2></div>
+          <div className="flex items-center justify-between gap-4">
+            <div><p className="text-sm font-medium">Hide Google &amp; Apple sign-in</p><p className="text-xs text-muted-foreground">Zero third-party logos — keep email/password, passwordless QR and Enterprise SSO only.</p></div>
+            <button data-testid="toggle-hide-social" role="switch" aria-checked={hideSocial} disabled={authBusy} onClick={() => saveAuthUI(!hideSocial)}
+              className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${hideSocial ? "bg-primary" : "bg-secondary"}`}>
+              <span className={`absolute top-0.5 left-0.5 w-5 h-5 rounded-full bg-white transition-transform ${hideSocial ? "translate-x-5" : ""}`} />
+            </button>
+          </div>
         </div>
       )}
 

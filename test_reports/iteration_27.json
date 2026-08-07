@@ -1,0 +1,26 @@
+{
+  "summary": "Frontend E2E for 3 P2 polish items on Obserra EIOS. All 3 features PASS. (1) Auth Button Toggle: admin can toggle hide_social in Settings; Google & Apple sign-in buttons hide on /auth while Enterprise SSO + Passwordless QR remain visible; toggle OFF restores Google/Apple. Left hide_social=false at end (verified via /api/auth/providers). (2) Role Nav Spotlight: Executive tour launched via Settings replay-tour advances through 4 steps and ends on 'STEP 4 OF 4 — Where to start' with a visible pulsing spotlight cutout ring around sidebar nav-overview; tour-finish (Get started) closes tour cleanly. (3) Board Report Cover Options: BoardReportModal renders cover-options bar with cover-date-input + cover-version-input; POST /api/advisor/board-report → 200, POST /api/reports/pdf → 200 for both report-download and report-download-deck; two valid %PDF-1.4 files downloaded (~218KB each); no error toasts.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/auth login screen", "issues": ["providers response has apple:false and sso:false, yet Apple + Enterprise SSO buttons are still rendered unconditionally in Auth.jsx (only 'hide_social' actually gates them). This works as-implemented for the requested toggle, but the per-provider booleans returned by /api/auth/providers appear unused. Consider gating Apple button on providers.apple in addition to hide_social to keep API contract meaningful."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Auth.jsx renders Apple/SSO buttons without checking providers.apple / providers.sso flags — flags exist in API response but are effectively dead. Low priority.",
+    "Settings.jsx toggle-hide-social calls saveAuthUI which sets state optimistically before PUT — good; error path reverts state. OK.",
+    "OnboardingTour spotlight uses [data-testid=nav-overview] via document.querySelector — works because sidebar is present on desktop. On mobile/tab (<lg) the sidebar is hidden and the spotlight would miss; consider guarding the spotlight step by viewport or falling back to a body-centered card."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100%"},
+  "test_credentials": "Admin jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None. hide_social toggled ON then OFF; final state confirmed OFF via /api/auth/providers.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 3 P2 items verified on desktop 1920x1080. Auth submit testid is 'auth-submit' (not 'login-submit'). On fresh login the onboarding tour auto-launches over the app and will intercept clicks — dismiss via 'Skip' or wait for tour-finish before interacting with the underlying UI. Board Report modal is opened from Overview page via [data-testid=board-report-btn]; cover-options only appear after POST /advisor/board-report resolves (~2-4s).",
+  "rca of the issue": "N/A — no bugs found."
+}

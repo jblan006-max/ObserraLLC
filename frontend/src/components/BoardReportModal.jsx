@@ -23,6 +23,8 @@ export function BoardReportModal({ open, onClose }) {
   const [report, setReport] = useState("");
   const [meta, setMeta] = useState(null);
   const [theme, setTheme] = useState("dark");
+  const [coverDate, setCoverDate] = useState("");
+  const [version, setVersion] = useState("");
 
   const shareTeams = async () => {
     setSharing(true);
@@ -46,7 +48,7 @@ export function BoardReportModal({ open, onClose }) {
 
   const downloadPdf = async (layout = "report") => {
     try {
-      const res = await api.post("/reports/pdf", { report, title: "Executive Board Report", theme, layout }, { responseType: "blob" });
+      const res = await api.post("/reports/pdf", { report, title: "Executive Board Report", theme, layout, cover_date: coverDate, version }, { responseType: "blob" });
       const url = URL.createObjectURL(res.data);
       const a = document.createElement("a"); a.href = url;
       a.download = layout === "deck" ? "obserra-board-deck.pdf" : "obserra-board-report.pdf"; a.click();
@@ -115,6 +117,15 @@ export function BoardReportModal({ open, onClose }) {
             <button data-testid="report-close" onClick={() => { onClose(); setReport(""); }} className="p-1.5 rounded-md hover:bg-secondary"><X className="w-4 h-4" /></button>
           </div>
         </div>
+        {report && !loading && (
+          <div className="flex flex-wrap items-center gap-3 px-5 py-2.5 border-b border-border/60 bg-secondary/20" data-testid="cover-options">
+            <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Cover</span>
+            <input data-testid="cover-date-input" value={coverDate} onChange={(e) => setCoverDate(e.target.value)} placeholder="Date (e.g. Q2 2026 · June 30, 2026)"
+              className="flex-1 min-w-[150px] bg-secondary/60 rounded-md px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary" />
+            <input data-testid="cover-version-input" value={version} onChange={(e) => setVersion(e.target.value)} placeholder="Version / revision (e.g. v1.2 — Rev C)"
+              className="flex-1 min-w-[150px] bg-secondary/60 rounded-md px-2.5 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary" />
+          </div>
+        )}
         <div className="flex-1 overflow-y-auto px-6 py-5">
           {loading ? (
             <div className="flex flex-col items-center justify-center h-64 gap-3 text-muted-foreground">

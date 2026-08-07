@@ -9,6 +9,8 @@ const EXEC_STEPS = [
     body: "The boardroom view — highlighted above. KPIs are framed in dollar-impact and posture: financial exposure, risk reduction and compliance readiness, so leadership sees what matters without the noise." },
   { title: "Operational Mode", spotlight: true,
     body: "Flip the same toggle to Operational for live counts and signals — open risks, control gaps and connector health — so your team can act on specifics in real time." },
+  { title: "Where to start", spotlight: true, target: "nav-overview",
+    body: "Your Overview — highlighted in the sidebar — is the executive command center: financial exposure, risk-reduction momentum and compliance readiness at a glance. Come back here anytime." },
 ];
 
 const OPS_STEPS = [
@@ -18,6 +20,8 @@ const OPS_STEPS = [
     body: "The toggle above keeps you in Operational view — live counts and signals for open risks, control gaps and connector health. This is your day-to-day working surface." },
   { title: "Where you'll work",
     body: "Jump into the Risk Register, Control Monitoring and Situation Room from the sidebar to triage, investigate and remediate. The Advisor can execute remediations for you too." },
+  { title: "Start in the Risk Register", spotlight: true, target: "nav-risk-register",
+    body: "Highlighted in the sidebar — the Risk Register is your triage home base. Open it to review, prioritize and remediate risks, with the Advisor one click away." },
 ];
 
 export const OnboardingTour = () => {
@@ -44,12 +48,13 @@ export const OnboardingTour = () => {
 
   const spotlight = open && steps[step]?.spotlight;
   const measure = useCallback(() => {
-    const el = document.querySelector('[data-testid="mode-toggle"]');
+    const target = steps[step]?.target || "mode-toggle";
+    const el = document.querySelector(`[data-testid="${target}"]`);
     if (el) {
       const r = el.getBoundingClientRect();
       setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
     } else setRect(null);
-  }, []);
+  }, [steps, step]);
 
   useLayoutEffect(() => {
     if (!spotlight) return;

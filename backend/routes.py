@@ -830,6 +830,24 @@ async def set_owners(body: OwnerDirectoryBody, user: dict = Depends(get_current_
     return {"ok": True, "count": len(clean)}
 
 
+class AuthUIBody(BaseModel):
+    hide_social: bool = False
+
+
+@api.get("/settings/auth-ui")
+async def get_auth_ui(user: dict = Depends(get_current_user)):
+    cfg = await db.app_config.find_one({"_id": "auth_ui"}) or {}
+    return {"hide_social": bool(cfg.get("hide_social"))}
+
+
+@api.put("/settings/auth-ui")
+async def set_auth_ui(body: AuthUIBody, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    await db.app_config.update_one({"_id": "auth_ui"}, {"$set": {"hide_social": body.hide_social}}, upsert=True)
+    return {"ok": True, "hide_social": body.hide_social}
+
+
 @api.get("/financials/trend")
 async def financials_trend(user: dict = Depends(get_current_user)):
     risks = await db.risks.find({"org_id": user["org_id"]}, {"_id": 0}).to_list(500)

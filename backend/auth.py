@@ -239,7 +239,8 @@ async def auth_providers():
     """Which sign-in methods are configured. Provider buttons render disabled until true."""
     apple = all(os.environ.get(k) for k in ("APPLE_TEAM_ID", "APPLE_SERVICE_ID", "APPLE_KEY_ID", "APPLE_PRIVATE_KEY_P8"))
     sso = bool(os.environ.get("OIDC_ISSUER") or os.environ.get("OIDC_DISCOVERY_URL") or os.environ.get("SSO_METADATA_URL"))
-    return {"google": True, "passwordless": True, "apple": apple, "sso": sso}
+    cfg = await db.app_config.find_one({"_id": "auth_ui"}) or {}
+    return {"google": True, "passwordless": True, "apple": apple, "sso": sso, "hide_social": bool(cfg.get("hide_social"))}
 
 
 @auth_router.post("/refresh")

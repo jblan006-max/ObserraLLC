@@ -131,9 +131,8 @@ links = []
 for dw, dh, r, ipad in DEVICES:
     make_splash(dw*r, dh*r, f"{OUT}/splash-{dw}x{dh}@{r}.png")
     links.append(f'        <link rel="apple-touch-startup-image" media="screen and (device-width: {dw}px) and (device-height: {dh}px) and (-webkit-device-pixel-ratio: {r}) and (orientation: portrait)" href="%PUBLIC_URL%/ios/splash-{dw}x{dh}@{r}.png" />')
-    if ipad:
-        make_splash(dh*r, dw*r, f"{OUT}/splash-{dw}x{dh}@{r}-land.png")
-        links.append(f'        <link rel="apple-touch-startup-image" media="screen and (device-width: {dw}px) and (device-height: {dh}px) and (-webkit-device-pixel-ratio: {r}) and (orientation: landscape)" href="%PUBLIC_URL%/ios/splash-{dw}x{dh}@{r}-land.png" />')
+    make_splash(dh*r, dw*r, f"{OUT}/splash-{dw}x{dh}@{r}-land.png")
+    links.append(f'        <link rel="apple-touch-startup-image" media="screen and (device-width: {dw}px) and (device-height: {dh}px) and (-webkit-device-pixel-ratio: {r}) and (orientation: landscape)" href="%PUBLIC_URL%/ios/splash-{dw}x{dh}@{r}-land.png" />')
 
 open("/tmp/splash_links.html", "w").write("\n".join(links))
 print("BG navy:", BG, "| font:", FB)
