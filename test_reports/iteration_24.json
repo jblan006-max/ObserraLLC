@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration 24 — verified log filtering (controls + vendors), owner remediation notifications (in-app), and Executive Remediation Momentum card. All 6 backend pytests pass and all UI flows pass at 1920x1080. Momentum card renders with score, counts (Remediations/Evidence/Recs applied), progress bar and 8 activity items. Filter-by-kind, search substring, and 'No matching entries.' work for both control-log-filters and vendor-log-filters. Remediation POST creates 'Remediation logged — <ref>' notifications; evidence/note kinds do not.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Overview / Controls / Vendors", "issues": ["Advisor floating hint ('Meet your Advisor') overlaps bottom-right area including parts of vendor pane — could obstruct the last log entries at some viewport sizes. Non-blocking for tests but consider auto-dismiss or persistence."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter24_log_features.py",
+    "/app/test_reports/pytest/iter24_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "NotificationBell testid is 'notif-bell' (not 'notification-bell'). Consistent internally, just noting for cross-refs.",
+    "Momentum score capped at 100 (min(100, ...)) is by-design; when the org already has many remediations, new remediation logs won't visibly bump the number. Consider showing raw delta or a 'sustained' badge so exec sees ongoing momentum after cap.",
+    "_nudge_owner falls back to admins/execs when owner name doesn't match a user; consider also matching by email or ownership tag to reduce noisy admin blasts.",
+    "GET /api/remediation/activity iterates 200+200 notes each call — fine at seed scale but add compound index (org_id, ts desc) on control_notes/vendor_notes to keep p99 low as data grows.",
+    "add_control_note & add_vendor_note happily accept unknown kinds by silently coercing to 'note'; better return 422 for unknown kinds to help API consumers."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter24_log_features.py"],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "100% of targeted flows"},
+  "test_credentials": "Admin jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Created TEST_-prefixed control_notes on IAM-3 and vendor_notes on VND-002 for filter/notification/momentum verification. All prefixed 'TEST_' so they can be purged by future cleanup.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Frontend login: use [data-testid=auth-submit] or press Enter on password field — the Sign In tab button also has text 'Sign in' and confuses get_by_role/name. Onboarding tour appears on first navigation each session (skip via [data-testid=tour-skip]). Notification bell testid is 'notif-bell'. Detail panes are md+ only; use viewport >=1280 for filter tests. Control row testid pattern is 'control-<CONTROL_ID>' (e.g. control-IAM-3). Vendor row is 'vendor-row-<REF>'. GET /api/notifications returns {items, unread}. GET /api/vendors returns {vendors, ...}. GET /api/remediation/activity confirmed shape {score, remediation_count, evidence_count, applied_recommendations, activity[<=8], window_days:30}. Score already saturated at 100/100 in seed org so new remediation adds do not increase the displayed value — confirmed count still increases via API.",
+  "rca_of_the_issue": "N/A — all three enhancements are working end-to-end (UI + API + notifications)."
+}

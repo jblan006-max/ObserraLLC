@@ -20,6 +20,8 @@ export default function VendorRisk() {
   const [noteText, setNoteText] = useState("");
   const [noteKind, setNoteKind] = useState("remediation");
   const [noteBusy, setNoteBusy] = useState(false);
+  const [logKind, setLogKind] = useState("all");
+  const [logQ, setLogQ] = useState("");
 
   const load = () => api.get("/vendors").then((r) => setData(r.data));
   useEffect(() => { load(); }, []);
@@ -52,6 +54,7 @@ export default function VendorRisk() {
 
   if (!data) return <div className="flex items-center justify-center h-96"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
   const shownVendors = data.vendors.filter((v) => (tierF === "all" || v.risk_tier === tierF) && `${v.name} ${v.ref}`.toLowerCase().includes(q.toLowerCase()));
+  const shownHistory = history.filter((h) => (logKind === "all" || h.kind === logKind) && h.text.toLowerCase().includes(logQ.toLowerCase()));
 
   return (
     <div className="rise space-y-6">
@@ -142,8 +145,19 @@ export default function VendorRisk() {
             </select>
             <textarea data-testid="vendor-note-text" value={noteText} onChange={(e) => setNoteText(e.target.value)} rows={2} placeholder="Log a remediation action or attach evidence…" className="w-full bg-secondary/60 rounded-md px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary resize-none" />
             <button data-testid="vendor-note-add" disabled={noteBusy || !noteText.trim()} onClick={addNote} className="w-full text-xs px-3 py-1.5 rounded-md bg-ai/10 border border-ai/30 text-ai hover:bg-ai/20 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">{noteBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add to log</button>
+            {history.length > 0 && (
+              <div className="flex gap-1.5" data-testid="vendor-log-filters">
+                <select data-testid="vendor-log-kind" value={logKind} onChange={(e) => setLogKind(e.target.value)} className="bg-secondary/60 rounded-md px-2 py-1 text-[11px] outline-none focus:ring-1 focus:ring-primary">
+                  <option value="all">All kinds</option>
+                  <option value="remediation">Remediation</option>
+                  <option value="evidence">Evidence</option>
+                  <option value="note">Note</option>
+                </select>
+                <input data-testid="vendor-log-search" value={logQ} onChange={(e) => setLogQ(e.target.value)} placeholder="Search log…" className="flex-1 min-w-0 bg-secondary/60 rounded-md px-2 py-1 text-[11px] outline-none focus:ring-1 focus:ring-primary" />
+              </div>
+            )}
             <div className="space-y-1.5 max-h-52 overflow-y-auto" data-testid="vendor-history-list">
-              {history.length === 0 ? <p className="text-[11px] text-muted-foreground">No entries yet.</p> : history.map((h, i) => (
+              {history.length === 0 ? <p className="text-[11px] text-muted-foreground">No entries yet.</p> : shownHistory.length === 0 ? <p className="text-[11px] text-muted-foreground">No matching entries.</p> : shownHistory.map((h, i) => (
                 <div key={i} data-testid="vendor-history-item" className="text-[11px] bg-secondary/30 rounded-md p-2 space-y-0.5">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-mono uppercase text-[9px] px-1.5 py-0.5 rounded-sm" style={{ background: `${KIND_COLOR[h.kind]}26`, color: KIND_COLOR[h.kind] }}>{h.kind}</span>

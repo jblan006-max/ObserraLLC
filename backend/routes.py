@@ -690,6 +690,31 @@ async def _emit_drift_alerts(org_id, statuses):
             dedupe_key=f"drift:{c['control_id']}:{c['evidence_expires'][:10]}:{c['effectiveness']}")
 
 
+async def _nudge_owner(org_id, owner_name, entity_label, note_text, actor):
+    """Email + in-app nudge to the control/vendor owner (or org admins/execs) when a remediation is logged."""
+    import re as _re
+    from kernel import notifications
+    title = f"Remediation logged — {entity_label}"
+    body = f"{actor} logged a remediation action on {entity_label}: {note_text[:180]}"
+    await notifications.create(org_id, "risk_critical", title, body, ref=entity_label)
+    recipients = []
+    if owner_name:
+        u = await db.users.find_one({"org_id": org_id, "name": {"$regex": f"^{_re.escape(owner_name)}$", "$options": "i"}})
+        if u and u.get("email"):
+            recipients.append(u["email"])
+    if not recipients:
+        admins = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}}).to_list(20)
+        recipients = [a["email"] for a in admins if a.get("email")]
+    html = (f"<div style='font:400 14px Arial;color:#0f1e3d'>"
+            f"<h2 style='font:800 18px Arial;color:#0f1e3d'>{title}</h2><p>{body}</p>"
+            f"<p style='color:#6b7280'>Owner: {owner_name or 'unassigned'} · via Obserra EIOS.</p></div>")
+    for to in recipients:
+        try:
+            await notifications.send_email(to, title, html)
+        except Exception:
+            pass
+
+
 class ControlNote(BaseModel):
     kind: str = "note"
     text: str
@@ -711,8 +736,32 @@ async def add_control_note(control_id: str, body: ControlNote, user: dict = Depe
            "author": user.get("name") or user["email"], "ts": datetime.now(timezone.utc).isoformat()}
     await db.control_notes.insert_one(doc)
     await _audit(user["org_id"], user["email"], "control.note", f"{control_id}: {kind}")
+    if kind == "remediation":
+        ctrl = await db.controls.find_one({"org_id": user["org_id"], "control_id": control_id}, {"_id": 0})
+        await _nudge_owner(user["org_id"], (ctrl or {}).get("owner"), control_id, text, doc["author"])
     doc.pop("_id", None)
     return doc
+
+
+@api.get("/remediation/activity")
+async def remediation_activity(user: dict = Depends(get_current_user)):
+    """Executive rollup — recent remediation/evidence activity + a risk-reduction momentum score."""
+    org_id = user["org_id"]
+    cnotes = await db.control_notes.find({"org_id": org_id}, {"_id": 0}).sort("ts", -1).to_list(200)
+    vnotes = await db.vendor_notes.find({"org_id": org_id}, {"_id": 0}).sort("ts", -1).to_list(200)
+    items = [{"entity": n["control_id"], "type": "control", "kind": n["kind"],
+              "text": n["text"], "author": n.get("author"), "ts": n["ts"]} for n in cnotes]
+    items += [{"entity": n["ref"], "type": "vendor", "kind": n["kind"],
+               "text": n["text"], "author": n.get("author"), "ts": n["ts"]} for n in vnotes]
+    items.sort(key=lambda x: x["ts"], reverse=True)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    recent = [i for i in items if i["ts"] >= cutoff]
+    rem = sum(1 for i in recent if i["kind"] == "remediation")
+    evi = sum(1 for i in recent if i["kind"] == "evidence")
+    applied = await db.recommendations.count_documents({"org_id": org_id, "status": "Applied"})
+    score = min(100, rem * 12 + evi * 6 + applied * 8)
+    return {"score": score, "remediation_count": rem, "evidence_count": evi,
+            "applied_recommendations": applied, "activity": items[:8], "window_days": 30}
 
 
 @api.get("/financials/trend")

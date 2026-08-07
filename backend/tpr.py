@@ -122,5 +122,21 @@ async def add_vendor_note(ref: str, body: VendorNote, user: dict = Depends(get_c
            "author": user.get("name") or user["email"], "ts": datetime.now(timezone.utc).isoformat()}
     await db.vendor_notes.insert_one(doc)
     await _log_audit(user["org_id"], user["email"], "vendor.note", f"{ref}: {kind}")
+    if kind == "remediation":
+        v = await db.vendors.find_one({"org_id": user["org_id"], "ref": ref}, {"_id": 0})
+        name = (v or {}).get("name", ref)
+        title = f"Remediation logged — {ref}"
+        bodytxt = f"{doc['author']} logged a remediation action on vendor {name} ({ref}): {text[:180]}"
+        await notifications.create(user["org_id"], "vendor_risk", title, bodytxt, ref=ref)
+        admins = await db.users.find({"org_id": user["org_id"], "role": {"$in": ["admin", "executive"]}}).to_list(20)
+        html = (f"<div style='font:400 14px Arial;color:#0f1e3d'>"
+                f"<h2 style='font:800 18px Arial;color:#0f1e3d'>{title}</h2><p>{bodytxt}</p>"
+                f"<p style='color:#6b7280'>via Obserra EIOS.</p></div>")
+        for a in admins:
+            if a.get("email"):
+                try:
+                    await notifications.send_email(a["email"], title, html)
+                except Exception:
+                    pass
     doc.pop("_id", None)
     return doc

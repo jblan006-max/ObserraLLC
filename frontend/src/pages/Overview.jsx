@@ -77,7 +77,7 @@ function QuarterChart({ title, data, kind = "bar", color = "hsl(190 90% 50%)", s
   );
 }
 
-function ExecutiveOverview({ health, m, onLineage }) {
+function ExecutiveOverview({ health, m, momentum, onLineage }) {
   const strategicKpis = [
     { icon: DollarSign, label: "Residual exposure / yr", value: fmtM(m.exposure_residual_ale), accent: "15 80% 55%", sub: "Modeled annualized loss", testid: "exec-kpi-residual" },
     { icon: ShieldCheck, label: "Exposure avoided", value: fmtM(m.exposure_avoided), accent: "142 70% 45%", sub: "Inherent − residual", testid: "exec-kpi-avoided" },
@@ -139,6 +139,36 @@ function ExecutiveOverview({ health, m, onLineage }) {
           </div>
         )}
       </motion.div>
+
+      {momentum && (
+        <motion.div custom={4} variants={fade} initial="hidden" animate="show" className="col-span-full bg-card fact-border rounded-xl p-6" data-testid="exec-remediation-momentum">
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+            <div className="flex items-center gap-2"><Activity className="w-4 h-4 text-low" /><h2 className="font-head font-bold text-lg">Remediation Momentum <span className="text-xs font-normal text-muted-foreground">· last {momentum.window_days} days</span></h2></div>
+            <div className="text-right">
+              <div className="text-[10px] font-mono uppercase text-muted-foreground">Risk reduction score</div>
+              <div className="font-head font-black text-3xl" data-testid="exec-risk-reduction-score" style={{ color: `hsl(${momentum.score >= 66 ? "142 70% 45%" : momentum.score >= 33 ? "35 90% 55%" : "0 84% 60%"})` }}>{momentum.score}<span className="text-lg text-muted-foreground">/100</span></div>
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <div className="bg-secondary/30 rounded-lg p-3"><div className="text-[10px] text-muted-foreground">Remediations</div><div className="font-head font-bold text-xl text-low">{momentum.remediation_count}</div></div>
+            <div className="bg-secondary/30 rounded-lg p-3"><div className="text-[10px] text-muted-foreground">Evidence logged</div><div className="font-head font-bold text-xl text-ai">{momentum.evidence_count}</div></div>
+            <div className="bg-secondary/30 rounded-lg p-3"><div className="text-[10px] text-muted-foreground">Recs applied</div><div className="font-head font-bold text-xl">{momentum.applied_recommendations}</div></div>
+          </div>
+          <div className="h-2 rounded-full bg-secondary overflow-hidden mb-4"><div className="h-full transition-all duration-500" style={{ width: `${momentum.score}%`, background: `hsl(${momentum.score >= 66 ? "142 70% 45%" : momentum.score >= 33 ? "35 90% 55%" : "0 84% 60%"})` }} /></div>
+          {momentum.activity.length === 0 ? <p className="text-xs text-muted-foreground">No remediation activity yet — logs added on Controls or Vendors appear here.</p> : (
+            <div className="space-y-2" data-testid="exec-remediation-activity">
+              {momentum.activity.map((it, i) => (
+                <div key={i} data-testid="exec-activity-item" className="flex items-center gap-3 text-xs">
+                  <span className="font-mono uppercase text-[9px] px-1.5 py-0.5 rounded-sm shrink-0" style={{ background: it.kind === "remediation" ? "#3b6ef533" : it.kind === "evidence" ? "#42c98e33" : "#94a3b833", color: it.kind === "remediation" ? "#3b6ef5" : it.kind === "evidence" ? "#42c98e" : "#94a3b8" }}>{it.kind}</span>
+                  <span className="font-mono text-ai text-[11px] shrink-0">{it.entity}</span>
+                  <span className="min-w-0 truncate flex-1 text-foreground/80">{it.text}</span>
+                  <span className="text-[10px] text-muted-foreground shrink-0">{new Date(it.ts).toLocaleDateString()}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </motion.div>
+      )}
 
       {/* 2 — Status */}
       <SectionLabel icon={Gauge}>Status</SectionLabel>
@@ -254,12 +284,13 @@ export default function Overview() {
   const [running, setRunning] = useState(null);
   const [lineage, setLineage] = useState(null);
   const [report, setReport] = useState(false);
+  const [momentum, setMomentum] = useState(null);
 
   const load = useCallback(async () => {
-    const [o, a, au, ig, mt] = await Promise.all([
-      api.get("/overview"), api.get("/analytics"), api.get("/audit-logs"), api.get("/integrations"), api.get("/metrics/dashboard"),
+    const [o, a, au, ig, mt, rm] = await Promise.all([
+      api.get("/overview"), api.get("/analytics"), api.get("/audit-logs"), api.get("/integrations"), api.get("/metrics/dashboard"), api.get("/remediation/activity"),
     ]);
-    setD(o.data); setAn(a.data); setAudit(au.data.slice(0, 8)); setIntg(ig.data); setMetrics(mt.data);
+    setD(o.data); setAn(a.data); setAudit(au.data.slice(0, 8)); setIntg(ig.data); setMetrics(mt.data); setMomentum(rm.data);
   }, []);
 
   useEffect(() => { load(); const t = setInterval(() => load(), 20000); return () => clearInterval(t); }, [load]);
@@ -296,7 +327,7 @@ export default function Overview() {
       </div>
 
       {isExec
-        ? <ExecutiveOverview health={d.health} m={metrics.executive} onLineage={setLineage} />
+        ? <ExecutiveOverview health={d.health} m={metrics.executive} momentum={momentum} onLineage={setLineage} />
         : <OperationalOverview d={d} an={an} audit={audit} intg={intg} running={running} runAction={runAction} onLineage={setLineage} m={metrics} />}
 
       <BoardReportModal open={report} onClose={() => setReport(false)} />
