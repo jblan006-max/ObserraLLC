@@ -17,8 +17,13 @@ export function PolicyModal({ policy, onClose, onSaved }) {
   });
   const [busy, setBusy] = useState(false);
   const [sim, setSim] = useState(null);
+  const [history, setHistory] = useState([]);
   const timer = useRef(null);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  useEffect(() => {
+    if (editing) api.get(`/policies/${policy.policy_id}/history`).then((r) => setHistory(r.data)).catch(() => {});
+  }, [editing, policy]);
 
   useEffect(() => {
     if (!canSimulate || form.threshold === "") { setSim(null); return; }
@@ -83,6 +88,19 @@ export function PolicyModal({ policy, onClose, onSaved }) {
           className="w-full mt-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center justify-center gap-2 disabled:opacity-50">
           {busy && <Loader2 className="w-4 h-4 animate-spin" />} {editing ? "Save changes" : "Create policy"}
         </button>
+        {editing && history.length > 0 && (
+          <div data-testid="policy-history" className="mt-4 border-t border-border/60 pt-3">
+            <div className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Change history</div>
+            <div className="space-y-1.5 max-h-32 overflow-y-auto">
+              {history.map((h, i) => (
+                <div key={i} className="text-[11px] text-muted-foreground">
+                  {h.changes.map((c) => `${c.field}: ${c.from ?? "—"} → ${c.to}`).join(", ")}
+                  <span className="text-foreground"> · {h.by}</span> · {new Date(h.at).toLocaleString()}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

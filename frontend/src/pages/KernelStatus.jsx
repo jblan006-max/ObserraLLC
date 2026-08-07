@@ -18,6 +18,7 @@ export default function KernelStatus() {
   const isAdmin = user?.role === "admin";
   const [manifest, setManifest] = useState(null);
   const [health, setHealth] = useState({});
+  const [kpi, setKpi] = useState(null);
   const [policies, setPolicies] = useState([]);
   const [workflows, setWorkflows] = useState([]);
   const [policyModal, setPolicyModal] = useState(null); // {policy} or {new:true}
@@ -26,6 +27,7 @@ export default function KernelStatus() {
   useEffect(() => {
     api.get("/kernel/manifest").then((r) => setManifest(r.data));
     api.get("/kernel/health").then((r) => setHealth(r.data)).catch(() => {});
+    api.get("/kernel/remediation-kpi").then((r) => setKpi(r.data)).catch(() => {});
     loadPolicies();
     api.get("/workflows").then((r) => setWorkflows(r.data));
   }, [loadPolicies]);
@@ -39,6 +41,17 @@ export default function KernelStatus() {
         <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><Layers className="w-7 h-7 text-primary" /> Platform Kernel</h1>
         <p className="text-sm text-muted-foreground mt-1">The shared cybersecurity kernel — {manifest.count} subsystems with live telemetry. Every Obserra application composes on top.</p>
       </div>
+
+      {kpi && (
+        <div data-testid="remediation-kpi" className="grid grid-cols-3 gap-4">
+          {[["Open remediations", kpi.open, "190 90% 50%"], ["Overdue", kpi.overdue, "0 84% 60%"], ["Resolved", kpi.resolved, "142 70% 45%"]].map(([label, val, color]) => (
+            <div key={label} className="bg-card fact-border rounded-xl p-4" style={{ borderLeft: `3px solid hsl(${color})` }}>
+              <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{label}</div>
+              <div className="font-head font-black text-3xl mt-1" style={{ color: val > 0 && label === "Overdue" ? `hsl(${color})` : undefined }}>{val}</div>
+            </div>
+          ))}
+        </div>
+      )}
 
       {layers.map((layer) => (
         <div key={layer}>

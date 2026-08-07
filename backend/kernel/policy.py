@@ -73,9 +73,21 @@ class PolicyEngine:
         doc.pop("_id", None)
         return doc
 
-    async def update(self, org_id, policy_id, changes):
+    async def update(self, org_id, policy_id, changes, by="system"):
         clean = {k: v for k, v in changes.items() if v is not None}
         if not clean:
             return None
+        before = await db.policies.find_one({"org_id": org_id, "policy_id": policy_id}, {"_id": 0})
+        if not before:
+            return None
         await db.policies.update_one({"org_id": org_id, "policy_id": policy_id}, {"$set": clean})
+        diffs = [{"field": k, "from": before.get(k), "to": v} for k, v in clean.items() if before.get(k) != v]
+        if diffs:
+            await db.policy_history.insert_one(
+                {"org_id": org_id, "policy_id": policy_id, "changes": diffs, "by": by,
+                 "at": datetime.now(timezone.utc).isoformat()})
         return await db.policies.find_one({"org_id": org_id, "policy_id": policy_id}, {"_id": 0})
+
+    async def history(self, org_id, policy_id):
+        return await db.policy_history.find(
+            {"org_id": org_id, "policy_id": policy_id}, {"_id": 0}).sort("at", -1).to_list(100)

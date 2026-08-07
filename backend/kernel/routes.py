@@ -1,6 +1,7 @@
 """Kernel API surface — manifest, health, policies, workflows, notifications, remediation."""
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
+from datetime import datetime, timezone
 
 from auth import get_current_user, require_roles
 from db import db
@@ -8,6 +9,16 @@ from kernel import SUBSYSTEMS, notifications, policies, workflows
 from kernel.health import compute_health
 
 kernel_router = APIRouter(prefix="/api")
+
+
+@kernel_router.get("/kernel/remediation-kpi")
+async def remediation_kpi(user: dict = Depends(get_current_user)):
+    wf = await db.workflows.find({"org_id": user["org_id"], "type": "remediation"}).to_list(2000)
+    now = datetime.now(timezone.utc).isoformat()
+    open_ = sum(1 for w in wf if w["status"] != "resolved")
+    overdue = sum(1 for w in wf if w["status"] != "resolved" and w.get("due_at") and w["due_at"] < now)
+    resolved = sum(1 for w in wf if w["status"] == "resolved")
+    return {"open": open_, "overdue": overdue, "resolved": resolved, "total": len(wf)}
 
 
 @kernel_router.get("/members")
@@ -57,10 +68,15 @@ async def create_policy(body: PolicyCreate, admin: dict = Depends(require_roles(
 
 @kernel_router.patch("/policies/{policy_id}")
 async def update_policy(policy_id: str, body: PolicyUpdate, admin: dict = Depends(require_roles("admin"))):
-    updated = await policies.update(admin["org_id"], policy_id, body.model_dump(exclude_unset=True))
+    updated = await policies.update(admin["org_id"], policy_id, body.model_dump(exclude_unset=True), by=admin["email"])
     if updated is None:
         raise HTTPException(404, "Policy not found or no changes")
     return updated
+
+
+@kernel_router.get("/policies/{policy_id}/history")
+async def policy_history(policy_id: str, admin: dict = Depends(require_roles("admin"))):
+    return await policies.history(admin["org_id"], policy_id)
 
 
 class SimulateBody(BaseModel):

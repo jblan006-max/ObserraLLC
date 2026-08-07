@@ -15,6 +15,8 @@ from payments import payments_router, setup_catalog
 from reports import reports_router
 from kernel.routes import kernel_router
 from scheduled import scheduled_router
+from enterprise import enterprise_router
+from agents import agents_router
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -28,6 +30,8 @@ app.include_router(payments_router)
 app.include_router(reports_router)
 app.include_router(kernel_router)
 app.include_router(scheduled_router)
+app.include_router(enterprise_router)
+app.include_router(agents_router)
 
 app.add_middleware(
     CORSMiddleware,
