@@ -59,7 +59,7 @@ export const InstallBanner = () => {
       }}
     >
       <div className="flex items-center gap-3 rounded-xl border border-border bg-secondary/95 backdrop-blur-md px-4 py-3 shadow-2xl">
-        <img src="/obserra-mark-flat.svg" alt="" className="h-9 w-9 flex-shrink-0" />
+        <img src="/brand-mark.png" alt="" className="h-9 w-9 object-contain flex-shrink-0" />
         <div className="flex-1 min-w-0">
           <div className="text-sm font-semibold text-foreground">Install Obserra</div>
           <div className="text-xs text-muted-foreground truncate">Add to your home screen for one-tap access.</div>

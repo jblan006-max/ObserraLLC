@@ -1,0 +1,60 @@
+{
+  "summary": "Frontend-only verification of Obserra brand consistency (auth + in-app) and role-aware Onboarding Tour with spotlight + replay. Uncovered 2 blocking runtime errors on /app/settings (missing lucide-react imports Compass & PlayCircle) which crashed the page and prevented the Replay tour test; both fixed. After fixes, all 6 requested checks PASS. Brand assets (brand-mark.png, brand-wordmark.png, brand-lockup.png) all serve 200, render on desktop (1400px) and mobile (390px) auth, and match inside the app shell.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Settings page", "issue": "BLOCKING: React runtime crash 'Compass is not defined' — <Compass/> icon used on line 62 was not imported from lucide-react. Entire Settings route rendered a red 'Uncaught runtime errors' overlay; Replay Tour button was unreachable.", "selector": "/app/settings", "priority": "HIGH (fixed by test agent)"},
+      {"component": "Settings page", "issue": "BLOCKING: React runtime crash 'PlayCircle is not defined' — <PlayCircle/> icon used on line 66 (inside Replay tour button) was not imported. Same crash overlay as above.", "selector": "[data-testid='replay-tour']", "priority": "HIGH (fixed by test agent)"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Auth page (mobile 390px)", "issues": ["Wordmark under the eye mark renders at h-10 (~40px tall). User explicitly asked for the company name to be LARGE on the sign-in page. On desktop it is 80px (h-16 xl:h-20), which reads well, but the mobile variant looks small relative to the mark (mark 96px vs wordmark 40px). Consider bumping mobile wordmark to h-14 or h-16 for parity with the intent."]}
+    ]
+  },
+  "test_results": {
+    "brand_assets_http": {"brand-mark.png": 200, "brand-wordmark.png": 200, "brand-lockup.png": 200},
+    "auth_desktop_1400": {"mark_visible": true, "mark_box": "356x212", "wordmark_visible": true, "wordmark_box": "392x80"},
+    "auth_mobile_390":  {"mark_visible": true, "mark_box": "161x96", "wordmark_visible": true, "wordmark_box": "196x40"},
+    "app_shell": {"brand-lockup_sidebar_visible": true, "brand-mark_advisor_icon_visible": true},
+    "executive_tour": {
+      "auto_open_on_first_login": true,
+      "label": "Executive tour",
+      "steps": ["Welcome to Obserra", "Executive Mode", "Operational Mode"],
+      "dots_0_1_2_present": true,
+      "next_back_skip_finish_all_work": true,
+      "spotlight_on_step2_and_step3": true,
+      "pulse_ring_present_during_spotlight": true,
+      "mode_toggle_stays_visible_during_spotlight": true,
+      "persists_after_finish_on_reload": true
+    },
+    "operational_tour": {
+      "auto_open_on_first_login": true,
+      "label": "Operational tour",
+      "steps": ["Welcome to Obserra", "Operational Mode", "Where you'll work"],
+      "spotlight_on_step2": true,
+      "copy_differs_from_exec": true
+    },
+    "replay_tour": {"button_visible_on_settings": true, "click_reopens_tour": true, "reopened_from_step1": true}
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Consider enlarging the mobile wordmark on Auth (Auth.jsx line 68: h-10 → h-14/h-16) to match the 'name must be LARGE' requirement on small screens.",
+    "Add a bundler/lint safeguard (e.g., eslint no-undef) so missing lucide-react imports never ship as runtime crashes again — the two Settings icons were only caught during E2E."
+  ],
+  "critical_code_review_comments": [
+    "Settings.jsx: two lucide icons (Compass, PlayCircle) were used without imports — indicates the file was edited without running a build/lint check. Enable react/jsx-no-undef in ESLint config to fail-fast at compile time.",
+    "OnboardingTour.jsx: spotlight uses fixed positioning + boxShadow 9999px trick which is correct; consider adding role='dialog' + aria-modal + aria-labelledby={tour-title} for a11y — currently the modal is not announced to screen readers.",
+    "OnboardingTour.jsx: clicking on the dimmed backdrop calls finish() which persists the done key. Users who click outside accidentally on step 1 will not see the tour again — consider closing without persisting on backdrop click, or removing the backdrop-click-to-close.",
+    "Auth.jsx mobile lockup: h-10 wordmark visually understates the brand next to h-24 mark; increase for visual weight the user asked for."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/Settings.jsx (added Compass and PlayCircle to lucide-react import — unblocked Settings page and Replay Tour)"
+  ],
+  "success_rate": {"backend": "N/A (skipped)", "frontend": "100% (6/6 after 2 blocking fixes applied)"},
+  "test_credentials": "Exec/Admin: jblan2026@gmail.com / Obserra2026!  |  Operational: analyst@obserra.demo / Analyst2026! (both from request)",
+  "seed_data_creation": "none",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "To retrigger the onboarding tour for a user, clear localStorage key 'obserra-tour-done-<userId or email>' before loading /app, or click Replay tour from /app/settings. Settings page previously crashed on missing icon imports — fixed by adding Compass + PlayCircle imports; do not remove them. All three brand assets serve 200 from /public and are rendered consistently across Auth page (desktop + mobile) and inside AppShell (sidebar lockup + advisor mark). Operational-role login uses analyst@obserra.demo / Analyst2026! and yields a distinct 3-step 'Operational tour' with different copy on step 3 ('Where you'll work'). Spotlight uses .tour-pulse-ring class over [data-testid=mode-toggle]; verified count=1 during exec step2/step3 and ops step2.",
+  "rca of the issue": "Blocking Settings crash was a direct RCA: JSX referenced Compass and PlayCircle without importing them, causing a ReferenceError that React surfaces as a red 'Uncaught runtime errors' overlay. Reproduction: navigate to /app/settings while logged in (any role). Mitigation applied: added both symbols to the lucide-react import on line 5 of /app/frontend/src/pages/Settings.jsx. Long-term mitigation: enable react/jsx-no-undef ESLint rule as an error (not warning) and add a CI check on frontend build."
+}

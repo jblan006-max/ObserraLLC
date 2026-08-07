@@ -30,14 +30,11 @@ export const Splash = () => {
       style={{ backgroundColor: "#061F3B" }}
     >
       <img
-        src="/obserra-mark-flat.svg"
+        src="/brand-mark.png"
         alt="Obserra"
-        className="h-28 w-auto object-contain logo-pulse drop-shadow-[0_8px_30px_rgba(86,184,233,0.3)]"
+        className="h-24 w-auto object-contain logo-pulse drop-shadow-[0_8px_30px_rgba(86,184,233,0.3)]"
       />
-      <div className="mt-6 font-head font-black text-2xl tracking-[0.35em] pl-[0.35em] text-white">OBSERRA</div>
-      <div className="mt-1 text-[9px] font-mono uppercase tracking-[0.22em] text-white/50">
-        Executive Protection &amp; Intelligence LLC
-      </div>
+      <img src="/brand-wordmark.png" alt="OBSERRA — Executive Protection & Intelligence LLC" className="mt-6 h-12 w-auto object-contain" />
     </div>
   );
 };

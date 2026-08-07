@@ -73,7 +73,7 @@ function SidebarInner({ user, sub, owns, doLogout, onNav, onClose }) {
   return (
     <>
       <div className="flex items-center justify-between px-4 h-16 border-b border-border shrink-0">
-        <img src="/logo.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-9 w-auto object-contain" />
+        <img src="/brand-lockup.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-7 w-auto object-contain" />
         {onClose && <button data-testid="mobile-nav-close" onClick={onClose} className="md:hidden p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/50"><X className="w-5 h-5" /></button>}
       </div>
       <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
@@ -158,14 +158,14 @@ export default function AppShell() {
             <button data-testid="mobile-nav-toggle" onClick={() => setMobileNav(true)} className="md:hidden p-2 -ml-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/50">
               <Menu className="w-5 h-5" />
             </button>
-            <img src="/logo.png" alt="Obserra" className="h-7 w-auto object-contain md:hidden" />
+            <img src="/brand-lockup.png" alt="Obserra" className="h-6 w-auto object-contain md:hidden" />
             <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest truncate hidden lg:block">
               {sub?.org_name || "Obserra — Executive Protection & Intelligence LLC"}
             </div>
           </div>
           <div className="flex-1 max-w-md hidden sm:block">
             <div className="flex items-center gap-2 rounded-full border border-ai/30 bg-ai/5 px-3 py-1.5 focus-within:ring-1 focus-within:ring-ai transition-shadow">
-              <img src="/logo.png" alt="Obserra Advisor" className="h-5 w-5 rounded-full object-cover shrink-0" style={{ objectPosition: "left center" }} />
+              <img src="/brand-mark.png" alt="Obserra Advisor" className="h-5 w-5 object-contain shrink-0" />
               <input data-testid="header-advisor-input" placeholder="Ask the Obserra Advisor…"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && e.currentTarget.value.trim()) {
