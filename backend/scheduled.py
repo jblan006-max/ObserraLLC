@@ -133,6 +133,46 @@ async def _run_drift_digest(cadences, label):
             logger.error(f"{label} drift digest failed for org {org_id}: {e}")
 
 
+def _momentum_html(x, y, arrow, m):
+    color = "#16a34a" if y > x else "#dc2626" if y < x else "#6b7280"
+    return (
+        '<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:auto;background:#fff">'
+        '<tr><td style="padding:24px">'
+        '<div style="font:800 18px Arial;color:#0f1e3d">Weekly Remediation Momentum</div>'
+        '<div style="font:400 12px Arial;color:#6b7280;margin-bottom:14px">Obserra — Executive Protection &amp; Intelligence LLC</div>'
+        f'<div style="font:700 22px Arial;color:{color};margin-bottom:6px">Risk-reduction score moved {x} {arrow} {y} '
+        '<span style="font-size:13px;color:#6b7280">/100 this week</span></div>'
+        f'<div style="font:400 13px Arial;color:#1f2937">{m["remediation_count"]} remediation(s) and {m["evidence_count"]} '
+        f'evidence item(s) logged in the last {m["window_days"]} days · {m["applied_recommendations"]} recommendation(s) applied.</div>'
+        '<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:10px;font:400 10px Arial;color:#9ca3af">'
+        'Sign in to Obserra EIOS → Executive Overview for the full trajectory.</div>'
+        '</td></tr></table>')
+
+
+async def _run_momentum_digest():
+    from routes import compute_momentum
+    orgs = await db.organizations.find({}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        try:
+            m = await compute_momentum(org_id)
+            y, x = m["score"], m.get("prev_score", m["score"])
+            arrow = "&#9650;" if y > x else "&#9660;" if y < x else "&#8594;"
+            recipients = await db.users.find(
+                {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
+            if not recipients:
+                continue
+            html = _momentum_html(x, y, arrow, m)
+            for r in recipients:
+                await notifications.send_email(r["email"], f"Risk-reduction score moved {x} to {y} this week", html)
+            await notifications.create(
+                org_id, "report", "Weekly momentum digest sent",
+                f"Risk-reduction score {x} to {y} emailed to {len(recipients)} exec(s)/admin(s).", ref="momentum-digest")
+            logger.info(f"Momentum digest sent for org {org_id}: {x}->{y}")
+        except Exception as e:
+            logger.error(f"Momentum digest failed for org {org_id}: {e}")
+
+
 @scheduled_router.post("/cron/weekly-drift-digest")
 async def weekly_drift_digest(request: Request, background_tasks: BackgroundTasks):
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
@@ -140,6 +180,7 @@ async def weekly_drift_digest(request: Request, background_tasks: BackgroundTask
         raise HTTPException(status_code=401, detail="Unauthorized")
     background_tasks.add_task(_run_drift_digest, {"weekly"}, "Weekly")
     background_tasks.add_task(_run_teams_digest)
+    background_tasks.add_task(_run_momentum_digest)
     return {"status": "accepted"}
 
 

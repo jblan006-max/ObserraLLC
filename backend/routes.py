@@ -749,10 +749,8 @@ async def add_control_note(control_id: str, body: ControlNote, user: dict = Depe
     return doc
 
 
-@api.get("/remediation/activity")
-async def remediation_activity(user: dict = Depends(get_current_user)):
-    """Executive rollup — recent remediation/evidence activity + a risk-reduction momentum score."""
-    org_id = user["org_id"]
+async def compute_momentum(org_id):
+    """Risk-reduction momentum score + recent activity + weekly trajectory for an org."""
     cnotes = await db.control_notes.find({"org_id": org_id}, {"_id": 0}).sort("ts", -1).to_list(200)
     vnotes = await db.vendor_notes.find({"org_id": org_id}, {"_id": 0}).sort("ts", -1).to_list(200)
     items = [{"entity": n["control_id"], "type": "control", "kind": n["kind"],
@@ -775,8 +773,15 @@ async def remediation_activity(user: dict = Depends(get_current_user)):
         wr = sum(1 for i in items if i["kind"] == "remediation" and start_iso <= i["ts"] <= end_iso)
         we = sum(1 for i in items if i["kind"] == "evidence" and start_iso <= i["ts"] <= end_iso)
         trend.append({"week": end.strftime("%b %d"), "score": min(100, wr * 12 + we * 6 + applied * 8)})
-    return {"score": score, "remediation_count": rem, "evidence_count": evi,
+    prev_score = trend[-2]["score"] if len(trend) >= 2 else score
+    return {"score": score, "prev_score": prev_score, "remediation_count": rem, "evidence_count": evi,
             "applied_recommendations": applied, "activity": items[:8], "window_days": 30, "trend": trend}
+
+
+@api.get("/remediation/activity")
+async def remediation_activity(user: dict = Depends(get_current_user)):
+    """Executive rollup — recent remediation/evidence activity + a risk-reduction momentum score."""
+    return await compute_momentum(user["org_id"])
 
 
 class OwnerDirectoryBody(BaseModel):
@@ -792,7 +797,21 @@ async def get_owners(user: dict = Depends(get_current_user)):
     names = sorted(n for n in names if n)
     org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"owner_directory": 1}) or {}
     directory = org.get("owner_directory") or {}
-    return {"owners": [{"name": n, "email": directory.get(n.lower(), "")} for n in names]}
+    users = await db.users.find({"org_id": org_id}, {"_id": 0, "name": 1, "email": 1}).to_list(500)
+
+    def _suggest(name):
+        nl = (name or "").strip().lower()
+        for u in users:
+            if (u.get("name") or "").strip().lower() == nl and u.get("email"):
+                return u["email"]
+        first = nl.split()[0] if nl.split() else nl
+        for u in users:
+            un = (u.get("name") or "").strip().lower()
+            if un and un.split() and un.split()[0] == first and u.get("email"):
+                return u["email"]
+        return ""
+
+    return {"owners": [{"name": n, "email": directory.get(n.lower(), ""), "suggestion": _suggest(n)} for n in names]}
 
 
 @api.put("/owners")

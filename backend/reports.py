@@ -678,3 +678,58 @@ async def vendor_log_pdf(ref: str, user: dict = Depends(get_current_user)):
     buf = _log_pdf(f"Remediation & Evidence Log — {ref}", subtitle, notes, org)
     return StreamingResponse(buf, media_type="application/pdf",
                              headers={"Content-Disposition": f'attachment; filename="log-{ref}.pdf"'})
+
+
+@reports_router.get("/api/reports/logs-pack.pdf")
+async def logs_pack_pdf(user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    from collections import defaultdict
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can export the evidence binder")
+    org_id = user["org_id"]
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)})
+    controls = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    vendors = await db.vendors.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    cnotes = await db.control_notes.find({"org_id": org_id}, {"_id": 0}).sort("ts", -1).to_list(2000)
+    vnotes = await db.vendor_notes.find({"org_id": org_id}, {"_id": 0}).sort("ts", -1).to_list(2000)
+    cg, vg = defaultdict(list), defaultdict(list)
+    for n in cnotes:
+        cg[n["control_id"]].append(n)
+    for n in vnotes:
+        vg[n["ref"]].append(n)
+    total = len(cnotes) + len(vnotes)
+    parts = [f"Exported {datetime.now(timezone.utc).strftime('%B %d, %Y · %H:%M UTC')} — {total} log entries "
+             f"across {len(cg)} control(s) and {len(vg)} vendor(s).", ""]
+
+    def _fmt(notes):
+        out = []
+        for n in notes:
+            ts = (n.get("ts", "") or "")[:16].replace("T", " ")
+            out.append(f"{(n.get('kind', 'note') or 'note').upper()} · {ts} · {n.get('author', '—')}")
+            out.append(re.sub(r"\*\*", "", n.get("text", "")))
+            out.append("")
+        return out
+
+    parts.append("# Controls")
+    if not any(cg.get(c["control_id"]) for c in controls):
+        parts.append("No control log entries recorded.")
+    for c in controls:
+        notes = cg.get(c["control_id"])
+        if not notes:
+            continue
+        parts.append(f"## {c['control_id']} — {c['name']} (Owner: {c.get('owner', '—')})")
+        parts += _fmt(notes)
+    parts += ["", "# Vendors"]
+    if not any(vg.get(v["ref"]) for v in vendors):
+        parts.append("No vendor log entries recorded.")
+    for v in vendors:
+        notes = vg.get(v["ref"])
+        if not notes:
+            continue
+        parts.append(f"## {v['ref']} — {v['name']} (Owner: {v.get('owner', '—')})")
+        parts += _fmt(notes)
+    brand = _resolve_brand(org)
+    buf = _build_pdf("\n".join(parts), "Audit Evidence Binder", cover=True,
+                     org_name=(org or {}).get("name"), brand=brand)
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": 'attachment; filename="obserra-evidence-binder.pdf"'})

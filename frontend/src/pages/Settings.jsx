@@ -234,6 +234,10 @@ export default function Settings() {
                   <input data-testid={`owner-email-${o.name.replace(/[^a-zA-Z0-9]/g, "-")}`} type="email" value={o.email}
                     onChange={(e) => setOwnerEmail(o.name, e.target.value)} placeholder="owner@company.com"
                     className="flex-1 min-w-[200px] bg-secondary/60 rounded-md px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" />
+                  {!o.email && o.suggestion && (
+                    <button data-testid={`owner-suggest-${o.name.replace(/[^a-zA-Z0-9]/g, "-")}`} onClick={() => setOwnerEmail(o.name, o.suggestion)}
+                      className="text-[11px] px-2 py-1 rounded-md bg-ai/10 border border-ai/30 text-ai hover:bg-ai/20 transition-colors shrink-0">Use {o.suggestion}</button>
+                  )}
                 </div>
               ))}
             </div>
@@ -244,6 +248,17 @@ export default function Settings() {
               {ownerBusy && <Loader2 className="w-4 h-4 animate-spin" />} Save owner directory
             </button>
           )}
+        </div>
+      )}
+
+      {isAdmin && (
+        <div className="bg-card fact-border rounded-xl p-6 space-y-4" data-testid="evidence-binder-settings">
+          <div className="flex items-center gap-2"><FileText className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Audit Evidence Binder</h2></div>
+          <p className="text-sm text-muted-foreground">Export every control &amp; vendor remediation/evidence log into one branded PDF pack for auditors.</p>
+          <button data-testid="download-evidence-binder" disabled={dlBusy === "binder"} onClick={() => downloadFile("/reports/logs-pack.pdf", "obserra-evidence-binder.pdf", "binder")}
+            className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
+            {dlBusy === "binder" ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />} Download evidence binder (PDF)
+          </button>
         </div>
       )}
 
