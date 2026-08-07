@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { EvidenceLineageModal } from "@/components/EvidenceLineageModal";
 import { SourceBadge, FreshnessBadge, ConfidenceBadge, DataTypeBadge, ScorePill } from "@/components/badges";
@@ -12,6 +13,8 @@ import {
 const STATUS = ["Open", "In Progress", "Remediated", "Accepted"];
 
 export default function RiskRegister() {
+  const { mode } = useAuth();
+  const isExec = mode === "executive";
   const [risks, setRisks] = useState(null);
   const [lineage, setLineage] = useState(null);
   const [evidence, setEvidence] = useState(null);
@@ -38,7 +41,7 @@ export default function RiskRegister() {
     <div className="rise space-y-5">
       <div>
         <h1 className="font-head font-black text-3xl tracking-tight">Cyber Risk Register</h1>
-        <p className="text-sm text-muted-foreground mt-1">Taxonomy, inherent vs residual scoring, ownership, treatment & KRIs. Click any row for evidence lineage.</p>
+        <p className="text-sm text-muted-foreground mt-1">{isExec ? "Business-impact view of the cyber risk register — exposure and residual severity by risk (read-only)." : "Taxonomy, inherent vs residual scoring, ownership, treatment & KRIs. Click any row for evidence lineage."}</p>
       </div>
 
       <div className="flex flex-wrap gap-3">
@@ -98,12 +101,16 @@ export default function RiskRegister() {
                   </div>
                 </td>
                 <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
-                  <Select value={r.status} onValueChange={(v) => updateStatus(r.ref, v)}>
-                    <SelectTrigger data-testid={`risk-status-${r.ref}`} className="w-32 h-8 text-xs bg-secondary/60"><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      {STATUS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
+                  {isExec ? (
+                    <span data-testid={`risk-status-badge-${r.ref}`} className="text-xs px-2.5 py-1 rounded-md bg-secondary/60">{r.status}</span>
+                  ) : (
+                    <Select value={r.status} onValueChange={(v) => updateStatus(r.ref, v)}>
+                      <SelectTrigger data-testid={`risk-status-${r.ref}`} className="w-32 h-8 text-xs bg-secondary/60"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {STATUS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                  )}
                 </td>
               </tr>
             ))}

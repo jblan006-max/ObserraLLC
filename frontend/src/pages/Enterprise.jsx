@@ -4,15 +4,15 @@ import { toast } from "sonner";
 import { Building2, Loader2, Plug, KeyRound, Users, ShieldCheck, Trash2, Plus, RefreshCw, Palette, Cloud } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-const TABS = [["connectors", "Connectors", Plug], ["sso", "SSO / SAML", KeyRound], ["scim", "SCIM", Users], ["abac", "ABAC", ShieldCheck], ["branding", "Branding", Palette]];
+const TABS = [["sso", "SSO / SAML", KeyRound], ["scim", "SCIM", Users], ["abac", "ABAC", ShieldCheck], ["branding", "Branding", Palette]];
 
 export default function Enterprise() {
-  const [tab, setTab] = useState("connectors");
+  const [tab, setTab] = useState("sso");
   return (
     <div className="rise space-y-6">
       <div>
         <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><Building2 className="w-7 h-7 text-primary" /> Enterprise Access</h1>
-        <p className="text-sm text-muted-foreground mt-1">Governed connectors and enterprise identity. <span className="text-med font-mono text-xs">M365 &amp; SSO go LIVE when you add real credentials; others remain MOCKED.</span></p>
+        <p className="text-sm text-muted-foreground mt-1">Enterprise identity, provisioning, ABAC &amp; white-label branding. <span className="text-med font-mono text-xs">Live connectors now live in the Available Connectors page.</span></p>
       </div>
       <div className="flex gap-1 border-b border-border">
         {TABS.map(([id, label, Icon]) => (
@@ -22,7 +22,6 @@ export default function Enterprise() {
           </button>
         ))}
       </div>
-      {tab === "connectors" && <Connectors />}
       {tab === "sso" && <SSO />}
       {tab === "scim" && <SCIM />}
       {tab === "abac" && <ABAC />}
@@ -172,7 +171,6 @@ function SSO() {
   };
   if (!cfg) return <Spinner />;
   return (
-    <div className="space-y-6">
     <div data-testid="sso-form" className="bg-card fact-border rounded-xl p-6 max-w-xl space-y-4">
       <label className="flex items-center gap-2 text-sm cursor-pointer">
         <input data-testid="sso-enabled" type="checkbox" checked={cfg.enabled} onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })} /> Enable SAML 2.0 single sign-on
@@ -180,8 +178,7 @@ function SSO() {
       <Field label="Identity Provider Entity ID" testid="sso-entity" value={cfg.entity_id} onChange={(e) => setCfg({ ...cfg, entity_id: e.target.value })} />
       <Field label="IdP SSO URL" testid="sso-url" value={cfg.sso_url} onChange={(e) => setCfg({ ...cfg, sso_url: e.target.value })} />
       <button data-testid="sso-save" disabled={busy} onClick={save} className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">Save SSO</button>
-    </div>
-    <LiveSSO />
+      <p className="text-[11px] text-muted-foreground">Live IdP metadata validation now lives in <span className="text-ai">Available Connectors → SSO / SAML</span>.</p>
     </div>
   );
 }

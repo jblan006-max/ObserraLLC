@@ -22,6 +22,7 @@ from tpr import tpr_router
 from insights import insights_router
 from cyber import cyber_router
 from studio import studio_router
+from metrics import metrics_router
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -42,6 +43,7 @@ app.include_router(insights_router)
 app.include_router(cyber_router)
 app.include_router(studio_router)
 app.include_router(live_connectors_router)
+app.include_router(metrics_router)
 
 app.add_middleware(
     CORSMiddleware,

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X, FileText, Loader2, Download, Sparkle, Mail } from "lucide-react";
+import { X, FileText, Loader2, Download, Sparkle, Mail, MessageSquare } from "lucide-react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -19,8 +19,20 @@ function renderReport(text) {
 export function BoardReportModal({ open, onClose }) {
   const [loading, setLoading] = useState(false);
   const [emailing, setEmailing] = useState(false);
+  const [sharing, setSharing] = useState(false);
   const [report, setReport] = useState("");
   const [meta, setMeta] = useState(null);
+
+  const shareTeams = async () => {
+    setSharing(true);
+    try {
+      await api.post("/enterprise/live/teams/share", { title: "Obserra — Executive Board Report", text: report });
+      toast.success("Board report shared to Microsoft Teams");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not share to Teams");
+    }
+    setSharing(false);
+  };
 
   const emailReport = async () => {
     setEmailing(true);
@@ -78,6 +90,9 @@ export function BoardReportModal({ open, onClose }) {
                 </button>
                 <button data-testid="report-email" onClick={emailReport} disabled={emailing} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-primary/15 border border-primary/30 hover:bg-primary/25 transition-colors disabled:opacity-50">
                   {emailing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />} Email me
+                </button>
+                <button data-testid="report-share-teams" onClick={shareTeams} disabled={sharing} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-ai/15 border border-ai/30 text-ai hover:bg-ai/25 transition-colors disabled:opacity-50">
+                  {sharing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageSquare className="w-3.5 h-3.5" />} Share to Teams
                 </button>
               </>
             )}

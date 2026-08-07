@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { ConfidenceBadge, FreshnessBadge, DataTypeBadge } from "@/components/badges";
 import { Loader2, Cpu, AlertOctagon, Ban, Eye } from "lucide-react";
@@ -19,6 +20,8 @@ function EvalBar({ label, value }) {
 }
 
 export default function AIGovernance() {
+  const { mode } = useAuth();
+  const isExec = mode === "executive";
   const [systems, setSystems] = useState(null);
   const [incidents, setIncidents] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -43,7 +46,7 @@ export default function AIGovernance() {
     <div className="rise space-y-5">
       <div>
         <h1 className="font-head font-black text-3xl tracking-tight">AI Governance Suite</h1>
-        <p className="text-sm text-muted-foreground mt-1">Inventory, NIST AI RMF mapping, model cards, evaluations & incident management. Sanctioned + shadow-AI discovery.</p>
+        <p className="text-sm text-muted-foreground mt-1">{isExec ? "AI governance posture — sanctioned vs shadow AI and the governance actions awaiting decision." : "Inventory, NIST AI RMF mapping, model cards, evaluations & incident management. Sanctioned + shadow-AI discovery."}</p>
       </div>
 
       {shadow.length > 0 && (
@@ -82,10 +85,12 @@ export default function AIGovernance() {
                 </div>
 
                 {s.status === "shadow" ? (
-                  <button data-testid={`sanction-${s.ref}`} onClick={(e) => { e.stopPropagation(); sanction(s.ref); }}
-                    className="w-full py-2 rounded-md bg-ai text-background font-head font-bold text-sm hover:opacity-90 transition-opacity">
-                    Bring under governance
-                  </button>
+                  isExec
+                    ? <div className="w-full py-2 rounded-md bg-ai/10 border border-ai/30 text-ai font-head font-bold text-sm text-center">Governance decision required</div>
+                    : <button data-testid={`sanction-${s.ref}`} onClick={(e) => { e.stopPropagation(); sanction(s.ref); }}
+                      className="w-full py-2 rounded-md bg-ai text-background font-head font-bold text-sm hover:opacity-90 transition-opacity">
+                      Bring under governance
+                    </button>
                 ) : (
                   <>
                     <div className="grid grid-cols-2 gap-3 mb-3">

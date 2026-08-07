@@ -40,6 +40,22 @@ class SSOBody(BaseModel):
     entity_id: str | None = None
 
 
+class OpenAIBody(BaseModel):
+    api_key: str
+    org: str | None = None
+
+
+class CopilotBody(BaseModel):
+    tenant_id: str
+    client_id: str
+    client_secret: str
+
+
+class TeamsBody(BaseModel):
+    webhook_url: str
+    channel_name: str | None = None
+
+
 def _m365_public(m):
     if not m:
         return {"configured": False, "live": False}
@@ -56,10 +72,37 @@ def _sso_public(s):
             "entity_id": s.get("entity_id"), "status": s.get("status"), "checked_at": s.get("checked_at")}
 
 
+def _openai_public(o):
+    if not o:
+        return {"configured": False, "live": False}
+    return {"configured": True, "live": bool(o.get("live")), "api_key_masked": _mask(o.get("api_key")),
+            "org": o.get("org"), "model_count": o.get("model_count"),
+            "status": o.get("status"), "checked_at": o.get("checked_at")}
+
+
+def _copilot_public(c):
+    if not c:
+        return {"configured": False, "live": False}
+    return {"configured": True, "live": bool(c.get("live")), "tenant_id": c.get("tenant_id"),
+            "client_id_masked": _mask(c.get("client_id")), "seats": c.get("seats"),
+            "status": c.get("status"), "checked_at": c.get("checked_at")}
+
+
+def _teams_public(t):
+    if not t:
+        return {"configured": False, "valid": False}
+    return {"configured": True, "valid": bool(t.get("valid")), "channel_name": t.get("channel_name"),
+            "webhook_masked": _mask(t.get("webhook_url")), "status": t.get("status"),
+            "checked_at": t.get("checked_at")}
+
+
 @live_connectors_router.get("/live")
 async def get_live(admin: dict = Depends(require_roles("admin"))):
     org = await _org(admin["org_id"])
-    return {"m365": _m365_public(org.get("live_m365")), "sso": _sso_public(org.get("live_sso"))}
+    return {"m365": _m365_public(org.get("live_m365")), "sso": _sso_public(org.get("live_sso")),
+            "openai": _openai_public(org.get("live_openai")),
+            "copilot": _copilot_public(org.get("live_copilot")),
+            "teams": _teams_public(org.get("live_teams"))}
 
 
 async def _verify_m365(tenant_id, client_id, client_secret):
@@ -135,3 +178,141 @@ async def del_sso(admin: dict = Depends(require_roles("admin"))):
     await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$unset": {"live_sso": ""}})
     await _log_audit(admin["org_id"], admin["email"], "sso.clear", "SSO configuration cleared")
     return {"configured": False, "valid": False}
+
+
+async def _verify_openai(api_key, org=None):
+    headers = {"Authorization": f"Bearer {api_key}"}
+    if org:
+        headers["OpenAI-Organization"] = org
+    async with httpx.AsyncClient(timeout=20) as c:
+        r = await c.get("https://api.openai.com/v1/models", headers=headers)
+    if r.status_code != 200:
+        msg = ""
+        try:
+            msg = r.json().get("error", {}).get("message", "")[:120]
+        except Exception:
+            pass
+        return False, None, f"OpenAI error {r.status_code}: {msg}"
+    data = r.json().get("data", [])
+    return True, len(data), "Connected to OpenAI"
+
+
+@live_connectors_router.put("/live/openai")
+async def put_openai(body: OpenAIBody, admin: dict = Depends(require_roles("admin"))):
+    try:
+        live, model_count, status = await _verify_openai(body.api_key, body.org)
+    except Exception as e:
+        live, model_count, status = False, None, f"Verification failed: {str(e)[:120]}"
+    doc = {"api_key": body.api_key, "org": body.org, "live": live,
+           "model_count": model_count, "status": status, "checked_at": _now()}
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"live_openai": doc}})
+    await _log_audit(admin["org_id"], admin["email"], "connector.openai.configure",
+                     f"ChatGPT {'LIVE' if live else 'configured (not live)'}: {status}")
+    return _openai_public(doc)
+
+
+@live_connectors_router.delete("/live/openai")
+async def del_openai(admin: dict = Depends(require_roles("admin"))):
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$unset": {"live_openai": ""}})
+    await _log_audit(admin["org_id"], admin["email"], "connector.openai.disconnect", "ChatGPT connection removed")
+    return {"configured": False, "live": False}
+
+
+async def _verify_copilot(tenant_id, client_id, client_secret):
+    async with httpx.AsyncClient(timeout=20) as c:
+        tok = await c.post(
+            f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token",
+            data={"client_id": client_id, "client_secret": client_secret,
+                  "grant_type": "client_credentials", "scope": "https://graph.microsoft.com/.default"})
+        if tok.status_code != 200:
+            desc = ""
+            try:
+                desc = tok.json().get("error_description", "")[:120]
+            except Exception:
+                pass
+            return False, None, f"Token error {tok.status_code}: {desc}"
+        access = tok.json()["access_token"]
+        seats = None
+        try:
+            r = await c.get("https://graph.microsoft.com/v1.0/subscribedSkus",
+                            headers={"Authorization": f"Bearer {access}"})
+            if r.status_code == 200:
+                skus = r.json().get("value", [])
+                seats = sum(s.get("prepaidUnits", {}).get("enabled", 0)
+                            for s in skus if "COPILOT" in (s.get("skuPartNumber", "") or "").upper())
+        except Exception:
+            pass
+    return True, seats, "Copilot governance connected — Microsoft Graph token validated"
+
+
+@live_connectors_router.put("/live/copilot")
+async def put_copilot(body: CopilotBody, admin: dict = Depends(require_roles("admin"))):
+    try:
+        live, seats, status = await _verify_copilot(body.tenant_id, body.client_id, body.client_secret)
+    except Exception as e:
+        live, seats, status = False, None, f"Verification failed: {str(e)[:120]}"
+    doc = {"tenant_id": body.tenant_id, "client_id": body.client_id, "client_secret": body.client_secret,
+           "live": live, "seats": seats, "status": status, "checked_at": _now()}
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"live_copilot": doc}})
+    await _log_audit(admin["org_id"], admin["email"], "connector.copilot.configure",
+                     f"Copilot {'LIVE' if live else 'configured (not live)'}: {status}")
+    return _copilot_public(doc)
+
+
+@live_connectors_router.delete("/live/copilot")
+async def del_copilot(admin: dict = Depends(require_roles("admin"))):
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$unset": {"live_copilot": ""}})
+    await _log_audit(admin["org_id"], admin["email"], "connector.copilot.disconnect", "Copilot connection removed")
+    return {"configured": False, "live": False}
+
+
+_TEAMS_HOSTS = ("webhook.office.com", ".office.com", "logic.azure.com", "azure.com")
+
+
+@live_connectors_router.put("/live/teams")
+async def put_teams(body: TeamsBody, admin: dict = Depends(require_roles("admin"))):
+    url = (body.webhook_url or "").strip()
+    valid = url.startswith("https://") and any(h in url for h in _TEAMS_HOSTS)
+    status = "Teams webhook ready — reports can be shared to the channel" if valid else "Invalid webhook URL (expected a Microsoft Teams Incoming Webhook)"
+    doc = {"webhook_url": url, "channel_name": body.channel_name, "valid": valid,
+           "status": status, "checked_at": _now()}
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"live_teams": doc}})
+    await _log_audit(admin["org_id"], admin["email"], "connector.teams.configure",
+                     f"Teams {'ready' if valid else 'invalid'}: {status}")
+    return _teams_public(doc)
+
+
+@live_connectors_router.delete("/live/teams")
+async def del_teams(admin: dict = Depends(require_roles("admin"))):
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$unset": {"live_teams": ""}})
+    await _log_audit(admin["org_id"], admin["email"], "connector.teams.disconnect", "Teams connection removed")
+    return {"configured": False, "valid": False}
+
+
+class TeamsShare(BaseModel):
+    title: str
+    text: str
+
+
+@live_connectors_router.post("/live/teams/share")
+async def share_to_teams(body: TeamsShare, admin: dict = Depends(require_roles("admin"))):
+    from fastapi import HTTPException
+    org = await _org(admin["org_id"])
+    t = org.get("live_teams") or {}
+    if not t.get("valid") or not t.get("webhook_url"):
+        raise HTTPException(400, "Teams connector is not configured. Add a Teams Incoming Webhook in Available Connectors → Microsoft Teams.")
+    card = {
+        "@type": "MessageCard", "@context": "https://schema.org/extensions",
+        "summary": body.title, "themeColor": "0f1e3d", "title": body.title,
+        "text": body.text[:16000].replace("\n", "\n\n"),
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.post(t["webhook_url"], json=card)
+        ok = r.status_code in (200, 202)
+    except Exception as e:
+        raise HTTPException(502, f"Failed to post to Teams: {str(e)[:140]}")
+    await _log_audit(admin["org_id"], admin["email"], "connector.teams.share", f"Shared '{body.title}' to Teams ({'ok' if ok else r.status_code})")
+    if not ok:
+        raise HTTPException(502, f"Teams webhook returned {r.status_code}")
+    return {"ok": True, "channel": t.get("channel_name")}

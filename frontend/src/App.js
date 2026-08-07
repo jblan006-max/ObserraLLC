@@ -20,6 +20,7 @@ import KernelStatus from "@/pages/KernelStatus";
 import Settings from "@/pages/Settings";
 import AIAgents from "@/pages/AIAgents";
 import Enterprise from "@/pages/Enterprise";
+import AvailableConnectors from "@/pages/AvailableConnectors";
 import VendorRisk from "@/pages/VendorRisk";
 import CyberRisk from "@/pages/CyberRisk";
 import Studio from "@/pages/Studio";
@@ -75,6 +76,7 @@ function App() {
               <Route path="spend-governance" element={<SpendGovernance />} />
               <Route path="benchmark" element={<Benchmark />} />
               <Route path="enterprise" element={<Enterprise />} />
+              <Route path="connectors" element={<AvailableConnectors />} />
               <Route path="marketplace" element={<Marketplace />} />
               <Route path="billing" element={<Billing />} />
             </Route>

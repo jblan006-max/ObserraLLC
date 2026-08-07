@@ -18,8 +18,9 @@ function Stat({ label, value, unit, icon: Icon, accent }) {
 }
 
 export default function CyberRisk() {
-  const { user } = useAuth();
+  const { user, mode } = useAuth();
   const isAdmin = user?.role === "admin";
+  const isExec = mode === "executive";
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState("");
 
@@ -39,7 +40,7 @@ export default function CyberRisk() {
     <div className="rise space-y-6" data-testid="cyber-page">
       <div>
         <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><ShieldAlert className="w-7 h-7 text-primary" /> Cyber Risk</h1>
-        <p className="text-sm text-muted-foreground mt-1">Control-centric cyber risk posture — a kernel-native app composed on the Obserra kernel.</p>
+        <p className="text-sm text-muted-foreground mt-1">{isExec ? "Strategic cyber risk posture — business exposure and mitigation at a glance." : "Control-centric cyber risk posture — a kernel-native app composed on the Obserra kernel."}</p>
         <div data-testid="cyber-composition" className="flex flex-wrap items-center gap-2 mt-3">
           <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1"><Layers className="w-3.5 h-3.5" /> Composed on:</span>
           {data.composition.map((c) => <span key={c} className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-ai/10 text-ai border border-ai/20">{c}</span>)}
