@@ -190,7 +190,8 @@ export function AIAdvisor() {
   return (
     <>
       <button data-testid="advisor-toggle" onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 z-40 flex flex-col items-center gap-1 px-4 py-3 rounded-2xl bg-ai font-head font-bold text-xs shadow-lg hover:-translate-y-0.5 transition-transform duration-200">
+        style={{ backgroundColor: "#0f1e3d" }}
+        className="fixed bottom-6 right-6 z-40 flex flex-col items-center gap-1 px-4 py-3 rounded-2xl font-head font-bold text-xs shadow-lg ring-1 ring-white/10 hover:-translate-y-0.5 transition-transform duration-200">
         {AVATAR("w-8 h-8")} <span className="text-white">Advisor</span>
       </button>
 
