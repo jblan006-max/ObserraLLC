@@ -1,21 +1,34 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { X, Loader2 } from "lucide-react";
+import { X, Loader2, Activity } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const SEVERITIES = ["Low", "Medium", "High", "Critical"];
+const THRESHOLD_POLICIES = ["POL-EVID-FRESH", "POL-CTRL-EFFECT", "POL-CTRL-DRIFT"];
 
 export function PolicyModal({ policy, onClose, onSaved }) {
   const editing = !!policy;
+  const canSimulate = editing && THRESHOLD_POLICIES.includes(policy.policy_id);
   const [form, setForm] = useState({
     name: policy?.name || "", statement: policy?.statement || "",
     framework: policy?.framework || "Custom", severity: policy?.severity || "Medium",
-    enforced: policy?.enforced ?? true,
-    threshold: policy?.threshold ?? "",
+    enforced: policy?.enforced ?? true, threshold: policy?.threshold ?? "",
   });
   const [busy, setBusy] = useState(false);
+  const [sim, setSim] = useState(null);
+  const timer = useRef(null);
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  useEffect(() => {
+    if (!canSimulate || form.threshold === "") { setSim(null); return; }
+    clearTimeout(timer.current);
+    timer.current = setTimeout(() => {
+      api.post("/policies/simulate", { policy_id: policy.policy_id, threshold: Number(form.threshold) })
+        .then((r) => setSim(r.data)).catch(() => setSim(null));
+    }, 400);
+    return () => clearTimeout(timer.current);
+  }, [form.threshold, canSimulate, policy]);
 
   const save = async () => {
     if (!form.name.trim() || !form.statement.trim()) { toast.error("Name and statement are required"); return; }
@@ -53,8 +66,14 @@ export function PolicyModal({ policy, onClose, onSaved }) {
                 <SelectContent>{SEVERITIES.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
               </Select>
             </div>
-            <Field label="Threshold (optional)" testid="policy-threshold" type="number" value={form.threshold} onChange={set("threshold")} />
+            <Field label="Threshold" testid="policy-threshold" type="number" value={form.threshold} onChange={set("threshold")} />
           </div>
+          {canSimulate && sim && sim.applies && (
+            <div data-testid="policy-simulation" className="ai-border rounded-md p-3 bg-ai/5 flex items-center gap-2 text-sm">
+              <Activity className="w-4 h-4 text-ai" />
+              <span>This threshold would flag <b data-testid="sim-flagged">{sim.flagged}</b> of {sim.total} controls{sim.flagged > 0 ? `: ${sim.controls.join(", ")}` : ""}.</span>
+            </div>
+          )}
           <label className="flex items-center gap-2 text-sm cursor-pointer">
             <input data-testid="policy-enforced" type="checkbox" checked={form.enforced} onChange={(e) => setForm((f) => ({ ...f, enforced: e.target.checked }))} />
             Enforced (actively evaluated)

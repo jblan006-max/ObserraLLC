@@ -1,5 +1,5 @@
 """Workflow Engine — onboarding + remediation workflows."""
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from bson import ObjectId
 
@@ -56,9 +56,10 @@ class WorkflowEngine:
             existing["id"] = str(existing.pop("_id"))
             return existing
         now = _now()
+        due = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat()
         steps = [{"key": k, "label": lbl, "done": False, "at": None} for k, lbl in REMEDIATION_STEPS]
         doc = {"org_id": org_id, "type": "remediation", "subject": control_id, "title": title,
-               "steps": steps, "status": "open", "assignee": None, "notes": [],
+               "steps": steps, "status": "open", "assignee": None, "notes": [], "due_at": due,
                "source_notification": source_notification, "created_at": now, "updated_at": now}
         res = await db.workflows.insert_one(doc)
         doc["id"] = str(res.inserted_id)

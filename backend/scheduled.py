@@ -69,7 +69,7 @@ def _digest_html(alerts):
         '</td></tr></table>')
 
 
-async def _run_weekly_drift_digest():
+async def _run_drift_digest(cadences, label):
     orgs = await db.organizations.find({}).to_list(1000)
     for org in orgs:
         org_id = str(org["_id"])
@@ -81,15 +81,19 @@ async def _run_weekly_drift_digest():
                 continue
             recipients = await db.users.find(
                 {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}).to_list(200)
+            # respect each recipient's digest cadence (missing -> weekly default)
+            recipients = [r for r in recipients if r.get("digest_cadence", "weekly") in cadences]
+            if not recipients:
+                continue
             html = _digest_html(alerts)
             for r in recipients:
-                await notifications.send_email(r["email"], f"Weekly Drift Digest — {len(alerts)} open alert(s)", html)
+                await notifications.send_email(r["email"], f"{label} Drift Digest — {len(alerts)} open alert(s)", html)
             await notifications.create(
-                org_id, "report", "Weekly drift digest sent",
+                org_id, "report", f"{label} drift digest sent",
                 f"Emailed {len(alerts)} open control alert(s) to {len(recipients)} recipient(s).", ref="digest")
-            logger.info(f"Weekly drift digest sent for org {org_id}: {len(alerts)} alerts")
+            logger.info(f"{label} drift digest sent for org {org_id}: {len(alerts)} alerts")
         except Exception as e:
-            logger.error(f"Weekly drift digest failed for org {org_id}: {e}")
+            logger.error(f"{label} drift digest failed for org {org_id}: {e}")
 
 
 @scheduled_router.post("/cron/weekly-drift-digest")
@@ -97,5 +101,14 @@ async def weekly_drift_digest(request: Request, background_tasks: BackgroundTask
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     if not _authorized(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
-    background_tasks.add_task(_run_weekly_drift_digest)
+    background_tasks.add_task(_run_drift_digest, {"weekly"}, "Weekly")
+    return {"status": "accepted"}
+
+
+@scheduled_router.post("/cron/daily-drift-digest")
+async def daily_drift_digest(request: Request, background_tasks: BackgroundTasks):
+    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
+    if not _authorized(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    background_tasks.add_task(_run_drift_digest, {"daily"}, "Daily")
     return {"status": "accepted"}

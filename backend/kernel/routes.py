@@ -3,10 +3,17 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from auth import get_current_user, require_roles
+from db import db
 from kernel import SUBSYSTEMS, notifications, policies, workflows
 from kernel.health import compute_health
 
 kernel_router = APIRouter(prefix="/api")
+
+
+@kernel_router.get("/members")
+async def org_members(user: dict = Depends(get_current_user)):
+    ms = await db.users.find({"org_id": user["org_id"]}).sort("name", 1).to_list(200)
+    return [{"name": m.get("name"), "email": m["email"], "role": m.get("role")} for m in ms]
 
 
 @kernel_router.get("/kernel/manifest")
@@ -54,6 +61,24 @@ async def update_policy(policy_id: str, body: PolicyUpdate, admin: dict = Depend
     if updated is None:
         raise HTTPException(404, "Policy not found or no changes")
     return updated
+
+
+class SimulateBody(BaseModel):
+    policy_id: str
+    threshold: int
+
+
+@kernel_router.post("/policies/simulate")
+async def simulate_policy(body: SimulateBody, admin: dict = Depends(require_roles("admin"))):
+    from routes import _control_status
+    controls_raw = await db.controls.find({"org_id": admin["org_id"]}, {"_id": 0}).to_list(500)
+    statuses = [_control_status(c) for c in controls_raw]
+    thresholds = await policies.thresholds(admin["org_id"])
+    key = {"POL-EVID-FRESH": "evidence_days", "POL-CTRL-EFFECT": "effectiveness_floor", "POL-CTRL-DRIFT": "drift_pts"}.get(body.policy_id)
+    if key:
+        thresholds[key] = body.threshold
+    flagged = [c["control_id"] for c in statuses if policies.evaluate_control(c, thresholds)]
+    return {"flagged": len(flagged), "total": len(statuses), "controls": flagged, "applies": bool(key)}
 
 
 # ---------- Workflow Engine ----------

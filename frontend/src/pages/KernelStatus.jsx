@@ -112,6 +112,12 @@ export default function KernelStatus() {
                   </span>
                   <span className={`text-xs px-2 py-0.5 rounded-sm capitalize ${w.status === "complete" || w.status === "resolved" ? "bg-low/15 text-low" : "bg-med/15 text-med"}`}>{w.status.replace("_", " ")}</span>
                 </div>
+                {w.type === "remediation" && w.due_at && w.status !== "resolved" && (() => {
+                  const days = Math.ceil((new Date(w.due_at) - Date.now()) / 86400000);
+                  return days < 0
+                    ? <span data-testid={`wf-overdue-${w.id}`} className="inline-flex items-center gap-1 text-[11px] font-mono text-crit mb-2"><Activity className="w-3 h-3" />Overdue by {Math.abs(days)}d</span>
+                    : <span className="inline-flex items-center gap-1 text-[11px] font-mono text-muted-foreground mb-2">Due in {days}d</span>;
+                })()}
                 <div className="flex flex-wrap gap-4">
                   {w.steps.map((s) => (
                     <span key={s.key} className={`flex items-center gap-1.5 text-xs ${s.done ? "text-foreground" : "text-muted-foreground"}`}>

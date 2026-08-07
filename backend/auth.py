@@ -283,6 +283,10 @@ class ChangePasswordBody(BaseModel):
     new_password: str
 
 
+class PreferencesBody(BaseModel):
+    digest_cadence: str
+
+
 @auth_router.get("/team/members")
 async def team_members(admin: dict = Depends(require_roles("admin"))):
     members = await db.users.find({"org_id": admin["org_id"]}).sort("created_at", 1).to_list(500)
@@ -358,6 +362,14 @@ async def change_password(body: ChangePasswordBody, request: Request, response: 
     access = create_access_token(user["id"], user["email"])
     response.set_cookie("access_token", access, httponly=True, secure=True, samesite="none", max_age=43200, path="/")
     return {"ok": True}
+
+
+@auth_router.patch("/preferences")
+async def update_preferences(body: PreferencesBody, user: dict = Depends(get_current_user)):
+    if body.digest_cadence not in ("weekly", "daily", "off"):
+        raise HTTPException(status_code=400, detail="Invalid cadence. Use weekly, daily, or off.")
+    await db.users.update_one({"_id": ObjectId(user["id"])}, {"$set": {"digest_cadence": body.digest_cadence}})
+    return {"ok": True, "digest_cadence": body.digest_cadence}
 
 
 @auth_router.delete("/team/members/{member_id}")

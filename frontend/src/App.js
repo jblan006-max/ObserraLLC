@@ -17,6 +17,7 @@ import KnowledgeGraph from "@/pages/KnowledgeGraph";
 import ControlMonitoring from "@/pages/ControlMonitoring";
 import Team from "@/pages/Team";
 import KernelStatus from "@/pages/KernelStatus";
+import Settings from "@/pages/Settings";
 import Reporting from "@/pages/Reporting";
 import PaymentSuccess from "@/pages/PaymentSuccess";
 import QRApprove from "@/pages/QRApprove";
@@ -57,6 +58,7 @@ function App() {
               <Route path="audit" element={<AuditLog />} />
               <Route path="kernel" element={<KernelStatus />} />
               <Route path="team" element={<Team />} />
+              <Route path="settings" element={<Settings />} />
               <Route path="marketplace" element={<Marketplace />} />
               <Route path="billing" element={<Billing />} />
             </Route>
