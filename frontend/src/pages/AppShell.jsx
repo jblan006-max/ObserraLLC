@@ -37,8 +37,8 @@ export default function AppShell() {
   return (
     <div className="min-h-screen grain flex">
       <aside className="hidden md:flex w-60 flex-col border-r border-border bg-card/40 sticky top-0 h-screen">
-        <div className="flex items-center gap-2 px-5 h-16 border-b border-border font-head font-black tracking-tight">
-          <ShieldHalf className="w-5 h-5 text-primary" /> OBSERRA <span className="text-ai">EIOS</span>
+        <div className="flex items-center px-4 h-16 border-b border-border">
+          <img src="/logo.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-9 w-auto object-contain" />
         </div>
         <nav className="flex-1 p-3 space-y-1">
           {NAV.map((n) => (
@@ -64,7 +64,7 @@ export default function AppShell() {
       <div className="flex-1 flex flex-col min-w-0">
         <header className="sticky top-0 z-30 h-16 flex items-center justify-between px-6 border-b border-border/40 backdrop-blur-xl bg-background/70">
           <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest">
-            Obserra LLC · Intelligence Fabric
+            Obserra — Executive Protection &amp; Intelligence LLC
           </div>
           <DualModeToggle />
         </header>

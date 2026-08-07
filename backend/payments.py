@@ -26,6 +26,15 @@ EDITIONS = {
 
 
 def setup_catalog():
+    try:
+        s = stripe.tax.Settings.retrieve()
+        if not (s.head_office and getattr(s.head_office, "address", None)):
+            stripe.tax.Settings.modify(
+                head_office={"address": {"country": "US", "line1": "500 Market St",
+                                         "city": "San Francisco", "state": "CA", "postal_code": "94105"}},
+                defaults={"tax_behavior": "exclusive"})
+    except Exception:
+        pass
     for entry in CATALOG:
         product = None
         for p in stripe.Product.list(active=True).auto_paging_iter():
@@ -66,14 +75,22 @@ async def create_checkout(req: CheckoutRequest, user: dict = Depends(get_current
     if not prices:
         raise HTTPException(500, f"Price not found: {req.lookup_key}")
     price = prices[0]
-    session = stripe.checkout.Session.create(
+    kwargs = dict(
         line_items=[{"price": price.id, "quantity": 1}],
         mode="subscription",
         success_url=f"{req.origin_url}/payment/success?session_id={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{req.origin_url}/billing",
         metadata={"user_id": user["id"], "org_id": user["org_id"], "lookup_key": req.lookup_key},
-        automatic_tax={"enabled": True}, billing_address_collection="required",
     )
+    try:
+        session = stripe.checkout.Session.create(**kwargs, managed_payments={"enabled": True})
+    except stripe.error.InvalidRequestError as e:
+        msg = (e.user_message or "").lower()
+        if "managed payments" in msg or "ineligible" in msg:
+            session = stripe.checkout.Session.create(
+                **kwargs, automatic_tax={"enabled": True}, billing_address_collection="required")
+        else:
+            raise
     await db.payment_transactions.insert_one({
         "session_id": session.id, "user_id": user["id"], "org_id": user["org_id"],
         "lookup_key": req.lookup_key, "amount": (price.unit_amount or 0), "currency": price.currency,

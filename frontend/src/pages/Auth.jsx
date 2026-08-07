@@ -30,8 +30,8 @@ export default function Auth() {
       <div className="relative hidden lg:flex flex-col justify-between p-12 border-r border-border overflow-hidden">
         <img alt="" src="https://images.unsplash.com/photo-1644088379091-d574269d422f?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200"
           className="absolute inset-0 w-full h-full object-cover opacity-[0.10]" />
-        <div className="relative flex items-center gap-2 font-head font-black text-xl tracking-tight">
-          <ShieldHalf className="w-6 h-6 text-primary" /> OBSERRA <span className="text-ai">EIOS</span>
+        <div className="relative">
+          <img src="/logo.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-11 w-auto object-contain" />
         </div>
         <div className="relative space-y-6">
           <h1 className="font-head font-black text-5xl leading-[1.05] tracking-tight">
@@ -51,8 +51,8 @@ export default function Auth() {
 
       <div className="flex items-center justify-center p-6">
         <div className="w-full max-w-sm rise">
-          <div className="lg:hidden flex items-center gap-2 font-head font-black text-lg mb-8">
-            <ShieldHalf className="w-5 h-5 text-primary" /> OBSERRA <span className="text-ai">EIOS</span>
+          <div className="lg:hidden mb-8">
+            <img src="/logo.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-10 w-auto object-contain" />
           </div>
           <div className="flex gap-1 p-1 bg-secondary/50 rounded-lg mb-6 text-sm">
             {["login", "register"].map((t) => (

@@ -87,7 +87,7 @@ export default function RiskRegister() {
                     <ConfidenceBadge value={r.confidence} />
                   </div>
                 </td>
-                <td className="px-4 py-3">
+                <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
                   <Select value={r.status} onValueChange={(v) => updateStatus(r.ref, v)}>
                     <SelectTrigger data-testid={`risk-status-${r.ref}`} className="w-32 h-8 text-xs bg-secondary/60"><SelectValue /></SelectTrigger>
                     <SelectContent>

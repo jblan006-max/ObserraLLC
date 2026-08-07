@@ -184,7 +184,7 @@ async def seed_admin():
     existing = await db.users.find_one({"email": email})
     if existing is None:
         org = await db.organizations.insert_one({
-            "name": "Obserra LLC (Demo Enterprise)", "plan": "enterprise",
+            "name": "Obserra — Executive Protection & Intelligence LLC", "plan": "enterprise",
             "entitlements": ["risk_register", "ai_governance"],
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
