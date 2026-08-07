@@ -34,7 +34,9 @@ Enterprise SaaS "continuous AI control plane" with Dual-Mode dashboards (Executi
 
 ## Recent polish (Jun 2026)
 - Settings: "Remove logo / Reset to Obserra" button (branding-reset) added; logo type/size validation + dropped-invalid-email recipient feedback all live.
-- AIAdvisor floating button: official navy (#0f1e3d) pill, white Obserra eye mark (brand-mark.png, no bg) stacked above white "Advisor" label.
+- AIAdvisor floating button: official navy (#0f1e3d) pill, white Obserra eye mark stacked above white "Advisor" label.
+- Advisor first-time hint bubble (once/user via localStorage) + pulse ring on button; in-chat reply avatars use navy eye badge (AVATAR).
+- Settings Report Branding: LIVE cover preview thumbnail (GET /api/reports/branding/preview, pymupdf-rendered) with Dark/Light toggle; refreshes after save/reset. Verified iteration_17 (100%).
 
 ## Backlog / Roadmap
 - P1 (blocked): Apple Sign-In + Enterprise SSO — awaiting user IdP metadata/Apple keys (wired, gated by `/api/auth/providers`).
