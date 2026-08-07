@@ -40,7 +40,22 @@ export default function VendorRisk() {
         <div className="bg-card fact-border rounded-xl p-4" style={{ borderLeft: "3px solid hsl(0 84% 60%)" }}><div className="text-[10px] font-mono uppercase text-muted-foreground">High / Critical</div><div className="font-head font-black text-3xl text-crit">{data.high_risk}</div></div>
       </div>
 
-      <div className="bg-card fact-border rounded-xl overflow-x-auto">
+      <div className="md:hidden space-y-3" data-testid="vendor-cards-mobile">
+        {data.vendors.map((v) => (
+          <div key={v.ref} data-testid={`vendor-card-${v.ref}`} className="bg-card fact-border rounded-xl p-4 space-y-2">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0"><div className="font-mono text-[11px] text-ai">{v.ref}</div><div className="font-medium text-sm">{v.name}</div><div className="text-[11px] text-muted-foreground">{v.category} · {v.data_access}</div></div>
+              <span className="text-[10px] px-2 py-0.5 rounded-sm font-mono font-bold shrink-0" style={{ background: `hsl(${TIER[v.risk_tier]} / 0.15)`, color: `hsl(${TIER[v.risk_tier]})` }}>{v.risk_tier} · {v.risk_score}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs text-muted-foreground">
+              <span>Attested {v.attestation}% · {v.incidents > 0 ? <span className="text-crit">{v.incidents} incidents</span> : "0 incidents"}</span>
+              {isAdmin && <button data-testid={`assess-m-${v.ref}`} disabled={!!busy} onClick={() => assess(v.ref)} className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded-md bg-primary/10 border border-primary/30 disabled:opacity-50">{busy === v.ref ? <Loader2 className="w-3 h-3 animate-spin" /> : <PlayCircle className="w-3 h-3" />} Assess</button>}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="hidden md:block bg-card fact-border rounded-xl overflow-x-auto">
         <table className="w-full text-sm min-w-[820px]">
           <thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border">
             <tr><th className="text-left px-4 py-3">Vendor</th><th className="text-left px-4 py-3">Category</th><th className="text-left px-4 py-3">Data access</th><th className="text-left px-4 py-3">Attested</th><th className="text-left px-4 py-3">Incidents</th><th className="text-left px-4 py-3">Risk</th><th className="text-right px-4 py-3">Action</th></tr>

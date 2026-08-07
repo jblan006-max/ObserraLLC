@@ -1,0 +1,22 @@
+{
+  "summary": "Iteration 21 tested all four features. Backend: 7/7 pytest tests pass (email-docs unauth 401, ops 403, invalid 400 with 'Enter a valid email address' message, admin 200 status:sent; regenerate-guides admin 200 ok; guide.pdf + guide.docx download 200 after regen). Frontend: Mobile card views verified at 390px for /app/team (member-cards-mobile, 2 cards + remove button), /app/vendors (vendor-cards-mobile, 4 cards), /app/agents (agent-cards-mobile, 3 cards) — desktop table hidden, no horizontal overflow (scrollWidth==clientWidth==390). Desktop at 1920: full tables render with member-*/vendor-row-*/agent-row-* (2/4/3) and mobile card lists hidden. Risk Register /app/risks mobile still shows risk-cards-mobile and tap→lineage-modal (regression OK). Tablet two-pane at 1280: clicking left edge of Ref cell opens risk-detail-pane (contains inherent+residual pills, category, owner, exposure content), table stays visible, risk-detail-lineage opens lineage-modal, risk-detail-evidence present, risk-detail-close hides pane. Settings → Deployment & Documentation: email-docs-input + email-docs-send present; send disabled with empty input, enabled after valid email; clicking sent POST /api/deploy/email-docs → 200 and success toast 'Guide + package emailed to jblan2026@gmail.com'. No functional console errors (only 2 expected 401 /api/auth/me on pre-login page load).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter21_features.py",
+    "/app/test_reports/pytest/iter21_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Login form: pressing Enter submits reliably but clicking data-testid=auth-submit sometimes does not fire submit in Playwright (fields cleared without POST). Consider wiring button onClick explicitly to submit handler in addition to type=submit — reduces flakiness for automation.",
+    "Onboarding tour and Advisor panel both auto-open post-login on desktop; consider a single global 'first-visit' coordinator so tests and users don't dismiss two overlays back-to-back."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter21_features.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Admin jblan2026@gmail.com/Obserra2026! ; Ops analyst@obserra.demo/Analyst2026! (loaded from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None — used existing seeded team/vendors/agents/risks.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Login via Playwright: prefer pressing Enter in password field over clicking [data-testid=auth-submit] (the click sometimes fails to fire submit). Onboarding tour ('Skip') and Advisor ([data-testid=advisor-close]) both auto-open on first login — dismiss both. Risk Register table row CENTER is the $ Exposure button (opens EvidenceModal); click LEFT edge of first td cell to trigger risk-detail-pane. Email-docs endpoint payload uses field name 'to' (not 'email').",
+  "rca of the issue": "N/A — all features validated."
+}

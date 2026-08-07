@@ -85,7 +85,21 @@ export default function Team() {
       )}
 
       {!members ? <div className="flex items-center justify-center h-40"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div> : (
-        <div className="bg-card fact-border rounded-xl overflow-x-auto">
+        <>
+        <div className="md:hidden space-y-3" data-testid="member-cards-mobile">
+          {members.map((m) => (
+            <div key={m.id} data-testid={`member-card-${m.id}`} className="bg-card fact-border rounded-xl p-4 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <div className="font-medium text-sm truncate">{m.name}</div>
+                <div className="text-xs text-muted-foreground font-mono truncate">{m.email}</div>
+                <span className="inline-block mt-1 px-2 py-0.5 rounded-sm text-[10px] font-mono font-bold" style={{ background: `hsl(${ROLE_COLOR[m.role]} / 0.15)`, color: `hsl(${ROLE_COLOR[m.role]})` }}>{ROLE_LABEL[m.role] || m.role}</span>
+              </div>
+              <button data-testid={`remove-m-${m.id}`} onClick={() => remove(m.id, m.email)}
+                className="shrink-0 inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md text-muted-foreground hover:text-crit hover:bg-crit/10 transition-colors"><Trash2 className="w-3.5 h-3.5" /> Remove</button>
+            </div>
+          ))}
+        </div>
+        <div className="hidden md:block bg-card fact-border rounded-xl overflow-x-auto">
           <table className="w-full text-sm min-w-[560px]">
             <thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border">
               <tr><th className="text-left px-4 py-3">Member</th><th className="text-left px-4 py-3">Email</th><th className="text-left px-4 py-3">Role</th><th className="text-right px-4 py-3">Actions</th></tr>
@@ -107,6 +121,7 @@ export default function Team() {
             </tbody>
           </table>
         </div>
+        </>
       )}
     </div>
   );

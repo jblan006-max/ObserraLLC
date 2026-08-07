@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { api, API } from "@/lib/api";
 import { toast } from "sonner";
-import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw, Image as ImageIcon, Server, Package, FileText, RefreshCw } from "lucide-react";
+import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw, Image as ImageIcon, Server, Package, FileText, RefreshCw, Send } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const OPTIONS = [
@@ -85,6 +85,18 @@ export default function Settings() {
       toast.success("Guides regenerated from the latest screenshots");
     } catch (e) { toast.error(e.response?.data?.detail || "Could not regenerate"); }
     setRegenBusy(false);
+  };
+
+  const [emailTo, setEmailTo] = useState("");
+  const [emailBusy, setEmailBusy] = useState(false);
+  const emailDocs = async () => {
+    setEmailBusy(true);
+    try {
+      await api.post("/deploy/email-docs", { to: emailTo });
+      toast.success(`Guide + package emailed to ${emailTo}`);
+      setEmailTo("");
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not send email"); }
+    setEmailBusy(false);
   };
 
   useEffect(() => {
@@ -287,7 +299,15 @@ export default function Settings() {
               {regenBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Regenerate guides
             </button>
           </div>
-          <p className="text-xs text-muted-foreground">Prefer a guided video? Use the built-in walkthrough via <span className="text-foreground">Guided Tour → Replay tour</span> above — it narrates Executive vs Operational mode in-app.</p>
+          <div className="flex items-center gap-2 flex-wrap pt-1" data-testid="email-docs-row">
+            <input data-testid="email-docs-input" type="email" value={emailTo} onChange={(e) => setEmailTo(e.target.value)} placeholder="it-team@company.com"
+              className="flex-1 min-w-[200px] bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary" />
+            <button data-testid="email-docs-send" disabled={emailBusy || !emailTo} onClick={emailDocs}
+              className="px-4 py-2.5 rounded-md bg-ai text-background font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
+              {emailBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Email to IT team
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground">Emails the guide (PDF) + on-premise package (zip) as attachments. Prefer a guided video? Use the built-in walkthrough via <span className="text-foreground">Guided Tour → Replay tour</span> above — it narrates Executive vs Operational mode in-app.</p>
         </div>
       )}
     </div>

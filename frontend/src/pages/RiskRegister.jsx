@@ -4,7 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { EvidenceLineageModal } from "@/components/EvidenceLineageModal";
 import { SourceBadge, FreshnessBadge, ConfidenceBadge, DataTypeBadge, ScorePill } from "@/components/badges";
-import { Loader2, Search, Info, DollarSign } from "lucide-react";
+import { Loader2, Search, Info, DollarSign, X } from "lucide-react";
 import { EvidenceModal } from "@/components/EvidenceModal";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -18,6 +18,7 @@ export default function RiskRegister() {
   const [risks, setRisks] = useState(null);
   const [lineage, setLineage] = useState(null);
   const [evidence, setEvidence] = useState(null);
+  const [selected, setSelected] = useState(null);
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
 
@@ -58,6 +59,8 @@ export default function RiskRegister() {
         </Select>
       </div>
 
+      <div className="md:flex md:gap-5 md:items-start">
+      <div className="min-w-0 flex-1 space-y-4">
       <div className="md:hidden space-y-3" data-testid="risk-cards-mobile">
         {filtered.map((r) => (
           <div key={r.ref} data-testid={`risk-card-${r.ref}`} onClick={() => setLineage(r.ref)}
@@ -109,7 +112,7 @@ export default function RiskRegister() {
           </thead>
           <tbody>
             {filtered.map((r) => (
-              <tr key={r.ref} data-testid={`risk-row-${r.ref}`} onClick={() => setLineage(r.ref)} className="border-b border-border/60 hover:bg-secondary/40 transition-colors cursor-pointer">
+              <tr key={r.ref} data-testid={`risk-row-${r.ref}`} onClick={() => setSelected(r)} className={`border-b border-border/60 hover:bg-secondary/40 transition-colors cursor-pointer ${selected?.ref === r.ref ? "bg-secondary/50" : ""}`}>
                 <td className="px-4 py-3">
                   <div className="font-mono text-xs text-ai">{r.ref}</div>
                   <div className="font-medium max-w-xs">{r.title}</div>
@@ -151,6 +154,41 @@ export default function RiskRegister() {
           </tbody>
         </table>
       </div>
+      </div>
+
+      {selected && (
+        <aside data-testid="risk-detail-pane" className="hidden md:block md:w-72 lg:w-80 shrink-0 md:sticky md:top-28 bg-card fact-border rounded-xl p-4 space-y-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="font-mono text-[11px] text-ai">{selected.ref}</div>
+              <div className="font-head font-bold text-sm">{selected.title}</div>
+            </div>
+            <button data-testid="risk-detail-close" onClick={() => setSelected(null)} className="shrink-0 text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+          </div>
+          <p className="text-xs text-high">{selected.business_impact}</p>
+          <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="bg-secondary/40 rounded-md p-2 space-y-1"><div className="text-[10px] text-muted-foreground">Inherent</div><ScorePill value={selected.inherent} /></div>
+            <div className="bg-secondary/40 rounded-md p-2 space-y-1"><div className="text-[10px] text-muted-foreground">Residual</div><ScorePill value={selected.residual} /></div>
+          </div>
+          <div className="text-xs space-y-1">
+            <div className="flex justify-between gap-2"><span className="text-muted-foreground">Category</span><span className="text-right">{selected.category}</span></div>
+            <div className="flex justify-between gap-2"><span className="text-muted-foreground">Owner</span><span className="text-right">{selected.owner}</span></div>
+            <div className="flex justify-between gap-2"><span className="text-muted-foreground">$ Exposure</span><span className="font-mono text-high">{Math.round((SLE_BY_IMPACT[selected.impact] || 1e6) * (selected.likelihood / 5) * (selected.residual / selected.inherent) / 1000)}k</span></div>
+            <div className="flex justify-between gap-2"><span className="text-muted-foreground">Status</span><span className="text-right">{selected.status}</span></div>
+          </div>
+          <div className="text-[11px] font-mono text-muted-foreground bg-secondary/30 rounded-md p-2">KRI: {selected.kri}</div>
+          <div className="flex flex-col gap-1.5">
+            <SourceBadge source={selected.source} />
+            <div className="flex flex-wrap items-center gap-2"><FreshnessBadge freshness={selected.freshness} /><DataTypeBadge type={selected.data_type} /><ConfidenceBadge value={selected.confidence} /></div>
+          </div>
+          <div className="flex gap-2 pt-1">
+            <button data-testid="risk-detail-lineage" onClick={() => setLineage(selected.ref)} className="flex-1 text-xs px-3 py-2 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 transition-colors">Full lineage</button>
+            <button data-testid="risk-detail-evidence" onClick={() => setEvidence(selected.ref)} className="flex-1 text-xs px-3 py-2 rounded-md bg-secondary/60 hover:bg-secondary transition-colors">Evidence</button>
+          </div>
+        </aside>
+      )}
+      </div>
+
 
       <EvidenceLineageModal riskRef={lineage} onClose={() => setLineage(null)} />
       <EvidenceModal kind="risk" refId={evidence} onClose={() => setEvidence(null)} />

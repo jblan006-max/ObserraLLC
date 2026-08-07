@@ -33,7 +33,23 @@ export default function AIAgents() {
         </div>
       </div>
 
-      <div className="bg-card fact-border rounded-xl overflow-x-auto">
+      <div className="md:hidden space-y-3" data-testid="agent-cards-mobile">
+        {data.agents.map((a) => (
+          <div key={a.ref} data-testid={`agent-card-${a.ref}`} onClick={() => setActive(a)}
+            className="bg-card fact-border rounded-xl p-4 space-y-2 active:bg-secondary/40 transition-colors">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0"><div className="font-mono text-[11px] text-ai">{a.ref}</div><div className="font-medium text-sm">{a.name}</div><div className="text-[11px] text-muted-foreground font-mono">{a.owner} · {a.model}</div></div>
+              <span className="text-[10px] px-2 py-0.5 rounded-sm font-mono font-bold shrink-0" style={{ background: `hsl(${RISK_COLOR[a.risk_class]} / 0.15)`, color: `hsl(${RISK_COLOR[a.risk_class]})` }}>{a.risk_class}</span>
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="capitalize font-mono" style={{ color: `hsl(${STATUS_COLOR[a.status]})` }}>{a.status}</span>
+              <span className="text-muted-foreground">Red-team: {a.last_redteam ? `${a.last_redteam.score}%` : "Not run"}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="hidden md:block bg-card fact-border rounded-xl overflow-x-auto">
         <table className="w-full text-sm min-w-[820px]">
           <thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border">
             <tr>
