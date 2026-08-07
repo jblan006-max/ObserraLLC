@@ -62,10 +62,18 @@ export const OnboardingTour = () => {
     };
   }, [spotlight, step, measure]);
 
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
   const finish = () => {
     if (key) localStorage.setItem(key, "1");
     setOpen(false);
   };
+  const dismissTemporary = () => setOpen(false);
 
   if (!open) return null;
   const s = steps[step];
@@ -82,11 +90,11 @@ export const OnboardingTour = () => {
           <div className="fixed tour-pulse-ring" style={{ ...hole, pointerEvents: "none" }} />
         </>
       ) : (
-        <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={finish} />
+        <div className="absolute inset-0 bg-background/80 backdrop-blur-sm" onClick={dismissTemporary} />
       )}
 
       <div className="absolute inset-0 flex items-center justify-center p-4 pointer-events-none">
-        <div className="pointer-events-auto w-full max-w-md rounded-2xl border border-border bg-card shadow-2xl rise overflow-hidden">
+        <div role="dialog" aria-modal="true" aria-labelledby="obserra-tour-title" className="pointer-events-auto w-full max-w-md rounded-2xl border border-border bg-card shadow-2xl rise overflow-hidden">
           <div className="h-1 w-full bg-secondary/60">
             <div className="h-full bg-ai transition-all duration-300" style={{ width: `${((step + 1) / steps.length) * 100}%` }} />
           </div>
@@ -97,7 +105,7 @@ export const OnboardingTour = () => {
             <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground mb-1">
               Step {step + 1} of {steps.length} · {isOps ? "Operational" : "Executive"} tour
             </div>
-            <h2 data-testid="tour-title" className="font-head font-black text-2xl mb-3">{s.title}</h2>
+            <h2 id="obserra-tour-title" data-testid="tour-title" className="font-head font-black text-2xl mb-3">{s.title}</h2>
             <p className="text-sm text-muted-foreground leading-relaxed">{s.body}</p>
 
             <div className="flex items-center gap-2 mt-6">

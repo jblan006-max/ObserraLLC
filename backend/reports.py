@@ -10,7 +10,7 @@ from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Image as RLImage
 
 from db import db
 from auth import get_current_user
@@ -18,6 +18,10 @@ from auth import get_current_user
 logger = logging.getLogger(__name__)
 reports_router = APIRouter()
 EMAIL_BASE_URL = "https://integrations.emergentagent.com"
+_ASSETS = os.path.join(os.path.dirname(__file__), "assets")
+_BADGE = os.path.join(_ASSETS, "brand-badge.png")
+_WATERMARK = os.path.join(_ASSETS, "brand-watermark.png")
+BRAND_IMG_URL = "https://customer-assets-39nsmqrw.emergentagent.net/job_cyber-dashboard-48/artifacts/5h8fj2gx_image.png"
 
 
 class ReportBody(BaseModel):
@@ -33,9 +37,14 @@ def _build_pdf(report: str, title: str) -> io.BytesIO:
     body = ParagraphStyle("b", parent=styles["BodyText"], fontSize=10, leading=15)
     title_s = ParagraphStyle("t", parent=styles["Title"], fontSize=18, textColor=colors.HexColor("#0f1e3d"))
     sub = ParagraphStyle("sub", parent=body, textColor=colors.grey)
-    story = [Paragraph(title, title_s),
-             Paragraph("Obserra — Executive Protection &amp; Intelligence LLC", sub),
-             HRFlowable(width="100%", color=colors.HexColor("#1b3a8a")), Spacer(1, 10)]
+    story = []
+    if os.path.exists(_BADGE):
+        badge = RLImage(_BADGE, width=0.6 * inch, height=0.6 * inch)
+        badge.hAlign = "LEFT"
+        story += [badge, Spacer(1, 6)]
+    story += [Paragraph(title, title_s),
+              Paragraph("Obserra — Executive Protection &amp; Intelligence LLC", sub),
+              HRFlowable(width="100%", color=colors.HexColor("#1b3a8a")), Spacer(1, 10)]
     for line in report.split("\n"):
         line = line.strip()
         if not line:
@@ -49,7 +58,19 @@ def _build_pdf(report: str, title: str) -> io.BytesIO:
     story.append(Spacer(1, 16))
     story.append(Paragraph("Confidential — decision-support estimates; not legal, financial, regulatory, or security guarantees.",
                            ParagraphStyle("d", parent=body, fontSize=7, textColor=colors.grey)))
-    doc.build(story)
+    def _brand_page(canvas, _doc):
+        pw, ph = LETTER
+        if os.path.exists(_WATERMARK):
+            wm_w = 4.6 * inch
+            wm_h = wm_w * 530.0 / 890.0
+            canvas.drawImage(_WATERMARK, (pw - wm_w) / 2, (ph - wm_h) / 2,
+                             width=wm_w, height=wm_h, mask="auto", preserveAspectRatio=True)
+        canvas.saveState()
+        canvas.setFont("Helvetica", 7)
+        canvas.setFillColor(colors.grey)
+        canvas.drawCentredString(pw / 2, 0.5 * inch, "Obserra — Executive Protection & Intelligence LLC  ·  Confidential")
+        canvas.restoreState()
+    doc.build(story, onFirstPage=_brand_page, onLaterPages=_brand_page)
     buf.seek(0)
     return buf
 
@@ -69,6 +90,7 @@ def _report_html(report: str, title: str) -> str:
     inner = "".join(rows)
     return (f'<table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:auto;background:#ffffff">'
             f'<tr><td style="padding:24px">'
+            f'<img src="{BRAND_IMG_URL}" width="48" height="48" alt="Obserra" style="display:block;border-radius:10px;margin-bottom:10px" />'
             f'<div style="font:800 20px Arial;color:#0f1e3d">{title}</div>'
             f'<div style="font:400 12px Arial;color:#6b7280;margin-bottom:12px">Obserra — Executive Protection &amp; Intelligence LLC</div>'
             f'<table width="100%">{inner}</table>'
