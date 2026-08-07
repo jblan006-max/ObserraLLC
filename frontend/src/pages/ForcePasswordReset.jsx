@@ -15,7 +15,7 @@ export default function ForcePasswordReset() {
   const submit = async (e) => {
     e.preventDefault(); setErr("");
     if (next !== confirm) { setErr("New passwords do not match"); return; }
-    if (next.length < 8) { setErr("New password must be at least 8 characters"); return; }
+    if (next.length < 15) { setErr("New password must be at least 15 characters"); return; }
     setBusy(true);
     try {
       await api.post("/auth/change-password", { current_password: current, new_password: next });
@@ -35,6 +35,7 @@ export default function ForcePasswordReset() {
         <form onSubmit={submit} data-testid="force-reset-form" className="space-y-4">
           <Field label="Temporary password" testid="fr-current" value={current} onChange={(e) => setCurrent(e.target.value)} />
           <Field label="New password" testid="fr-new" value={next} onChange={(e) => setNext(e.target.value)} />
+          <p data-testid="fr-password-hint" className="text-[11px] text-muted-foreground -mt-2">Minimum 15 characters, with an uppercase, lowercase, number and symbol.</p>
           <Field label="Confirm new password" testid="fr-confirm" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
           {err && <p data-testid="fr-error" className="text-xs text-crit">{err}</p>}
           <button data-testid="fr-submit" disabled={busy} type="submit"

@@ -3,11 +3,20 @@ import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useUrlState } from "@/hooks/useUrlState";
 import { toast } from "sonner";
-import { Users, UserPlus, Loader2, Trash2, Copy, KeyRound, Search } from "lucide-react";
+import { Users, UserPlus, Loader2, Trash2, Copy, KeyRound, Search, SlidersHorizontal } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const ROLE_LABEL = { admin: "Admin", executive: "Executive", operational: "Operational" };
 const ROLE_COLOR = { admin: "225 70% 60%", executive: "142 70% 45%", operational: "190 90% 50%" };
+const CATS = [
+  { id: "ai_governance", name: "AI Governance" },
+  { id: "cyber_risk", name: "Cyber Risk" },
+  { id: "third_party_risk", name: "Third-Party Risk" },
+  { id: "asset_intelligence", name: "Asset Intelligence" },
+  { id: "audit_evidence", name: "Audit & Evidence" },
+  { id: "reporting_board", name: "Reporting & Board" },
+];
+const accessLabel = (m) => (m.module_access == null ? "All access" : `${m.module_access.length} categor${m.module_access.length === 1 ? "y" : "ies"}`);
 
 export default function Team() {
   const [members, setMembers] = useState(null);
@@ -41,6 +50,26 @@ export default function Team() {
   };
 
   const copy = (txt) => { navigator.clipboard.writeText(txt); toast.success("Copied"); };
+
+  const [accessFor, setAccessFor] = useState(null);
+  const [accessSel, setAccessSel] = useState([]);
+  const [accessAll, setAccessAll] = useState(true);
+  const [accessBusy, setAccessBusy] = useState(false);
+  const openAccess = (m) => {
+    setAccessFor(m);
+    setAccessAll(m.module_access == null);
+    setAccessSel(m.module_access || CATS.map((c) => c.id));
+  };
+  const toggleCat = (id) => setAccessSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+  const saveAccess = async () => {
+    setAccessBusy(true);
+    try {
+      await api.post(`/auth/team/${accessFor.id}/access`, { module_access: accessAll ? null : accessSel });
+      toast.success(`Access updated for ${accessFor.email}`);
+      setAccessFor(null); load();
+    } catch (e2) { toast.error(e2.response?.data?.detail || "Could not update access"); }
+    setAccessBusy(false);
+  };
 
   return (
     <div className="rise space-y-6 max-w-4xl">
@@ -107,15 +136,19 @@ export default function Team() {
                 <div className="text-xs text-muted-foreground font-mono truncate">{m.email}</div>
                 <span className="inline-block mt-1 px-2 py-0.5 rounded-sm text-[10px] font-mono font-bold" style={{ background: `hsl(${ROLE_COLOR[m.role]} / 0.15)`, color: `hsl(${ROLE_COLOR[m.role]})` }}>{ROLE_LABEL[m.role] || m.role}</span>
               </div>
-              <button data-testid={`remove-m-${m.id}`} onClick={() => remove(m.id, m.email)}
-                className="shrink-0 inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md text-muted-foreground hover:text-crit hover:bg-crit/10 transition-colors"><Trash2 className="w-3.5 h-3.5" /> Remove</button>
+              <div className="shrink-0 flex flex-col gap-1">
+                <button data-testid={`access-m-${m.id}`} onClick={() => openAccess(m)}
+                  className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md text-muted-foreground hover:text-ai hover:bg-ai/10 transition-colors"><SlidersHorizontal className="w-3.5 h-3.5" /> Access</button>
+                <button data-testid={`remove-m-${m.id}`} onClick={() => remove(m.id, m.email)}
+                  className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md text-muted-foreground hover:text-crit hover:bg-crit/10 transition-colors"><Trash2 className="w-3.5 h-3.5" /> Remove</button>
+              </div>
             </div>
           ))}
         </div>
         <div className="hidden md:block bg-card fact-border rounded-xl overflow-x-auto">
           <table className="w-full text-sm min-w-[560px]">
             <thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border">
-              <tr><th className="text-left px-4 py-3">Member</th><th className="text-left px-4 py-3">Email</th><th className="text-left px-4 py-3">Role</th><th className="text-right px-4 py-3">Actions</th></tr>
+              <tr><th className="text-left px-4 py-3">Member</th><th className="text-left px-4 py-3">Email</th><th className="text-left px-4 py-3">Role</th><th className="text-left px-4 py-3">Access</th><th className="text-right px-4 py-3">Actions</th></tr>
             </thead>
             <tbody>
               {shownMembers.map((m) => (
@@ -124,6 +157,10 @@ export default function Team() {
                   <td className="px-4 py-3 text-muted-foreground font-mono text-xs">{m.email}</td>
                   <td className="px-4 py-3">
                     <span className="px-2 py-0.5 rounded-sm text-[10px] font-mono font-bold" style={{ background: `hsl(${ROLE_COLOR[m.role]} / 0.15)`, color: `hsl(${ROLE_COLOR[m.role]})` }}>{ROLE_LABEL[m.role] || m.role}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    <button data-testid={`access-${m.id}`} onClick={() => openAccess(m)}
+                      className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border border-border text-muted-foreground hover:text-ai hover:border-ai/40 transition-colors"><SlidersHorizontal className="w-3.5 h-3.5" /> {accessLabel(m)}</button>
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button data-testid={`remove-${m.id}`} onClick={() => remove(m.id, m.email)}
@@ -135,6 +172,37 @@ export default function Team() {
           </table>
         </div>
         </>
+      )}
+
+      {accessFor && (
+        <div data-testid="access-modal" className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={() => setAccessFor(null)} />
+          <div className="relative w-full max-w-md bg-card fact-border rounded-xl p-6 rise space-y-4">
+            <div>
+              <h3 className="font-head font-black text-lg flex items-center gap-2"><SlidersHorizontal className="w-5 h-5 text-ai" /> Dashboard access</h3>
+              <p className="text-xs text-muted-foreground mt-1 font-mono truncate">{accessFor.email}</p>
+            </div>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input data-testid="access-all-toggle" type="checkbox" checked={accessAll} onChange={(e) => setAccessAll(e.target.checked)} className="accent-primary w-4 h-4" />
+              <span>All access <span className="text-muted-foreground">(no restriction)</span></span>
+            </label>
+            <div className={`space-y-2 pl-1 ${accessAll ? "opacity-40 pointer-events-none" : ""}`}>
+              {CATS.map((c) => (
+                <label key={c.id} data-testid={`access-cat-${c.id}`} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={accessSel.includes(c.id)} onChange={() => toggleCat(c.id)} className="accent-primary w-4 h-4" />
+                  <span>{c.name}</span>
+                </label>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={() => setAccessFor(null)} className="px-4 py-2 rounded-md text-sm text-muted-foreground hover:bg-secondary/60 transition-colors">Cancel</button>
+              <button data-testid="access-save" disabled={accessBusy} onClick={saveAccess}
+                className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
+                {accessBusy && <Loader2 className="w-4 h-4 animate-spin" />} Save access
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

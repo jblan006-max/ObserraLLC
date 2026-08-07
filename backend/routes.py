@@ -355,12 +355,19 @@ async def subscription(user: dict = Depends(get_current_user)):
     if is_owner(user):
         return {"plan": "enterprise", "status": "active", "active": True, "trial_end": None,
                 "current_period_end": None, "billing_interval": "year",
-                "entitlements": ALL_ENTITLEMENTS, "org_name": org.get("name")}
-    return {"plan": org.get("plan"), "status": org.get("subscription_status"),
+                "entitlements": ALL_ENTITLEMENTS, "restricted": False, "org_name": org.get("name")}
+    plan = org.get("plan")
+    org_ents = ALL_ENTITLEMENTS if plan == "enterprise" else list(org.get("entitlements", []))
+    ma = user.get("module_access")
+    ents, restricted = org_ents, False
+    if user.get("role") != "admin" and isinstance(ma, list):
+        ents = [e for e in org_ents if e in ma]
+        restricted = True
+    return {"plan": plan, "status": org.get("subscription_status"),
             "active": subscription_active(org), "trial_end": org.get("trial_end"),
             "current_period_end": org.get("current_period_end"),
             "billing_interval": org.get("billing_interval"),
-            "entitlements": org.get("entitlements", []), "org_name": org.get("name")}
+            "entitlements": ents, "restricted": restricted, "org_name": org.get("name")}
 
 
 _ASSET_SEED = [

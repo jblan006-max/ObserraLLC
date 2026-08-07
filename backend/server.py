@@ -24,6 +24,7 @@ from cyber import cyber_router
 from studio import studio_router
 from metrics import metrics_router
 from social_auth import social_router
+from sso_config import sso_config_router
 from push import push_router
 from deploy import deploy_router
 from starlette.middleware.sessions import SessionMiddleware
@@ -49,6 +50,7 @@ app.include_router(studio_router)
 app.include_router(live_connectors_router)
 app.include_router(metrics_router)
 app.include_router(social_router)
+app.include_router(sso_config_router)
 app.include_router(push_router)
 app.include_router(deploy_router)
 

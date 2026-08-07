@@ -95,6 +95,9 @@ export default function Auth() {
             )}
             <Field label="Work email" type="email" testid="auth-email" value={form.email} onChange={set("email")} required />
             <Field label="Password" type="password" testid="auth-password" value={form.password} onChange={set("password")} required />
+            {tab === "register" && (
+              <p data-testid="password-hint" className="text-[11px] text-muted-foreground -mt-1">Minimum 15 characters, with an uppercase, lowercase, number and symbol.</p>
+            )}
 
             {err && <p data-testid="auth-error" className="text-xs text-crit">{err}</p>}
 

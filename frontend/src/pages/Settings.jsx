@@ -4,6 +4,7 @@ import { api, API } from "@/lib/api";
 import { toast } from "sonner";
 import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw, Image as ImageIcon, Server, Package, FileText, RefreshCw, Send, Bookmark, X, Lock } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { SsoCard } from "@/components/SsoCard";
 
 const OPTIONS = [
   { value: "weekly", label: "Weekly", desc: "A digest every Monday morning" },
@@ -330,6 +331,8 @@ export default function Settings() {
           </div>
         </div>
       )}
+
+      {isAdmin && <SsoCard />}
 
       {isAdmin && (
         <div className="bg-card fact-border rounded-xl p-6 space-y-4" data-testid="evidence-binder-settings">

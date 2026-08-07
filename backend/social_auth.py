@@ -20,19 +20,12 @@ from fastapi.responses import RedirectResponse
 
 from db import db
 from auth import create_access_token, create_refresh_token, set_auth_cookies, _log_audit
+from sso_config import resolve_apple, resolve_oidc
 
 social_router = APIRouter(prefix="/api/auth")
 
 FRONTEND = os.environ.get("FRONTEND_URL", "http://localhost:3000")
 APP_BASE = os.environ.get("APP_BASE_URL", "")
-
-
-def apple_configured():
-    return all(os.environ.get(k) for k in ("APPLE_TEAM_ID", "APPLE_SERVICE_ID", "APPLE_KEY_ID", "APPLE_PRIVATE_KEY_P8"))
-
-
-def oidc_configured():
-    return bool(os.environ.get("OIDC_DISCOVERY_URL") and os.environ.get("OIDC_CLIENT_ID") and os.environ.get("OIDC_CLIENT_SECRET"))
 
 
 async def _jit_provision(provider, email, name, subject):
@@ -76,13 +69,13 @@ async def _finish(provider, subject, email, name=None, jit=False):
 
 
 # ---------- Sign in with Apple (web) ----------
-def _apple_client_secret():
-    key = os.environ["APPLE_PRIVATE_KEY_P8"].replace("\\n", "\n")
+def _apple_client_secret(cfg):
+    key = cfg["p8"].replace("\\n", "\n")
     now = int(time.time())
     return jwt.encode(
-        {"iss": os.environ["APPLE_TEAM_ID"], "iat": now, "exp": now + 15552000,
-         "aud": "https://appleid.apple.com", "sub": os.environ["APPLE_SERVICE_ID"]},
-        key, algorithm="ES256", headers={"kid": os.environ["APPLE_KEY_ID"]})
+        {"iss": cfg["team_id"], "iat": now, "exp": now + 15552000,
+         "aud": "https://appleid.apple.com", "sub": cfg["service_id"]},
+        key, algorithm="ES256", headers={"kid": cfg["key_id"]})
 
 
 def _apple_redirect():
@@ -91,19 +84,23 @@ def _apple_redirect():
 
 @social_router.get("/apple")
 async def apple_start(request: Request):
-    if not apple_configured():
+    cfg = await resolve_apple()
+    if not cfg:
         raise HTTPException(404, "Apple Sign In is not configured")
     state, nonce = secrets.token_urlsafe(24), secrets.token_urlsafe(24)
     request.session["apple_state"] = state
     request.session["apple_nonce"] = nonce
     q = {"response_type": "code id_token", "response_mode": "form_post",
-         "client_id": os.environ["APPLE_SERVICE_ID"], "redirect_uri": _apple_redirect(),
+         "client_id": cfg["service_id"], "redirect_uri": _apple_redirect(),
          "scope": "name email", "state": state, "nonce": nonce}
     return RedirectResponse("https://appleid.apple.com/auth/authorize?" + urlencode(q))
 
 
 @social_router.post("/apple/callback")
 async def apple_callback(request: Request):
+    cfg = await resolve_apple()
+    if not cfg:
+        raise HTTPException(404, "Apple Sign In is not configured")
     form = await request.form()
     if not secrets.compare_digest(str(form.get("state", "")), request.session.pop("apple_state", "")):
         return RedirectResponse(f"{FRONTEND}/?sso_error=state")
@@ -113,7 +110,7 @@ async def apple_callback(request: Request):
     try:
         signing = PyJWKClient("https://appleid.apple.com/auth/keys").get_signing_key_from_jwt(raw_id).key
         claims = jwt.decode(raw_id, signing, algorithms=["RS256"],
-                            audience=os.environ["APPLE_SERVICE_ID"], issuer="https://appleid.apple.com")
+                            audience=cfg["service_id"], issuer="https://appleid.apple.com")
     except Exception:
         return RedirectResponse(f"{FRONTEND}/?sso_error=apple_verify")
     if claims.get("nonce") != request.session.pop("apple_nonce", None):
@@ -127,19 +124,14 @@ async def apple_callback(request: Request):
 
 
 # ---------- Enterprise SSO (generic OIDC — Okta / Azure AD / Google Workspace) ----------
-_oauth = None
-
-
-def _get_oauth():
-    global _oauth
-    if _oauth is None:
-        from authlib.integrations.starlette_client import OAuth
-        _oauth = OAuth()
-        _oauth.register(
-            "sso", client_id=os.environ["OIDC_CLIENT_ID"], client_secret=os.environ["OIDC_CLIENT_SECRET"],
-            server_metadata_url=os.environ["OIDC_DISCOVERY_URL"],
-            client_kwargs={"scope": "openid email profile"})
-    return _oauth
+def _build_oauth(cfg):
+    from authlib.integrations.starlette_client import OAuth
+    oauth = OAuth()
+    oauth.register(
+        "sso", client_id=cfg["client_id"], client_secret=cfg["client_secret"],
+        server_metadata_url=cfg["discovery_url"],
+        client_kwargs={"scope": "openid email profile"})
+    return oauth
 
 
 def _oidc_redirect():
@@ -148,17 +140,19 @@ def _oidc_redirect():
 
 @social_router.get("/sso")
 async def sso_start(request: Request):
-    if not oidc_configured():
+    cfg = await resolve_oidc()
+    if not cfg:
         raise HTTPException(404, "Enterprise SSO is not configured")
-    return await _get_oauth().sso.authorize_redirect(request, _oidc_redirect())
+    return await _build_oauth(cfg).sso.authorize_redirect(request, _oidc_redirect())
 
 
 @social_router.get("/sso/callback")
 async def sso_callback(request: Request):
-    if not oidc_configured():
+    cfg = await resolve_oidc()
+    if not cfg:
         raise HTTPException(404, "Enterprise SSO is not configured")
     try:
-        token = await _get_oauth().sso.authorize_access_token(request)
+        token = await _build_oauth(cfg).sso.authorize_access_token(request)
     except Exception:
         return RedirectResponse(f"{FRONTEND}/?sso_error=sso")
     claims = token.get("userinfo") or {}

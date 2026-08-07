@@ -10,7 +10,7 @@ import ForcePasswordReset from "@/pages/ForcePasswordReset";
 import { Footer } from "@/components/Footer";
 import {
   LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
-  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone,
+  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight,
 } from "lucide-react";
 
 function DualModeToggle() {
@@ -104,6 +104,14 @@ const CAT_STYLE = {
 };
 
 function SidebarInner({ user, sub, owns, doLogout, onNav, onClose }) {
+  const [collapsed, setCollapsed] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("obserra-nav-collapsed") || "{}"); } catch { return {}; }
+  });
+  const toggle = (key) => setCollapsed((c) => {
+    const next = { ...c, [key]: !c[key] };
+    localStorage.setItem("obserra-nav-collapsed", JSON.stringify(next));
+    return next;
+  });
   return (
     <>
       <div className="flex items-center justify-between px-4 h-16 border-b border-border shrink-0">
@@ -113,35 +121,44 @@ function SidebarInner({ user, sub, owns, doLogout, onNav, onClose }) {
       <nav className="flex-1 p-3 space-y-4 overflow-y-auto">
         {NAV_SECTIONS.filter((s) => !s.admin || user?.role === "admin").map((sec, si) => {
           const cs = sec.cat ? CAT_STYLE[sec.color] : null;
+          const key = sec.section || `s${si}`;
+          const isColl = sec.section ? !!collapsed[key] : false;
+          const Chevron = isColl ? ChevronRight : ChevronDown;
           return (
-            <div key={sec.section || si} className="space-y-1">
+            <div key={key} className="space-y-1">
               {sec.section && (
                 cs ? (
-                  <div className={`flex items-center gap-2 px-3 py-1.5 mb-1 rounded-md border ${cs.border} ${cs.glow}`}>
+                  <button type="button" data-testid={`nav-section-${key.toLowerCase().replace(/ &/g, "").replace(/ /g, "-")}`} onClick={() => toggle(key)}
+                    className={`w-full flex items-center gap-2 px-3 py-1.5 mb-1 rounded-md border ${cs.border} ${cs.glow} transition-colors`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${cs.dot} shadow-[0_0_6px] shadow-current`} />
                     <span className={`text-[11px] font-head font-black uppercase tracking-[0.12em] ${cs.text}`}>{sec.section}</span>
-                  </div>
+                    <Chevron className={`w-3.5 h-3.5 ml-auto ${cs.text}`} />
+                  </button>
                 ) : (
-                  <div className="px-3 pt-1 pb-1 text-[10px] font-mono font-bold uppercase tracking-[0.14em] text-muted-foreground/50">
+                  <button type="button" data-testid={`nav-section-${key.toLowerCase().replace(/ &/g, "").replace(/ /g, "-")}`} onClick={() => toggle(key)}
+                    className="w-full flex items-center px-3 pt-1 pb-1 text-[10px] font-mono font-bold uppercase tracking-[0.14em] text-muted-foreground/50 hover:text-muted-foreground transition-colors">
                     {sec.section}
-                  </div>
+                    <Chevron className="w-3 h-3 ml-auto" />
+                  </button>
                 )
               )}
-              <div className={cs ? `ml-2.5 pl-2 border-l ${cs.border} space-y-1` : "space-y-1"}>
-                {sec.items.map((n) => {
-                  const ent = n.ent ?? sec.ent;
-                  const locked = !owns(ent);
-                  return (
-                    <NavLink key={n.to} to={n.to} end={n.end} onClick={onNav}
-                      data-testid={`nav-${n.label.toLowerCase().replace(/ &/g, "").replace(/ /g, "-")}`}
-                      className={({ isActive }) => `flex items-center justify-between gap-3 px-3 py-2.5 rounded-md text-sm transition-colors duration-200 ${
-                        isActive && !locked ? "bg-primary/15 text-foreground border border-primary/30" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}`}>
-                      <span className="flex items-center gap-3"><n.icon className="w-4 h-4" /> {n.label}</span>
-                      {locked && <Lock className="w-3 h-3 text-muted-foreground" />}
-                    </NavLink>
-                  );
-                })}
-              </div>
+              {!isColl && (
+                <div className={cs ? `ml-2.5 pl-2 border-l ${cs.border} space-y-1` : "space-y-1"}>
+                  {sec.items.map((n) => {
+                    const ent = n.ent ?? sec.ent;
+                    const locked = !owns(ent);
+                    return (
+                      <NavLink key={n.to} to={n.to} end={n.end} onClick={onNav}
+                        data-testid={`nav-${n.label.toLowerCase().replace(/ &/g, "").replace(/ /g, "-")}`}
+                        className={({ isActive }) => `flex items-center justify-between gap-3 px-3 py-2.5 rounded-md text-sm transition-colors duration-200 ${
+                          isActive && !locked ? "bg-primary/15 text-foreground border border-primary/30" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}`}>
+                        <span className="flex items-center gap-3"><n.icon className="w-4 h-4" /> {n.label}</span>
+                        {locked && <Lock className="w-3 h-3 text-muted-foreground" />}
+                      </NavLink>
+                    );
+                  })}
+                </div>
+              )}
             </div>
           );
         })}
@@ -185,7 +202,7 @@ export default function AppShell() {
 
   const doLogout = async () => { await logout(); navigate("/"); };
   const ents = sub?.entitlements || [];
-  const enterprise = sub?.plan === "enterprise";
+  const enterprise = !sub?.restricted && sub?.plan === "enterprise";
   const owns = (ent) => !ent || enterprise || ents.includes(ent);
   const allowedWhenInactive = ["/app/billing", "/app/marketplace"];
   const inactive = (sub && !sub.active) || paywall;

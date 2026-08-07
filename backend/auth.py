@@ -32,11 +32,11 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 
 # Password policy — NIST 800-63B / ISO 27001 A.5.17 / SOC 2 CC6.1 alignment.
-PASSWORD_POLICY_MSG = "at least 12 characters and include an uppercase letter, a lowercase letter, a number and a symbol"
+PASSWORD_POLICY_MSG = "at least 15 characters and include an uppercase letter, a lowercase letter, a number and a symbol"
 
 
 def validate_password_policy(pw: str):
-    if (len(pw) < 12 or not re.search(r"[A-Z]", pw) or not re.search(r"[a-z]", pw)
+    if (len(pw) < 15 or not re.search(r"[A-Z]", pw) or not re.search(r"[a-z]", pw)
             or not re.search(r"\d", pw) or not re.search(r"[^A-Za-z0-9]", pw)):
         raise HTTPException(status_code=400, detail=f"Password must be {PASSWORD_POLICY_MSG}.")
 
@@ -249,9 +249,10 @@ async def me(user: dict = Depends(get_current_user)):
 
 @auth_router.get("/providers")
 async def auth_providers():
-    """Which sign-in methods are configured. Provider buttons render disabled until true."""
-    apple = all(os.environ.get(k) for k in ("APPLE_TEAM_ID", "APPLE_SERVICE_ID", "APPLE_KEY_ID", "APPLE_PRIVATE_KEY_P8"))
-    sso = bool(os.environ.get("OIDC_ISSUER") or os.environ.get("OIDC_DISCOVERY_URL") or os.environ.get("SSO_METADATA_URL"))
+    """Which sign-in methods are configured (DB self-service config, env fallback)."""
+    from sso_config import resolve_apple, resolve_oidc
+    apple = bool(await resolve_apple())
+    sso = bool(await resolve_oidc())
     cfg = await db.app_config.find_one({"_id": "auth_ui"}) or {}
     return {"google": True, "passwordless": True, "apple": apple, "sso": sso, "hide_social": bool(cfg.get("hide_social"))}
 
@@ -349,12 +350,35 @@ class PreferencesBody(BaseModel):
     digest_cadence: str
 
 
+CATEGORY_IDS = ["ai_governance", "cyber_risk", "third_party_risk", "asset_intelligence", "audit_evidence", "reporting_board"]
+
+
+class AccessBody(BaseModel):
+    module_access: list[str] | None = None
+
+
 @auth_router.get("/team/members")
 async def team_members(admin: dict = Depends(require_roles("admin"))):
     members = await db.users.find({"org_id": admin["org_id"]}).sort("created_at", 1).to_list(500)
     return [{"id": str(m["_id"]), "email": m["email"], "name": m.get("name"),
              "role": m.get("role"), "created_at": m.get("created_at"),
-             "invited_by": m.get("invited_by")} for m in members]
+             "invited_by": m.get("invited_by"), "module_access": m.get("module_access")} for m in members]
+
+
+@auth_router.post("/team/{user_id}/access")
+async def set_member_access(user_id: str, body: AccessBody, admin: dict = Depends(require_roles("admin"))):
+    """Grant a teammate access to specific dashboard categories (None = all org access)."""
+    member = await db.users.find_one({"_id": ObjectId(user_id), "org_id": admin["org_id"]})
+    if not member:
+        raise HTTPException(status_code=404, detail="Member not found")
+    ma = body.module_access
+    if ma is not None:
+        ma = [c for c in ma if c in CATEGORY_IDS]
+    op = {"$set": {"module_access": ma}} if ma is not None else {"$unset": {"module_access": ""}}
+    await db.users.update_one({"_id": ObjectId(user_id)}, op)
+    await _log_audit(admin["org_id"], admin["email"], "team.access",
+                     f"Set dashboard access for {member['email']}: {ma if ma is not None else 'all'}")
+    return {"ok": True, "module_access": ma}
 
 
 @auth_router.post("/team/invite")
