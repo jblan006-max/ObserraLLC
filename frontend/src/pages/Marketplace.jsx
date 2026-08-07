@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Loader2, Check, Lock, Store } from "lucide-react";
+import { Loader2, Check, Lock, Store, Sparkles } from "lucide-react";
 
 export default function Marketplace() {
   const [packs, setPacks] = useState(null);
@@ -53,6 +53,7 @@ export default function Marketplace() {
             <div key={p.id} data-testid={`module-${p.id}`}
               onClick={() => toggle(p)}
               className={`rounded-xl p-6 flex flex-col cursor-pointer transition-colors ${p.owned ? "bg-card fact-border cursor-default" : sel ? "border-2 border-ai bg-ai/10" : "ai-border bg-ai/5 hover:bg-ai/10"}`}>
+              {p.entitlement === "cyber_risk" && !p.owned && <div className="text-[9px] font-mono uppercase tracking-widest text-ai mb-1 flex items-center gap-1"><Sparkles className="w-3 h-3" /> Most popular</div>}
               <div className="flex items-center justify-between mb-2">
                 <h2 className="font-head font-bold text-lg">{p.name}</h2>
                 {p.owned ? <span className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-low/15 text-low">ACTIVE</span>
@@ -65,7 +66,7 @@ export default function Marketplace() {
               </div>
               <div className="mt-4 text-sm font-head font-bold">
                 {p.owned ? <span className="text-low flex items-center gap-1.5"><Check className="w-4 h-4" /> Activated</span>
-                  : <span className="text-ai">${p[interval].price}<span className="text-muted-foreground font-normal">/{interval === "yearly" ? "yr" : "mo"}</span></span>}
+                  : <span className="text-ai">${p[interval].price}<span className="text-muted-foreground font-normal">/{interval === "yearly" ? "yr" : "mo"}</span>{interval === "yearly" && <span className="ml-2 text-[10px] font-mono text-low">save ${(p.monthly.price * 12 - p.yearly.price).toLocaleString()}</span>}</span>}
               </div>
             </div>
           );

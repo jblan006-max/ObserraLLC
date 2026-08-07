@@ -2,15 +2,25 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { Loader2, Check, Sparkle, Clock } from "lucide-react";
+import { Loader2, Check, Sparkle, Clock, ExternalLink } from "lucide-react";
 
 export default function Billing() {
   const { sub, refreshSub } = useAuth();
   const [plans, setPlans] = useState(null);
   const [interval, setIntervalSel] = useState("monthly");
   const [busy, setBusy] = useState("");
+  const [mods, setMods] = useState([]);
+  const [portalBusy, setPortalBusy] = useState(false);
 
-  useEffect(() => { api.get("/billing/plans").then((r) => setPlans(r.data)); refreshSub?.(); }, []);
+  useEffect(() => { api.get("/billing/plans").then((r) => setPlans(r.data)); api.get("/modules").then((r) => setMods(r.data || [])); refreshSub?.(); }, []);
+
+  const openPortal = async () => {
+    setPortalBusy(true);
+    try {
+      const { data } = await api.post("/billing/portal", { origin_url: window.location.origin });
+      window.location.href = data.portal_url;
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not open the billing portal"); setPortalBusy(false); }
+  };
 
   const checkout = async (lookup_key) => {
     setBusy(lookup_key);

@@ -120,7 +120,19 @@ async def modules(user: dict = Depends(get_current_user)):
     org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])})
     ents = set(org.get("entitlements", []))
     enterprise = org.get("plan") == "enterprise"
-    return [{**p, "owned": bool(enterprise or p["entitlement"] in ents)} for p in PACKS]
+    cfg = await db.app_config.find_one({"_id": "pricing"}) or {}
+    ov = cfg.get("packs", {})
+    out = []
+    for p in PACKS:
+        pp = {**p, "monthly": {**p["monthly"]}, "yearly": {**p["yearly"]}}
+        o = ov.get(p["id"]) or {}
+        if o.get("monthly"):
+            pp["monthly"]["price"] = o["monthly"]
+        if o.get("yearly"):
+            pp["yearly"]["price"] = o["yearly"]
+        pp["owned"] = bool(enterprise or p["entitlement"] in ents)
+        out.append(pp)
+    return out
 
 
 class CheckoutRequest(BaseModel):
@@ -251,6 +263,11 @@ async def get_status(session_id: str):
                     {"session_id": session_id, "payment_status": {"$ne": "paid"}},
                     {"$set": {"status": "completed", "payment_status": "paid", "updated_at": datetime.now(timezone.utc)}})
                 await _grant(record)
+                try:
+                    if s.get("customer"):
+                        await db.organizations.update_one({"_id": ObjectId(record["org_id"])}, {"$set": {"stripe_customer_id": s["customer"]}})
+                except Exception:
+                    pass
                 record = await db.payment_transactions.find_one({"session_id": session_id})
         except stripe.error.StripeError:
             pass
@@ -274,3 +291,71 @@ async def stripe_webhook(request: Request):
         if rec:
             await _grant(rec)
     return {"status": "ok"}
+
+
+class PortalReq(BaseModel):
+    origin_url: str
+
+
+@payments_router.post("/api/billing/portal")
+async def billing_portal(req: PortalReq, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can manage the subscription")
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])})
+    cust = (org or {}).get("stripe_customer_id")
+    if not cust:
+        tx = await db.payment_transactions.find_one(
+            {"org_id": user["org_id"], "payment_status": "paid"}, sort=[("updated_at", -1)])
+        if tx:
+            try:
+                s = stripe.checkout.Session.retrieve(tx["session_id"])
+                cust = s.get("customer")
+                if cust:
+                    await db.organizations.update_one({"_id": ObjectId(user["org_id"])}, {"$set": {"stripe_customer_id": cust}})
+            except stripe.error.StripeError:
+                pass
+    if not cust:
+        raise HTTPException(400, "No active subscription to manage yet — purchase an add-on or plan first")
+    session = stripe.billing_portal.Session.create(customer=cust, return_url=f"{req.origin_url}/app/billing")
+    return {"portal_url": session.url}
+
+
+class PricingBody(BaseModel):
+    prices: dict
+
+
+@payments_router.get("/api/admin/pricing")
+async def get_pricing(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    cfg = await db.app_config.find_one({"_id": "pricing"}) or {}
+    ov = cfg.get("packs", {})
+    return [{"id": p["id"], "name": p["name"],
+             "monthly": (ov.get(p["id"], {}).get("monthly") or p["monthly"]["price"]),
+             "yearly": (ov.get(p["id"], {}).get("yearly") or p["yearly"]["price"])} for p in PACKS]
+
+
+def _set_price(lookup_key: str, amount_cents: int, interval: str, product_name: str):
+    existing = stripe.Price.list(lookup_keys=[lookup_key], active=True, limit=1).data
+    product = existing[0].product if existing else stripe.Product.create(name=product_name).id
+    stripe.Price.create(unit_amount=int(amount_cents), currency="usd", recurring={"interval": interval},
+                        product=product, lookup_key=lookup_key, transfer_lookup_key=True)
+
+
+@payments_router.put("/api/admin/pricing")
+async def set_pricing(body: PricingBody, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    packs_by_id = {p["id"]: p for p in PACKS}
+    store = {}
+    for pid, vals in (body.prices or {}).items():
+        p = packs_by_id.get(pid)
+        if not p:
+            continue
+        m = int(vals.get("monthly") or p["monthly"]["price"])
+        y = int(vals.get("yearly") or p["yearly"]["price"])
+        _set_price(p["monthly"]["lookup_key"], m * 100, "month", p["name"] + " (Monthly)")
+        _set_price(p["yearly"]["lookup_key"], y * 100, "year", p["name"] + " (Yearly)")
+        store[pid] = {"monthly": m, "yearly": y}
+    await db.app_config.update_one({"_id": "pricing"}, {"$set": {"packs": store}}, upsert=True)
+    return {"ok": True, "count": len(store)}

@@ -147,6 +147,20 @@ export default function Settings() {
     } catch { toast.error("Could not update login screen"); setHideSocial(!val); }
     setAuthBusy(false);
   };
+  const [pricing, setPricing] = useState([]);
+  const [priceBusy, setPriceBusy] = useState(false);
+  useEffect(() => { if (!isAdmin) return; api.get("/admin/pricing").then((r) => setPricing(r.data || [])).catch(() => {}); }, [isAdmin]);
+  const setPrice = (id, field, val) => setPricing((ps) => ps.map((p) => p.id === id ? { ...p, [field]: val } : p));
+  const savePricing = async () => {
+    setPriceBusy(true);
+    try {
+      const prices = {};
+      pricing.forEach((p) => { prices[p.id] = { monthly: Number(p.monthly), yearly: Number(p.yearly) }; });
+      const { data } = await api.put("/admin/pricing", { prices });
+      toast.success(`Updated pricing for ${data.count} pack(s)`);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not update pricing"); }
+    setPriceBusy(false);
+  };
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -281,6 +295,26 @@ export default function Settings() {
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {isAdmin && pricing.length > 0 && (
+        <div className="bg-card fact-border rounded-xl p-6 space-y-4" data-testid="pricing-settings">
+          <div className="flex items-center gap-2"><Package className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Add-on Pricing</h2></div>
+          <p className="text-xs text-muted-foreground">Set the monthly &amp; yearly price (USD) for each add-on pack. Saving updates the live Stripe prices — new checkouts are charged the new amount immediately.</p>
+          <div className="space-y-2">
+            {pricing.map((p) => (
+              <div key={p.id} data-testid={`pricing-row-${p.id}`} className="flex flex-wrap items-center gap-2">
+                <span className="text-sm font-medium w-44 shrink-0 truncate">{p.name}</span>
+                <label className="text-xs text-muted-foreground">$/mo <input data-testid={`price-monthly-${p.id}`} type="number" min="0" value={p.monthly} onChange={(e) => setPrice(p.id, "monthly", e.target.value)} className="ml-1 w-24 bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary" /></label>
+                <label className="text-xs text-muted-foreground">$/yr <input data-testid={`price-yearly-${p.id}`} type="number" min="0" value={p.yearly} onChange={(e) => setPrice(p.id, "yearly", e.target.value)} className="ml-1 w-24 bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary" /></label>
+              </div>
+            ))}
+          </div>
+          <button data-testid="save-pricing" disabled={priceBusy} onClick={savePricing}
+            className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
+            {priceBusy && <Loader2 className="w-4 h-4 animate-spin" />} Save pricing
+          </button>
         </div>
       )}
 

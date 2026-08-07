@@ -76,6 +76,7 @@ export const OnboardingTour = () => {
 
   const finish = () => {
     if (key) localStorage.setItem(key, "1");
+    try { window.dispatchEvent(new Event("obserra-tour-finished")); } catch (e) {}
     setOpen(false);
   };
   const dismissTemporary = () => setOpen(false);

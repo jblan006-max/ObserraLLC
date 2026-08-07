@@ -4,6 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { AIAdvisor } from "@/components/AIAdvisor";
 import { OnboardingTour } from "@/components/OnboardingTour";
 import { LockedGate } from "@/components/LockedGate";
+import { FirstRunWizard } from "@/components/FirstRunWizard";
 import { NotificationBell } from "@/components/NotificationBell";
 import ForcePasswordReset from "@/pages/ForcePasswordReset";
 import { Footer } from "@/components/Footer";
@@ -193,6 +194,7 @@ export default function AppShell() {
 
       <AIAdvisor />
       <OnboardingTour />
+      <FirstRunWizard />
     </div>
   );
 }
