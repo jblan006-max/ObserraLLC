@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
-import { X, FileText, Loader2, Download, Sparkle, Mail, MessageSquare, Sun, Moon, Presentation } from "lucide-react";
-import { api } from "@/lib/api";
+import { X, FileText, Loader2, Download, Sparkle, Mail, MessageSquare, Sun, Moon, Presentation, Eye } from "lucide-react";
+import { api, API } from "@/lib/api";
 import { toast } from "sonner";
 
 function renderReport(text) {
@@ -122,7 +122,23 @@ export function BoardReportModal({ open, onClose }) {
               <p className="text-sm">Synthesizing evidence into a board-ready report…</p>
               <p className="text-[10px] font-mono">Claude Sonnet 5 · grounded on your live posture</p>
             </div>
-          ) : renderReport(report)}
+          ) : (
+            <div className="grid md:grid-cols-[160px_1fr] gap-5">
+              {report && (
+                <div className="hidden md:block" data-testid="modal-cover-preview">
+                  <div className="flex items-center gap-1.5 text-[10px] font-head font-bold uppercase tracking-wide text-muted-foreground mb-1.5">
+                    <Eye className="w-3 h-3 text-ai" /> Cover
+                  </div>
+                  <img key={`${theme}`} data-testid="modal-cover-preview-img"
+                    src={`${API}/reports/branding/preview?theme=${theme}`}
+                    alt="Board report cover preview"
+                    className="w-full rounded-md border border-border shadow-sm bg-secondary/40 sticky top-0" />
+                  <p className="text-[10px] text-muted-foreground mt-1.5 leading-snug">This is the branded cover the board will receive.</p>
+                </div>
+              )}
+              <div>{renderReport(report)}</div>
+            </div>
+          )}
         </div>
       </div>
     </div>

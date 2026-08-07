@@ -254,6 +254,16 @@ async def advisor_logs(user: dict = Depends(get_current_user)):
     return logs
 
 
+@advisor_router.post("/hint-open")
+async def advisor_hint_open(user: dict = Depends(get_current_user)):
+    """Record that an exec opened the Advisor from the first-time intro hint."""
+    await db.advisor_hint_events.insert_one({
+        "org_id": user["org_id"], "user": user["email"],
+        "ts": datetime.now(timezone.utc).isoformat(),
+    })
+    return {"ok": True}
+
+
 @advisor_router.get("/usage")
 async def advisor_usage(admin: dict = Depends(require_roles("admin"))):
     logs = await db.advisor_logs.find({"org_id": admin["org_id"], "usage": {"$exists": True}}, {"_id": 0}).sort("ts", -1).to_list(500)
@@ -288,11 +298,15 @@ async def advisor_usage(admin: dict = Depends(require_roles("admin"))):
     forecast = round(month_cost / now.day * dim, 4) if now.day > 0 else month_cost
     forecast_pct = round(forecast / budget * 100) if budget > 0 else 0
     forecast_over = budget > 0 and forecast > budget
+    hint_events = await db.advisor_hint_events.find({"org_id": admin["org_id"]}, {"_id": 0, "user": 1}).to_list(5000)
+    hint_opens = len(hint_events)
+    hint_unique = len({e["user"] for e in hint_events})
     return {"queries": len(logs), "total_tokens": total_tokens, "total_cost_usd": total_cost,
             "today_cost_usd": today_cost, "month_cost_usd": month_cost, "budget_usd": budget,
             "budget_pct": pct, "budget_status": status, "auto_pause": auto_pause, "paused": paused,
             "alert_threshold": threshold, "forecast_usd": forecast, "forecast_pct": forecast_pct,
-            "forecast_over": forecast_over, "trend": trend, "by_user": by_user, "recent": recent}
+            "forecast_over": forecast_over, "trend": trend, "by_user": by_user, "recent": recent,
+            "hint_opens": hint_opens, "hint_unique": hint_unique}
 
 
 async def spend_rows(org_id: str, scope: str = "all"):

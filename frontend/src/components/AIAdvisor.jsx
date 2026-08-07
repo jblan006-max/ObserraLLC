@@ -76,6 +76,12 @@ export function AIAdvisor() {
     try { localStorage.setItem(hintKey, "1"); } catch {}
   };
 
+  const openFromHint = () => {
+    if (showHint) api.post("/advisor/hint-open").catch(() => {});
+    setOpen(true);
+    dismissHint();
+  };
+
   useEffect(() => { scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" }); }, [messages, streaming]);
 
   useEffect(() => {
@@ -217,7 +223,7 @@ export function AIAdvisor() {
           </div>
         </div>
       )}
-      <button data-testid="advisor-toggle" onClick={() => { setOpen(true); dismissHint(); }}
+      <button data-testid="advisor-toggle" onClick={openFromHint}
         style={{ backgroundColor: "#0f1e3d" }}
         className="fixed bottom-6 right-6 z-40 flex flex-col items-center gap-1 px-4 py-3 rounded-2xl font-head font-bold text-xs shadow-lg ring-1 ring-white/10 hover:-translate-y-0.5 transition-transform duration-200">
         {showHint && <span className="absolute inset-0 rounded-2xl ring-2 ring-ai/60 animate-ping pointer-events-none" />}
@@ -235,6 +241,11 @@ export function AIAdvisor() {
                 {isAdmin && spend && (
                   <div data-testid="advisor-spend" className="text-[10px] font-mono text-ai mt-0.5">
                     spend: ${spend.total_cost_usd?.toFixed(4)} · {spend.total_tokens?.toLocaleString()} tok · {spend.queries}q
+                  </div>
+                )}
+                {isAdmin && spend?.hint_opens > 0 && (
+                  <div data-testid="advisor-hint-stat" className="text-[10px] font-mono text-muted-foreground mt-0.5">
+                    intro-hint opens: {spend.hint_opens} · {spend.hint_unique} exec{spend.hint_unique === 1 ? "" : "s"}
                   </div>
                 )}
               </div>

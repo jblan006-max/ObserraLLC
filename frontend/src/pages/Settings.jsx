@@ -57,7 +57,7 @@ export default function Settings() {
     setTestBusy(false);
   };
 
-  const [brand, setBrand] = useState({ enabled: false, company_name: "", has_logo: false });
+  const [brand, setBrand] = useState({ enabled: false, company_name: "", has_logo: false, accent: "" });
   const [brandLogo, setBrandLogo] = useState("");
   const [brandBusy, setBrandBusy] = useState(false);
   const [previewTheme, setPreviewTheme] = useState("dark");
@@ -89,7 +89,7 @@ export default function Settings() {
     setBrandBusy(true);
     try {
       const { data } = await api.put("/reports/branding", {
-        enabled: brand.enabled, company_name: brand.company_name, logo: brandLogo || "",
+        enabled: brand.enabled, company_name: brand.company_name, logo: brandLogo || "", accent: brand.accent || "",
       });
       setBrand(data); setBrandLogo(""); setPreviewBust(Date.now());
       toast.success("Report branding saved");
@@ -198,7 +198,20 @@ export default function Settings() {
             {brandLogo && <img src={brandLogo} alt="logo preview" className="mt-2 h-12 w-auto object-contain bg-secondary/40 rounded p-1" />}
           </div>
           <div className="flex items-center gap-3 flex-wrap">
-            <button data-testid="branding-save" disabled={brandBusy} onClick={saveBranding}
+            <div>
+            <label className="text-xs text-muted-foreground">Brand accent colour — flows into the report cover, trend line &amp; risk bars</label>
+            <div className="mt-1 flex items-center gap-3">
+              <input type="color" data-testid="branding-accent" value={brand.accent || "#12b4d6"}
+                onChange={(e) => setBrand({ ...brand, accent: e.target.value })}
+                className="h-9 w-14 rounded-md bg-secondary/40 border border-border cursor-pointer p-0.5" />
+              <span className="text-xs font-mono text-muted-foreground">{brand.accent || "default"}</span>
+              {brand.accent && (
+                <button data-testid="branding-accent-clear" onClick={() => setBrand({ ...brand, accent: "" })}
+                  className="text-xs text-muted-foreground hover:text-foreground underline">Clear</button>
+              )}
+            </div>
+          </div>
+          <button data-testid="branding-save" disabled={brandBusy} onClick={saveBranding}
               className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
               {brandBusy && <Loader2 className="w-4 h-4 animate-spin" />} Save branding
             </button>

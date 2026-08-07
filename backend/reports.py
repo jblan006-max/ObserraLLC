@@ -34,7 +34,19 @@ class ReportBody(BaseModel):
     layout: str = "report"
 
 
-def _trend_drawing(series):
+def _norm_hex(v):
+    """Normalise a hex colour like #12B4D6 -> #12b4d6; return None if invalid."""
+    if not v or not isinstance(v, str):
+        return None
+    s = v.strip().lower()
+    if re.fullmatch(r"#[0-9a-f]{6}", s):
+        return s
+    if re.fullmatch(r"[0-9a-f]{6}", s):
+        return "#" + s
+    return None
+
+
+def _trend_drawing(series, accent=None):
     """Line chart of portfolio residual exposure ($M) over recent months."""
     try:
         from reportlab.graphics.shapes import Drawing, String
@@ -54,7 +66,7 @@ def _trend_drawing(series):
         lc.valueAxis.valueMin = 0
         lc.valueAxis.labelTextFormat = "$%0.1fM"
         lc.valueAxis.labels.fontSize = 7
-        lc.lines[0].strokeColor = colors.HexColor("#d9663a")
+        lc.lines[0].strokeColor = colors.HexColor(accent or "#d9663a")
         lc.lines[0].strokeWidth = 2.2
         d.add(lc)
         return d
@@ -63,7 +75,7 @@ def _trend_drawing(series):
         return None
 
 
-def _risk_bar_drawing(bars):
+def _risk_bar_drawing(bars, accent=None):
     """Bar chart of top risks by residual score (0-25)."""
     try:
         from reportlab.graphics.shapes import Drawing, String
@@ -83,7 +95,7 @@ def _risk_bar_drawing(bars):
         bc.valueAxis.valueMax = 25
         bc.valueAxis.valueStep = 5
         bc.valueAxis.labels.fontSize = 7
-        bc.bars[0].fillColor = colors.HexColor("#1b6fb3")
+        bc.bars[0].fillColor = colors.HexColor(accent or "#1b6fb3")
         bc.barWidth = 8
         d.add(bc)
         return d
@@ -94,6 +106,7 @@ def _risk_bar_drawing(bars):
 
 def _resolve_brand(org):
     rb = (org or {}).get("report_branding") or {}
+    accent = _norm_hex(rb.get("accent"))
     if rb.get("enabled") and rb.get("logo"):
         import base64 as _b64, tempfile
         data = rb["logo"]
@@ -118,7 +131,7 @@ def _paint_cover(canvas, pw, ph, title, org_name, report_date, theme, brand):
     bg = "#ffffff" if light else "#081428"
     lockup = brand["lockup_dark"] if light else brand["lockup"]
     title_col = "#0f1e3d" if light else "#F4F8FC"
-    org_col = "#0e7490" if light else "#56B8E9"
+    org_col = brand.get("accent") or ("#0e7490" if light else "#56B8E9")
     date_col = "#6b7280" if light else "#8AA0B8"
     note_col = "#9ca3af" if light else "#5a708c"
     canvas.saveState()
@@ -197,10 +210,10 @@ def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = Non
             story.append(Paragraph(re.sub(r"\*\*", "", line), body))
     if chart_series or risk_bars:
         story += [Spacer(1, 10), Paragraph("Portfolio Trends", h)]
-        d = _trend_drawing(chart_series) if chart_series else None
+        d = _trend_drawing(chart_series, brand.get("accent")) if chart_series else None
         if d is not None:
             story += [d, Spacer(1, 6)]
-        b = _risk_bar_drawing(risk_bars) if risk_bars else None
+        b = _risk_bar_drawing(risk_bars, brand.get("accent")) if risk_bars else None
         if b is not None:
             story += [b, Spacer(1, 4)]
     if takeaways:
@@ -418,7 +431,7 @@ async def build_board_deck_pdf(org_id: str, report_text: str,
 
     # Slide 3 — exposure trend
     content_header("Portfolio Exposure Trend")
-    d = _trend_drawing(m["series"])
+    d = _trend_drawing(m["series"], m["brand"].get("accent"))
     if d is not None:
         px = (pw - 500) / 2; py = ph * 0.26
         c.setFillColor(colors.white); c.roundRect(px, py, 500, 210, 10, fill=1, stroke=0)
@@ -427,7 +440,7 @@ async def build_board_deck_pdf(org_id: str, report_text: str,
 
     # Slide 4 — top risks
     content_header("Top Risks by Residual Score")
-    d2 = _risk_bar_drawing(m["risk_bars"])
+    d2 = _risk_bar_drawing(m["risk_bars"], m["brand"].get("accent"))
     if d2 is not None:
         px = (pw - 500) / 2; py = ph * 0.26
         c.setFillColor(colors.white); c.roundRect(px, py, 500, 210, 10, fill=1, stroke=0)
@@ -485,6 +498,7 @@ class BrandingBody(BaseModel):
     enabled: bool = False
     company_name: str = ""
     logo: str = ""
+    accent: str = ""
     remove_logo: bool = False
 
 
@@ -494,7 +508,7 @@ async def get_branding(user: dict = Depends(get_current_user)):
     org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
     rb = org.get("report_branding") or {}
     return {"enabled": bool(rb.get("enabled")), "company_name": rb.get("company_name", ""),
-            "has_logo": bool(rb.get("logo"))}
+            "has_logo": bool(rb.get("logo")), "accent": _norm_hex(rb.get("accent")) or ""}
 
 
 @reports_router.get("/api/reports/branding/preview")
@@ -519,10 +533,12 @@ async def set_branding(body: BrandingBody, user: dict = Depends(get_current_user
         await db.organizations.update_one(
             {"_id": oid},
             {"$set": {"report_branding.enabled": False, "report_branding.company_name": ""},
-             "$unset": {"report_branding.logo": ""}})
+             "$unset": {"report_branding.logo": "", "report_branding.accent": ""}})
     else:
         update = {"report_branding.enabled": bool(body.enabled),
                   "report_branding.company_name": (body.company_name or "").strip()[:120]}
+        accent = _norm_hex(body.accent)
+        update["report_branding.accent"] = accent or ""
         if body.logo:
             data = body.logo.split(",", 1)[1] if "," in body.logo else body.logo
             if len(data) > 2_000_000:
@@ -532,7 +548,7 @@ async def set_branding(body: BrandingBody, user: dict = Depends(get_current_user
     org = await db.organizations.find_one({"_id": oid}) or {}
     rb = org.get("report_branding") or {}
     return {"enabled": bool(rb.get("enabled")), "company_name": rb.get("company_name", ""),
-            "has_logo": bool(rb.get("logo"))}
+            "has_logo": bool(rb.get("logo")), "accent": _norm_hex(rb.get("accent")) or ""}
 
 
 @reports_router.post("/api/reports/test-email")

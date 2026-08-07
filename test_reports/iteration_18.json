@@ -1,0 +1,23 @@
+{
+  "summary": "Iteration 18 — validated three new features end-to-end: (1) Accent Colour backend (PUT/GET /api/reports/branding with normalization, invalid-ignore, clear); (2) Preview In Modal (New Board Report modal shows modal-cover-preview + dark/light theme toggle producing valid PNG images); (3) Hint Analytics (POST /api/advisor/hint-open records + GET /api/advisor/usage returns hint_opens/hint_unique, frontend fires POST from advisor-hint bubble + advisor-hint-stat renders in admin panel). Backend: 8/8 pytest passing. Frontend: all data-testid selectors match implementation; accent colour persists across reload, clear resets to default, live preview thumbnail (branding-preview-img) refreshes (naturalWidth=857). Modal cover preview loaded in ~12s after New Board Report click; theme-dark/theme-light toggles swap ?theme= param and PNG re-loads with valid naturalWidth. Advisor hint stat rendered 'intro-hint opens: 3 · 1 exec'. Accent reset to empty in cleanup.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter18_accent_hint.py",
+    "/app/test_reports/pytest/iter18.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Settings.jsx line 204: brand.accent color input controlled correctly (value + onChange). Note: automated tests must use native HTMLInputElement value setter (React tracked values) instead of el.value=... to trigger onChange properly.",
+    "reports.py _norm_hex correctly normalizes/validates hex; invalid values (e.g. 'red') return empty and PUT stores '' — good defensive validation.",
+    "ai_advisor.py hint-open handler uses any authenticated user (correct); usage returns hint_opens/hint_unique aggregated per org.",
+    "BoardReportModal keys the preview <img> on theme so React fully re-mounts on toggle (avoids stale image cache) — clean pattern."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter18_accent_hint.py"],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (3/3 flows)"},
+  "test_credentials": "Admin jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None. Accent was set to #e11d48 during tests and reset to '' in fixture teardown + frontend Clear+Save flow — no stray accent left on org.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All three iteration-18 features are working. When testing color-picker inputs (branding-accent) in playwright, use the React-compatible native setter pattern: Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(el, hex) + dispatch input/change events, otherwise React state won't update. Onboarding tour ([data-testid=onboarding-tour]) intercepts clicks on Settings — dismiss via 'Skip' or remove from DOM before interacting with Save buttons. Modal cover preview takes ~10-40s (LLM call) after New Board Report — poll for [data-testid=modal-cover-preview] up to 60s. Backend test file /app/backend/tests/test_iter18_accent_hint.py reusable for regression."
+}
