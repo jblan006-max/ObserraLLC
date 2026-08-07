@@ -54,10 +54,12 @@ app.include_router(sso_config_router)
 app.include_router(push_router)
 app.include_router(deploy_router)
 
+_cors = os.environ.get("CORS_ORIGINS", "*").strip()
+_cors_kwargs = {"allow_origin_regex": ".*"} if _cors == "*" else {"allow_origins": [o.strip() for o in _cors.split(",") if o.strip()]}
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
-    allow_origins=[os.environ.get("FRONTEND_URL", "http://localhost:3000"), "http://localhost:3000"],
+    **_cors_kwargs,
     allow_methods=["*"],
     allow_headers=["*"],
 )
