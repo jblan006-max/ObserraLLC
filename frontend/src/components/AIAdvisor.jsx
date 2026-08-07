@@ -5,8 +5,8 @@ import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
 const AVATAR = (cls = "w-6 h-6") => (
-  <span className={`inline-flex items-center justify-center ${cls} rounded-full overflow-hidden bg-background align-middle shrink-0`}>
-    <img src="/brand-mark.png" alt="Obserra" className="h-3/4 w-3/4 object-contain" />
+  <span className={`inline-flex items-center justify-center ${cls} align-middle shrink-0`}>
+    <img src="/brand-mark.png" alt="Obserra" className="h-full w-full object-contain" />
   </span>
 );
 
@@ -190,8 +190,8 @@ export function AIAdvisor() {
   return (
     <>
       <button data-testid="advisor-toggle" onClick={() => setOpen(true)}
-        className="fixed bottom-6 right-6 z-40 flex items-center gap-2 pl-2 pr-4 py-2 rounded-full bg-ai text-background font-head font-bold text-sm shadow-lg hover:-translate-y-0.5 transition-transform duration-200">
-        {AVATAR("w-7 h-7")} Advisor
+        className="fixed bottom-6 right-6 z-40 flex flex-col items-center gap-1 px-4 py-3 rounded-2xl bg-ai font-head font-bold text-xs shadow-lg hover:-translate-y-0.5 transition-transform duration-200">
+        {AVATAR("w-8 h-8")} <span className="text-white">Advisor</span>
       </button>
 
       {open && (
