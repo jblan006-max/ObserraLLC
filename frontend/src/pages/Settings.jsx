@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users } from "lucide-react";
+import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const OPTIONS = [
@@ -194,10 +194,16 @@ export default function Settings() {
               className="mt-1 block w-full text-xs text-muted-foreground file:mr-3 file:rounded-md file:border-0 file:bg-primary file:text-primary-foreground file:px-3 file:py-1.5 file:text-xs file:font-medium" />
             {brandLogo && <img src={brandLogo} alt="logo preview" className="mt-2 h-12 w-auto object-contain bg-secondary/40 rounded p-1" />}
           </div>
-          <button data-testid="branding-save" disabled={brandBusy} onClick={saveBranding}
-            className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
-            {brandBusy && <Loader2 className="w-4 h-4 animate-spin" />} Save branding
-          </button>
+          <div className="flex items-center gap-3 flex-wrap">
+            <button data-testid="branding-save" disabled={brandBusy} onClick={saveBranding}
+              className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
+              {brandBusy && <Loader2 className="w-4 h-4 animate-spin" />} Save branding
+            </button>
+            <button data-testid="branding-reset" disabled={brandBusy} onClick={removeBranding}
+              className="px-5 py-2.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-primary/40 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
+              <RotateCcw className="w-4 h-4" /> Remove logo / Reset to Obserra
+            </button>
+          </div>
         </div>
       )}
     </div>

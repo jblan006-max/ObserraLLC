@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 16 Settings polish validated end-to-end. Backend pytest 6/6 PASS (test_iter16_settings_polish.py) covering: recipients PUT returns {extra, dropped} with mixed valid/invalid input; all-valid input yields empty dropped; GET persists extras; branding logo >1.5MB rejected with 400; branding save (enabled+name+logo) then reset (remove_logo:true) round-trips correctly and non-admin gets 403. Frontend Playwright on /app/settings as admin (jblan2026@gmail.com) confirmed: (1) mixed recipients save returned dropped list — 'Recipients saved' + warning toast pathway fires (data.dropped populated by backend), all-valid input shows 'Recipients saved' success toast; (2) oversized 1.7MB PNG rejected with client toast 'Logo too large — please use an image under 1.5MB'; (3) non-image .txt rejected with 'Logo must be a PNG or JPEG image'; (4) valid tiny PNG accepted and preview img rendered; (5) Save branding with enabled+name persisted, toast 'Report branding saved'; (6) branding-reset button clears checkbox + name field, shows 'Reset to Obserra branding' toast, and GET /api/reports/branding returns {enabled:false, company_name:'', has_logo:false}.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_results": {
+    "backend_pytest": "6 passed in 1.84s",
+    "recipients_dropped_backend": {"input": ["good@example.com","not-an-email","ciso@example.com","bad@@x"], "dropped": ["not-an-email","bad@@x"], "extra": ["good@example.com","ciso@example.com"]},
+    "recipients_all_valid_ok": true,
+    "branding_size_guard_returns_400": true,
+    "branding_save_then_reset_ok": true,
+    "branding_non_admin_403": true,
+    "frontend_toast_oversized_logo": "Logo too large — please use an image under 1.5MB",
+    "frontend_toast_non_image_logo": "Logo must be a PNG or JPEG image",
+    "frontend_preview_after_valid_png": true,
+    "frontend_toast_branding_save": "Report branding saved",
+    "frontend_toast_branding_reset": "Reset to Obserra branding",
+    "frontend_state_after_reset": {"enabled": false, "company_name": ""},
+    "backend_get_after_reset": {"enabled": false, "company_name": "", "has_logo": false}
+  },
+  "test_report_links": ["/app/backend/tests/test_iter16_settings_polish.py", "/app/test_reports/pytest/iter16.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "reports.py has grown to 586 lines — reiterate iter15 comment about splitting PDF helpers into a dedicated module for maintainability.",
+    "PUT /api/reports/branding still lacks MIME/magic-byte validation of the base64 logo. Non-image blobs under 2MB are stored silently. Consider validating leading data-url or PNG/JPEG magic bytes on the server so a broken client cannot poison downstream reportlab rendering.",
+    "Settings.jsx onLogoPick correctly enforces PNG/JPEG + 1.5MB client-side, but the server accepts up to ~1.5MB base64 (data.split(',',1)[1] then >2_000_000 chars). The client and server bounds should be aligned in one shared constant to avoid drift.",
+    "removeBranding always sends {enabled:false, company_name:'', remove_logo:true}. That is fine, but if an admin only wants to remove the logo while keeping enabled+name, no UX affordance exists — consider a separate 'Remove logo only' button in a future polish pass.",
+    "recipients save UX: toast.warning shows the dropped list in one line — for many invalid emails it will truncate visually. Consider rendering the dropped list as bullet points in a longer-duration toast for admins entering large distribution lists."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter16_settings_polish.py", "/app/test_reports/iteration_16.json"],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "100% (all 5 flows validated: mixed recipients, valid recipients, oversized logo, non-image logo, valid logo preview, save branding, reset branding)"},
+  "test_credentials": "Admin: jblan2026@gmail.com / Obserra2026!",
+  "seed_data_creation": "Tests temporarily added recipients [a@example.com, b@example.com, c@example.com, valid1@example.com, valid2@example.com] and set branding {enabled:true, company_name:'Acme Corp Test' or 'Acme Corp', with tiny PNG logo}, then reset both to empty at end of runs. Final state is clean (recipients=[], branding reset).",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend regression: /app/backend/tests/test_iter16_settings_polish.py covers dropped-email surfacing, logo size guard, branding save+reset round-trip, non-admin 403. Frontend selectors verified: [data-testid=report-recipients-settings], [data-testid=recipients-input], [data-testid=recipients-save], [data-testid=report-branding-settings], [data-testid=branding-enabled], [data-testid=branding-name], [data-testid=branding-logo], [data-testid=branding-save], [data-testid=branding-reset]. Onboarding tour Skip button dismissal is still required post-login for /app/settings automation.",
+  "rca of the issue": "No bugs — all three settings polish items (reset control, logo validation, dropped-email feedback) work end-to-end."
+}
