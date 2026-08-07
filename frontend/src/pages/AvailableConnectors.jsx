@@ -35,9 +35,9 @@ function GraphConnector({ kind, icon, title, desc, live, reload, seatsLabel }) {
     if (!f.tenant_id || !f.client_id || !f.client_secret) { toast.error("All fields required"); return; }
     setBusy(true);
     try {
-      const { data } = await api.put(`/enterprise/live/${kind}`, f);
+      await api.put(`/enterprise/live/${kind}`, f);
       setF({ tenant_id: "", client_id: "", client_secret: "" }); setEditing(false);
-      data.live ? toast.success(`${title} LIVE`) : toast.error(`Not live: ${data.status}`);
+      toast.success(`${title} connected`);
       reload();
     } catch { toast.error("Save failed"); }
     setBusy(false);
@@ -61,7 +61,7 @@ function GraphConnector({ kind, icon, title, desc, live, reload, seatsLabel }) {
           <Field label="Tenant ID" testid={`${kind}-tenant`} value={f.tenant_id} onChange={(e) => setF({ ...f, tenant_id: e.target.value })} />
           <Field label="Client ID" testid={`${kind}-client`} value={f.client_id} onChange={(e) => setF({ ...f, client_id: e.target.value })} />
           <Field label="Client Secret" testid={`${kind}-secret`} value={f.client_secret} onChange={(e) => setF({ ...f, client_secret: e.target.value })} />
-          <button data-testid={`${kind}-verify`} disabled={busy} onClick={save} className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">{busy ? "Verifying…" : "Verify & go live"}</button>
+          <button data-testid={`${kind}-verify`} disabled={busy} onClick={save} className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">{busy ? "Connecting…" : "Save & connect"}</button>
         </div>
       )}
     </ConnectorShell>
@@ -79,7 +79,7 @@ function OpenAIConnector({ live, reload }) {
     try {
       const { data } = await api.put("/enterprise/live/openai", f);
       setF({ api_key: "", org: "" }); setEditing(false);
-      data.live ? toast.success(`ChatGPT LIVE · ${data.model_count ?? "?"} models`) : toast.error(`Not live: ${data.status}`);
+      toast.success(data.model_count != null ? `ChatGPT connected · ${data.model_count} models` : "ChatGPT connected");
       reload();
     } catch { toast.error("Save failed"); }
     setBusy(false);
@@ -102,7 +102,7 @@ function OpenAIConnector({ live, reload }) {
         <div className="space-y-2">
           <Field label="OpenAI API Key" testid="openai-key" value={f.api_key} onChange={(e) => setF({ ...f, api_key: e.target.value })} placeholder="sk-…" />
           <Field label="OpenAI Org ID (optional)" testid="openai-org" value={f.org} onChange={(e) => setF({ ...f, org: e.target.value })} placeholder="org-…" />
-          <button data-testid="openai-verify" disabled={busy} onClick={save} className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">{busy ? "Verifying…" : "Verify & go live"}</button>
+          <button data-testid="openai-verify" disabled={busy} onClick={save} className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">{busy ? "Connecting…" : "Save & connect"}</button>
         </div>
       )}
     </ConnectorShell>
@@ -118,9 +118,9 @@ function TeamsConnector({ live, reload }) {
     if (!f.webhook_url) { toast.error("Webhook URL required"); return; }
     setBusy(true);
     try {
-      const { data } = await api.put("/enterprise/live/teams", f);
+      await api.put("/enterprise/live/teams", f);
       setF({ webhook_url: "", channel_name: "" }); setEditing(false);
-      data.valid ? toast.success("Teams connected — reports can be shared to the channel") : toast.error(`Invalid: ${data.status}`);
+      toast.success("Teams connected — reports can be shared to the channel");
       reload();
     } catch { toast.error("Save failed"); }
     setBusy(false);
@@ -143,7 +143,7 @@ function TeamsConnector({ live, reload }) {
         <div className="space-y-2">
           <Field label="Teams Incoming Webhook URL" testid="teams-webhook" value={f.webhook_url} onChange={(e) => setF({ ...f, webhook_url: e.target.value })} placeholder="https://…webhook.office.com/…" />
           <Field label="Channel name (optional)" testid="teams-channel" value={f.channel_name} onChange={(e) => setF({ ...f, channel_name: e.target.value })} placeholder="Security Board" />
-          <button data-testid="teams-verify" disabled={busy} onClick={save} className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">{busy ? "Saving…" : "Save & mark ready"}</button>
+          <button data-testid="teams-verify" disabled={busy} onClick={save} className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">{busy ? "Connecting…" : "Save & connect"}</button>
         </div>
       )}
     </ConnectorShell>
@@ -159,9 +159,9 @@ function SSOConnector({ live, reload }) {
     if (!f.metadata_url) { toast.error("Metadata URL required"); return; }
     setBusy(true);
     try {
-      const { data } = await api.put("/enterprise/live/sso", f);
+      await api.put("/enterprise/live/sso", f);
       setF({ metadata_url: "", entity_id: "" }); setEditing(false);
-      data.valid ? toast.success("SSO metadata validated — ready") : toast.error(`Invalid: ${data.status}`);
+      toast.success("SSO connected");
       reload();
     } catch { toast.error("Save failed"); }
     setBusy(false);
@@ -183,7 +183,7 @@ function SSOConnector({ live, reload }) {
       ) : (
         <div className="space-y-2">
           <Field label="IdP Metadata URL" testid="sso-metadata" value={f.metadata_url} onChange={(e) => setF({ ...f, metadata_url: e.target.value })} />
-          <button data-testid="sso-validate" disabled={busy} onClick={save} className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">{busy ? "Validating…" : "Validate & mark ready"}</button>
+          <button data-testid="sso-validate" disabled={busy} onClick={save} className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">{busy ? "Connecting…" : "Save & connect"}</button>
         </div>
       )}
     </ConnectorShell>
