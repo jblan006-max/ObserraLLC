@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Building2, Loader2, Plug, KeyRound, Users, ShieldCheck, Trash2, Plus, RefreshCw } from "lucide-react";
+import { Building2, Loader2, Plug, KeyRound, Users, ShieldCheck, Trash2, Plus, RefreshCw, Palette } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-const TABS = [["connectors", "Connectors", Plug], ["sso", "SSO / SAML", KeyRound], ["scim", "SCIM", Users], ["abac", "ABAC", ShieldCheck]];
+const TABS = [["connectors", "Connectors", Plug], ["sso", "SSO / SAML", KeyRound], ["scim", "SCIM", Users], ["abac", "ABAC", ShieldCheck], ["branding", "Branding", Palette]];
 
 export default function Enterprise() {
   const [tab, setTab] = useState("connectors");
@@ -26,6 +26,7 @@ export default function Enterprise() {
       {tab === "sso" && <SSO />}
       {tab === "scim" && <SCIM />}
       {tab === "abac" && <ABAC />}
+      {tab === "branding" && <Branding />}
     </div>
   );
 }
@@ -117,9 +118,14 @@ function SCIM() {
 
 function ABAC() {
   const [rules, setRules] = useState(null);
+  const [enforce, setEnforce] = useState(false);
   const [form, setForm] = useState({ attribute: "", operator: "equals", value: "", resource: "", effect: "allow" });
-  const load = () => api.get("/enterprise/abac").then((r) => setRules(r.data));
+  const load = () => {
+    api.get("/enterprise/abac").then((r) => setRules(r.data));
+    api.get("/enterprise/config").then((r) => setEnforce(r.data.abac?.enforce || false));
+  };
   useEffect(() => { load(); }, []);
+  const toggleEnforce = async () => { const { data } = await api.post("/enterprise/abac/enforce", { enforce: !enforce }); setEnforce(data.enforce); toast.success(`ABAC enforcement ${data.enforce ? "ON" : "OFF"}`); };
   const add = async () => {
     if (!form.attribute || !form.resource) { toast.error("Attribute and resource required"); return; }
     try { await api.post("/enterprise/abac", form); toast.success("Rule added"); setForm({ attribute: "", operator: "equals", value: "", resource: "", effect: "allow" }); load(); }
@@ -129,6 +135,10 @@ function ABAC() {
   if (!rules) return <Spinner />;
   return (
     <div className="space-y-4">
+      <div className="bg-card fact-border rounded-xl p-4 flex items-center justify-between">
+        <div><div className="font-head font-bold text-sm">Request-path enforcement</div><div className="text-xs text-muted-foreground">When ON, matching deny rules block API calls (fail-safe: default allow).</div></div>
+        <button data-testid="abac-enforce-toggle" onClick={toggleEnforce} className={`text-xs px-3 py-2 rounded-md font-bold ${enforce ? "bg-crit/15 text-crit" : "bg-secondary/60 text-muted-foreground"}`}>{enforce ? "Enforcing" : "Monitor only"}</button>
+      </div>
       <div data-testid="abac-form" className="bg-card fact-border rounded-xl p-4 grid sm:grid-cols-6 gap-2 items-end">
         <Field label="Attribute" testid="abac-attribute" value={form.attribute} onChange={(e) => setForm({ ...form, attribute: e.target.value })} />
         <div><span className="text-xs text-muted-foreground mb-1.5 block">Operator</span>
@@ -150,6 +160,31 @@ function ABAC() {
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function Branding() {
+  const [b, setB] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api.get("/branding").then((r) => setB(r.data)); }, []);
+  const save = async () => {
+    setBusy(true);
+    try { const { data } = await api.put("/branding", b); setB(data); document.documentElement.style.setProperty("--brand-accent", data.accent); document.title = data.display_name; toast.success("Branding saved"); }
+    catch { toast.error("Save failed"); }
+    setBusy(false);
+  };
+  if (!b) return <Spinner />;
+  return (
+    <div data-testid="branding-panel" className="bg-card fact-border rounded-xl p-6 max-w-xl space-y-4">
+      <div className="text-xs text-muted-foreground">White-label the tenant experience — display name, accent color and logo.</div>
+      <Field label="Display name" testid="brand-name" value={b.display_name} onChange={(e) => setB({ ...b, display_name: e.target.value })} />
+      <Field label="Logo URL" testid="brand-logo" value={b.logo_url} onChange={(e) => setB({ ...b, logo_url: e.target.value })} />
+      <div className="flex items-center gap-3">
+        <input data-testid="brand-accent" type="color" value={b.accent} onChange={(e) => setB({ ...b, accent: e.target.value })} className="w-12 h-10 rounded-md bg-secondary/60 cursor-pointer" />
+        <span className="text-sm font-mono">{b.accent}</span>
+      </div>
+      <button data-testid="brand-save" disabled={busy} onClick={save} className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">Save branding</button>
     </div>
   );
 }

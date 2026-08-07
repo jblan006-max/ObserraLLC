@@ -13,8 +13,19 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
+    // CRITICAL: skip the /me check when returning from Google OAuth — AuthCallback handles it.
+    if (window.location.hash?.includes("session_id=")) return;
     api.get("/auth/me").then((r) => setUser(r.data)).catch(() => setUser(false));
   }, []);
+
+  // White-label: apply tenant branding (accent + document title) once authenticated.
+  useEffect(() => {
+    if (!user) return;
+    api.get("/branding").then(({ data }) => {
+      if (data.accent) document.documentElement.style.setProperty("--brand-accent", data.accent);
+      if (data.display_name) document.title = data.display_name;
+    }).catch(() => {});
+  }, [user]);
 
   useEffect(() => { if (user) refreshSub(); }, [user, refreshSub]);
 

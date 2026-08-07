@@ -7,7 +7,7 @@ import ForcePasswordReset from "@/pages/ForcePasswordReset";
 import { Footer } from "@/components/Footer";
 import {
   LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
-  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Building2,
+  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Building2, Building, BarChart3,
 } from "lucide-react";
 
 function DualModeToggle() {
@@ -38,6 +38,8 @@ const NAV = [
   { to: "/app/reporting", label: "Evidence & Reporting", icon: FileBarChart, ent: "evidence_reporting" },
   { to: "/app/audit", label: "Audit Log", icon: ScrollText },
   { to: "/app/agents", label: "AI Agents", icon: Bot },
+  { to: "/app/vendors", label: "Third-Party Risk", icon: Building },
+  { to: "/app/benchmark", label: "Benchmarking", icon: BarChart3 },
   { to: "/app/kernel", label: "Platform Kernel", icon: Layers, admin: true },
   { to: "/app/team", label: "Team", icon: Users, admin: true },
   { to: "/app/enterprise", label: "Enterprise", icon: Building2, admin: true },

@@ -20,6 +20,9 @@ import KernelStatus from "@/pages/KernelStatus";
 import Settings from "@/pages/Settings";
 import AIAgents from "@/pages/AIAgents";
 import Enterprise from "@/pages/Enterprise";
+import VendorRisk from "@/pages/VendorRisk";
+import Benchmark from "@/pages/Benchmark";
+import AuthCallback from "@/pages/AuthCallback";
 import Reporting from "@/pages/Reporting";
 import PaymentSuccess from "@/pages/PaymentSuccess";
 import QRApprove from "@/pages/QRApprove";
@@ -34,6 +37,7 @@ function Gate({ children }) {
 
 function Landing() {
   const { user } = useAuth();
+  if (window.location.hash?.includes("session_id=")) return <AuthCallback />;
   if (user) return <Navigate to="/app" replace />;
   return <Auth />;
 }
@@ -62,6 +66,8 @@ function App() {
               <Route path="team" element={<Team />} />
               <Route path="settings" element={<Settings />} />
               <Route path="agents" element={<AIAgents />} />
+              <Route path="vendors" element={<VendorRisk />} />
+              <Route path="benchmark" element={<Benchmark />} />
               <Route path="enterprise" element={<Enterprise />} />
               <Route path="marketplace" element={<Marketplace />} />
               <Route path="billing" element={<Billing />} />

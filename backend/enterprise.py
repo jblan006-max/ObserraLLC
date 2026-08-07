@@ -80,10 +80,31 @@ async def _config(org_id):
     if not cfg:
         cfg = {"org_id": org_id,
                "sso": {"enabled": False, "provider": "SAML 2.0", "entity_id": "", "sso_url": "", "certificate": ""},
-               "scim": {"enabled": False, "base_url": f"/api/scim/v2/{org_id}", "token": "", "last_provisioned": 0}}
+               "scim": {"enabled": False, "base_url": f"/api/scim/v2/{org_id}", "token": "", "last_provisioned": 0},
+               "abac": {"enforce": False}}
         await db.enterprise_config.insert_one(cfg)
+    cfg.setdefault("abac", {"enforce": False})
     cfg.pop("_id", None)
     return cfg
+
+
+async def abac_decision(org_id, resource, attrs):
+    rules = await db.abac_rules.find({"org_id": org_id, "resource": resource}).to_list(200)
+    decision, matched = "allow", None
+    for r in rules:
+        val = str(attrs.get(r["attribute"], ""))
+        op, target = r["operator"], r["value"]
+        hit = (op == "equals" and val == target) or (op == "not_equals" and val != target) \
+            or (op == "in" and val in [t.strip() for t in target.split(",")])
+        if hit and r["effect"] == "deny":
+            return {"decision": "deny", "matched": r["rule_id"]}
+        if hit and r["effect"] == "allow":
+            matched = r["rule_id"]
+    return {"decision": decision, "matched": matched}
+
+
+async def abac_enforced(org_id):
+    return (await _config(org_id)).get("abac", {}).get("enforce", False)
 
 
 class SSOBody(BaseModel):
@@ -149,3 +170,37 @@ async def create_abac(body: ABACRule, admin: dict = Depends(require_roles("admin
 async def delete_abac(rule_id: str, admin: dict = Depends(require_roles("admin"))):
     await db.abac_rules.delete_one({"org_id": admin["org_id"], "rule_id": rule_id})
     return {"ok": True}
+
+
+class EnforceBody(BaseModel):
+    enforce: bool
+
+
+@enterprise_router.post("/abac/enforce")
+async def set_enforce(body: EnforceBody, admin: dict = Depends(require_roles("admin"))):
+    await _config(admin["org_id"])
+    await db.enterprise_config.update_one({"org_id": admin["org_id"]}, {"$set": {"abac.enforce": body.enforce}})
+    await _log_audit(admin["org_id"], admin["email"], "abac.enforce", f"ABAC enforcement {'ON' if body.enforce else 'OFF'}")
+    return {"enforce": body.enforce}
+
+
+class EvalBody(BaseModel):
+    resource: str
+    attributes: dict = {}
+
+
+@enterprise_router.post("/abac/evaluate")
+async def evaluate_abac(body: EvalBody, user: dict = Depends(get_current_user)):
+    enforced = await abac_enforced(user["org_id"])
+    d = await abac_decision(user["org_id"], body.resource, body.attributes)
+    return {**d, "enforced": enforced}
+
+
+@enterprise_router.get("/abac/protected-demo")
+async def abac_protected_demo(user: dict = Depends(get_current_user)):
+    # Demonstrates request-path enforcement: denied if an ABAC deny rule matches the caller.
+    if await abac_enforced(user["org_id"]):
+        d = await abac_decision(user["org_id"], "demo.resource", {"role": user.get("role"), "email": user["email"]})
+        if d["decision"] == "deny":
+            raise HTTPException(403, detail=f"Denied by ABAC rule {d['matched']}")
+    return {"ok": True, "message": "Access granted"}

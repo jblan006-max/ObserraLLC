@@ -100,6 +100,21 @@ export default function Auth() {
           </form>
           )}
 
+          {!showQR && (
+            <>
+              <div className="flex items-center gap-3 my-4">
+                <div className="h-px flex-1 bg-border" /><span className="text-[10px] font-mono uppercase text-muted-foreground">or</span><div className="h-px flex-1 bg-border" />
+              </div>
+              {/* REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH */}
+              <button type="button" data-testid="google-signin" onClick={() => {
+                const redirectUrl = window.location.origin + "/app";
+                window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+              }} className="w-full py-2.5 rounded-md bg-white text-gray-800 font-head font-bold text-sm flex items-center justify-center gap-2 hover:opacity-90 transition-opacity">
+                <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="" className="w-4 h-4" /> Continue with Google
+              </button>
+            </>
+          )}
+
           {tab === "login" && !showQR && (
             <>
               <p className="mt-6 text-xs text-muted-foreground text-center">

@@ -130,6 +130,34 @@ async def _log_audit(org_id, actor, action, detail=""):
     })
 
 
+EMERGENT_SESSION_URL = "https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data"
+
+
+@auth_router.post("/google/session")
+async def google_session(request: Request, response: Response):
+    # Emergent-managed Google OAuth: exchange session_id for profile, map to an existing
+    # invited Obserra user, then issue our normal JWT session. Keeps multi-tenant clean.
+    import httpx
+    sid = request.headers.get("X-Session-ID")
+    if not sid:
+        raise HTTPException(status_code=400, detail="Missing session id")
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.get(EMERGENT_SESSION_URL, headers={"X-Session-ID": sid})
+    except Exception:
+        raise HTTPException(status_code=502, detail="Auth provider unreachable")
+    if r.status_code != 200:
+        raise HTTPException(status_code=401, detail="Google authentication failed")
+    email = (r.json().get("email") or "").lower()
+    user = await db.users.find_one({"email": email})
+    if not user:
+        raise HTTPException(status_code=403, detail="No Obserra account for this Google email. Ask your admin to invite you.")
+    uid = str(user["_id"])
+    set_auth_cookies(response, create_access_token(uid, email), create_refresh_token(uid))
+    await _log_audit(user["org_id"], email, "auth.google_login", "Signed in with Google")
+    return _public_user(user)
+
+
 @auth_router.post("/register")
 async def register(body: RegisterBody, response: Response):
     email = body.email.lower()
