@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate, useLocation, Navigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { AIAdvisor } from "@/components/AIAdvisor";
+import { NotificationBell } from "@/components/NotificationBell";
+import ForcePasswordReset from "@/pages/ForcePasswordReset";
 import { Footer } from "@/components/Footer";
 import {
   LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
-  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users,
+  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers,
 } from "lucide-react";
 
 function DualModeToggle() {
@@ -35,6 +37,7 @@ const NAV = [
   { to: "/app/decisions", label: "Recommendations", icon: GitBranch },
   { to: "/app/reporting", label: "Evidence & Reporting", icon: FileBarChart, ent: "evidence_reporting" },
   { to: "/app/audit", label: "Audit Log", icon: ScrollText },
+  { to: "/app/kernel", label: "Platform Kernel", icon: Layers, admin: true },
   { to: "/app/team", label: "Team", icon: Users, admin: true },
   { to: "/app/marketplace", label: "Marketplace", icon: Store },
   { to: "/app/billing", label: "Billing", icon: CreditCard },
@@ -73,6 +76,8 @@ export default function AppShell() {
   const allowedWhenInactive = ["/app/billing", "/app/marketplace"];
   const inactive = (sub && !sub.active) || paywall;
   const blocked = inactive && !allowedWhenInactive.includes(location.pathname);
+
+  if (user?.must_change_password) return <ForcePasswordReset />;
 
   return (
     <div className="min-h-screen grain flex">
@@ -121,7 +126,10 @@ export default function AppShell() {
           <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest truncate">
             {sub?.org_name || "Obserra — Executive Protection & Intelligence LLC"}
           </div>
-          <DualModeToggle />
+          <div className="flex items-center gap-2">
+            <NotificationBell />
+            <DualModeToggle />
+          </div>
         </header>
         <main className="flex-1 p-6 lg:p-8 max-w-[1500px] w-full">
           {blocked ? <Paywall /> : <Outlet />}

@@ -13,6 +13,8 @@ from routes import api as domain_api
 from ai_advisor import advisor_router
 from payments import payments_router, setup_catalog
 from reports import reports_router
+from kernel.routes import kernel_router
+from scheduled import scheduled_router
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -24,6 +26,8 @@ app.include_router(domain_api)
 app.include_router(advisor_router)
 app.include_router(payments_router)
 app.include_router(reports_router)
+app.include_router(kernel_router)
+app.include_router(scheduled_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -42,6 +46,8 @@ async def startup():
     await db.ai_systems.create_index([("org_id", 1), ("ref", 1)])
     await db.audit_logs.create_index([("org_id", 1), ("ts", -1)])
     await db.qr_sessions.create_index("expireAt", expireAfterSeconds=0)
+    await db.notifications.create_index([("org_id", 1), ("created_at", -1)])
+    await db.notifications.create_index([("org_id", 1), ("dedupe_key", 1)])
     await seed_admin()
     try:
         setup_catalog()

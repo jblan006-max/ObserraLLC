@@ -278,6 +278,11 @@ class InviteBody(BaseModel):
     role: str
 
 
+class ChangePasswordBody(BaseModel):
+    current_password: str
+    new_password: str
+
+
 @auth_router.get("/team/members")
 async def team_members(admin: dict = Depends(require_roles("admin"))):
     members = await db.users.find({"org_id": admin["org_id"]}).sort("created_at", 1).to_list(500)
@@ -301,8 +306,58 @@ async def team_invite(body: InviteBody, admin: dict = Depends(require_roles("adm
     }
     res = await db.users.insert_one(doc)
     await _log_audit(admin["org_id"], admin["email"], "team.invite", f"Invited {email} as {body.role}")
+    # Kernel: start onboarding workflow + send welcome email (managed Resend)
+    try:
+        from kernel import workflows, notifications
+        from kernel.workflow import ONBOARDING_STEPS
+        await workflows.start(admin["org_id"], "onboarding", email, ONBOARDING_STEPS, first_done="invited")
+        frontend = os.environ["FRONTEND_URL"].rstrip("/")
+        html = _invite_email_html(body.name, email, temp_password, frontend)
+        await notifications.send_email(email, "You've been invited to Obserra EIOS", html)
+        await notifications.create(admin["org_id"], "team",
+                                   f"{body.name} invited", f"{email} was invited as {body.role} and emailed a sign-in link.",
+                                   ref=email)
+    except Exception as e:
+        import logging; logging.getLogger(__name__).error(f"invite side-effects failed: {e}")
     return {"id": str(res.inserted_id), "email": email, "name": body.name,
             "role": body.role, "temp_password": temp_password}
+
+
+def _invite_email_html(name, email, temp_password, frontend):
+    return (
+        '<table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;margin:auto;background:#ffffff">'
+        '<tr><td style="padding:28px 24px">'
+        '<div style="font:800 20px Arial;color:#0f1e3d">Obserra — Executive Protection &amp; Intelligence LLC</div>'
+        f'<div style="font:400 14px Arial;color:#1f2937;margin-top:14px;line-height:1.6">Hi {name},<br><br>'
+        'You have been invited to the Obserra EIOS enterprise intelligence platform. '
+        'Use the button below to sign in, then set your own password on first login.</div>'
+        f'<div style="margin:22px 0"><a href="{frontend}" style="background:#1b3a8a;color:#fff;font:700 14px Arial;text-decoration:none;padding:12px 22px;border-radius:8px">Sign in to Obserra EIOS</a></div>'
+        f'<div style="font:400 13px Arial;color:#1f2937">Email: <b>{email}</b><br>Temporary password: '
+        f'<code style="background:#f3f4f6;padding:2px 6px;border-radius:4px">{temp_password}</code></div>'
+        '<div style="border-top:1px solid #e5e7eb;margin-top:20px;padding-top:10px;font:400 10px Arial;color:#9ca3af">'
+        'You will be required to set a new password on first sign-in. Confidential — authorized personnel only.</div>'
+        '</td></tr></table>')
+
+
+@auth_router.post("/change-password")
+async def change_password(body: ChangePasswordBody, request: Request, response: Response, user: dict = Depends(get_current_user)):
+    record = await db.users.find_one({"_id": ObjectId(user["id"])})
+    if not record or not verify_password(body.current_password, record["password_hash"]):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+    await db.users.update_one({"_id": ObjectId(user["id"])},
+                              {"$set": {"password_hash": hash_password(body.new_password), "must_change_password": False}})
+    await _log_audit(user["org_id"], user["email"], "user.password_change", "Password updated")
+    try:
+        from kernel import workflows
+        await workflows.advance(user["org_id"], "onboarding", user["email"], "password_set")
+        await workflows.advance(user["org_id"], "onboarding", user["email"], "active")
+    except Exception:
+        pass
+    access = create_access_token(user["id"], user["email"])
+    response.set_cookie("access_token", access, httponly=True, secure=True, samesite="none", max_age=43200, path="/")
+    return {"ok": True}
 
 
 @auth_router.delete("/team/members/{member_id}")

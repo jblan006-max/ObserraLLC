@@ -622,7 +622,25 @@ async def controls(user: dict = Depends(get_current_user)):
     if not existing:
         await db.controls.insert_many([{**c, "org_id": org_id} for c in _CONTROL_SEED])
         existing = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
-    return [_control_status(c) for c in existing]
+    statuses = [_control_status(c) for c in existing]
+    await _emit_drift_alerts(org_id, statuses)
+    return statuses
+
+
+async def _emit_drift_alerts(org_id, statuses):
+    from kernel import notifications, policies
+    await policies.ensure_seed(org_id)
+    for c in statuses:
+        violations = policies.evaluate_control(c)
+        if not violations:
+            continue
+        reasons = "; ".join(f"{r} ({pid})" for pid, r in violations)
+        await notifications.create(
+            org_id, "control_drift",
+            f"Control {c['control_id']} needs attention",
+            f"{c['name']} — owner {c['owner']}. {reasons}.",
+            ref=c["control_id"],
+            dedupe_key=f"drift:{c['control_id']}:{c['evidence_expires'][:10]}:{c['effectiveness']}")
 
 
 @api.get("/financials/trend")

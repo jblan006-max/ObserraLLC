@@ -106,7 +106,10 @@ async def advisor_logs(user: dict = Depends(get_current_user)):
 
 @advisor_router.post("/board-report")
 async def board_report(user: dict = Depends(require_active_subscription)):
-    org_id = user["org_id"]
+    return await generate_board_report(user["org_id"], by=user["email"])
+
+
+async def generate_board_report(org_id: str, by: str):
     context = await _build_context(org_id)
     chat = LlmChat(
         api_key=os.environ["EMERGENT_LLM_KEY"],
@@ -130,7 +133,7 @@ async def board_report(user: dict = Depends(require_active_subscription)):
     report = "".join(collected)
     now = datetime.now(timezone.utc).isoformat()
     await db.reports.insert_one({"org_id": org_id, "report": report,
-                                 "model": "anthropic/claude-sonnet-5", "generated_at": now, "by": user["email"]})
+                                 "model": "anthropic/claude-sonnet-5", "generated_at": now, "by": by})
     return {"report": report, "model": "claude-sonnet-5", "generated_at": now}
 
 
