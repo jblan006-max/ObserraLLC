@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Request, Depends
 from pydantic import BaseModel
 
 from db import db
-from auth import get_current_user
+from auth import get_current_user, require_roles, OWNER_EMAILS
 
 stripe.api_key = os.environ.get("STRIPE_SECRET_KEY") or "sk_test_emergent"
 STRIPE_WEBHOOK_SECRET = os.environ.get("STRIPE_WEBHOOK_SECRET", "")
@@ -133,6 +133,30 @@ async def modules(user: dict = Depends(get_current_user)):
             pp["yearly"]["price"] = o["yearly"]
         pp["owned"] = bool(enterprise or p["entitlement"] in ents)
         out.append(pp)
+    return out
+
+
+@payments_router.get("/api/billing/access-summary")
+async def access_summary(admin: dict = Depends(require_roles("admin"))):
+    """Per-pack seat/access summary: which teammates can reach each paid pack."""
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])})
+    enterprise = org.get("plan") == "enterprise"
+    ents = set(org.get("entitlements", []))
+    members = await db.users.find({"org_id": admin["org_id"]}).to_list(500)
+    total = len(members)
+    out = []
+    for p in PACKS:
+        ent = p["entitlement"]
+        owned = bool(enterprise or ent in ents)
+        seats = []
+        if owned:
+            for m in members:
+                ma = m.get("module_access")
+                is_own = str(m.get("email", "")).lower() in OWNER_EMAILS
+                if m.get("role") == "admin" or is_own or ma is None or ent in ma:
+                    seats.append({"email": m["email"], "name": m.get("name")})
+        out.append({"id": p["id"], "name": p["name"], "entitlement": ent, "owned": owned,
+                    "seat_count": len(seats), "total_members": total, "seats": seats})
     return out
 
 

@@ -339,6 +339,7 @@ class InviteBody(BaseModel):
     email: EmailStr
     name: str
     role: str
+    module_access: list[str] | None = None
 
 
 class ChangePasswordBody(BaseModel):
@@ -381,6 +382,37 @@ async def set_member_access(user_id: str, body: AccessBody, admin: dict = Depend
     return {"ok": True, "module_access": ma}
 
 
+class PresetBody(BaseModel):
+    name: str
+    module_access: list[str] | None = None
+
+
+@auth_router.get("/access-presets")
+async def list_access_presets(admin: dict = Depends(require_roles("admin"))):
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}, {"access_presets": 1})
+    return (org or {}).get("access_presets", [])
+
+
+@auth_router.post("/access-presets")
+async def save_access_preset(body: PresetBody, admin: dict = Depends(require_roles("admin"))):
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Preset name required")
+    ma = None if body.module_access is None else [c for c in body.module_access if c in CATEGORY_IDS]
+    oid = ObjectId(admin["org_id"])
+    await db.organizations.update_one({"_id": oid}, {"$pull": {"access_presets": {"name": name}}})
+    await db.organizations.update_one({"_id": oid}, {"$push": {"access_presets": {"name": name, "module_access": ma}}})
+    await _log_audit(admin["org_id"], admin["email"], "team.preset", f"Saved access preset '{name}'")
+    org = await db.organizations.find_one({"_id": oid}, {"access_presets": 1})
+    return org.get("access_presets", [])
+
+
+@auth_router.delete("/access-presets/{name}")
+async def delete_access_preset(name: str, admin: dict = Depends(require_roles("admin"))):
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$pull": {"access_presets": {"name": name}}})
+    return {"ok": True}
+
+
 @auth_router.post("/team/invite")
 async def team_invite(body: InviteBody, admin: dict = Depends(require_roles("admin"))):
     email = body.email.lower()
@@ -394,6 +426,8 @@ async def team_invite(body: InviteBody, admin: dict = Depends(require_roles("adm
         "role": body.role, "org_id": admin["org_id"], "invited_by": admin["email"],
         "must_change_password": True, "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    if body.module_access is not None:
+        doc["module_access"] = [c for c in body.module_access if c in CATEGORY_IDS]
     res = await db.users.insert_one(doc)
     await _log_audit(admin["org_id"], admin["email"], "team.invite", f"Invited {email} as {body.role}")
     # Kernel: start onboarding workflow + send welcome email (managed Resend)

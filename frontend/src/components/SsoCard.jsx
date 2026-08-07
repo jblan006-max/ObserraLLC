@@ -35,6 +35,15 @@ export function SsoCard() {
     setBusy(false);
   };
 
+  const test = async (provider, payload) => {
+    setBusy(true);
+    try {
+      const { data } = await api.post("/admin/sso/test", { provider, ...payload });
+      if (data.ok) toast.success(data.message); else toast.error(data.message);
+    } catch (e) { toast.error(e.response?.data?.detail || "Test failed"); }
+    setBusy(false);
+  };
+
   const setA = (k) => (e) => setApple((f) => ({ ...f, [k]: e.target.value }));
   const setO = (k) => (e) => setOidc((f) => ({ ...f, [k]: e.target.value }));
 
@@ -58,6 +67,8 @@ export function SsoCard() {
         </div>
         <textarea data-testid="apple-p8" rows={4} className={`${inputCls} font-mono text-xs`} placeholder="Paste the complete .p8 private key contents (leave blank to keep existing)" value={apple.private_key_p8} onChange={setA("private_key_p8")} />
         <div className="flex gap-2">
+          <button data-testid="apple-test" disabled={busy} onClick={() => test("apple", apple.private_key_p8 ? { apple } : {})}
+            className="px-4 py-2 rounded-md bg-secondary/70 border border-border font-head font-bold text-sm hover:bg-secondary transition-colors">Test connection</button>
           <button data-testid="apple-save" disabled={busy} onClick={() => put({ apple }, "Apple Sign In saved")}
             className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
             {busy && <Loader2 className="w-4 h-4 animate-spin" />} Save Apple
@@ -79,6 +90,8 @@ export function SsoCard() {
           <input data-testid="oidc-client-secret" type="password" autoComplete="new-password" className={inputCls} placeholder="Client secret (blank to keep existing)" value={oidc.client_secret} onChange={setO("client_secret")} />
         </div>
         <div className="flex gap-2">
+          <button data-testid="oidc-test" disabled={busy} onClick={() => test("oidc", { discovery_url: oidc.discovery_url })}
+            className="px-4 py-2 rounded-md bg-secondary/70 border border-border font-head font-bold text-sm hover:bg-secondary transition-colors">Test connection</button>
           <button data-testid="oidc-save" disabled={busy} onClick={() => put({ oidc }, "Enterprise SSO saved")}
             className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
             {busy && <Loader2 className="w-4 h-4 animate-spin" />} Save Enterprise SSO

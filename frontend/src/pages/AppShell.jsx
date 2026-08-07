@@ -10,7 +10,7 @@ import ForcePasswordReset from "@/pages/ForcePasswordReset";
 import { Footer } from "@/components/Footer";
 import {
   LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
-  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight,
+  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp,
 } from "lucide-react";
 
 function DualModeToggle() {
@@ -112,6 +112,13 @@ function SidebarInner({ user, sub, owns, doLogout, onNav, onClose }) {
     localStorage.setItem("obserra-nav-collapsed", JSON.stringify(next));
     return next;
   });
+  const sectionKeys = NAV_SECTIONS.filter((s) => s.section).map((s) => s.section);
+  const allCollapsed = sectionKeys.every((k) => collapsed[k]);
+  const setAll = (val) => {
+    const next = {}; sectionKeys.forEach((k) => { next[k] = val; });
+    localStorage.setItem("obserra-nav-collapsed", JSON.stringify(next));
+    setCollapsed(next);
+  };
   return (
     <>
       <div className="flex items-center justify-between px-4 h-16 border-b border-border shrink-0">
@@ -119,6 +126,13 @@ function SidebarInner({ user, sub, owns, doLogout, onNav, onClose }) {
         {onClose && <button data-testid="mobile-nav-close" onClick={onClose} className="md:hidden p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/50"><X className="w-5 h-5" /></button>}
       </div>
       <nav className="flex-1 p-3 space-y-4 overflow-y-auto">
+        <div className="flex justify-end -mt-1 mb-1">
+          <button data-testid="nav-collapse-all" onClick={() => setAll(!allCollapsed)}
+            className="flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-muted-foreground/60 hover:text-foreground transition-colors">
+            {allCollapsed ? <ChevronDown className="w-3 h-3" /> : <ChevronUp className="w-3 h-3" />}
+            {allCollapsed ? "Expand all" : "Collapse all"}
+          </button>
+        </div>
         {NAV_SECTIONS.filter((s) => !s.admin || user?.role === "admin").map((sec, si) => {
           const cs = sec.cat ? CAT_STYLE[sec.color] : null;
           const key = sec.section || `s${si}`;

@@ -5,9 +5,10 @@ Admins enter credentials in the Settings UI; they are encrypted at rest in Mongo
 remain as a read-only fallback so nothing breaks before an admin configures it.
 """
 import os
+import httpx
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from db import db
@@ -120,3 +121,47 @@ async def put_sso(body: SSOInput, admin: dict = Depends(require_roles("admin")))
     await db.app_config.update_one({"_id": CFG_ID}, op, upsert=True)
     await _log_audit(admin["org_id"], admin["email"], "sso.config", "Updated Apple / Enterprise SSO configuration")
     return {"ok": True}
+
+
+class SSOTestInput(BaseModel):
+    provider: str
+    discovery_url: str | None = None
+    apple: AppleInput | None = None
+
+
+@sso_config_router.post("/test")
+async def test_sso(body: SSOTestInput, admin: dict = Depends(require_roles("admin"))):
+    """Validate an OIDC discovery URL or Apple key before saving, so admins catch typos instantly."""
+    if body.provider == "oidc":
+        url = (body.discovery_url or "").strip()
+        if not url:
+            saved = await resolve_oidc()
+            url = saved["discovery_url"] if saved else ""
+        if not url:
+            raise HTTPException(status_code=400, detail="Enter a discovery URL first")
+        try:
+            async with httpx.AsyncClient(timeout=8) as c:
+                r = await c.get(url)
+                r.raise_for_status()
+                meta = r.json()
+        except Exception:
+            return {"ok": False, "message": "Could not reach that discovery URL — check the address."}
+        missing = [k for k in ("authorization_endpoint", "token_endpoint", "jwks_uri") if not meta.get(k)]
+        if missing:
+            return {"ok": False, "message": f"Not a valid OIDC provider (missing: {', '.join(missing)})."}
+        return {"ok": True, "message": f"Valid OIDC provider · issuer {meta.get('issuer', 'unknown')}"}
+    if body.provider == "apple":
+        if body.apple and body.apple.private_key_p8.strip():
+            a = body.apple
+            cfg = {"team_id": a.team_id, "service_id": a.service_id, "key_id": a.key_id, "p8": a.private_key_p8}
+        else:
+            cfg = await resolve_apple()
+        if not cfg or not cfg.get("p8"):
+            raise HTTPException(status_code=400, detail="Enter Apple Team/Service/Key IDs and the .p8 key first")
+        try:
+            from social_auth import _apple_client_secret
+            _apple_client_secret(cfg)
+        except Exception:
+            return {"ok": False, "message": "Apple key invalid — check the .p8 contents and IDs."}
+        return {"ok": True, "message": "Apple configuration valid — client secret generated successfully."}
+    raise HTTPException(status_code=400, detail="Unknown provider")

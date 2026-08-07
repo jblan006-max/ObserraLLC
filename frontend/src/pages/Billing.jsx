@@ -2,17 +2,20 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { Loader2, Check, Sparkle, Clock, ExternalLink } from "lucide-react";
+import { Loader2, Check, Sparkle, Clock, ExternalLink, Users } from "lucide-react";
 
 export default function Billing() {
-  const { sub, refreshSub } = useAuth();
+  const { sub, refreshSub, user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [plans, setPlans] = useState(null);
+  const [summary, setSummary] = useState(null);
   const [interval, setIntervalSel] = useState("monthly");
   const [busy, setBusy] = useState("");
   const [mods, setMods] = useState([]);
   const [portalBusy, setPortalBusy] = useState(false);
 
   useEffect(() => { api.get("/billing/plans").then((r) => setPlans(r.data)); api.get("/modules").then((r) => setMods(r.data || [])); refreshSub?.(); }, []);
+  useEffect(() => { if (user?.role === "admin") api.get("/billing/access-summary").then((r) => setSummary(r.data)).catch(() => {}); }, [user]);
 
   const openPortal = async () => {
     setPortalBusy(true);
@@ -75,6 +78,25 @@ export default function Billing() {
           );
         })}
       </div>
+      {isAdmin && summary && (
+        <div data-testid="seats-access-summary" className="bg-card fact-border rounded-xl p-6 space-y-3">
+          <h2 className="font-head font-bold text-lg flex items-center gap-2"><Users className="w-5 h-5 text-ai" /> Seats &amp; Access</h2>
+          <p className="text-sm text-muted-foreground -mt-1">Which teammates can reach each paid pack right now.</p>
+          <div>
+            {summary.map((s) => (
+              <div key={s.id} data-testid={`seat-row-${s.id}`} className="flex items-center justify-between gap-3 py-2.5 border-b border-border/50 last:border-0">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${s.owned ? "bg-low" : "bg-muted-foreground/40"}`} />
+                  <span className="text-sm font-medium truncate">{s.name}</span>
+                  {!s.owned && <span className="text-[10px] font-mono uppercase text-muted-foreground border border-border rounded px-1.5 py-0.5 shrink-0">not owned</span>}
+                </div>
+                <div className="text-sm text-muted-foreground shrink-0">{s.owned ? `${s.seat_count} of ${s.total_members} teammates` : "—"}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <p className="text-xs text-muted-foreground">Deployment: SaaS (managed), Private Cloud, or Hybrid. Test card: <span className="font-mono text-foreground">4242 4242 4242 4242</span>, any future expiry, any CVC.</p>
     </div>
   );

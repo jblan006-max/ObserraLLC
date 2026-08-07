@@ -29,3 +29,10 @@
 - Self-service Apple + Enterprise SSO config: new security.py (Fernet, APP_SETTINGS_KEK) + sso_config.py (GET/PUT /api/admin/sso, admin-gated, secrets encrypted at rest in app_config/_id=sso). social_auth.py now resolves Apple/OIDC creds from DB with env fallback; /api/auth/providers reflects DB config. New SsoCard.jsx in Settings (admin) for Team/Service/Key IDs + .p8, OIDC discovery/client id+secret, SAML metadata URL. Verified PUT/GET/clear + providers toggle.
 - Team access roles: POST /api/auth/team/{id}/access sets per-user module_access (null=all). team_members returns module_access. /api/subscription computes effective per-user entitlements + `restricted` flag; AppShell owns() no longer grants enterprise bypass when restricted. Team.jsx: Access column + modal with 6 category checkboxes / All-access toggle.
 - Collapsible sidebar: every named section header is a toggle (chevron) with per-section state persisted to localStorage (obserra-nav-collapsed); 6 paid categories keep their accent colors.
+
+## 2026-08-07 — SSO test, access presets, invite-with-access, collapse-all, billing seats
+- Test SSO Connection: POST /api/admin/sso/test (admin) validates an OIDC discovery URL (fetch + endpoint check) or an Apple key (ES256 client-secret build). "Test connection" buttons added in SsoCard. Verified good→ok, bad→friendly error.
+- Access Presets: org-level presets (auth.py GET/POST/DELETE /api/auth/access-presets). Team access modal gets "Apply preset" dropdown + "Save as preset"; invite form gets a preset/custom selector.
+- Invite With Access: InviteBody + team_invite accept module_access; invite form lets admins pick All / a preset / custom categories up front.
+- Collapse All: sidebar top control toggles all sections collapsed/expanded (ChevronUp/Down), persisted to localStorage.
+- Billing Seats & Access: GET /api/billing/access-summary (admin) → per-pack owned + seat_count/total_members; new card on Billing lists all 6 packs with "X of N teammates". Verified via curl + screenshot.

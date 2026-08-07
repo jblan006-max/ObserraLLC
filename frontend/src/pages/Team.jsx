@@ -23,22 +23,30 @@ export default function Team() {
   const [form, setForm] = useState({ name: "", email: "", role: "operational" });
   const [busy, setBusy] = useState(false);
   const [invited, setInvited] = useState(null);
+  const [presets, setPresets] = useState([]);
+  const [invAccessMode, setInvAccessMode] = useState("all");
+  const [invAccessSel, setInvAccessSel] = useState([]);
   const navigate = useNavigate();
   const [q, setQ] = useUrlState("q", "");
   const [roleF, setRoleF] = useUrlState("roleF", "all");
   const shownMembers = (members || []).filter((m) => (roleF === "all" || m.role === roleF) && `${m.name} ${m.email}`.toLowerCase().includes(q.toLowerCase()));
 
   const load = () => api.get("/auth/team/members").then((r) => setMembers(r.data)).catch(() => navigate("/app"));
-  useEffect(() => { load(); }, []);
+  const loadPresets = () => api.get("/auth/access-presets").then((r) => setPresets(r.data || [])).catch(() => {});
+  useEffect(() => { load(); loadPresets(); }, []);
 
   const invite = async (e) => {
     e.preventDefault();
     setBusy(true); setInvited(null);
+    let module_access = null;
+    if (invAccessMode === "custom") module_access = invAccessSel;
+    else if (invAccessMode !== "all") { const p = presets.find((x) => x.name === invAccessMode); module_access = p ? p.module_access : null; }
     try {
-      const { data } = await api.post("/auth/team/invite", form);
+      const { data } = await api.post("/auth/team/invite", { ...form, module_access });
       setInvited(data);
       toast.success(`${data.email} invited as ${ROLE_LABEL[data.role]}`);
       setForm({ name: "", email: "", role: "operational" });
+      setInvAccessMode("all"); setInvAccessSel([]);
       load();
     } catch (e2) { toast.error(e2.response?.data?.detail || "Could not invite"); }
     setBusy(false);
@@ -69,6 +77,14 @@ export default function Team() {
       setAccessFor(null); load();
     } catch (e2) { toast.error(e2.response?.data?.detail || "Could not update access"); }
     setAccessBusy(false);
+  };
+  const saveAsPreset = async () => {
+    const name = window.prompt("Preset name (e.g. Auditor)");
+    if (!name) return;
+    try {
+      const { data } = await api.post("/auth/access-presets", { name, module_access: accessAll ? null : accessSel });
+      setPresets(data || []); toast.success(`Preset '${name}' saved`);
+    } catch { toast.error("Could not save preset"); }
   };
 
   return (
@@ -104,6 +120,28 @@ export default function Team() {
           className="flex items-center justify-center gap-2 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm hover:opacity-90 transition-opacity disabled:opacity-50">
           {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />} Invite
         </button>
+        <div className="sm:col-span-4 border-t border-border/60 pt-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-xs font-medium text-muted-foreground">Dashboard access</span>
+            <select data-testid="invite-access-mode" value={invAccessMode} onChange={(e) => setInvAccessMode(e.target.value)}
+              className="bg-secondary/60 rounded-md px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary">
+              <option value="all">All access</option>
+              {presets.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+              <option value="custom">Custom…</option>
+            </select>
+          </div>
+          {invAccessMode === "custom" && (
+            <div className="flex flex-wrap gap-x-5 gap-y-2 mt-3">
+              {CATS.map((c) => (
+                <label key={c.id} data-testid={`invite-cat-${c.id}`} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" className="accent-primary w-4 h-4" checked={invAccessSel.includes(c.id)}
+                    onChange={() => setInvAccessSel((s) => (s.includes(c.id) ? s.filter((x) => x !== c.id) : [...s, c.id]))} />
+                  <span>{c.name}</span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
       </form>
 
       {invited && (
@@ -186,6 +224,16 @@ export default function Team() {
               <input data-testid="access-all-toggle" type="checkbox" checked={accessAll} onChange={(e) => setAccessAll(e.target.checked)} className="accent-primary w-4 h-4" />
               <span>All access <span className="text-muted-foreground">(no restriction)</span></span>
             </label>
+            {presets.length > 0 && (
+              <div className="flex items-center gap-2 text-sm">
+                <span className="text-xs text-muted-foreground">Apply preset</span>
+                <select data-testid="apply-preset" defaultValue="" onChange={(e) => { const p = presets.find((x) => x.name === e.target.value); if (p) { setAccessAll(p.module_access == null); setAccessSel(p.module_access || CATS.map((c) => c.id)); } }}
+                  className="bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none">
+                  <option value="">Choose…</option>
+                  {presets.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
+                </select>
+              </div>
+            )}
             <div className={`space-y-2 pl-1 ${accessAll ? "opacity-40 pointer-events-none" : ""}`}>
               {CATS.map((c) => (
                 <label key={c.id} data-testid={`access-cat-${c.id}`} className="flex items-center gap-2 text-sm cursor-pointer">
@@ -195,6 +243,7 @@ export default function Team() {
               ))}
             </div>
             <div className="flex justify-end gap-2 pt-2">
+              <button data-testid="save-as-preset" onClick={saveAsPreset} className="mr-auto px-4 py-2 rounded-md text-sm border border-border text-muted-foreground hover:text-ai hover:border-ai/40 transition-colors">Save as preset</button>
               <button onClick={() => setAccessFor(null)} className="px-4 py-2 rounded-md text-sm text-muted-foreground hover:bg-secondary/60 transition-colors">Cancel</button>
               <button data-testid="access-save" disabled={accessBusy} onClick={saveAccess}
                 className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
