@@ -32,6 +32,10 @@ Enterprise SaaS "continuous AI control plane" with Dual-Mode dashboards (Executi
 - Board PDF verified via render (doc-verification skill): cover + chart + takeaways + watermark/footer all correct.
 - Credentials in `/app/memory/test_credentials.md`.
 
+## Recent polish (Jun 2026)
+- Settings: "Remove logo / Reset to Obserra" button (branding-reset) added; logo type/size validation + dropped-invalid-email recipient feedback all live.
+- AIAdvisor floating button: official navy (#0f1e3d) pill, white Obserra eye mark (brand-mark.png, no bg) stacked above white "Advisor" label.
+
 ## Backlog / Roadmap
 - P1 (blocked): Apple Sign-In + Enterprise SSO — awaiting user IdP metadata/Apple keys (wired, gated by `/api/auth/providers`).
 - P2: landscape iPhone splash; per-role nav spotlight; hide Google/Apple buttons if user wants zero 3rd-party logos; report cover date/version options.
