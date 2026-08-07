@@ -1,0 +1,29 @@
+{
+  "summary": "Responsive/cross-device testing (Windows desktop 1440x900 and iPhone-like mobile 390x844). Auth page, mobile nav drawer, Overview, Compliance Posture and Control Monitoring pages all pass on mobile. Desktop regression (sidebar/mode toggles) also passes. No horizontal overflow detected on any tested page/viewport. One notable mobile UX issue: AIAdvisor panel auto-opens on first login and, because it is w-full on mobile, covers the entire viewport including the hamburger button until the user finds the close (X) inside it.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AIAdvisor panel", "issue": "On mobile (<sm, <640px) advisor-panel is w-full and it auto-opens on the first session after login (sessionStorage 'advisor-opened'). This completely blocks the app viewport including the mobile-nav-toggle (hamburger) until user manually taps advisor-close. First-time iOS users see the Advisor, not the dashboard/nav.", "selector": "[data-testid=\"advisor-panel\"]", "priority": "MEDIUM"},
+      {"component": "SidebarInner header inside mobile drawer", "issue": "The mobile-nav-close (X) button is absolutely positioned at top-4 right-3 and visually overlaps the Obserra logo header inside the drawer (both occupy the top row). Minor visual polish.", "selector": "[data-testid=\"mobile-nav-close\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/test_reports/mobile_overview.png", "/app/test_reports/mobile_drawer.png", "/app/test_reports/mobile_compliance.png", "/app/test_reports/mobile_controls.png", "/app/test_reports/desktop_operational.png", "/app/test_reports/desktop_executive.png"],
+  "action_items": [
+    "Consider NOT auto-opening AIAdvisor on mobile viewport (or make the panel w-[90%] with a visible backdrop) so first-time mobile users can see the dashboard/hamburger without needing to close the advisor.",
+    "Reposition the mobile-nav-close X button (e.g. put it inside the sidebar header row) so it doesn't overlap the Obserra logo in the drawer."
+  ],
+  "critical_code_review_comments": [
+    "AIAdvisor auto-open logic (AIAdvisor.jsx line 72) does not consider viewport size - forces panel open on 390px iPhone screen where panel is w-full and blocks all app interaction including the new mobile-nav-toggle.",
+    "AppShell.jsx NAV items (nav-* data-testids) are rendered twice on mobile (desktop <aside class='hidden md:flex'> is still in DOM). Tests must scope by mobile-nav-drawer or the desktop-hidden copy is matched first. Not a bug, just a test-authoring gotcha."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (skipped as requested)", "frontend": "100% for the requested responsive checklist; 1 medium + 1 low mobile UX finding"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from review_request)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All 5 responsive test items in review_request pass. Verified: mobile auth (hero hidden lg:flex → display:none), mobile /app has hamburger + drawer with nav-overview / nav-compliance-posture / nav-cyber-risk (each testid appears twice in DOM because desktop sidebar is still mounted with class 'hidden md:flex' - scope clicks to '[data-testid=mobile-nav-drawer] [data-testid=nav-...]'). Drawer closes on: close button, backdrop click, and nav link click. header-advisor-input is hidden on mobile. Overview/Compliance/Controls have zero horizontal overflow (scrollWidth == 390). Desktop 1440: sidebar visible, hamburger hidden, mode-toggle-executive/operational both work. Only concern: AIAdvisor auto-opens on first session and, being w-full on mobile, blocks everything until user closes it — flagged as MEDIUM UX issue.",
+  "rca of the issue": "Not applicable - no functional bugs. AIAdvisor mobile-obstruction RCA: sessionStorage-based auto-open in AIAdvisor.jsx L72 fires regardless of viewport, and panel classes are 'fixed inset-y-0 right-0 z-50 w-full sm:w-[440px]' so on <640px it is full-width. Mitigation: skip auto-open when window.innerWidth < 640, or change to w-[92%] max-w-[440px] with a semi-transparent backdrop so users can still see/dismiss it easily."
+}

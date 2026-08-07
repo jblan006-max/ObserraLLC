@@ -35,6 +35,17 @@
 
 * { border-color: hsl(var(--border)); }
 
+/* Cross-device: prevent iOS text auto-resize, honor safe areas, avoid horizontal overflow */
+html { -webkit-text-size-adjust: 100%; }
+body { overflow-x: hidden; }
+@supports (padding: max(0px)) {
+    body { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+}
+/* iOS Safari zooms in when a focused input's font-size is < 16px — force 16px on small screens */
+@media (max-width: 767px) {
+    input, textarea, select { font-size: 16px !important; }
+}
+
 body {
     margin: 0;
     background-color: hsl(var(--background));

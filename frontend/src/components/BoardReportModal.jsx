@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { X, FileText, Loader2, Download, Sparkle, Mail, MessageSquare } from "lucide-react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
@@ -61,7 +61,10 @@ export function BoardReportModal({ open, onClose }) {
     setLoading(false);
   };
 
-  if (open && !report && !loading) generate();
+  useEffect(() => {
+    if (open && !report && !loading) generate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
   if (!open) return null;
 
   const download = () => {
