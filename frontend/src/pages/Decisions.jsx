@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { ConfidenceBadge, DataTypeBadge } from "@/components/badges";
-import { Loader2, GitBranch, CheckCircle2, FileText } from "lucide-react";
+import { Loader2, GitBranch, CheckCircle2, FileText, Activity } from "lucide-react";
+import { SimulationModal } from "@/components/SimulationModal";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter,
 } from "@/components/ui/dialog";
@@ -10,14 +11,20 @@ import {
 export default function Decisions() {
   const [recs, setRecs] = useState(null);
   const [decisions, setDecisions] = useState([]);
+  const [riskMap, setRiskMap] = useState({});
   const [active, setActive] = useState(null);
   const [chosen, setChosen] = useState("");
   const [rationale, setRationale] = useState("");
   const [busy, setBusy] = useState(false);
+  const [simRisk, setSimRisk] = useState(null);
 
   const load = () => {
     api.get("/recommendations").then((r) => setRecs(r.data));
     api.get("/decisions").then((r) => setDecisions(r.data));
+    api.get("/risks").then((r) => {
+      const map = {}; r.data.forEach((x) => { map[x.ref] = { residual: x.residual, inherent: x.inherent }; });
+      setRiskMap(map);
+    });
   };
   useEffect(() => { load(); }, []);
 
@@ -56,8 +63,14 @@ export default function Decisions() {
               <div className="text-[11px] text-muted-foreground mb-3">
                 Evidence: {r.evidence?.join(" · ")}
               </div>
-              <div className="flex items-center justify-between">
-                <ConfidenceBadge value={r.confidence} />
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <ConfidenceBadge value={r.confidence} />
+                  <button data-testid={`simulate-${r.ref}`} onClick={() => setSimRisk({ ref: r.risk_ref, title: r.title, ...(riskMap[r.risk_ref] || { residual: 12, inherent: 20 }) })}
+                    className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-secondary/60 hover:bg-secondary transition-colors">
+                    <Activity className="w-3.5 h-3.5" /> Simulate
+                  </button>
+                </div>
                 {r.status === "Pending" ? (
                   <Dialog open={active?.ref === r.ref} onOpenChange={(o) => { setActive(o ? r : null); setChosen(""); setRationale(""); }}>
                     <DialogTrigger asChild>

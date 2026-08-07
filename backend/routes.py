@@ -360,3 +360,202 @@ async def assets(user: dict = Depends(get_current_user)):
     await db.assets.insert_many([dict(d) for d in docs])
     return await db.assets.find({"org_id": org_id}, {"_id": 0}).to_list(500)
 
+
+# ---------- Financial quantification (FAIR-style) ----------
+SLE_BY_IMPACT = {5: 8_000_000, 4: 3_000_000, 3: 1_000_000, 2: 300_000, 1: 75_000}
+
+
+def _fin(r):
+    sle = SLE_BY_IMPACT.get(r.get("impact", 3), 1_000_000)
+    aro = r.get("likelihood", 3) / 5
+    inherent = max(1, r.get("inherent", 10))
+    residual = r.get("residual", inherent)
+    inherent_ale = sle * aro
+    residual_ale = inherent_ale * (residual / inherent)
+    return {
+        "sle": sle, "aro": round(aro, 2),
+        "inherent_ale": round(inherent_ale), "residual_ale": round(residual_ale),
+        "risk_adjusted": round(residual_ale * r.get("confidence", 0.7)),
+    }
+
+
+@api.get("/financials")
+async def financials(user: dict = Depends(get_current_user)):
+    risks = await db.risks.find({"org_id": user["org_id"]}, {"_id": 0}).to_list(500)
+    items = [{"ref": r["ref"], "title": r["title"], "category": r["category"],
+              "residual": r["residual"], "inherent": r["inherent"], **_fin(r)} for r in risks]
+    items.sort(key=lambda x: x["residual_ale"], reverse=True)
+    total_residual = sum(i["residual_ale"] for i in items)
+    total_inherent = sum(i["inherent_ale"] for i in items)
+    total_adj = sum(i["risk_adjusted"] for i in items)
+    return {"items": items, "total_residual_ale": total_residual, "total_inherent_ale": total_inherent,
+            "total_risk_adjusted": total_adj, "avoided": total_inherent - total_residual}
+
+
+# ---------- Decision simulation (what-if) ----------
+_POINT_COST = {"Identity & Access": 42000, "Vulnerability Mgmt": 55000, "AI Governance": 60000,
+               "Third Party": 30000, "Resilience": 38000, "Data Protection": 48000}
+
+
+class SimulateBody(BaseModel):
+    risk_ref: str
+    target_residual: int
+
+
+@api.post("/simulate")
+async def simulate(body: SimulateBody, user: dict = Depends(get_current_user)):
+    r = await db.risks.find_one({"org_id": user["org_id"], "ref": body.risk_ref}, {"_id": 0})
+    if not r:
+        raise HTTPException(404, "Risk not found")
+    target = max(1, min(r["inherent"], body.target_residual))
+    before = _fin(r)
+    after = _fin({**r, "residual": target})
+    reduction = before["residual_ale"] - after["residual_ale"]
+    points = max(0, r["residual"] - target)
+    cost = points * _POINT_COST.get(r["category"], 45000)
+    roi = round(reduction / cost, 2) if cost else None
+    return {
+        "risk_ref": body.risk_ref, "current_residual": r["residual"], "target_residual": target,
+        "exposure_before": before["residual_ale"], "exposure_after": after["residual_ale"],
+        "expected_reduction": reduction, "estimated_cost": cost, "roi": roi,
+        "health_delta": min(6, points), "payback_months": (round(cost / (reduction / 12)) if reduction else None),
+    }
+
+
+# ---------- Evidence drill-down ----------
+_FW_BY_CAT = {"Identity & Access": ["NIST CSF 2.0", "ISO/IEC 27001", "SOC 2"],
+              "Vulnerability Mgmt": ["NIST SP 800-53", "PCI DSS"],
+              "AI Governance": ["NIST AI RMF", "EU AI Act", "ISO/IEC 42001"],
+              "Third Party": ["SOC 2", "DORA"], "Resilience": ["ISO/IEC 27001", "DORA"],
+              "Data Protection": ["GDPR", "HIPAA"]}
+_CTRL_BY_CAT = {"Identity & Access": "IAM-3 Privileged Access Management",
+                "Vulnerability Mgmt": "VM-2 Timely Remediation", "AI Governance": "AIG-1 AI Use Governance",
+                "Third Party": "TPR-4 Vendor Attestation", "Resilience": "BCP-2 DR Testing",
+                "Data Protection": "DP-1 Data Minimization"}
+
+
+@api.get("/evidence/{kind}/{ref}")
+async def evidence(kind: str, ref: str, user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    if kind == "risk":
+        r = await db.risks.find_one({"org_id": org_id, "ref": ref}, {"_id": 0})
+        if not r:
+            raise HTTPException(404, "Not found")
+        rec = await db.recommendations.find_one({"org_id": org_id, "risk_ref": ref}, {"_id": 0})
+        live = r["freshness"] == "live"
+        return {
+            "metric": f"Residual Risk — {ref}", "value": r["residual"],
+            "calculation": f"likelihood({r['likelihood']}) × impact({r['impact']}) = inherent {r['inherent']}; residual after controls = {r['residual']}",
+            "methodology": "FAIR-aligned inherent × residual with control-effectiveness ratio",
+            "source_system": r["source"], "source_record": ref,
+            "evidence": [r.get("kri", ""), f"Owner attestation — {r['owner']}", f"Treatment: {r['treatment']}"],
+            "evidence_owner": r["owner"], "collected": r.get("created_at"), "last_verified": r.get("updated_at"),
+            "freshness": r["freshness"], "confidence": r["confidence"],
+            "completeness": 0.92 if r["data_type"] == "fact" else 0.72,
+            "reliability": 0.88 if live else 0.6, "data_type": r["data_type"],
+            "related_controls": [_CTRL_BY_CAT.get(r["category"], "GEN-1 General Control")],
+            "related_risks": [ref], "frameworks": _FW_BY_CAT.get(r["category"], ["NIST CSF 2.0"]),
+            "historical": [{"label": "Inherent", "value": r["inherent"]}, {"label": "Residual", "value": r["residual"]}],
+            "ai_reasoning": rec["predicted_impact"] if rec else "No active recommendation.",
+            "human_validation": "Validated" if r["status"] != "Open" else "Pending review",
+            "financial": _fin(r),
+        }
+    if kind == "health":
+        h = await db.health_index.find_one({"org_id": org_id}, {"_id": 0})
+        comp = next((c for c in h["components"] if c["name"] == ref), None)
+        if not comp:
+            raise HTTPException(404, "Not found")
+        return {
+            "metric": f"Health Component — {ref}", "value": comp["score"],
+            "calculation": f"weighted contribution {int(comp['weight']*100)}% of Enterprise Health Index ({h['score']})",
+            "methodology": "Weighted control-effectiveness rollup across connected sources",
+            "source_system": "Aggregated (Entra ID · Tenable · CASB)", "source_record": ref,
+            "evidence": ["Continuous control monitoring", "Connector telemetry"],
+            "evidence_owner": "Security Operations", "collected": h.get("computed_at"), "last_verified": h.get("computed_at"),
+            "freshness": h.get("freshness", "live"), "confidence": comp.get("confidence", 0.8),
+            "completeness": 0.9, "reliability": 0.85, "data_type": "fact",
+            "related_controls": [_CTRL_BY_CAT.get(ref, "GEN-1 General Control")],
+            "related_risks": [], "frameworks": _FW_BY_CAT.get(ref, ["NIST CSF 2.0"]),
+            "historical": h.get("history", []), "ai_reasoning": "Trend derived from control telemetry.",
+            "human_validation": "Validated",
+        }
+    raise HTTPException(400, "Unknown evidence kind")
+
+
+# ---------- Enterprise Knowledge Graph ----------
+async def _build_graph(org_id):
+    ai = await db.ai_systems.find({"org_id": org_id}, {"_id": 0}).to_list(100)
+    risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(200)
+    nodes, edges = [], []
+
+    def add(nid, label, ntype, meta=None):
+        nodes.append({"id": nid, "label": label, "type": ntype, "meta": meta or {}})
+
+    for d, lbl in [("D-CONF", "Confidential PII"), ("D-FIN", "Financial Data"), ("D-PUB", "Public Data")]:
+        add(d, lbl, "data")
+    vendors = {"V-OPENAI": ("OpenAI", "high"), "V-ANTHROPIC": ("Anthropic", "low"),
+               "V-INHOUSE": ("In-house", "low"), "V-UNKNOWN": ("Unknown SaaS", "critical")}
+    for vid, (lbl, rl) in vendors.items():
+        add(vid, lbl, "vendor", {"risk_level": rl})
+    prov_map = {"AI-001": "V-OPENAI", "AI-002": "V-INHOUSE", "AI-003": "V-UNKNOWN", "AI-004": "V-ANTHROPIC"}
+    data_map = {"AI-001": ["D-CONF"], "AI-002": ["D-CONF", "D-FIN"], "AI-003": ["D-CONF"], "AI-004": ["D-CONF"]}
+    for a in ai:
+        add(a["ref"], a["name"], "ai", {"status": a["status"], "risk_class": a["risk_class"]})
+        v = prov_map.get(a["ref"], "V-OPENAI")
+        edges.append({"source": a["ref"], "target": v, "label": "depends_on"})
+        for d in data_map.get(a["ref"], ["D-PUB"]):
+            edges.append({"source": a["ref"], "target": d, "label": "processes"})
+    for r in risks:
+        add(r["ref"], r["title"][:26], "risk", {"residual": r["residual"], "status": r["status"], "category": r["category"]})
+    # vendor -> risk links
+    edges.append({"source": "V-UNKNOWN", "target": "CR-004", "label": "has_risk"})
+    edges.append({"source": "V-OPENAI", "target": "CR-004", "label": "has_risk"})
+    for bu in ["Corporate", "Engineering", "Finance", "Customer Ops"]:
+        add(f"BU-{bu}", bu, "bu")
+    for reg in ["EU AI Act", "NIST AI RMF", "GDPR", "PCI DSS"]:
+        add(f"REG-{reg}", reg, "regulation")
+    return {"nodes": nodes, "edges": edges}
+
+
+@api.get("/knowledge-graph")
+async def knowledge_graph(user: dict = Depends(get_current_user)):
+    return await _build_graph(user["org_id"])
+
+
+class GraphQuery(BaseModel):
+    preset: str
+
+
+@api.post("/knowledge-graph/query")
+async def knowledge_graph_query(body: GraphQuery, user: dict = Depends(get_current_user)):
+    g = await _build_graph(user["org_id"])
+    nodes = {n["id"]: n for n in g["nodes"]}
+    edges = g["edges"]
+    highlight, matches = set(), []
+    if body.preset == "conf_risky_vendor":
+        risky_vendors = {n["id"] for n in g["nodes"] if n["type"] == "vendor" and n["meta"].get("risk_level") in ("critical", "high")}
+        for n in g["nodes"]:
+            if n["type"] != "ai":
+                continue
+            proc_conf = any(e for e in edges if e["source"] == n["id"] and e["target"] == "D-CONF")
+            vend = next((e["target"] for e in edges if e["source"] == n["id"] and e["label"] == "depends_on"), None)
+            if proc_conf and vend in risky_vendors:
+                matches.append(n["id"]); highlight.update([n["id"], "D-CONF", vend])
+        explanation = f"{len(matches)} AI system(s) process Confidential PII AND depend on a high/critical-risk vendor: {', '.join(matches) or 'none'}."
+    elif body.preset == "shadow_exposure":
+        for n in g["nodes"]:
+            if n["type"] == "ai" and n["meta"].get("status") == "shadow":
+                matches.append(n["id"]); highlight.add(n["id"])
+                for e in edges:
+                    if e["source"] == n["id"]:
+                        highlight.add(e["target"])
+        explanation = f"{len(matches)} shadow AI system(s) discovered with active data/vendor dependencies."
+    elif body.preset == "critical_risks":
+        for n in g["nodes"]:
+            if n["type"] == "risk" and n["meta"].get("residual", 0) >= 16:
+                matches.append(n["id"]); highlight.add(n["id"])
+        explanation = f"{len(matches)} critical residual risk(s) (score ≥ 16)."
+    else:
+        raise HTTPException(400, "Unknown preset")
+    return {"highlight": list(highlight), "matches": matches, "explanation": explanation}
+

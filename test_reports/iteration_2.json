@@ -1,0 +1,41 @@
+{
+  "summary": "Tested 4 P0 features (Knowledge Graph, Financials, Decision Simulation, Evidence drill-down) end-to-end. Backend: 15/16 P0 pytest cases pass (the 1 failure is data-pollution, not a code bug — AI-003 was sanctioned by earlier action tests, so shadow_exposure returns 0). Frontend: KG page, Evidence modal, and Overview financial cards all work perfectly. CRITICAL FRONTEND BUG: Simulate button click sets simRisk state but Decisions.jsx never renders <SimulationModal /> — the JSX element is missing, so simulation-modal never opens.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/knowledge-graph/query {preset:shadow_exposure}", "issue": "Returns 0 matches because AI-003 was sanctioned by previous test_new_features.py actions test — not a code bug, but the preset silently returns [] on a fresh but stateful org. Consider resetting or seeding an additional shadow AI to keep this preset meaningful after actions run."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Decisions.jsx", "issue": "SimulationModal is imported and simRisk state exists, but the <SimulationModal risk={simRisk} onClose={()=>setSimRisk(null)}/> JSX element is NEVER rendered in the return tree. Clicking [data-testid='simulate-REC-001'] updates state but nothing appears on screen. Add the component render (e.g., {simRisk && <SimulationModal risk={simRisk} onClose={()=>setSimRisk(null)}/>}) inside the top-level div.", "selector": "[data-testid='simulate-REC-001']", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [
+      {"flow": "Decision Simulation (P0)", "issue": "Backend POST /api/simulate works (verified via pytest — returns exposure_before/after, ROI, payback, health_delta), but the frontend Simulate button never opens simulation-modal because the modal JSX is missing from Decisions.jsx. Entire feature is unreachable from the UI.", "affected_selectors": ["[data-testid='simulation-modal']", "[data-testid='sim-slider']"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_p0_features.py",
+    "/app/test_reports/pytest/p0_results.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Add <SimulationModal risk={simRisk} onClose={()=>setSimRisk(null)}/> render inside Decisions.jsx return JSX (after the outer div children). Without it the P0 Decision Simulation UI is dead.",
+    "Optional: Make shadow_exposure preset resilient — either reseed AI-003 as shadow after CASB action runs, or seed a second shadow AI so the preset always demonstrates value."
+  ],
+  "critical_code_review_comments": [
+    "Decisions.jsx: dead-code import — SimulationModal imported but never rendered. Lint rule (no-unused-vars for JSX-adjacent imports) would have caught this.",
+    "KnowledgeGraph.jsx: preset button UI is clean, ReactFlow renders 25-node graph with correct type coloring and highlight overlay — good work.",
+    "EvidenceModal.jsx: fully renders the Metric→Calc→Source→Evidence→Control→Risk→Framework→Owner chain plus FAIR ALE — verified visually with CR-002 ($8M inherent / $4.8M residual / $3.7M risk-adjusted).",
+    "routes._build_graph is org-scoped and re-derived each call (no caching) — fine at 25 nodes but could add response cache header for large orgs.",
+    "shadow_exposure preset silently returns [] when no shadow AI exist — consider returning explanation like 'No shadow AI currently discovered — good posture' instead of the current '0 shadow AI system(s) discovered...' which is passable but ambiguous."
+  ],
+  "updated_files": ["/app/backend/tests/test_p0_features.py"],
+  "success_rate": {"backend": "94% (15/16 P0 cases; the failure is environmental data pollution not a code bug)", "frontend": "75% (3 of 4 P0 features work end-to-end; Simulation modal never renders)"},
+  "test_credentials": "Admin jblan2026@gmail.com / Obserra2026! works (used).",
+  "seed_data_creation": "None (used existing enterprise org).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After main agent adds the missing <SimulationModal/> render in Decisions.jsx, re-run the Playwright block that clicks [data-testid='simulate-REC-001'] and asserts [data-testid='simulation-modal'] visibility + [data-testid='sim-slider']. Backend endpoints for all 4 P0 features are green. Pytest file: /app/backend/tests/test_p0_features.py.",
+  "rca of the issue": "Decisions.jsx sets simRisk state on button click (line 69) but there is no <SimulationModal risk={simRisk} onClose={()=>setSimRisk(null)}/> in the JSX return tree. React never mounts the component, so the modal DOM never appears. Fix is a 1-line addition inside the outer <div className='rise space-y-6'>: {simRisk && <SimulationModal risk={simRisk} onClose={()=>setSimRisk(null)}/>}"
+}

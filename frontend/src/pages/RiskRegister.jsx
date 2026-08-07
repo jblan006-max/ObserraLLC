@@ -3,7 +3,8 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { EvidenceLineageModal } from "@/components/EvidenceLineageModal";
 import { SourceBadge, FreshnessBadge, ConfidenceBadge, DataTypeBadge, ScorePill } from "@/components/badges";
-import { Loader2, Search } from "lucide-react";
+import { Loader2, Search, Info, DollarSign } from "lucide-react";
+import { EvidenceModal } from "@/components/EvidenceModal";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -13,6 +14,7 @@ const STATUS = ["Open", "In Progress", "Remediated", "Accepted"];
 export default function RiskRegister() {
   const [risks, setRisks] = useState(null);
   const [lineage, setLineage] = useState(null);
+  const [evidence, setEvidence] = useState(null);
   const [q, setQ] = useState("");
   const [cat, setCat] = useState("all");
 
@@ -61,6 +63,7 @@ export default function RiskRegister() {
               <th className="text-left px-4 py-3">Category</th>
               <th className="text-left px-4 py-3">Inh.</th>
               <th className="text-left px-4 py-3">Res.</th>
+              <th className="text-left px-4 py-3">$ Exposure</th>
               <th className="text-left px-4 py-3">Owner</th>
               <th className="text-left px-4 py-3">KRI</th>
               <th className="text-left px-4 py-3">Evidence</th>
@@ -78,6 +81,13 @@ export default function RiskRegister() {
                 <td className="px-4 py-3 text-xs text-muted-foreground">{r.category}</td>
                 <td className="px-4 py-3"><ScorePill value={r.inherent} /></td>
                 <td className="px-4 py-3"><ScorePill value={r.residual} /></td>
+                <td className="px-4 py-3">
+                  <button data-testid={`evidence-${r.ref}`} onClick={(e) => { e.stopPropagation(); setEvidence(r.ref); }}
+                    className="flex items-center gap-1 text-xs font-mono text-high hover:text-foreground transition-colors">
+                    <DollarSign className="w-3 h-3" />{Math.round((SLE_BY_IMPACT[r.impact] || 1e6) * (r.likelihood / 5) * (r.residual / r.inherent) / 1000)}k
+                    <Info className="w-3 h-3 opacity-60" />
+                  </button>
+                </td>
                 <td className="px-4 py-3 text-xs">{r.owner}</td>
                 <td className="px-4 py-3 text-[11px] font-mono text-muted-foreground max-w-[140px]">{r.kri}</td>
                 <td className="px-4 py-3">
@@ -102,6 +112,9 @@ export default function RiskRegister() {
       </div>
 
       <EvidenceLineageModal riskRef={lineage} onClose={() => setLineage(null)} />
+      <EvidenceModal kind="risk" refId={evidence} onClose={() => setEvidence(null)} />
     </div>
   );
 }
+
+const SLE_BY_IMPACT = { 5: 8000000, 4: 3000000, 3: 1000000, 2: 300000, 1: 75000 };

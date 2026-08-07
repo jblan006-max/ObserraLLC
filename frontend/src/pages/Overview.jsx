@@ -22,6 +22,7 @@ export default function Overview() {
   const { mode } = useAuth();
   const [d, setD] = useState(null);
   const [an, setAn] = useState(null);
+  const [fin, setFin] = useState(null);
   const [audit, setAudit] = useState([]);
   const [intg, setIntg] = useState([]);
   const [running, setRunning] = useState(null);
@@ -29,10 +30,10 @@ export default function Overview() {
   const [report, setReport] = useState(false);
 
   const load = useCallback(async (silent) => {
-    const [o, a, au, ig] = await Promise.all([
-      api.get("/overview"), api.get("/analytics"), api.get("/audit-logs"), api.get("/integrations"),
+    const [o, a, au, ig, f] = await Promise.all([
+      api.get("/overview"), api.get("/analytics"), api.get("/audit-logs"), api.get("/integrations"), api.get("/financials"),
     ]);
-    setD(o.data); setAn(a.data); setAudit(au.data.slice(0, 8)); setIntg(ig.data);
+    setD(o.data); setAn(a.data); setAudit(au.data.slice(0, 8)); setIntg(ig.data); setFin(f.data);
   }, []);
 
   useEffect(() => { load(); const t = setInterval(() => load(true), 20000); return () => clearInterval(t); }, [load]);
@@ -115,8 +116,8 @@ export default function Overview() {
             </AreaChart>
           </ResponsiveContainer>
           <div className="grid grid-cols-2 gap-3 mt-3">
-            <div className="estimate-border rounded-md p-3"><div className="text-[10px] text-muted-foreground">Business exposure</div><div className="font-head font-bold text-lg"><CountUp value={11} prefix="$" suffix="M" decimals={1} /></div><DataTypeBadge type="estimate" /></div>
-            <div className="fact-border rounded-md p-3"><div className="text-[10px] text-muted-foreground">vs Q1</div><div className="font-head font-bold text-lg text-low">+8 pts</div><DataTypeBadge type="fact" /></div>
+            <div className="estimate-border rounded-md p-3"><div className="text-[10px] text-muted-foreground">Residual exposure/yr</div><div className="font-head font-bold text-lg text-high">{fin ? "$" + (fin.total_residual_ale / 1e6).toFixed(1) + "M" : "—"}</div><DataTypeBadge type="estimate" /></div>
+            <div className="fact-border rounded-md p-3"><div className="text-[10px] text-muted-foreground">Exposure avoided</div><div className="font-head font-bold text-lg text-low">{fin ? "$" + (fin.avoided / 1e6).toFixed(1) + "M" : "—"}</div><DataTypeBadge type="fact" /></div>
           </div>
         </motion.div>
 

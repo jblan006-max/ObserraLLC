@@ -5,7 +5,7 @@ import { AIAdvisor } from "@/components/AIAdvisor";
 import { Footer } from "@/components/Footer";
 import {
   LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
-  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock,
+  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network,
 } from "lucide-react";
 
 function DualModeToggle() {
@@ -30,6 +30,7 @@ const NAV = [
   { to: "/app/risks", label: "Risk Register", icon: ListChecks },
   { to: "/app/ai-governance", label: "AI Governance", icon: Cpu },
   { to: "/app/assets", label: "Asset Intelligence", icon: Boxes, ent: "asset_intelligence" },
+  { to: "/app/knowledge-graph", label: "Knowledge Graph", icon: Network },
   { to: "/app/decisions", label: "Recommendations", icon: GitBranch },
   { to: "/app/reporting", label: "Evidence & Reporting", icon: FileBarChart, ent: "evidence_reporting" },
   { to: "/app/audit", label: "Audit Log", icon: ScrollText },

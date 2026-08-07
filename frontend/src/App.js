@@ -13,6 +13,7 @@ import Billing from "@/pages/Billing";
 import Marketplace from "@/pages/Marketplace";
 import SituationRoom from "@/pages/SituationRoom";
 import AssetIntelligence from "@/pages/AssetIntelligence";
+import KnowledgeGraph from "@/pages/KnowledgeGraph";
 import Reporting from "@/pages/Reporting";
 import PaymentSuccess from "@/pages/PaymentSuccess";
 import QRApprove from "@/pages/QRApprove";
@@ -46,6 +47,7 @@ function App() {
               <Route path="risks" element={<RiskRegister />} />
               <Route path="ai-governance" element={<AIGovernance />} />
               <Route path="assets" element={<AssetIntelligence />} />
+              <Route path="knowledge-graph" element={<KnowledgeGraph />} />
               <Route path="decisions" element={<Decisions />} />
               <Route path="reporting" element={<Reporting />} />
               <Route path="audit" element={<AuditLog />} />
