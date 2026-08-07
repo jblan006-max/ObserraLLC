@@ -55,12 +55,64 @@ async def _run_monthly_board_reports():
             logger.error(f"Monthly board report failed for org {org_id}: {e}")
 
 
+async def _run_access_expiry():
+    from auth import _notify_access_change, _log_audit, _access_summary_text
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    users = await db.users.find({"access_expiry": {"$lte": today}}).to_list(1000)
+    for u in users:
+        old = u.get("module_access")
+        revert = u.get("access_expiry_revert")
+        await db.users.update_one({"_id": u["_id"]},
+                                  {"$set": {"module_access": revert},
+                                   "$unset": {"access_expiry": "", "access_expiry_revert": "", "preset_pin": ""}})
+        try:
+            await _log_audit(u["org_id"], "scheduler@obserra", "team.access",
+                             f"Access grant expired → reverted to {_access_summary_text(revert)}", target=u["email"])
+            await _notify_access_change(u["org_id"], u, revert, "scheduler@obserra", old_ma=old)
+        except Exception as e:
+            logger.error(f"access expiry notify failed: {e}")
+
+
+async def _run_access_review():
+    from auth import CATEGORY_NAMES, CATEGORY_IDS
+    orgs = await db.organizations.find({}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        try:
+            enterprise = org.get("plan") == "enterprise"
+            ents = set(org.get("entitlements", []))
+            members = await db.users.find({"org_id": org_id}).to_list(500)
+            rows = ""
+            for c in CATEGORY_IDS:
+                if not (enterprise or c in ents):
+                    continue
+                seats = [m for m in members if m.get("role") == "admin" or m.get("module_access") is None or c in (m.get("module_access") or [])]
+                rows += (f'<tr><td style="padding:6px 8px;border-bottom:1px solid #eee">{CATEGORY_NAMES[c]}</td>'
+                         f'<td style="padding:6px 8px;border-bottom:1px solid #eee;text-align:right">{len(seats)} of {len(members)}</td></tr>')
+            if not rows:
+                continue
+            html = ('<table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;margin:auto;background:#fff"><tr><td style="padding:26px 24px">'
+                    '<div style="font:800 20px Arial;color:#0f1e3d">Monthly Access Review</div>'
+                    '<div style="font:400 13px Arial;color:#374151;margin:10px 0 14px">Snapshot of who can reach each paid pack — review for audit hygiene.</div>'
+                    f'<table style="width:100%;border-collapse:collapse;font:400 13px Arial;color:#1f2937">{rows}</table>'
+                    '</td></tr></table>')
+            admins = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}}).to_list(200)
+            for a in admins:
+                await notifications.send_email(a["email"], "Monthly Access Review — Obserra EIOS", html)
+            await notifications.create(org_id, "team", "Access review sent",
+                                       f"Monthly access snapshot emailed to {len(admins)} admin(s).", ref="access-review")
+        except Exception as e:
+            logger.error(f"access review failed for org {org_id}: {e}")
+
+
 @scheduled_router.post("/cron/monthly-board-report")
 async def monthly_board_report(request: Request, background_tasks: BackgroundTasks):
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     if not _authorized(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
     background_tasks.add_task(_run_monthly_board_reports)
+    background_tasks.add_task(_run_access_review)
     return {"status": "accepted"}
 
 
@@ -235,6 +287,7 @@ async def daily_drift_digest(request: Request, background_tasks: BackgroundTasks
     if not _authorized(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
     background_tasks.add_task(_run_drift_digest, {"daily"}, "Daily")
+    background_tasks.add_task(_run_access_expiry)
     return {"status": "accepted"}
 
 

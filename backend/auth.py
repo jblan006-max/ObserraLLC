@@ -412,9 +412,19 @@ async def _notify_access_change(org_id, member, ma, actor, old_ma="__none__"):
         import logging; logging.getLogger(__name__).error(f"access-change notify failed: {e}")
 
 
+async def _org_preset(org_id, name):
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"access_presets": 1})
+    for p in (org or {}).get("access_presets", []):
+        if p["name"] == name:
+            return p
+    return None
+
+
 class AccessBody(BaseModel):
     module_access: list[str] | None = None
     notify: bool = True
+    pin: str | None = None
+    expires_on: str | None = None
 
 
 @auth_router.get("/team/members")
@@ -422,37 +432,65 @@ async def team_members(admin: dict = Depends(require_roles("admin"))):
     members = await db.users.find({"org_id": admin["org_id"]}).sort("created_at", 1).to_list(500)
     return [{"id": str(m["_id"]), "email": m["email"], "name": m.get("name"),
              "role": m.get("role"), "created_at": m.get("created_at"),
-             "invited_by": m.get("invited_by"), "module_access": m.get("module_access")} for m in members]
+             "invited_by": m.get("invited_by"), "module_access": m.get("module_access"),
+             "preset_pin": m.get("preset_pin"), "access_expiry": m.get("access_expiry")} for m in members]
 
 
 @auth_router.post("/team/{user_id}/access")
 async def set_member_access(user_id: str, body: AccessBody, admin: dict = Depends(require_roles("admin"))):
-    """Grant a teammate access to specific dashboard categories (None = all org access)."""
+    """Grant access to categories (None=all). Optionally pin to a preset (auto-syncs) or set an expiry date."""
     member = await db.users.find_one({"_id": ObjectId(user_id), "org_id": admin["org_id"]})
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
-    ma = body.module_access
-    if ma is not None:
-        ma = [c for c in ma if c in CATEGORY_IDS]
-    op = {"$set": {"module_access": ma}} if ma is not None else {"$unset": {"module_access": ""}}
+    old_ma = member.get("module_access")
+    upd, unset = {}, {}
+    if body.pin:
+        preset = await _org_preset(admin["org_id"], body.pin)
+        if not preset:
+            raise HTTPException(status_code=400, detail="Preset not found")
+        ma = preset.get("module_access")
+        upd["preset_pin"] = body.pin
+    else:
+        ma = None if body.module_access is None else [c for c in body.module_access if c in CATEGORY_IDS]
+        unset["preset_pin"] = ""
+    upd["module_access"] = ma
+    if body.expires_on:
+        upd["access_expiry"] = body.expires_on
+        upd["access_expiry_revert"] = old_ma
+    else:
+        unset["access_expiry"] = ""
+        unset["access_expiry_revert"] = ""
+    op = {"$set": upd}
+    if unset:
+        op["$unset"] = unset
     await db.users.update_one({"_id": ObjectId(user_id)}, op)
+    extra = (f" (synced to preset '{body.pin}')" if body.pin else "") + (f" · expires {body.expires_on}" if body.expires_on else "")
     await _log_audit(admin["org_id"], admin["email"], "team.access",
-                     f"Set dashboard access: {_access_summary_text(ma)}", target=member["email"])
+                     f"Set dashboard access: {_access_summary_text(ma)}{extra}", target=member["email"])
     if body.notify:
-        await _notify_access_change(admin["org_id"], member, ma, admin["email"], old_ma=member.get("module_access"))
+        await _notify_access_change(admin["org_id"], member, ma, admin["email"], old_ma=old_ma)
     return {"ok": True, "module_access": ma}
 
 
 class BulkAccessBody(BaseModel):
     user_ids: list[str]
     module_access: list[str] | None = None
+    pin_preset: str | None = None
     notify: bool = True
 
 
 @auth_router.post("/team/bulk-access")
 async def bulk_set_access(body: BulkAccessBody, admin: dict = Depends(require_roles("admin"))):
-    """Apply the same dashboard access to several teammates at once."""
-    ma = None if body.module_access is None else [c for c in body.module_access if c in CATEGORY_IDS]
+    """Apply the same dashboard access (or pin the same preset) to several teammates at once."""
+    pin = None
+    if body.pin_preset:
+        preset = await _org_preset(admin["org_id"], body.pin_preset)
+        if not preset:
+            raise HTTPException(status_code=400, detail="Preset not found")
+        ma = preset.get("module_access")
+        pin = body.pin_preset
+    else:
+        ma = None if body.module_access is None else [c for c in body.module_access if c in CATEGORY_IDS]
     updated = 0
     for uid in body.user_ids:
         try:
@@ -462,10 +500,15 @@ async def bulk_set_access(body: BulkAccessBody, admin: dict = Depends(require_ro
         member = await db.users.find_one({"_id": oid, "org_id": admin["org_id"]})
         if not member:
             continue
-        op = {"$set": {"module_access": ma}} if ma is not None else {"$unset": {"module_access": ""}}
-        await db.users.update_one({"_id": oid}, op)
+        upd = {"module_access": ma}
+        unset = {"access_expiry": "", "access_expiry_revert": ""}
+        if pin:
+            upd["preset_pin"] = pin
+        else:
+            unset["preset_pin"] = ""
+        await db.users.update_one({"_id": oid}, {"$set": upd, "$unset": unset})
         await _log_audit(admin["org_id"], admin["email"], "team.access",
-                         f"Bulk set access: {_access_summary_text(ma)}", target=member["email"])
+                         f"Bulk set access: {_access_summary_text(ma)}" + (f" (synced to '{pin}')" if pin else ""), target=member["email"])
         if body.notify:
             await _notify_access_change(admin["org_id"], member, ma, admin["email"], old_ma=member.get("module_access"))
         updated += 1
@@ -503,6 +546,14 @@ async def save_access_preset(body: PresetBody, admin: dict = Depends(require_rol
     await db.organizations.update_one({"_id": oid}, {"$pull": {"access_presets": {"name": name}}})
     await db.organizations.update_one({"_id": oid}, {"$push": {"access_presets": {"name": name, "module_access": ma}}})
     await _log_audit(admin["org_id"], admin["email"], "team.preset", f"Saved access preset '{name}'")
+    # Sync pinned teammates so editing a preset auto-updates everyone on it
+    pinned = await db.users.find({"org_id": admin["org_id"], "preset_pin": name}).to_list(500)
+    for u in pinned:
+        old = u.get("module_access")
+        await db.users.update_one({"_id": u["_id"]}, {"$set": {"module_access": ma}})
+        await _log_audit(admin["org_id"], admin["email"], "team.access",
+                         f"Preset '{name}' sync: {_access_summary_text(ma)}", target=u["email"])
+        await _notify_access_change(admin["org_id"], u, ma, admin["email"], old_ma=old)
     org = await db.organizations.find_one({"_id": oid}, {"access_presets": 1})
     return org.get("access_presets", [])
 
@@ -545,6 +596,52 @@ async def team_invite(body: InviteBody, admin: dict = Depends(require_roles("adm
         import logging; logging.getLogger(__name__).error(f"invite side-effects failed: {e}")
     return {"id": str(res.inserted_id), "email": email, "name": body.name,
             "role": body.role, "temp_password": temp_password}
+
+
+class ImportRow(BaseModel):
+    name: str = ""
+    email: str
+    role: str = "operational"
+    preset: str | None = None
+
+
+class ImportBody(BaseModel):
+    rows: list[ImportRow]
+
+
+@auth_router.post("/team/import")
+async def team_import(body: ImportBody, admin: dict = Depends(require_roles("admin"))):
+    """Bulk-invite teammates from CSV rows, optionally applying a preset per row."""
+    frontend = os.environ["FRONTEND_URL"].rstrip("/")
+    results = []
+    for row in body.rows:
+        email = (row.email or "").strip().lower()
+        role = row.role if row.role in ("executive", "operational", "admin") else "operational"
+        if not email or "@" not in email:
+            results.append({"email": row.email, "status": "invalid"}); continue
+        if await db.users.find_one({"email": email}):
+            results.append({"email": email, "status": "exists"}); continue
+        ma, pin = None, None
+        if row.preset:
+            preset = await _org_preset(admin["org_id"], row.preset)
+            if preset:
+                ma, pin = preset.get("module_access"), row.preset
+        temp_password = secrets.token_urlsafe(9)
+        doc = {"email": email, "password_hash": hash_password(temp_password), "name": row.name or email,
+               "role": role, "org_id": admin["org_id"], "invited_by": admin["email"],
+               "must_change_password": True, "created_at": datetime.now(timezone.utc).isoformat()}
+        if pin:
+            doc["module_access"], doc["preset_pin"] = ma, pin
+        await db.users.insert_one(doc)
+        await _log_audit(admin["org_id"], admin["email"], "team.invite", f"Imported {email} as {role}", target=email)
+        try:
+            from kernel import notifications
+            html = _invite_email_html(row.name or email, email, temp_password, frontend)
+            await notifications.send_email(email, "You've been invited to Obserra EIOS", html)
+        except Exception as e:
+            import logging; logging.getLogger(__name__).error(f"import invite email failed: {e}")
+        results.append({"email": email, "status": "invited", "temp_password": temp_password})
+    return {"results": results, "invited": len([r for r in results if r["status"] == "invited"])}
 
 
 def _invite_email_html(name, email, temp_password, frontend):

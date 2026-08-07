@@ -55,3 +55,11 @@
 - Bulk From Directory: Team page "Quick select role" buttons (Operational/Executive/Admin) select every member of a role in one click, then apply a preset via the bulk bar.
 - Preset Usage Count: each Preset Manager chip shows "N in use" (teammates whose access exactly matches the preset).
 - History Filters: the access modal's Change History has actor + since/until date filters (client-side); Export PDF forwards them as query params to GET /api/reports/access-history/{id}.pdf (actor/since/until). Verified: filtered PDF returns valid 213KB.
+
+## 2026-08-07 — Preset sync, audit-log filters, CSV import, access expiry, monthly access review
+- Sync Preset Members: pin a teammate to a preset (AccessBody.pin / bulk pin_preset, user.preset_pin); editing a preset auto-updates every pinned teammate's access + emails them. Access modal has a "Sync: <preset>" dropdown; member rows show a pin badge.
+- History In Audit Log: AuditLog page now has actor + since/until filters over /api/audit-logs (which now carries `target`), surfacing all team.access/invite/preset events.
+- CSV Team Import: POST /api/auth/team/import bulk-invites from name,email,role,preset rows (emails each teammate); Team page has a paste-CSV card.
+- Access Expiry: AccessBody.expires_on stores an expiry + revert value; daily-drift-digest cron runs _run_access_expiry to auto-revert lapsed grants (clears pin) and email the teammate. Access modal has an expiry date picker; member rows show an expiry badge.
+- Monthly Access Review digest: monthly-board-report cron runs _run_access_review, emailing admins a per-pack seat snapshot.
+- Fix: repaired a corrupted duplicated tail in auth.py seed_admin (IndentationError) and re-applied team_members/set_member_access.

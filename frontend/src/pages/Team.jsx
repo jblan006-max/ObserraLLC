@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { useUrlState } from "@/hooks/useUrlState";
 import { toast } from "sonner";
-import { Users, UserPlus, Loader2, Trash2, Copy, KeyRound, Search, SlidersHorizontal, Pencil, History } from "lucide-react";
+import { Users, UserPlus, Loader2, Trash2, Copy, KeyRound, Search, SlidersHorizontal, Pencil, History, Pin, CalendarClock, Upload } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const ROLE_LABEL = { admin: "Admin", executive: "Executive", operational: "Operational" };
@@ -84,11 +84,18 @@ export default function Team() {
   const [histActor, setHistActor] = useState("");
   const [histSince, setHistSince] = useState("");
   const [histUntil, setHistUntil] = useState("");
+  const [accessPin, setAccessPin] = useState("");
+  const [accessExpiry, setAccessExpiry] = useState("");
+  const [bulkPin, setBulkPin] = useState(false);
+  const [csvText, setCsvText] = useState("");
+  const [importBusy, setImportBusy] = useState(false);
   const openAccess = (m) => {
     setAccessFor(m);
     setAccessAll(m.module_access == null);
     setAccessSel(m.module_access || CATS.map((c) => c.id));
     setAccessNotify(true);
+    setAccessPin(m.preset_pin || "");
+    setAccessExpiry(m.access_expiry || "");
     setAccessHistory([]);
     setHistActor(""); setHistSince(""); setHistUntil("");
     api.get(`/auth/team/${m.id}/access-history`).then((r) => setAccessHistory(r.data || [])).catch(() => {});
@@ -97,7 +104,7 @@ export default function Team() {
   const saveAccess = async () => {
     setAccessBusy(true);
     try {
-      await api.post(`/auth/team/${accessFor.id}/access`, { module_access: accessAll ? null : accessSel, notify: accessNotify });
+      await api.post(`/auth/team/${accessFor.id}/access`, { module_access: accessAll ? null : accessSel, notify: accessNotify, pin: accessPin || null, expires_on: accessExpiry || null });
       toast.success(`Access updated for ${accessFor.email}`);
       setAccessFor(null); load();
     } catch (e2) { toast.error(e2.response?.data?.detail || "Could not update access"); }
@@ -129,10 +136,10 @@ export default function Team() {
   const toggleSelect = (id) => setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
   const applyBulk = async () => {
     setBulkBusy(true);
-    let module_access = null;
-    if (bulkMode !== "all") { const p = presets.find((x) => x.name === bulkMode); module_access = p ? p.module_access : null; }
+    let module_access = null; let pin_preset = null;
+    if (bulkMode !== "all") { const p = presets.find((x) => x.name === bulkMode); module_access = p ? p.module_access : null; if (bulkPin) pin_preset = bulkMode; }
     try {
-      const { data } = await api.post("/auth/team/bulk-access", { user_ids: selected, module_access, notify: bulkNotify });
+      const { data } = await api.post("/auth/team/bulk-access", { user_ids: selected, module_access, pin_preset, notify: bulkNotify });
       toast.success(`Access updated for ${data.updated} teammate(s)`);
       setSelected([]); load();
     } catch { toast.error("Could not apply bulk access"); }
@@ -161,6 +168,21 @@ export default function Team() {
 
   const histActors = [...new Set((accessHistory || []).map((h) => h.actor).filter(Boolean))];
   const shownHistory = (accessHistory || []).filter((h) => (!histActor || h.actor === histActor) && (!histSince || (h.ts || "").slice(0, 10) >= histSince) && (!histUntil || (h.ts || "").slice(0, 10) <= histUntil));
+  const importCsv = async () => {
+    const lines = csvText.split("\n").map((l) => l.trim()).filter(Boolean);
+    const rows = lines.filter((l) => !/^name\s*,\s*email/i.test(l)).map((l) => {
+      const [name, email, role, preset] = l.split(",").map((x) => (x || "").trim());
+      return { name, email, role: role || "operational", preset: preset || null };
+    }).filter((r) => r.email);
+    if (!rows.length) { toast.error("No valid rows found (use: name,email,role,preset)"); return; }
+    setImportBusy(true);
+    try {
+      const { data } = await api.post("/auth/team/import", { rows });
+      toast.success(`Imported ${data.invited} of ${rows.length} teammate(s)`);
+      setCsvText(""); load();
+    } catch { toast.error("Import failed"); }
+    setImportBusy(false);
+  };
 
   return (
     <div className="rise space-y-6 max-w-4xl">
@@ -250,6 +272,18 @@ export default function Team() {
         )}
       </div>
 
+      <div data-testid="csv-import" className="bg-card fact-border rounded-xl p-5 space-y-3">
+        <div className="flex items-center gap-2"><Upload className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Bulk Import (CSV)</h2></div>
+        <p className="text-sm text-muted-foreground">Paste rows as <code className="font-mono text-xs">name,email,role,preset</code> (one per line). Role defaults to operational; preset is optional and applies that access. Each teammate is emailed a sign-in link.</p>
+        <textarea data-testid="csv-input" rows={4} value={csvText} onChange={(e) => setCsvText(e.target.value)}
+          placeholder={"Jane Auditor,jane@acme.com,operational,Auditor\nSam Exec,sam@acme.com,executive"}
+          className="w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm font-mono outline-none focus:ring-1 focus:ring-primary" />
+        <button data-testid="csv-import-btn" disabled={importBusy || !csvText.trim()} onClick={importCsv}
+          className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
+          {importBusy && <Loader2 className="w-4 h-4 animate-spin" />} Import teammates
+        </button>
+      </div>
+
       {!members ? <div className="flex items-center justify-center h-40"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div> : (
         <>
         <div className="flex flex-wrap gap-2" data-testid="member-filters">
@@ -275,6 +309,9 @@ export default function Team() {
               <option value="all">All access</option>
               {presets.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
             </select>
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+              <input data-testid="bulk-pin" type="checkbox" checked={bulkPin} onChange={(e) => setBulkPin(e.target.checked)} disabled={bulkMode === "all"} className="accent-primary w-3.5 h-3.5" /> Keep in sync
+            </label>
             <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
               <input data-testid="bulk-notify" type="checkbox" checked={bulkNotify} onChange={(e) => setBulkNotify(e.target.checked)} className="accent-primary w-3.5 h-3.5" /> Email teammates
             </label>
@@ -320,6 +357,8 @@ export default function Team() {
                   <td className="px-4 py-3">
                     <button data-testid={`access-${m.id}`} onClick={() => openAccess(m)}
                       className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md border border-border text-muted-foreground hover:text-ai hover:border-ai/40 transition-colors"><SlidersHorizontal className="w-3.5 h-3.5" /> {accessLabel(m)}</button>
+                    {m.preset_pin && <span className="ml-1.5 text-[10px] font-mono text-ai" title="Synced to preset"><Pin className="w-3 h-3 inline" /> {m.preset_pin}</span>}
+                    {m.access_expiry && <span className="ml-1.5 text-[10px] font-mono text-med" title="Access expires"><CalendarClock className="w-3 h-3 inline" /> {m.access_expiry}</span>}
                   </td>
                   <td className="px-4 py-3 text-right">
                     <button data-testid={`remove-${m.id}`} onClick={() => remove(m.id, m.email)}
@@ -384,6 +423,20 @@ export default function Team() {
                 </div>
               </div>
             )}
+            <div className="flex flex-wrap items-center gap-3 border-t border-border pt-3">
+              <div className="flex items-center gap-2">
+                <Pin className="w-3.5 h-3.5 text-muted-foreground" />
+                <select data-testid="access-pin" value={accessPin} onChange={(e) => setAccessPin(e.target.value)} className="bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none">
+                  <option value="">Not pinned</option>
+                  {presets.map((p) => <option key={p.name} value={p.name}>Sync: {p.name}</option>)}
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <CalendarClock className="w-3.5 h-3.5 text-muted-foreground" />
+                <input data-testid="access-expiry" type="date" value={accessExpiry} onChange={(e) => setAccessExpiry(e.target.value)} className="bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none" />
+                {accessExpiry && <button onClick={() => setAccessExpiry("")} className="text-xs text-muted-foreground hover:text-foreground">clear</button>}
+              </div>
+            </div>
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input data-testid="access-notify" type="checkbox" checked={accessNotify} onChange={(e) => setAccessNotify(e.target.checked)} className="accent-primary w-4 h-4" />
               <span>Email this teammate about the change</span>
