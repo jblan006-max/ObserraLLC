@@ -38,7 +38,7 @@ export default function Auth() {
           className="absolute inset-0 w-full h-full object-cover opacity-[0.08]" />
         <NetworkBackground className="absolute inset-0 w-full h-full opacity-70" />
         <div className="relative flex flex-col items-center text-center gap-5">
-          <img src="/obserra-mark.svg" alt="Obserra mark" className="h-40 xl:h-52 w-auto object-contain logo-pulse drop-shadow-[0_8px_30px_rgba(86,184,233,0.25)]" />
+          <img src="/obserra-mark-flat.svg" alt="Obserra mark" className="h-40 xl:h-52 w-auto object-contain logo-pulse drop-shadow-[0_8px_30px_rgba(86,184,233,0.25)]" />
           <div className="space-y-1.5">
             <div className="font-head font-black text-4xl xl:text-5xl tracking-[0.35em] pl-[0.35em] text-foreground">OBSERRA</div>
             <div className="text-[11px] xl:text-xs font-mono uppercase tracking-[0.25em] text-muted-foreground">Executive Protection &amp; Intelligence LLC</div>
@@ -67,7 +67,7 @@ export default function Auth() {
       <div className="flex items-center justify-center p-6">
         <div className="w-full max-w-sm rise">
           <div className="lg:hidden mb-8 flex flex-col items-center text-center gap-3">
-            <img src="/obserra-mark.svg" alt="Obserra mark" className="h-24 w-auto object-contain drop-shadow-[0_6px_20px_rgba(86,184,233,0.25)]" />
+            <img src="/obserra-mark-flat.svg" alt="Obserra mark" className="h-24 w-auto object-contain drop-shadow-[0_6px_20px_rgba(86,184,233,0.25)]" />
             <div className="space-y-1">
               <div className="font-head font-black text-2xl tracking-[0.3em] pl-[0.3em] text-foreground">OBSERRA</div>
               <div className="text-[9px] font-mono uppercase tracking-[0.22em] text-muted-foreground">Executive Protection &amp; Intelligence LLC</div>

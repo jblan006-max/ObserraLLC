@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Obserra logo</title><desc id="desc">Obserra eye and keyhole protection mark</desc>
+  <path d="M35 128c25-37 55-56 93-56s68 19 93 56c-25 37-55 56-93 56s-68-19-93-56Z" fill="none" stroke="#F4F8FC" stroke-width="13" stroke-linejoin="round"/>
+  <circle cx="128" cy="128" r="40" fill="none" stroke="#F4F8FC" stroke-width="9"/>
+  <circle cx="128" cy="115" r="13" fill="#F4F8FC"/>
+  <path d="M119 123 L137 123 L143 153 L113 153 Z" fill="#F4F8FC"/>
+</svg>

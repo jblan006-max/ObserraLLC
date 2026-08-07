@@ -30,7 +30,7 @@ export const Splash = () => {
       style={{ backgroundColor: "#061F3B" }}
     >
       <img
-        src="/obserra-mark.svg"
+        src="/obserra-mark-flat.svg"
         alt="Obserra"
         className="h-28 w-auto object-contain logo-pulse drop-shadow-[0_8px_30px_rgba(86,184,233,0.3)]"
       />
