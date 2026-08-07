@@ -16,6 +16,8 @@ export default function Settings() {
   const [cadence, setCadence] = useState(user?.digest_cadence || "weekly");
   const [busy, setBusy] = useState(false);
 
+  const [licenses, setLicenses] = useState([]);
+
   const replayTour = () => {
     const k = `obserra-tour-done-${user?.id || user?.email}`;
     localStorage.removeItem(k);
@@ -136,6 +138,7 @@ export default function Settings() {
   const [hideSocial, setHideSocial] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   useEffect(() => { if (!isAdmin) return; api.get("/settings/auth-ui").then((r) => setHideSocial(!!r.data.hide_social)).catch(() => {}); }, [isAdmin]);
+  useEffect(() => { if (!isAdmin) return; api.get("/licenses").then((r) => setLicenses(r.data || [])).catch(() => {}); }, [isAdmin]);
   const saveAuthUI = async (val) => {
     setHideSocial(val); setAuthBusy(true);
     try {
@@ -259,6 +262,25 @@ export default function Settings() {
               {ownerBusy && <Loader2 className="w-4 h-4 animate-spin" />} Save owner directory
             </button>
           )}
+        </div>
+      )}
+
+      {isAdmin && licenses.length > 0 && (
+        <div className="bg-card fact-border rounded-xl p-6 space-y-3" data-testid="licenses-settings">
+          <div className="flex items-center gap-2"><Package className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Add-on License Keys</h2></div>
+          <p className="text-xs text-muted-foreground">Keys issued when your add-on packs were activated. Keep them confidential.</p>
+          <div className="space-y-2">
+            {licenses.map((l, i) => (
+              <div key={i} data-testid="license-row" className="flex flex-wrap items-center justify-between gap-2 bg-secondary/40 rounded-md px-3 py-2">
+                <span className="text-sm font-medium">{l.pack}</span>
+                <div className="flex items-center gap-2">
+                  <code className="text-xs text-ai">{l.key}</code>
+                  <button data-testid="license-copy" onClick={() => { navigator.clipboard.writeText(l.key); toast.success("License key copied"); }}
+                    className="text-[11px] px-2 py-1 rounded-md bg-secondary hover:bg-secondary/70 transition-colors">Copy</button>
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

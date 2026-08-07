@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate, useLocation, Navigate } from "react-route
 import { useAuth } from "@/context/AuthContext";
 import { AIAdvisor } from "@/components/AIAdvisor";
 import { OnboardingTour } from "@/components/OnboardingTour";
+import { LockedGate } from "@/components/LockedGate";
 import { NotificationBell } from "@/components/NotificationBell";
 import ForcePasswordReset from "@/pages/ForcePasswordReset";
 import { Footer } from "@/components/Footer";
@@ -29,20 +30,20 @@ function DualModeToggle() {
 
 const NAV = [
   { to: "/app", label: "Overview", icon: LayoutDashboard, end: true },
-  { to: "/app/situation-room", label: "Situation Room", icon: Radar, ent: "situation_room" },
-  { to: "/app/risks", label: "Risk Register", icon: ListChecks },
-  { to: "/app/ai-governance", label: "AI Governance", icon: Cpu },
-  { to: "/app/controls", label: "Control Monitoring", icon: ShieldCheck },
-  { to: "/app/compliance", label: "Compliance Posture", icon: ShieldCheck },
-  { to: "/app/snapshot", label: "Exec Snapshot", icon: Smartphone },
+  { to: "/app/situation-room", label: "Situation Room", icon: Radar, ent: "cyber_risk" },
+  { to: "/app/risks", label: "Risk Register", icon: ListChecks, ent: "cyber_risk" },
+  { to: "/app/ai-governance", label: "AI Governance", icon: Cpu, ent: "ai_governance" },
+  { to: "/app/controls", label: "Control Monitoring", icon: ShieldCheck, ent: "cyber_risk" },
+  { to: "/app/compliance", label: "Compliance Posture", icon: ShieldCheck, ent: "reporting_board" },
+  { to: "/app/snapshot", label: "Exec Snapshot", icon: Smartphone, ent: "reporting_board" },
   { to: "/app/assets", label: "Asset Intelligence", icon: Boxes, ent: "asset_intelligence" },
   { to: "/app/knowledge-graph", label: "Knowledge Graph", icon: Network },
   { to: "/app/decisions", label: "Recommendations", icon: GitBranch },
-  { to: "/app/reporting", label: "Evidence & Reporting", icon: FileBarChart, ent: "evidence_reporting" },
-  { to: "/app/audit", label: "Audit Log", icon: ScrollText },
-  { to: "/app/agents", label: "AI Agents", icon: Bot },
-  { to: "/app/vendors", label: "Third-Party Risk", icon: Building },
-  { to: "/app/cyber-risk", label: "Cyber Risk", icon: ShieldAlert },
+  { to: "/app/reporting", label: "Evidence & Reporting", icon: FileBarChart, ent: "reporting_board" },
+  { to: "/app/audit", label: "Audit Log", icon: ScrollText, ent: "audit_evidence" },
+  { to: "/app/agents", label: "AI Agents", icon: Bot, ent: "ai_governance" },
+  { to: "/app/vendors", label: "Third-Party Risk", icon: Building, ent: "third_party_risk" },
+  { to: "/app/cyber-risk", label: "Cyber Risk", icon: ShieldAlert, ent: "cyber_risk" },
   { to: "/app/studio", label: "Studio", icon: Sparkles },
   { to: "/app/benchmark", label: "Benchmarking", icon: BarChart3 },
   { to: "/app/kernel", label: "Platform Kernel", icon: Layers, admin: true },
@@ -80,7 +81,7 @@ function SidebarInner({ user, sub, owns, doLogout, onNav, onClose }) {
         {NAV.filter((n) => !n.admin || user?.role === "admin").map((n) => {
           const locked = !owns(n.ent);
           return (
-            <NavLink key={n.to} to={locked ? "/app/marketplace" : n.to} end={n.end} onClick={onNav}
+            <NavLink key={n.to} to={n.to} end={n.end} onClick={onNav}
               data-testid={`nav-${n.label.toLowerCase().replace(/ &/g, "").replace(/ /g, "-")}`}
               className={({ isActive }) => `flex items-center justify-between gap-3 px-3 py-2.5 rounded-md text-sm transition-colors duration-200 ${
                 isActive && !locked ? "bg-primary/15 text-foreground border border-primary/30" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}`}>
@@ -134,6 +135,9 @@ export default function AppShell() {
   const allowedWhenInactive = ["/app/billing", "/app/marketplace"];
   const inactive = (sub && !sub.active) || paywall;
   const blocked = inactive && !allowedWhenInactive.includes(location.pathname);
+  const routeEnt = Object.fromEntries(NAV.filter((n) => n.ent).map((n) => [n.to, n.ent]));
+  const currentEnt = routeEnt[location.pathname];
+  const locked = currentEnt && !owns(currentEnt);
 
   if (user?.must_change_password) return <ForcePasswordReset />;
 
@@ -182,7 +186,7 @@ export default function AppShell() {
           </div>
         </header>
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1500px] w-full min-w-0 overflow-x-hidden pb-28 md:pb-8">
-          {blocked ? <Paywall /> : <Outlet />}
+          {blocked ? <Paywall /> : locked ? <LockedGate ent={currentEnt} /> : <Outlet />}
         </main>
         <Footer />
       </div>
