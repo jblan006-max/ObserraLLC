@@ -1,0 +1,107 @@
+import { useEffect, useState } from "react";
+import { api } from "@/lib/api";
+import { toast } from "sonner";
+import { EvidenceLineageModal } from "@/components/EvidenceLineageModal";
+import { SourceBadge, FreshnessBadge, ConfidenceBadge, DataTypeBadge, ScorePill } from "@/components/badges";
+import { Loader2, Search } from "lucide-react";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+
+const STATUS = ["Open", "In Progress", "Remediated", "Accepted"];
+
+export default function RiskRegister() {
+  const [risks, setRisks] = useState(null);
+  const [lineage, setLineage] = useState(null);
+  const [q, setQ] = useState("");
+  const [cat, setCat] = useState("all");
+
+  const load = () => api.get("/risks").then((r) => setRisks(r.data));
+  useEffect(() => { load(); }, []);
+
+  const updateStatus = async (ref, status) => {
+    await api.patch(`/risks/${ref}`, { status });
+    toast.success(`${ref} → ${status}`);
+    load();
+  };
+
+  if (!risks) return <div className="flex items-center justify-center h-96"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
+
+  const categories = ["all", ...Array.from(new Set(risks.map((r) => r.category)))];
+  const filtered = risks.filter((r) =>
+    (cat === "all" || r.category === cat) &&
+    (r.title.toLowerCase().includes(q.toLowerCase()) || r.ref.toLowerCase().includes(q.toLowerCase())));
+
+  return (
+    <div className="rise space-y-5">
+      <div>
+        <h1 className="font-head font-black text-3xl tracking-tight">Cyber Risk Register</h1>
+        <p className="text-sm text-muted-foreground mt-1">Taxonomy, inherent vs residual scoring, ownership, treatment & KRIs. Click any row for evidence lineage.</p>
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+          <input data-testid="risk-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search risks…"
+            className="w-full bg-card border border-border rounded-md pl-9 pr-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" />
+        </div>
+        <Select value={cat} onValueChange={setCat}>
+          <SelectTrigger data-testid="risk-category-filter" className="w-52 bg-card"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            {categories.map((c) => <SelectItem key={c} value={c}>{c === "all" ? "All categories" : c}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+
+      <div className="bg-card fact-border rounded-lg overflow-x-auto">
+        <table className="w-full text-sm min-w-[900px]">
+          <thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border">
+            <tr>
+              <th className="text-left px-4 py-3">Ref / Risk</th>
+              <th className="text-left px-4 py-3">Category</th>
+              <th className="text-left px-4 py-3">Inh.</th>
+              <th className="text-left px-4 py-3">Res.</th>
+              <th className="text-left px-4 py-3">Owner</th>
+              <th className="text-left px-4 py-3">KRI</th>
+              <th className="text-left px-4 py-3">Evidence</th>
+              <th className="text-left px-4 py-3">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filtered.map((r) => (
+              <tr key={r.ref} data-testid={`risk-row-${r.ref}`} className="border-b border-border/60 hover:bg-secondary/40 transition-colors">
+                <td className="px-4 py-3 cursor-pointer" onClick={() => setLineage(r.ref)}>
+                  <div className="font-mono text-xs text-ai">{r.ref}</div>
+                  <div className="font-medium max-w-xs">{r.title}</div>
+                  <div className="text-[11px] text-muted-foreground mt-0.5">{r.business_impact}</div>
+                </td>
+                <td className="px-4 py-3 text-xs text-muted-foreground">{r.category}</td>
+                <td className="px-4 py-3"><ScorePill value={r.inherent} /></td>
+                <td className="px-4 py-3"><ScorePill value={r.residual} /></td>
+                <td className="px-4 py-3 text-xs">{r.owner}</td>
+                <td className="px-4 py-3 text-[11px] font-mono text-muted-foreground max-w-[140px]">{r.kri}</td>
+                <td className="px-4 py-3">
+                  <div className="flex flex-col gap-1">
+                    <SourceBadge source={r.source} />
+                    <div className="flex items-center gap-2"><FreshnessBadge freshness={r.freshness} /><DataTypeBadge type={r.data_type} /></div>
+                    <ConfidenceBadge value={r.confidence} />
+                  </div>
+                </td>
+                <td className="px-4 py-3">
+                  <Select value={r.status} onValueChange={(v) => updateStatus(r.ref, v)}>
+                    <SelectTrigger data-testid={`risk-status-${r.ref}`} className="w-32 h-8 text-xs bg-secondary/60"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {STATUS.map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      <EvidenceLineageModal riskRef={lineage} onClose={() => setLineage(null)} />
+    </div>
+  );
+}

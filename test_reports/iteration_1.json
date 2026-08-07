@@ -1,0 +1,53 @@
+{
+  "summary": "End-to-end testing of Obserra EIOS: 23 backend pytest cases against production URL (21 pass, 1 real failure = Stripe checkout 500, 1 test-ordering flake). Frontend flows validated with Playwright — login, dual-mode toggle, risk register, AI governance, recommendations/decisions, audit log, billing, and AI advisor SSE streaming all functional. Two issues to fix: (1) Stripe checkout 500 due to automatic_tax without a valid head office address, (2) minor test-id naming mismatch vs spec.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/billing/checkout", "issue": "Returns 500: 'You must have a valid head office address to enable automatic tax calculation in test mode.' The Stripe test account is missing a head office address, but payments.py enables automatic_tax={'enabled': True}. Either disable automatic_tax or set the address on the Stripe test account. Frontend surfaces this as toast 'Could not start checkout'.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "PATCH /api/ai-systems/{ref}", "issue": "No validation on status values (any string accepted). Consider enum: sanctioned|shadow|deprecated."},
+      {"endpoint": "POST /api/recommendations/{ref}/decide", "issue": "DEC ref generated via count+1 is not concurrency-safe; two simultaneous decisions can collide. Consider ObjectId or Mongo counter."},
+      {"endpoint": "POST /api/auth/register", "issue": "EmailStr (pydantic email-validator) rejects .test / reserved TLDs (422). Not a functional bug but tests must use real-looking domains."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "RiskRegister", "issue": "Description says 'Click any row for evidence lineage' but only the first (REF) cell has onClick — clicking anywhere else in the row does nothing. Move onClick to the <tr> or all td except the status dropdown.", "selector": "tr[data-testid^='risk-row-'] > td", "priority": "MEDIUM"},
+      {"component": "Billing", "issue": "'Could not start checkout' toast shown when Subscribe clicked — caused by backend 500 (Stripe automatic_tax config). No detail surfaced to user.", "selector": "[data-testid='subscribe-eios_team_monthly']", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Stripe subscribe from Billing page", "issue": "Checkout session creation fails end-to-end; blocks the entire billing flow (success_url, /payment/status/{id} untested).", "affected_selectors": ["[data-testid^='subscribe-']"]}
+    ],
+    "design_issues": [
+      {"screen": "Sidebar nav testids", "issues": ["Actual testids are nav-overview / nav-risk-register / nav-ai-governance / nav-recommendations / nav-audit-log / nav-billing. Spec listed nav-risks, nav-ai, nav-decisions — mismatch is minor but should be reconciled either in spec or NAV_ITEMS labels."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix Stripe checkout 500: either set automatic_tax={'enabled': False} in payments.create_checkout, or configure Stripe test-mode head office address at https://dashboard.stripe.com/test/settings/tax.",
+    "RiskRegister: make full <tr> row clickable for lineage (not just first cell) to match copy 'Click any row'.",
+    "Optional: align sidebar nav data-testids with spec (nav-risks / nav-ai / nav-decisions) or update spec.",
+    "Make DEC-ref generation concurrency-safe."
+  ],
+  "critical_code_review_comments": [
+    "payments.py: automatic_tax hard-enabled with no fallback — brittle to Stripe account config.",
+    "auth.py seed_admin correctly updates password if it changes ✓; bcrypt hash produced by bcrypt.hashpw ✓ ($2b$).",
+    "CORS: allow_credentials=True with explicit origin list ✓ (no wildcard with credentials).",
+    "Brute-force lockout (5 attempts / 15 min) implemented ✓.",
+    "MongoDB _id consistently excluded in projections ✓.",
+    "ai_advisor.py: LLM errors are swallowed but 'done' still emitted — good UX, but should surface an error flag so frontend can show a real error state instead of silent empty response.",
+    "decide_rec DEC-ref generation uses count_documents+1 — race condition risk.",
+    "routes update endpoints don't enforce enum on status/risk_class — any string accepted."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "91% (21/23; 1 real bug + 1 test-order flake)", "frontend": "90% (all pages render, all flows work except Stripe checkout)"},
+  "test_credentials": "Admin jblan2026@gmail.com / Obserra2026! works. Operational analyst@obserra.demo / Analyst2026! seeded (not exercised in UI test).",
+  "seed_data_creation": "Register endpoint auto-seeds a new org with 6 risks, 4 AI systems, 2 incidents, 2 recs, 1 decision — verified by tenant-isolation test.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "backend_test.py is the pytest regression file. It creates orgs with @example.com emails. After the Stripe fix, re-run TestBilling::test_checkout_and_status. Note that the test that asserts a shadow AI (AI-003) exists will flake if any prior test sanctioned it — run isolated or reset DB.",
+  "rca of the issue": "Stripe checkout: payments.py:75 sets automatic_tax={'enabled': True}. Stripe test account acct_1U1bU8AGTEe1D1HN has no head office address configured, so any session with automatic_tax raises InvalidRequestError → FastAPI returns 500. Fix option A (recommended for demo): remove automatic_tax kwarg. Fix option B (production-correct): set head office address in Stripe dashboard."
+}
