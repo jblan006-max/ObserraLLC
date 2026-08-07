@@ -1,4 +1,6 @@
 import os
+import io
+import csv
 import json
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -96,12 +98,13 @@ async def _check_budget(org_id: str):
     spent = await _month_spend(org_id)
     pct = spent / budget * 100
     mk = _month_key()
+    org = await _org_settings(org_id)
+    threshold = float(org.get("advisor_alert_threshold") or 80)
     if pct >= 100:
         await notifications.create(
             org_id, "advisor_budget", "AI advisor budget exceeded",
             f"Advisor spend ${spent} has exceeded the ${budget} monthly cap.",
             ref="advisor-budget", dedupe_key=f"advisor-budget:{mk}:100")
-        org = await _org_settings(org_id)
         if org.get("advisor_auto_pause") and org.get("advisor_pause_notified") != mk:
             recips = await db.users.find(
                 {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
@@ -114,11 +117,23 @@ async def _check_budget(org_id: str):
             for r in recips:
                 await notifications.send_email(r["email"], "AI Advisor auto-paused — monthly cap reached", html)
             await db.organizations.update_one({"_id": ObjectId(org_id)}, {"$set": {"advisor_pause_notified": mk}})
-    elif pct >= 80:
+    elif pct >= threshold:
         await notifications.create(
             org_id, "advisor_budget", "AI advisor budget nearing cap",
-            f"Advisor spend ${spent} is {round(pct)}% of the ${budget} monthly cap.",
-            ref="advisor-budget", dedupe_key=f"advisor-budget:{mk}:80")
+            f"Advisor spend ${spent} is {round(pct)}% of the ${budget} monthly cap (alert at {round(threshold)}%).",
+            ref="advisor-budget", dedupe_key=f"advisor-budget:{mk}:{round(threshold)}")
+        if org.get("advisor_alert_notified") != mk:
+            recips = await db.users.find(
+                {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
+            html = ("<div style=\"font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto\">"
+                    "<h2 style=\"color:#0f1e3d\">AI Advisor spend alert</h2>"
+                    f"<p>Advisor spend of <b>${spent}</b> is <b>{round(pct)}%</b> of the <b>${budget}</b> monthly cap "
+                    f"(your alert threshold is {round(threshold)}%).</p>"
+                    "<p>Review usage or adjust the cap in the Advisor panel.</p>"
+                    "<p style=\"font-size:11px;color:#9ca3af\">Obserra — Executive Protection &amp; Intelligence LLC</p></div>")
+            for r in recips:
+                await notifications.send_email(r["email"], f"AI Advisor spend at {round(pct)}% of monthly cap", html)
+            await db.organizations.update_one({"_id": ObjectId(org_id)}, {"$set": {"advisor_alert_notified": mk}})
 
 
 
@@ -226,8 +241,9 @@ async def advisor_usage(admin: dict = Depends(require_roles("admin"))):
     budget = await _org_budget(admin["org_id"])
     org = await _org_settings(admin["org_id"])
     auto_pause = bool(org.get("advisor_auto_pause"))
+    threshold = float(org.get("advisor_alert_threshold") or 80)
     pct = round(month_cost / budget * 100) if budget > 0 else 0
-    status = "off" if budget <= 0 else ("over" if pct >= 100 else ("warning" if pct >= 80 else "ok"))
+    status = "off" if budget <= 0 else ("over" if pct >= 100 else ("warning" if pct >= threshold else "ok"))
     paused = budget > 0 and auto_pause and month_cost >= budget
     recent = [{"prompt": l["prompt"][:80], "user": l["user"], "model": l.get("model"), "ts": l.get("ts"),
                "tokens": l["usage"]["total_tokens"], "cost_usd": l["usage"]["cost_usd"]} for l in logs[:20]]
@@ -244,12 +260,36 @@ async def advisor_usage(admin: dict = Depends(require_roles("admin"))):
     return {"queries": len(logs), "total_tokens": total_tokens, "total_cost_usd": total_cost,
             "today_cost_usd": today_cost, "month_cost_usd": month_cost, "budget_usd": budget,
             "budget_pct": pct, "budget_status": status, "auto_pause": auto_pause, "paused": paused,
-            "trend": trend, "by_user": by_user, "recent": recent}
+            "alert_threshold": threshold, "trend": trend, "by_user": by_user, "recent": recent}
+
+
+@advisor_router.get("/usage/export")
+async def advisor_usage_export(admin: dict = Depends(require_roles("admin"))):
+    logs = await db.advisor_logs.find({"org_id": admin["org_id"], "usage": {"$exists": True}}, {"_id": 0}).sort("ts", -1).to_list(2000)
+    mk = _month_key()
+    bu = {}
+    for l in logs:
+        if l.get("ts", "").startswith(mk):
+            e = bu.setdefault(l["user"], {"user": l["user"], "cost_usd": 0.0, "queries": 0, "tokens": 0})
+            e["cost_usd"] += l["usage"]["cost_usd"]
+            e["queries"] += 1
+            e["tokens"] += l["usage"]["total_tokens"]
+    rows = sorted(bu.values(), key=lambda x: x["cost_usd"], reverse=True)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Month", "Teammate", "Queries", "Tokens", "Cost (USD)"])
+    for r in rows:
+        w.writerow([mk, r["user"], r["queries"], r["tokens"], f"{r['cost_usd']:.4f}"])
+    w.writerow([mk, "TOTAL", sum(r["queries"] for r in rows), sum(r["tokens"] for r in rows), f"{sum(r['cost_usd'] for r in rows):.4f}"])
+    buf.seek(0)
+    return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
+                             headers={"Content-Disposition": f'attachment; filename="advisor-spend-{mk}.csv"'})
 
 
 class BudgetBody(BaseModel):
     monthly_usd: float
     auto_pause: bool | None = None
+    alert_threshold: float | None = None
 
 
 @advisor_router.put("/budget")
@@ -258,9 +298,11 @@ async def set_budget(body: BudgetBody, admin: dict = Depends(require_roles("admi
     update = {"advisor_budget_usd": val}
     if body.auto_pause is not None:
         update["advisor_auto_pause"] = bool(body.auto_pause)
+    if body.alert_threshold is not None:
+        update["advisor_alert_threshold"] = min(99.0, max(1.0, round(body.alert_threshold)))
     await db.organizations.update_one({"_id": ObjectId(admin["org_id"])},
-                                      {"$set": update, "$unset": {"advisor_pause_notified": ""}})
-    return {"monthly_usd": val, "auto_pause": update.get("advisor_auto_pause")}
+                                      {"$set": update, "$unset": {"advisor_pause_notified": "", "advisor_alert_notified": ""}})
+    return {"monthly_usd": val, "auto_pause": update.get("advisor_auto_pause"), "alert_threshold": update.get("advisor_alert_threshold")}
 
 
 @advisor_router.post("/board-report")

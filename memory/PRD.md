@@ -97,6 +97,10 @@ Foundation: Tenant Management · Identity & RBAC | Data: Enterprise Asset Model 
 - **Per-User Spend**: /api/advisor/usage returns `by_user` (current-month cost + query count per teammate, desc) — rendered as a "This month by teammate" list in the advisor.
 - **Auto-Pause Email**: when month spend crosses 100% and auto_pause is on, _check_budget emails admins/execs a heads-up (once per month via organizations.advisor_pause_notified; reuses Resend). set_budget $unset's the notified flag so a future breach re-notifies. (Email path wired + compiles; live send not explicitly triggered.)
 
+## Session 2026-06 (Configurable Spend Alert Threshold + CSV Export)
+- **Spend Alert Threshold**: org flag advisor_alert_threshold (default 80). Advisor budget panel adds 75/80/90% buttons; PUT /api/advisor/budget accepts alert_threshold; /api/advisor/usage returns alert_threshold and computes warning status at the chosen %. _check_budget now fires the warning notification AND a heads-up email to admins/execs at the threshold (deduped per month via advisor_alert_notified), plus the existing 100% auto-pause email. set_budget $unset's both notified flags on change.
+- **Exportable Usage Report**: GET /api/advisor/usage/export → CSV (Month, Teammate, Queries, Tokens, Cost) of current-month per-teammate advisor spend + TOTAL row. "Download spend CSV" button in the advisor.
+
 ## Implemented (as of 2026-06)
 - JWT auth (httpOnly cookies, brute-force lockout), org/role, tenant isolation
 - Passwordless QR login (start/approve/poll, 3-min single-use, cross-device)

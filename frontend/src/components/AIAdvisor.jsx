@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { X, Send, Loader2, Zap, Brain } from "lucide-react";
+import { X, Send, Loader2, Zap, Brain, Download } from "lucide-react";
 import { API, api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
@@ -136,6 +136,27 @@ export function AIAdvisor() {
     setSavingBudget(false);
   };
 
+  const saveThreshold = async (t) => {
+    if (!spend) return;
+    setSavingBudget(true);
+    try {
+      await api.put("/advisor/budget", { monthly_usd: spend.budget_usd || 0, alert_threshold: t });
+      const { data } = await api.get("/advisor/usage");
+      setSpend(data);
+      toast.success(`Alert threshold set to ${t}%`);
+    } catch { toast.error("Could not update threshold"); }
+    setSavingBudget(false);
+  };
+
+  const exportUsageCsv = async () => {
+    try {
+      const { data } = await api.get("/advisor/usage/export", { responseType: "blob" });
+      const url = URL.createObjectURL(new Blob([data], { type: "text/csv" }));
+      const a = document.createElement("a"); a.href = url; a.download = "advisor-spend.csv"; a.click(); URL.revokeObjectURL(url);
+      toast.success("Spend CSV downloaded");
+    } catch { toast.error("Export failed"); }
+  };
+
   const suggestions = mode === "executive"
     ? ["Summarize our top enterprise risks for the board", "What is driving the AI Governance score?"]
     : ["Which risks need remediation this week?", "Detail the shadow AI exposure and fix it"];
@@ -204,6 +225,21 @@ export function AIAdvisor() {
                   {savingBudget ? "…" : "Set"}
                 </button>
               </div>
+              <div className="flex items-center justify-between pt-0.5">
+                <span className="text-[10px] font-mono text-muted-foreground">Alert at</span>
+                <div className="flex items-center gap-1">
+                  {[75, 80, 90].map((t) => (
+                    <button key={t} data-testid={`advisor-threshold-${t}`} disabled={savingBudget} onClick={() => saveThreshold(t)}
+                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors disabled:opacity-50 ${Math.round(spend.alert_threshold || 80) === t ? "bg-ai/15 text-ai border-ai/30" : "bg-secondary/60 text-muted-foreground border-border"}`}>
+                      {t}%
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <button data-testid="advisor-export-csv" onClick={exportUsageCsv}
+                className="w-full inline-flex items-center justify-center gap-1.5 text-[11px] px-3 py-1.5 rounded-md bg-secondary/60 border border-border hover:bg-secondary text-muted-foreground transition-colors">
+                <Download className="w-3 h-3" /> Download spend CSV
+              </button>
               {spend.trend?.length > 0 && (() => {
                 const max = Math.max(...spend.trend.map((t) => t.cost_usd), 0.0001);
                 return (
