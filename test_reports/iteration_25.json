@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration 25 — verified three new remediation/evidence-log enhancements: (1) Owner Directory (Settings), (2) Momentum Trend area chart on Executive Overview, (3) Log Export PDF for Controls and Vendors. All 9 backend pytest cases pass and all UI flows pass at 1920x1080. Owner Directory: PUT /api/owners saves+persists, invalid email → 400, UI toast 'Saved 6 owner email(s)' shown and persisted on reload. Momentum: /api/remediation/activity now returns trend[] with 8 weekly points; exec-momentum-trend SVG renders inside exec-remediation-momentum card alongside score/tiles/progress/activity. Log Export: control-log-export & vendor-log-export buttons visible for admin when history is non-empty; downloads valid application/pdf (~141–142KB) and shows 'Log exported' toast. Owner-nudge routing: adding remediation notes with a directory email still creates 'Remediation logged — <ref>' in-app notification. Non-authenticated PDF export → 401. No webpack/JSX errors observed on /app/overview, /app/controls, /app/vendors, /app/settings.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Detail panes (vendors/controls)", "issues": ["The 'Meet your Advisor' floating hint still overlaps the bottom of the vendor/control detail pane; last log entry can be partially covered at 1920x1080. Non-blocking (documented in iter24 too)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter25_owner_momentum_export.py",
+    "/app/test_reports/pytest/iter25_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Owner Directory PUT stores keys lowercased (line routes.py:809) — fine for GET which lowercases lookup, but confirm _nudge_owner also lowercases the owner name before directory lookup to avoid case-sensitivity bugs when a control owner is stored 'Priya GRC' vs directory key 'priya grc'.",
+    "reports.py _log_pdf reused for both control & vendor logs — good DRY. Consider adding a 'total_entries' footer count and truncation notice if >500 notes (currently to_list(500) caps silently).",
+    "Log export button visibility depends on history.length > 0 in FE (VendorRisk.jsx:152, ControlMonitoring.jsx:217). If a user opens the pane and clicks export before the async /history GET returns, the button is hidden — fine, but consider a loading skeleton to avoid perceived flicker.",
+    "/api/remediation/activity trend loop rebuilds 8 windows in-memory each request over 400 items — fine at seed scale; add index on control_notes/vendor_notes (org_id, ts) if list grows.",
+    "In VendorRisk.jsx the exportLog handler is not shown here but ensure it uses window.open with credentials or an anchor tag so cookies flow — a fetch-based approach would strip auth in some browsers when triggering a download."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter25_owner_momentum_export.py"],
+  "success_rate": {"backend": "100% (9/9)", "frontend": "100% of targeted flows"},
+  "test_credentials": "Admin jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md). Auth via httpOnly cookie (no bearer token in response body).",
+  "seed_data_creation": "Created TEST_-prefixed control_notes on IAM-3 and vendor_notes on VND-002 to seed non-empty history for export-button visibility. Also set owner_directory emails prefixed TEST_ (e.g. TEST_ui25_XXXX@example.com, TEST_owner@example.com) — cleanup by clearing the org.owner_directory field or purging TEST_ prefixed notes.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Auth is cookie-based (httpOnly) — use requests.Session() and login POST; do NOT parse 'token' from JSON body (it does not exist). Login redirects to /app (not /app/dashboard); use wait_for_url(lambda u: '/app' in u). Tour modal ('Welcome to Obserra') appears on first visit each session — dismiss via text=\"Skip\" (data-testid=tour-skip also works). Detail-pane export buttons only render when history is loaded AND non-empty; add >=1 note first and wait ~2s for /history GET to resolve before asserting on control-log-export/vendor-log-export. Owner directory testid pattern is owner-email-<slugified-owner-name> (e.g. owner-email-AI-Gov-Board, owner-email-GRC-Team). Distinct owner count in seed: 6.",
+  "rca_of_the_issue": "N/A — all three enhancements are working end-to-end. Initial UI-test 'export button missing' was a false negative caused by asserting immediately after opening the detail pane before the async /history fetch completed. Added explicit wait_for_timeout(3000) after opening the pane and buttons appeared as expected."
+}

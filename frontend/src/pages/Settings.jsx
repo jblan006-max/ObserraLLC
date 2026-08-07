@@ -119,6 +119,20 @@ export default function Settings() {
     } catch (e) { toast.error(e.response?.data?.detail || "Could not send to list"); }
     setAllBusy(false);
   };
+  const [owners, setOwners] = useState([]);
+  const [ownerBusy, setOwnerBusy] = useState(false);
+  useEffect(() => { if (!isAdmin) return; api.get("/owners").then((r) => setOwners(r.data.owners || [])).catch(() => {}); }, [isAdmin]);
+  const setOwnerEmail = (name, email) => setOwners((o) => o.map((x) => x.name === name ? { ...x, email } : x));
+  const saveOwners = async () => {
+    setOwnerBusy(true);
+    try {
+      const directory = {};
+      owners.forEach((o) => { if (o.email) directory[o.name] = o.email; });
+      const { data } = await api.put("/owners", { directory });
+      toast.success(`Saved ${data.count} owner email(s)`);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not save directory"); }
+    setOwnerBusy(false);
+  };
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -207,6 +221,31 @@ export default function Settings() {
           <PlayCircle className="w-4 h-4 text-primary" /> Replay tour
         </button>
       </div>
+
+      {isAdmin && (
+        <div className="bg-card fact-border rounded-xl p-6 space-y-4" data-testid="owner-directory-settings">
+          <div className="flex items-center gap-2"><Users className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Owner Directory</h2></div>
+          <p className="text-sm text-muted-foreground">Map each control / vendor owner name to a real email so remediation nudges reach the right person instead of falling back to all admins. Leave blank to keep the admin fallback.</p>
+          {owners.length === 0 ? <p className="text-xs text-muted-foreground">No owners found yet — they appear once controls & vendors load.</p> : (
+            <div className="space-y-2" data-testid="owner-directory-list">
+              {owners.map((o) => (
+                <div key={o.name} className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium w-40 shrink-0 truncate" title={o.name}>{o.name}</span>
+                  <input data-testid={`owner-email-${o.name.replace(/[^a-zA-Z0-9]/g, "-")}`} type="email" value={o.email}
+                    onChange={(e) => setOwnerEmail(o.name, e.target.value)} placeholder="owner@company.com"
+                    className="flex-1 min-w-[200px] bg-secondary/60 rounded-md px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" />
+                </div>
+              ))}
+            </div>
+          )}
+          {owners.length > 0 && (
+            <button data-testid="owner-directory-save" disabled={ownerBusy} onClick={saveOwners}
+              className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
+              {ownerBusy && <Loader2 className="w-4 h-4 animate-spin" />} Save owner directory
+            </button>
+          )}
+        </div>
+      )}
 
       {isAdmin && (
         <div className="bg-card fact-border rounded-xl p-6 space-y-4" data-testid="report-recipients-settings">

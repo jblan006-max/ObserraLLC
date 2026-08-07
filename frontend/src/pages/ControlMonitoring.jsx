@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useUrlState } from "@/hooks/useUrlState";
+import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { ShieldCheck, Loader2, AlertTriangle, Clock, FileDown, TrendingDown, Search, X, Plus } from "lucide-react";
 
@@ -8,6 +9,8 @@ const statusHsl = { Passing: "142 70% 45%", Drifting: "35 90% 55%", Failing: "0 
 const KIND_COLOR = { remediation: "#3b82f6", evidence: "#22c55e", note: "#94a3b8" };
 
 export default function ControlMonitoring() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [controls, setControls] = useState(null);
   const [compliance, setCompliance] = useState(null);
   const [busy, setBusy] = useState("");
@@ -43,6 +46,16 @@ export default function ControlMonitoring() {
       toast.success("Added to control log");
     } catch { toast.error("Could not add to log"); }
     setNoteBusy(false);
+  };
+
+  const exportLog = async (id) => {
+    try {
+      const res = await api.get(`/reports/control-log/${id}.pdf`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a"); a.href = url; a.download = `log-${id}.pdf`; a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Log exported");
+    } catch { toast.error("Could not export log"); }
   };
 
   const pack = async (id) => {
@@ -199,7 +212,10 @@ export default function ControlMonitoring() {
           </div>
           <button data-testid="control-detail-pack" disabled={busy === selected.control_id} onClick={() => pack(selected.control_id)} className="w-full text-xs px-3 py-2 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">{busy === selected.control_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />} Evidence pack</button>
           <div className="pt-2 border-t border-border/60 space-y-2" data-testid="control-history">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Remediation &amp; evidence log</div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Remediation &amp; evidence log</span>
+              {isAdmin && history.length > 0 && <button data-testid="control-log-export" onClick={() => exportLog(selected.control_id)} className="text-[10px] flex items-center gap-1 text-ai hover:text-foreground transition-colors"><FileDown className="w-3 h-3" /> Export PDF</button>}
+            </div>
             <select data-testid="control-note-kind" value={noteKind} onChange={(e) => setNoteKind(e.target.value)} className="w-full bg-secondary/60 rounded-md px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary">
               <option value="remediation">Remediation action</option>
               <option value="evidence">Evidence</option>

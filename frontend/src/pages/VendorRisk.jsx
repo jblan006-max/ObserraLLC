@@ -3,7 +3,7 @@ import { api } from "@/lib/api";
 import { useUrlState } from "@/hooks/useUrlState";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { Building, Loader2, Layers, ShieldAlert, PlayCircle, Search, X, Plus } from "lucide-react";
+import { Building, Loader2, Layers, ShieldAlert, PlayCircle, Search, X, Plus, FileDown } from "lucide-react";
 
 const TIER = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 90% 55%", Low: "142 70% 45%" };
 const KIND_COLOR = { remediation: "#3b82f6", evidence: "#22c55e", note: "#94a3b8" };
@@ -43,6 +43,16 @@ export default function VendorRisk() {
       toast.success("Added to vendor log");
     } catch { toast.error("Could not add to log"); }
     setNoteBusy(false);
+  };
+
+  const exportLog = async (ref) => {
+    try {
+      const res = await api.get(`/reports/vendor-log/${ref}.pdf`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a"); a.href = url; a.download = `log-${ref}.pdf`; a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Log exported");
+    } catch { toast.error("Could not export log"); }
   };
 
   const assess = async (ref) => {
@@ -137,7 +147,10 @@ export default function VendorRisk() {
           </div>
           {isAdmin && <button data-testid="vendor-detail-assess" disabled={!!busy} onClick={() => assess(selected.ref)} className="w-full text-xs px-3 py-2 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">{busy === selected.ref ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />} Re-assess vendor</button>}
           <div className="pt-2 border-t border-border/60 space-y-2" data-testid="vendor-history">
-            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Remediation &amp; evidence log</div>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Remediation &amp; evidence log</span>
+              {isAdmin && history.length > 0 && <button data-testid="vendor-log-export" onClick={() => exportLog(selected.ref)} className="text-[10px] flex items-center gap-1 text-ai hover:text-foreground transition-colors"><FileDown className="w-3 h-3" /> Export PDF</button>}
+            </div>
             <select data-testid="vendor-note-kind" value={noteKind} onChange={(e) => setNoteKind(e.target.value)} className="w-full bg-secondary/60 rounded-md px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary">
               <option value="remediation">Remediation action</option>
               <option value="evidence">Evidence</option>

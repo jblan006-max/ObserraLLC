@@ -155,6 +155,20 @@ function ExecutiveOverview({ health, m, momentum, onLineage }) {
             <div className="bg-secondary/30 rounded-lg p-3"><div className="text-[10px] text-muted-foreground">Recs applied</div><div className="font-head font-bold text-xl">{momentum.applied_recommendations}</div></div>
           </div>
           <div className="h-2 rounded-full bg-secondary overflow-hidden mb-4"><div className="h-full transition-all duration-500" style={{ width: `${momentum.score}%`, background: `hsl(${momentum.score >= 66 ? "142 70% 45%" : momentum.score >= 33 ? "35 90% 55%" : "0 84% 60%"})` }} /></div>
+          {momentum.trend && momentum.trend.length > 0 && (
+            <div className="mb-4" data-testid="exec-momentum-trend">
+              <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Score trajectory (weekly)</div>
+              <ResponsiveContainer width="100%" height={110}>
+                <AreaChart data={momentum.trend}>
+                  <defs><linearGradient id="mg1" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="hsl(142 70% 45%)" stopOpacity={0.5} /><stop offset="100%" stopColor="hsl(142 70% 45%)" stopOpacity={0} /></linearGradient></defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(215 30% 18%)" vertical={false} />
+                  <XAxis dataKey="week" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={CHART_TT} formatter={(v) => [`${v}/100`, "Score"]} />
+                  <Area type="monotone" dataKey="score" stroke="hsl(142 70% 45%)" strokeWidth={2.5} fill="url(#mg1)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
           {momentum.activity.length === 0 ? <p className="text-xs text-muted-foreground">No remediation activity yet — logs added on Controls or Vendors appear here.</p> : (
             <div className="space-y-2" data-testid="exec-remediation-activity">
               {momentum.activity.map((it, i) => (

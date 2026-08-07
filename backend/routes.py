@@ -698,10 +698,16 @@ async def _nudge_owner(org_id, owner_name, entity_label, note_text, actor):
     body = f"{actor} logged a remediation action on {entity_label}: {note_text[:180]}"
     await notifications.create(org_id, "risk_critical", title, body, ref=entity_label)
     recipients = []
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"owner_directory": 1}) or {}
+    directory = org.get("owner_directory") or {}
     if owner_name:
-        u = await db.users.find_one({"org_id": org_id, "name": {"$regex": f"^{_re.escape(owner_name)}$", "$options": "i"}})
-        if u and u.get("email"):
-            recipients.append(u["email"])
+        email = directory.get(owner_name.strip().lower())
+        if email:
+            recipients.append(email)
+        else:
+            u = await db.users.find_one({"org_id": org_id, "name": {"$regex": f"^{_re.escape(owner_name)}$", "$options": "i"}})
+            if u and u.get("email"):
+                recipients.append(u["email"])
     if not recipients:
         admins = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}}).to_list(20)
         recipients = [a["email"] for a in admins if a.get("email")]
@@ -760,8 +766,49 @@ async def remediation_activity(user: dict = Depends(get_current_user)):
     evi = sum(1 for i in recent if i["kind"] == "evidence")
     applied = await db.recommendations.count_documents({"org_id": org_id, "status": "Applied"})
     score = min(100, rem * 12 + evi * 6 + applied * 8)
+    now = datetime.now(timezone.utc)
+    trend = []
+    for w in range(7, -1, -1):
+        end = now - timedelta(days=7 * w)
+        start_iso = (end - timedelta(days=30)).isoformat()
+        end_iso = end.isoformat()
+        wr = sum(1 for i in items if i["kind"] == "remediation" and start_iso <= i["ts"] <= end_iso)
+        we = sum(1 for i in items if i["kind"] == "evidence" and start_iso <= i["ts"] <= end_iso)
+        trend.append({"week": end.strftime("%b %d"), "score": min(100, wr * 12 + we * 6 + applied * 8)})
     return {"score": score, "remediation_count": rem, "evidence_count": evi,
-            "applied_recommendations": applied, "activity": items[:8], "window_days": 30}
+            "applied_recommendations": applied, "activity": items[:8], "window_days": 30, "trend": trend}
+
+
+class OwnerDirectoryBody(BaseModel):
+    directory: dict[str, str] = {}
+
+
+@api.get("/owners")
+async def get_owners(user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    controls = await db.controls.find({"org_id": org_id}, {"_id": 0, "owner": 1}).to_list(500)
+    vendors = await db.vendors.find({"org_id": org_id}, {"_id": 0, "owner": 1}).to_list(500)
+    names = {(c.get("owner") or "").strip() for c in controls} | {(v.get("owner") or "").strip() for v in vendors}
+    names = sorted(n for n in names if n)
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"owner_directory": 1}) or {}
+    directory = org.get("owner_directory") or {}
+    return {"owners": [{"name": n, "email": directory.get(n.lower(), "")} for n in names]}
+
+
+@api.put("/owners")
+async def set_owners(body: OwnerDirectoryBody, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    import re as _re
+    clean = {}
+    for name, email in (body.directory or {}).items():
+        email = (email or "").strip()
+        if email and not _re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            raise HTTPException(400, f"Invalid email for {name}")
+        if email:
+            clean[name.strip().lower()] = email
+    await db.organizations.update_one({"_id": ObjectId(user["org_id"])}, {"$set": {"owner_directory": clean}})
+    return {"ok": True, "count": len(clean)}
 
 
 @api.get("/financials/trend")

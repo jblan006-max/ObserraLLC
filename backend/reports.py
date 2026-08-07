@@ -631,3 +631,50 @@ async def evidence_pack(body: PackBody, user: dict = Depends(get_current_user)):
     buf = _build_pdf("\n".join(lines), f"Audit Evidence Pack — {c['control_id']}")
     return StreamingResponse(buf, media_type="application/pdf",
                              headers={"Content-Disposition": f'attachment; filename="evidence-pack-{c["control_id"]}.pdf"'})
+
+
+def _log_pdf(title, subtitle, notes, org):
+    brand = _resolve_brand(org)
+    parts = [f"# {title}", "", subtitle,
+             f"Exported {datetime.now(timezone.utc).strftime('%B %d, %Y · %H:%M UTC')} — {len(notes)} log entries", ""]
+    if not notes:
+        parts.append("No log entries recorded.")
+    for n in notes:
+        ts = (n.get("ts", "") or "")[:16].replace("T", " ")
+        parts.append(f"## {(n.get('kind', 'note') or 'note').upper()} — {ts}")
+        parts.append(re.sub(r"\*\*", "", n.get("text", "")))
+        parts.append(f"Logged by {n.get('author', '—')}")
+        parts.append("")
+    return _build_pdf("\n".join(parts), title, brand=brand)
+
+
+@reports_router.get("/api/reports/control-log/{control_id}.pdf")
+async def control_log_pdf(control_id: str, user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can export the log")
+    c = await db.controls.find_one({"org_id": user["org_id"], "control_id": control_id})
+    if not c:
+        raise HTTPException(404, "Control not found")
+    notes = await db.control_notes.find({"org_id": user["org_id"], "control_id": control_id}, {"_id": 0}).sort("ts", -1).to_list(500)
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])})
+    subtitle = f"{c['control_id']} — {c['name']} ({c['category']}) · Owner: {c.get('owner', '—')}"
+    buf = _log_pdf(f"Remediation & Evidence Log — {control_id}", subtitle, notes, org)
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename="log-{control_id}.pdf"'})
+
+
+@reports_router.get("/api/reports/vendor-log/{ref}.pdf")
+async def vendor_log_pdf(ref: str, user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can export the log")
+    v = await db.vendors.find_one({"org_id": user["org_id"], "ref": ref})
+    if not v:
+        raise HTTPException(404, "Vendor not found")
+    notes = await db.vendor_notes.find({"org_id": user["org_id"], "ref": ref}, {"_id": 0}).sort("ts", -1).to_list(500)
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])})
+    subtitle = f"{v['ref']} — {v['name']} ({v.get('category', '')}) · Owner: {v.get('owner', '—')} · Risk: {v.get('risk_tier', '')} {v.get('risk_score', '')}"
+    buf = _log_pdf(f"Remediation & Evidence Log — {ref}", subtitle, notes, org)
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename="log-{ref}.pdf"'})

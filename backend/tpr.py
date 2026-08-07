@@ -18,13 +18,13 @@ COMPOSITION = ["Asset Model", "Risk Engine", "Policy Engine", "Workflow Engine",
                "Notification Engine", "Audit Ledger", "Evidence Store"]
 
 SEED = [
-    {"ref": "VND-001", "name": "Cloudflare", "category": "CDN / Edge", "criticality": "High",
+    {"ref": "VND-001", "name": "Cloudflare", "category": "CDN / Edge", "criticality": "High", "owner": "Platform Eng",
      "data_access": "None", "attestation": 96, "incidents": 0, "contract_end": "2027-03-01", "status": "active"},
-    {"ref": "VND-002", "name": "Datavault Analytics", "category": "Data Processor", "criticality": "Critical",
+    {"ref": "VND-002", "name": "Datavault Analytics", "category": "Data Processor", "criticality": "Critical", "owner": "Priya GRC",
      "data_access": "PII / Confidential", "attestation": 48, "incidents": 2, "contract_end": "2026-09-15", "status": "review"},
-    {"ref": "VND-003", "name": "Zendesk", "category": "Support SaaS", "criticality": "Medium",
+    {"ref": "VND-003", "name": "Zendesk", "category": "Support SaaS", "criticality": "Medium", "owner": "Support Ops",
      "data_access": "Customer contact", "attestation": 82, "incidents": 0, "contract_end": "2026-12-01", "status": "active"},
-    {"ref": "VND-004", "name": "LegacyPay Gateway", "category": "Payments", "criticality": "Critical",
+    {"ref": "VND-004", "name": "LegacyPay Gateway", "category": "Payments", "criticality": "Critical", "owner": "Finance Sec",
      "data_access": "Cardholder data", "attestation": 61, "incidents": 1, "contract_end": "2026-07-30", "status": "review"},
 ]
 
@@ -54,6 +54,7 @@ async def _seed(org_id):
 @tpr_router.get("")
 async def list_vendors(user: dict = Depends(get_current_user)):
     await _seed(user["org_id"])
+    await db.vendors.update_many({"org_id": user["org_id"], "owner": {"$exists": False}}, {"$set": {"owner": "GRC Team"}})
     vendors = await db.vendors.find({"org_id": user["org_id"]}, {"_id": 0}).sort("risk_score", -1).to_list(200)
     portfolio = round(sum(v["risk_score"] for v in vendors) / len(vendors)) if vendors else 0
     return {"composition": COMPOSITION, "vendors": vendors, "portfolio_risk": portfolio,
@@ -68,6 +69,7 @@ class VendorCreate(BaseModel):
     attestation: int = 80
     incidents: int = 0
     contract_end: str = ""
+    owner: str = "GRC Team"
 
 
 @tpr_router.post("")
@@ -124,19 +126,7 @@ async def add_vendor_note(ref: str, body: VendorNote, user: dict = Depends(get_c
     await _log_audit(user["org_id"], user["email"], "vendor.note", f"{ref}: {kind}")
     if kind == "remediation":
         v = await db.vendors.find_one({"org_id": user["org_id"], "ref": ref}, {"_id": 0})
-        name = (v or {}).get("name", ref)
-        title = f"Remediation logged — {ref}"
-        bodytxt = f"{doc['author']} logged a remediation action on vendor {name} ({ref}): {text[:180]}"
-        await notifications.create(user["org_id"], "vendor_risk", title, bodytxt, ref=ref)
-        admins = await db.users.find({"org_id": user["org_id"], "role": {"$in": ["admin", "executive"]}}).to_list(20)
-        html = (f"<div style='font:400 14px Arial;color:#0f1e3d'>"
-                f"<h2 style='font:800 18px Arial;color:#0f1e3d'>{title}</h2><p>{bodytxt}</p>"
-                f"<p style='color:#6b7280'>via Obserra EIOS.</p></div>")
-        for a in admins:
-            if a.get("email"):
-                try:
-                    await notifications.send_email(a["email"], title, html)
-                except Exception:
-                    pass
+        from routes import _nudge_owner
+        await _nudge_owner(user["org_id"], (v or {}).get("owner"), ref, text, doc["author"])
     doc.pop("_id", None)
     return doc
