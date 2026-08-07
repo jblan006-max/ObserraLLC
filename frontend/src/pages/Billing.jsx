@@ -10,6 +10,7 @@ export default function Billing() {
   const [plans, setPlans] = useState(null);
   const [summary, setSummary] = useState(null);
   const [openPack, setOpenPack] = useState(null);
+  const [seatQ, setSeatQ] = useState("");
   const [interval, setIntervalSel] = useState("monthly");
   const [busy, setBusy] = useState("");
   const [mods, setMods] = useState([]);
@@ -83,8 +84,10 @@ export default function Billing() {
         <div data-testid="seats-access-summary" className="bg-card fact-border rounded-xl p-6 space-y-3">
           <h2 className="font-head font-bold text-lg flex items-center gap-2"><Users className="w-5 h-5 text-ai" /> Seats &amp; Access</h2>
           <p className="text-sm text-muted-foreground -mt-1">Which teammates can reach each paid pack right now.</p>
+          <input data-testid="seat-search" value={seatQ} onChange={(e) => setSeatQ(e.target.value)} placeholder="Find a teammate by name or email…"
+            className="w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary" />
           <div>
-            {summary.map((s) => (
+            {summary.filter((s) => !seatQ.trim() || (s.owned && s.seats.some((u) => `${u.name || ""} ${u.email}`.toLowerCase().includes(seatQ.trim().toLowerCase())))).map((s) => (
               <div key={s.id} className="border-b border-border/50 last:border-0">
                 <button data-testid={`seat-row-${s.id}`} onClick={() => s.owned && setOpenPack(openPack === s.id ? null : s.id)}
                   className={`w-full flex items-center justify-between gap-3 py-2.5 text-left ${s.owned ? "cursor-pointer hover:opacity-80" : "cursor-default"}`}>
@@ -95,13 +98,14 @@ export default function Billing() {
                   </div>
                   <div className="flex items-center gap-2 shrink-0 text-sm text-muted-foreground">
                     {s.owned ? `${s.seat_count} of ${s.total_members} teammates` : "—"}
-                    {s.owned && (openPack === s.id ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />)}
+                    {s.owned && ((seatQ.trim() || openPack === s.id) ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />)}
                   </div>
                 </button>
-                {openPack === s.id && s.owned && (
+                {(seatQ.trim() || openPack === s.id) && s.owned && (
                   <div data-testid={`seat-detail-${s.id}`} className="pb-3 pl-3.5 flex flex-wrap gap-1.5">
-                    {s.seats.length === 0 ? <span className="text-xs text-muted-foreground">No teammates have this access yet.</span> :
-                      s.seats.map((u) => <span key={u.email} className="text-xs bg-secondary/60 rounded-full px-2.5 py-1">{u.name || u.email}</span>)}
+                    {(seatQ.trim() ? s.seats.filter((u) => `${u.name || ""} ${u.email}`.toLowerCase().includes(seatQ.trim().toLowerCase())) : s.seats).length === 0
+                      ? <span className="text-xs text-muted-foreground">No teammates have this access yet.</span>
+                      : (seatQ.trim() ? s.seats.filter((u) => `${u.name || ""} ${u.email}`.toLowerCase().includes(seatQ.trim().toLowerCase())) : s.seats).map((u) => <span key={u.email} className="text-xs bg-secondary/60 rounded-full px-2.5 py-1">{u.name || u.email}</span>)}
                   </div>
                 )}
               </div>

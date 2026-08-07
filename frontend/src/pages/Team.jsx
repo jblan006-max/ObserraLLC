@@ -63,14 +63,21 @@ export default function Team() {
   const [accessSel, setAccessSel] = useState([]);
   const [accessAll, setAccessAll] = useState(true);
   const [accessBusy, setAccessBusy] = useState(false);
+  const [accessNotify, setAccessNotify] = useState(true);
   const [selected, setSelected] = useState([]);
   const [bulkMode, setBulkMode] = useState("all");
+  const [bulkNotify, setBulkNotify] = useState(true);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [accessHistory, setAccessHistory] = useState([]);
+  const [editPreset, setEditPreset] = useState(null);
+  const [editSel, setEditSel] = useState([]);
+  const [editAll, setEditAll] = useState(false);
+  const [editBusy, setEditBusy] = useState(false);
   const openAccess = (m) => {
     setAccessFor(m);
     setAccessAll(m.module_access == null);
     setAccessSel(m.module_access || CATS.map((c) => c.id));
+    setAccessNotify(true);
     setAccessHistory([]);
     api.get(`/auth/team/${m.id}/access-history`).then((r) => setAccessHistory(r.data || [])).catch(() => {});
   };
@@ -78,7 +85,7 @@ export default function Team() {
   const saveAccess = async () => {
     setAccessBusy(true);
     try {
-      await api.post(`/auth/team/${accessFor.id}/access`, { module_access: accessAll ? null : accessSel });
+      await api.post(`/auth/team/${accessFor.id}/access`, { module_access: accessAll ? null : accessSel, notify: accessNotify });
       toast.success(`Access updated for ${accessFor.email}`);
       setAccessFor(null); load();
     } catch (e2) { toast.error(e2.response?.data?.detail || "Could not update access"); }
@@ -113,11 +120,27 @@ export default function Team() {
     let module_access = null;
     if (bulkMode !== "all") { const p = presets.find((x) => x.name === bulkMode); module_access = p ? p.module_access : null; }
     try {
-      const { data } = await api.post("/auth/team/bulk-access", { user_ids: selected, module_access });
+      const { data } = await api.post("/auth/team/bulk-access", { user_ids: selected, module_access, notify: bulkNotify });
       toast.success(`Access updated for ${data.updated} teammate(s)`);
       setSelected([]); load();
     } catch { toast.error("Could not apply bulk access"); }
     setBulkBusy(false);
+  };
+  const openEditPreset = (p) => { setEditPreset(p); setEditAll(p.module_access == null); setEditSel(p.module_access || CATS.map((c) => c.id)); };
+  const savePresetCats = async () => {
+    setEditBusy(true);
+    try {
+      const { data } = await api.post("/auth/access-presets", { name: editPreset.name, module_access: editAll ? null : editSel });
+      setPresets(data || []); toast.success("Preset updated"); setEditPreset(null);
+    } catch { toast.error("Could not update preset"); }
+    setEditBusy(false);
+  };
+  const downloadHistory = async () => {
+    try {
+      const res = await api.get(`/reports/access-history/${accessFor.id}.pdf`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a"); a.href = url; a.download = `access-history-${accessFor.email}.pdf`; a.click(); URL.revokeObjectURL(url);
+    } catch { toast.error("Could not export history"); }
   };
 
   return (
@@ -198,6 +221,7 @@ export default function Team() {
               <div key={p.name} data-testid={`preset-${p.name}`} className="flex items-center gap-2 bg-secondary/50 border border-border rounded-lg px-3 py-1.5">
                 <span className="text-sm font-medium">{p.name}</span>
                 <span className="text-[10px] font-mono text-muted-foreground">{p.module_access == null ? "all" : `${p.module_access.length} cat`}</span>
+                <button data-testid={`preset-edit-${p.name}`} onClick={() => openEditPreset(p)} className="text-muted-foreground hover:text-ai transition-colors"><SlidersHorizontal className="w-3.5 h-3.5" /></button>
                 <button data-testid={`preset-rename-${p.name}`} onClick={() => renamePreset(p)} className="text-muted-foreground hover:text-ai transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
                 <button data-testid={`preset-delete-${p.name}`} onClick={() => deletePreset(p)} className="text-muted-foreground hover:text-crit transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
               </div>
@@ -224,6 +248,9 @@ export default function Team() {
               <option value="all">All access</option>
               {presets.map((p) => <option key={p.name} value={p.name}>{p.name}</option>)}
             </select>
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
+              <input data-testid="bulk-notify" type="checkbox" checked={bulkNotify} onChange={(e) => setBulkNotify(e.target.checked)} className="accent-primary w-3.5 h-3.5" /> Email teammates
+            </label>
             <button data-testid="bulk-apply" disabled={bulkBusy} onClick={applyBulk}
               className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
               {bulkBusy && <Loader2 className="w-4 h-4 animate-spin" />} Apply to selected
@@ -319,12 +346,45 @@ export default function Team() {
                 ))}
               </div>
             )}
-            <div className="flex justify-end gap-2 pt-2">
-              <button data-testid="save-as-preset" onClick={saveAsPreset} className="mr-auto px-4 py-2 rounded-md text-sm border border-border text-muted-foreground hover:text-ai hover:border-ai/40 transition-colors">Save as preset</button>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input data-testid="access-notify" type="checkbox" checked={accessNotify} onChange={(e) => setAccessNotify(e.target.checked)} className="accent-primary w-4 h-4" />
+              <span>Email this teammate about the change</span>
+            </label>
+            <div className="flex flex-wrap justify-end gap-2 pt-2">
+              <button data-testid="access-history-pdf" onClick={downloadHistory} className="mr-auto px-3 py-2 rounded-md text-sm border border-border text-muted-foreground hover:text-ai hover:border-ai/40 transition-colors flex items-center gap-1"><History className="w-3.5 h-3.5" /> Export PDF</button>
+              <button data-testid="save-as-preset" onClick={saveAsPreset} className="px-4 py-2 rounded-md text-sm border border-border text-muted-foreground hover:text-ai hover:border-ai/40 transition-colors">Save as preset</button>
               <button onClick={() => setAccessFor(null)} className="px-4 py-2 rounded-md text-sm text-muted-foreground hover:bg-secondary/60 transition-colors">Cancel</button>
               <button data-testid="access-save" disabled={accessBusy} onClick={saveAccess}
                 className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
                 {accessBusy && <Loader2 className="w-4 h-4 animate-spin" />} Save access
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editPreset && (
+        <div data-testid="preset-edit-modal" className="fixed inset-0 z-[70] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-background/70 backdrop-blur-sm" onClick={() => setEditPreset(null)} />
+          <div className="relative w-full max-w-md bg-card fact-border rounded-xl p-6 rise space-y-4">
+            <h3 className="font-head font-black text-lg flex items-center gap-2"><SlidersHorizontal className="w-5 h-5 text-ai" /> Edit preset “{editPreset.name}”</h3>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input data-testid="preset-edit-all" type="checkbox" checked={editAll} onChange={(e) => setEditAll(e.target.checked)} className="accent-primary w-4 h-4" />
+              <span>All access <span className="text-muted-foreground">(no restriction)</span></span>
+            </label>
+            <div className={`space-y-2 pl-1 ${editAll ? "opacity-40 pointer-events-none" : ""}`}>
+              {CATS.map((c) => (
+                <label key={c.id} data-testid={`preset-edit-cat-${c.id}`} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={editSel.includes(c.id)} onChange={() => setEditSel((s) => (s.includes(c.id) ? s.filter((x) => x !== c.id) : [...s, c.id]))} className="accent-primary w-4 h-4" />
+                  <span>{c.name}</span>
+                </label>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <button onClick={() => setEditPreset(null)} className="px-4 py-2 rounded-md text-sm text-muted-foreground hover:bg-secondary/60 transition-colors">Cancel</button>
+              <button data-testid="preset-edit-save" disabled={editBusy} onClick={savePresetCats}
+                className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
+                {editBusy && <Loader2 className="w-4 h-4 animate-spin" />} Save
               </button>
             </div>
           </div>

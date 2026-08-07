@@ -393,6 +393,7 @@ async def _notify_access_change(org_id, member, ma, actor):
 
 class AccessBody(BaseModel):
     module_access: list[str] | None = None
+    notify: bool = True
 
 
 @auth_router.get("/team/members")
@@ -416,13 +417,15 @@ async def set_member_access(user_id: str, body: AccessBody, admin: dict = Depend
     await db.users.update_one({"_id": ObjectId(user_id)}, op)
     await _log_audit(admin["org_id"], admin["email"], "team.access",
                      f"Set dashboard access: {_access_summary_text(ma)}", target=member["email"])
-    await _notify_access_change(admin["org_id"], member, ma, admin["email"])
+    if body.notify:
+        await _notify_access_change(admin["org_id"], member, ma, admin["email"])
     return {"ok": True, "module_access": ma}
 
 
 class BulkAccessBody(BaseModel):
     user_ids: list[str]
     module_access: list[str] | None = None
+    notify: bool = True
 
 
 @auth_router.post("/team/bulk-access")
@@ -442,7 +445,8 @@ async def bulk_set_access(body: BulkAccessBody, admin: dict = Depends(require_ro
         await db.users.update_one({"_id": oid}, op)
         await _log_audit(admin["org_id"], admin["email"], "team.access",
                          f"Bulk set access: {_access_summary_text(ma)}", target=member["email"])
-        await _notify_access_change(admin["org_id"], member, ma, admin["email"])
+        if body.notify:
+            await _notify_access_change(admin["org_id"], member, ma, admin["email"])
         updated += 1
     return {"ok": True, "updated": updated, "module_access": ma}
 

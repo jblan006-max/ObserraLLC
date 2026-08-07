@@ -43,3 +43,9 @@
 - Access Audit Trail: _log_audit now stores a `target` field; GET /api/auth/team/{id}/access-history returns team.access/team.invite entries for that member, shown as "Recent changes" in the access modal.
 - Seat Drill-Down: Billing seats rows are expandable to show the exact teammates who hold each pack's access (uses access-summary `seats`).
 - Access-change emails: _notify_access_change emails the teammate (managed Resend) + in-app notification whenever their dashboard access changes (single or bulk). Verified via curl (set/bulk/history) + screenshots.
+
+## 2026-08-07 — Preset inline edit, history PDF export, notify toggle, seat search
+- Preset On Invite Reuse: Preset Manager chips now have an inline category editor (SlidersHorizontal → modal with 6 checkboxes / all-access) plus rename & delete — no need to open a teammate.
+- History Export: GET /api/reports/access-history/{id}.pdf builds a branded ReportLab PDF of a teammate's access changes; "Export PDF" button in the access modal (verified: application/pdf, ~213KB).
+- Notify Toggle: AccessBody + BulkAccessBody now accept notify (default true); access modal has "Email this teammate about the change" and the bulk bar has "Email teammates" so admins can run quiet migrations. Verified bulk notify:false via curl.
+- Seat Search: Billing "Seats & Access" card has a search box that filters/auto-expands packs to show which packs a specific teammate can reach.

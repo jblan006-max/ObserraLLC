@@ -740,3 +740,34 @@ async def logs_pack_pdf(user: dict = Depends(get_current_user)):
                      org_name=(org or {}).get("name"), brand=brand)
     return StreamingResponse(buf, media_type="application/pdf",
                              headers={"Content-Disposition": 'attachment; filename="obserra-evidence-binder.pdf"'})
+
+
+@reports_router.get("/api/reports/access-history/{user_id}.pdf")
+async def access_history_pdf(user_id: str, user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can export access history")
+    org_id = user["org_id"]
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)})
+    member = await db.users.find_one({"_id": ObjectId(user_id), "org_id": org_id})
+    if not member:
+        raise HTTPException(404, "Member not found")
+    logs = await db.audit_logs.find(
+        {"org_id": org_id, "target": member["email"], "action": {"$in": ["team.access", "team.invite"]}},
+        {"_id": 0}).sort("ts", -1).to_list(200)
+    parts = [f"Dashboard access history for {member.get('name') or member['email']} ({member['email']}).",
+             f"Exported {datetime.now(timezone.utc).strftime('%B %d, %Y · %H:%M UTC')} — {len(logs)} change(s).", ""]
+    if not logs:
+        parts.append("No access changes recorded.")
+    for h in logs:
+        ts = (h.get("ts", "") or "")[:16].replace("T", " ")
+        parts.append(f"## {ts} UTC")
+        parts.append(re.sub(r"\*\*", "", h.get("detail", "") or ""))
+        parts.append(f"By {h.get('actor', '—')}")
+        parts.append("")
+    brand = _resolve_brand(org)
+    buf = _build_pdf("\n".join(parts), "Dashboard Access History", cover=True,
+                     org_name=(org or {}).get("name"), brand=brand)
+    safe = member["email"].replace("@", "-at-")
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename="access-history-{safe}.pdf"'})
