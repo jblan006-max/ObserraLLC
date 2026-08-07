@@ -25,6 +25,7 @@ from studio import studio_router
 from metrics import metrics_router
 from social_auth import social_router
 from push import push_router
+from deploy import deploy_router
 from starlette.middleware.sessions import SessionMiddleware
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -49,6 +50,7 @@ app.include_router(live_connectors_router)
 app.include_router(metrics_router)
 app.include_router(social_router)
 app.include_router(push_router)
+app.include_router(deploy_router)
 
 app.add_middleware(
     CORSMiddleware,

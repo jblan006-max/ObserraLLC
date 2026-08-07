@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { api, API } from "@/lib/api";
 import { toast } from "sonner";
-import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw, Image as ImageIcon } from "lucide-react";
+import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw, Image as ImageIcon, Server, Package, FileText } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const OPTIONS = [
@@ -63,6 +63,19 @@ export default function Settings() {
   const [previewTheme, setPreviewTheme] = useState("dark");
   const [previewBust, setPreviewBust] = useState(Date.now());
   const previewSrc = `${API}/reports/branding/preview?theme=${previewTheme}&t=${previewBust}`;
+  const [dlBusy, setDlBusy] = useState("");
+
+  const downloadFile = async (path, filename, key) => {
+    setDlBusy(key);
+    try {
+      const res = await api.get(path, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) { toast.error(e.response?.data?.detail || "Download failed"); }
+    setDlBusy("");
+  };
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -239,6 +252,28 @@ export default function Settings() {
             <img key={previewSrc} data-testid="branding-preview-img" src={previewSrc} alt="Board report cover preview"
               className="w-full max-w-xs rounded-lg border border-border shadow-sm bg-secondary/40" />
           </div>
+        </div>
+      )}
+
+      {isAdmin && (
+        <div className="bg-card fact-border rounded-xl p-6 space-y-4" data-testid="deployment-docs-settings">
+          <div className="flex items-center gap-2"><Server className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Deployment &amp; Documentation</h2></div>
+          <p className="text-sm text-muted-foreground">Obserra installs on any device as a one-click app (PWA) — on desktop use the Install button in the address bar or the in-app banner; on mobile use "Add to Home Screen". For fully self-hosted use, download the on-premise package and guides below.</p>
+          <div className="flex items-center gap-3 flex-wrap">
+            <button data-testid="download-onprem" disabled={dlBusy} onClick={() => downloadFile("/deploy/onprem-package", "obserra-onprem-deploy.zip", "onprem")}
+              className="px-4 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
+              {dlBusy === "onprem" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />} On‑premise package (.zip)
+            </button>
+            <button data-testid="download-guide-pdf" disabled={dlBusy} onClick={() => downloadFile("/deploy/guide.pdf", "Obserra-Install-and-User-Guide.pdf", "pdf")}
+              className="px-4 py-2.5 rounded-md border border-primary/40 text-foreground hover:bg-primary/10 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
+              {dlBusy === "pdf" ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4 text-primary" />} Install &amp; User Guide (PDF)
+            </button>
+            <button data-testid="download-guide-docx" disabled={dlBusy} onClick={() => downloadFile("/deploy/guide.docx", "Obserra-Install-and-User-Guide.docx", "docx")}
+              className="px-4 py-2.5 rounded-md border border-primary/40 text-foreground hover:bg-primary/10 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
+              {dlBusy === "docx" ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4 text-primary" />} Install &amp; User Guide (Word)
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground">Prefer a guided video? Use the built-in walkthrough via <span className="text-foreground">Guided Tour → Replay tour</span> above — it narrates Executive vs Operational mode in-app.</p>
         </div>
       )}
     </div>

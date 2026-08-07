@@ -1,4 +1,5 @@
 {
+  "id": "/app",
   "short_name": "Obserra",
   "name": "Obserra — Executive Protection & Intelligence",
   "description": "Enterprise cyber risk, AI governance & executive intelligence.",
@@ -8,6 +9,12 @@
   "orientation": "portrait",
   "background_color": "#0a0f1e",
   "theme_color": "#0a0f1e",
+  "categories": ["business", "productivity", "security"],
+  "launch_handler": { "client_mode": "focus-existing" },
+  "shortcuts": [
+    { "name": "Executive Overview", "url": "/app", "icons": [{ "src": "/logo-mark-192.png", "sizes": "192x192" }] },
+    { "name": "Board Reporting", "url": "/app/reporting", "icons": [{ "src": "/logo-mark-192.png", "sizes": "192x192" }] }
+  ],
   "icons": [
     { "src": "/logo-mark-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/logo-mark-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
