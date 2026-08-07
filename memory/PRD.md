@@ -63,6 +63,13 @@ Foundation: Tenant Management · Identity & RBAC | Data: Enterprise Asset Model 
 - Real (live) connector OAuth + true SSO/SAML/SCIM with an IdP; production ABAC enforcement in request path
 - Additional kernel-native apps per vertical; benchmarking; white-label; custom dashboards/report builders
 
+## Session 2026-06 (identity + 2nd kernel-native app + white-label) — verified iteration_8.json (backend 20/20, frontend 100%)
+- Emergent-managed **Google login** alongside JWT (POST /auth/google/session maps Google email → existing invited user → our JWT session). Live OAuth round-trip is manual-verify; guards tested (400/401).
+- **ABAC enforcement in request path**: /enterprise/abac/enforce toggle + /abac/evaluate + /abac/protected-demo (deny precedence, fail-safe default-allow). Enterprise → ABAC tab enforce toggle.
+- **Third-Party / Vendor Risk** = 2nd kernel-native app (/app/vendors): vendor inventory + risk scoring; assessing High/Critical opens a remediation workflow + vendor_risk alert (kernel loop).
+- **White-label Branding** (/branding GET/PUT, Enterprise → Branding tab: display name/accent/logo) + **Peer Benchmarking** (/benchmark, /app/benchmark) with metrics computed from real controls/agents.
+- QUEUED (needs creds): real Microsoft 365 connector OAuth (Azure app client id/secret/tenant); real SAML/SCIM with an enterprise IdP.
+
 
 ## Implemented (as of 2026-06)
 - JWT auth (httpOnly cookies, brute-force lockout), org/role, tenant isolation

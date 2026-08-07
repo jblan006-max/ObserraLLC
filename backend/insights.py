@@ -28,7 +28,7 @@ async def get_branding(user: dict = Depends(get_current_user)):
 async def put_branding(body: Branding, admin: dict = Depends(require_roles("admin"))):
     await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"branding": body.model_dump()}})
     await _log_audit(admin["org_id"], admin["email"], "branding.update", body.display_name)
-    return body.model_dump()
+    return {**DEFAULT_BRANDING, **body.model_dump()}
 
 
 @insights_router.get("/benchmark")
