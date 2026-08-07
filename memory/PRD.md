@@ -33,10 +33,11 @@ Enterprise SaaS "continuous AI control plane" with Dual-Mode dashboards (Executi
 - Credentials in `/app/memory/test_credentials.md`.
 
 ## Recent polish (Jun 2026)
-- Settings: "Remove logo / Reset to Obserra" button (branding-reset) added; logo type/size validation + dropped-invalid-email recipient feedback all live.
-- AIAdvisor floating button: official navy (#0f1e3d) pill, white Obserra eye mark stacked above white "Advisor" label.
-- Advisor first-time hint bubble (once/user via localStorage) + pulse ring on button; in-chat reply avatars use navy eye badge (AVATAR).
-- Settings Report Branding: LIVE cover preview thumbnail (GET /api/reports/branding/preview, pymupdf-rendered) with Dark/Light toggle; refreshes after save/reset. Verified iteration_17 (100%).
+- Settings: "Remove logo / Reset to Obserra" button; logo type/size validation + dropped-invalid-email recipient feedback.
+- AIAdvisor floating button: navy (#0f1e3d) pill, white eye mark; first-time hint bubble + pulse (hint-open analytics in /advisor/usage); in-chat reply avatars use navy eye badge.
+- Report Branding: LIVE cover preview (pymupdf GET /api/reports/branding/preview) with Dark/Light toggle; brand accent colour flows into cover org text + trend line + risk bars.
+- Board Report modal: branded cover thumbnail preview column (theme-aware).
+- **Distribution & docs**: PWA hardened for one-click install (service worker /push-sw.js with offline shell registered on load; manifest id/shortcuts) across desktop/mobile. On-premise Docker package (/app/deploy/onprem: docker-compose, Dockerfiles, nginx.conf, .env.example, INSTALL.md, optional install.sh) downloadable via GET /api/deploy/onprem-package (admin). Auto-generated PDF + Word Install & User Guide with dashboard screenshots (scripts/gen_docs.py → /api/deploy/guide.pdf, /guide.docx, admin). Settings "Deployment & Documentation" card exposes all three downloads. Video walkthrough NOT produced (agent cannot record video) — built-in Guided Tour offered as in-app alternative. Verified iteration_19 (backend 9/9, frontend 100%).
 
 ## Backlog / Roadmap
 - P1 (blocked): Apple Sign-In + Enterprise SSO — awaiting user IdP metadata/Apple keys (wired, gated by `/api/auth/providers`).

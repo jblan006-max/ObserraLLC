@@ -39,6 +39,8 @@ async def onprem_package(user: dict = Depends(get_current_user)):
 
 @deploy_router.get("/guide.pdf")
 async def guide_pdf(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can download the guide")
     if not os.path.exists(_GUIDE_PDF):
         raise HTTPException(404, "Guide not generated yet")
     return FileResponse(_GUIDE_PDF, media_type="application/pdf",
@@ -47,6 +49,8 @@ async def guide_pdf(user: dict = Depends(get_current_user)):
 
 @deploy_router.get("/guide.docx")
 async def guide_docx(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can download the guide")
     if not os.path.exists(_GUIDE_DOCX):
         raise HTTPException(404, "Guide not generated yet")
     return FileResponse(
