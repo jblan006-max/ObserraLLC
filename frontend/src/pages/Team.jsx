@@ -30,6 +30,14 @@ export default function Team() {
   const [q, setQ] = useUrlState("q", "");
   const [roleF, setRoleF] = useUrlState("roleF", "all");
   const shownMembers = (members || []).filter((m) => (roleF === "all" || m.role === roleF) && `${m.name} ${m.email}`.toLowerCase().includes(q.toLowerCase()));
+  const sameAccess = (a, b) => {
+    if (a == null && b == null) return true;
+    if (a == null || b == null) return false;
+    if (a.length !== b.length) return false;
+    const sb = new Set(b); return a.every((x) => sb.has(x));
+  };
+  const presetUsage = (p) => (members || []).filter((m) => m.role !== "admin" && sameAccess(m.module_access ?? null, p.module_access ?? null)).length;
+  const selectRole = (r) => setSelected((members || []).filter((m) => m.role === r).map((m) => m.id));
 
   const load = () => api.get("/auth/team/members").then((r) => setMembers(r.data)).catch(() => navigate("/app"));
   const loadPresets = () => api.get("/auth/access-presets").then((r) => setPresets(r.data || [])).catch(() => {});
@@ -73,12 +81,16 @@ export default function Team() {
   const [editSel, setEditSel] = useState([]);
   const [editAll, setEditAll] = useState(false);
   const [editBusy, setEditBusy] = useState(false);
+  const [histActor, setHistActor] = useState("");
+  const [histSince, setHistSince] = useState("");
+  const [histUntil, setHistUntil] = useState("");
   const openAccess = (m) => {
     setAccessFor(m);
     setAccessAll(m.module_access == null);
     setAccessSel(m.module_access || CATS.map((c) => c.id));
     setAccessNotify(true);
     setAccessHistory([]);
+    setHistActor(""); setHistSince(""); setHistUntil("");
     api.get(`/auth/team/${m.id}/access-history`).then((r) => setAccessHistory(r.data || [])).catch(() => {});
   };
   const toggleCat = (id) => setAccessSel((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
@@ -137,11 +149,18 @@ export default function Team() {
   };
   const downloadHistory = async () => {
     try {
-      const res = await api.get(`/reports/access-history/${accessFor.id}.pdf`, { responseType: "blob" });
+      const params = new URLSearchParams();
+      if (histActor) params.set("actor", histActor);
+      if (histSince) params.set("since", histSince);
+      if (histUntil) params.set("until", histUntil);
+      const res = await api.get(`/reports/access-history/${accessFor.id}.pdf?${params.toString()}`, { responseType: "blob" });
       const url = URL.createObjectURL(res.data);
       const a = document.createElement("a"); a.href = url; a.download = `access-history-${accessFor.email}.pdf`; a.click(); URL.revokeObjectURL(url);
     } catch { toast.error("Could not export history"); }
   };
+
+  const histActors = [...new Set((accessHistory || []).map((h) => h.actor).filter(Boolean))];
+  const shownHistory = (accessHistory || []).filter((h) => (!histActor || h.actor === histActor) && (!histSince || (h.ts || "").slice(0, 10) >= histSince) && (!histUntil || (h.ts || "").slice(0, 10) <= histUntil));
 
   return (
     <div className="rise space-y-6 max-w-4xl">
@@ -221,6 +240,7 @@ export default function Team() {
               <div key={p.name} data-testid={`preset-${p.name}`} className="flex items-center gap-2 bg-secondary/50 border border-border rounded-lg px-3 py-1.5">
                 <span className="text-sm font-medium">{p.name}</span>
                 <span className="text-[10px] font-mono text-muted-foreground">{p.module_access == null ? "all" : `${p.module_access.length} cat`}</span>
+                <span data-testid={`preset-usage-${p.name}`} className="text-[10px] font-mono text-ai">· {presetUsage(p)} in use</span>
                 <button data-testid={`preset-edit-${p.name}`} onClick={() => openEditPreset(p)} className="text-muted-foreground hover:text-ai transition-colors"><SlidersHorizontal className="w-3.5 h-3.5" /></button>
                 <button data-testid={`preset-rename-${p.name}`} onClick={() => renamePreset(p)} className="text-muted-foreground hover:text-ai transition-colors"><Pencil className="w-3.5 h-3.5" /></button>
                 <button data-testid={`preset-delete-${p.name}`} onClick={() => deletePreset(p)} className="text-muted-foreground hover:text-crit transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
@@ -240,6 +260,13 @@ export default function Team() {
           <select data-testid="member-filter" value={roleF} onChange={(e) => setRoleF(e.target.value)} className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary">
             <option value="all">All roles</option><option value="admin">Admin</option><option value="executive">Executive</option><option value="operational">Operational</option>
           </select>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 text-xs" data-testid="role-quickselect">
+          <span className="text-muted-foreground">Quick select role:</span>
+          {["operational", "executive", "admin"].map((r) => (
+            <button key={r} data-testid={`select-role-${r}`} onClick={() => selectRole(r)}
+              className="px-2.5 py-1 rounded-md border border-border hover:border-ai/40 hover:text-ai transition-colors">{ROLE_LABEL[r]}</button>
+          ))}
         </div>
         {selected.length > 0 && (
           <div data-testid="bulk-access-bar" className="flex flex-wrap items-center gap-3 bg-ai/5 ai-border rounded-lg p-3">
@@ -337,13 +364,24 @@ export default function Team() {
               ))}
             </div>
             {accessHistory.length > 0 && (
-              <div data-testid="access-history" className="border-t border-border pt-3 space-y-1.5 max-h-40 overflow-y-auto">
-                <div className="flex items-center gap-1.5 text-xs font-mono uppercase tracking-wider text-muted-foreground"><History className="w-3.5 h-3.5" /> Recent changes</div>
-                {accessHistory.map((h, i) => (
-                  <div key={i} className="text-xs text-muted-foreground leading-snug">
-                    <span className="text-foreground">{h.detail}</span> · by {h.actor} · {new Date(h.ts).toLocaleString()}
-                  </div>
-                ))}
+              <div data-testid="access-history" className="border-t border-border pt-3 space-y-2">
+                <div className="flex items-center gap-1.5 text-xs font-mono uppercase tracking-wider text-muted-foreground"><History className="w-3.5 h-3.5" /> Change history</div>
+                <div className="flex flex-wrap gap-2">
+                  <select data-testid="hist-actor" value={histActor} onChange={(e) => setHistActor(e.target.value)} className="bg-secondary/60 rounded-md px-2 py-1 text-xs outline-none">
+                    <option value="">All actors</option>
+                    {histActors.map((a) => <option key={a} value={a}>{a}</option>)}
+                  </select>
+                  <input data-testid="hist-since" type="date" value={histSince} onChange={(e) => setHistSince(e.target.value)} className="bg-secondary/60 rounded-md px-2 py-1 text-xs outline-none" />
+                  <input data-testid="hist-until" type="date" value={histUntil} onChange={(e) => setHistUntil(e.target.value)} className="bg-secondary/60 rounded-md px-2 py-1 text-xs outline-none" />
+                </div>
+                <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                  {shownHistory.length === 0 ? <div className="text-xs text-muted-foreground">No changes match these filters.</div> :
+                    shownHistory.map((h, i) => (
+                      <div key={i} className="text-xs text-muted-foreground leading-snug">
+                        <span className="text-foreground">{h.detail}</span> · by {h.actor} · {new Date(h.ts).toLocaleString()}
+                      </div>
+                    ))}
+                </div>
               </div>
             )}
             <label className="flex items-center gap-2 text-sm cursor-pointer">

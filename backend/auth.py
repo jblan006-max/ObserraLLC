@@ -369,18 +369,39 @@ def _access_summary_text(ma):
     return ", ".join(CATEGORY_NAMES.get(c, c) for c in ma)
 
 
-async def _notify_access_change(org_id, member, ma, actor):
-    """Email the teammate (managed Resend) when their dashboard access changes."""
+def _access_diff(old_ma, new_ma):
+    all_ids = set(CATEGORY_IDS)
+    old_set = all_ids if old_ma is None else set(old_ma or [])
+    new_set = all_ids if new_ma is None else set(new_ma or [])
+    added = [CATEGORY_NAMES[c] for c in CATEGORY_IDS if c in (new_set - old_set)]
+    removed = [CATEGORY_NAMES[c] for c in CATEGORY_IDS if c in (old_set - new_set)]
+    return added, removed
+
+
+async def _notify_access_change(org_id, member, ma, actor, old_ma="__none__"):
+    """Email the teammate (managed Resend) with an added-vs-removed diff when access changes."""
     try:
         from kernel import notifications
         summary = _access_summary_text(ma)
         frontend = os.environ["FRONTEND_URL"].rstrip("/")
+        diff_html = ""
+        if old_ma != "__none__":
+            added, removed = _access_diff(old_ma, ma)
+            rows = ""
+            if added:
+                rows += f'<div style="font:700 13px Arial;color:#15803d;margin-top:6px">&#43; Added: {", ".join(added)}</div>'
+            if removed:
+                rows += f'<div style="font:700 13px Arial;color:#b91c1c;margin-top:6px">&#8722; Removed: {", ".join(removed)}</div>'
+            if not rows:
+                rows = '<div style="font:400 13px Arial;color:#6b7280;margin-top:6px">No change to the packs you can reach.</div>'
+            diff_html = f'<div style="margin-top:12px;padding:12px 14px;background:#f3f6fb;border-radius:8px">{rows}</div>'
         html = (
             '<table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;margin:auto;background:#ffffff">'
             '<tr><td style="padding:28px 24px">'
             '<div style="font:800 20px Arial;color:#0f1e3d">Obserra — Executive Protection &amp; Intelligence LLC</div>'
             f'<div style="font:400 14px Arial;color:#1f2937;margin-top:14px;line-height:1.6">Hi {member.get("name") or member["email"]},<br><br>'
             f'Your Obserra dashboard access was updated. You can now reach: <b>{summary}</b>.</div>'
+            f'{diff_html}'
             f'<div style="margin:22px 0"><a href="{frontend}/app" style="background:#1b3a8a;color:#fff;font:700 14px Arial;text-decoration:none;padding:12px 22px;border-radius:8px">Open Obserra EIOS</a></div>'
             '</td></tr></table>'
         )
@@ -418,7 +439,7 @@ async def set_member_access(user_id: str, body: AccessBody, admin: dict = Depend
     await _log_audit(admin["org_id"], admin["email"], "team.access",
                      f"Set dashboard access: {_access_summary_text(ma)}", target=member["email"])
     if body.notify:
-        await _notify_access_change(admin["org_id"], member, ma, admin["email"])
+        await _notify_access_change(admin["org_id"], member, ma, admin["email"], old_ma=member.get("module_access"))
     return {"ok": True, "module_access": ma}
 
 
@@ -446,7 +467,7 @@ async def bulk_set_access(body: BulkAccessBody, admin: dict = Depends(require_ro
         await _log_audit(admin["org_id"], admin["email"], "team.access",
                          f"Bulk set access: {_access_summary_text(ma)}", target=member["email"])
         if body.notify:
-            await _notify_access_change(admin["org_id"], member, ma, admin["email"])
+            await _notify_access_change(admin["org_id"], member, ma, admin["email"], old_ma=member.get("module_access"))
         updated += 1
     return {"ok": True, "updated": updated, "module_access": ma}
 

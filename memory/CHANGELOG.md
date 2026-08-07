@@ -49,3 +49,9 @@
 - History Export: GET /api/reports/access-history/{id}.pdf builds a branded ReportLab PDF of a teammate's access changes; "Export PDF" button in the access modal (verified: application/pdf, ~213KB).
 - Notify Toggle: AccessBody + BulkAccessBody now accept notify (default true); access modal has "Email this teammate about the change" and the bulk bar has "Email teammates" so admins can run quiet migrations. Verified bulk notify:false via curl.
 - Seat Search: Billing "Seats & Access" card has a search box that filters/auto-expands packs to show which packs a specific teammate can reach.
+
+## 2026-08-07 — Access diff email, bulk-from-directory, preset usage count, history filters
+- Access Diff Email: _notify_access_change now takes old_ma and shows added (green) vs removed (red) packs in the teammate email; set/bulk endpoints pass the pre-change access.
+- Bulk From Directory: Team page "Quick select role" buttons (Operational/Executive/Admin) select every member of a role in one click, then apply a preset via the bulk bar.
+- Preset Usage Count: each Preset Manager chip shows "N in use" (teammates whose access exactly matches the preset).
+- History Filters: the access modal's Change History has actor + since/until date filters (client-side); Export PDF forwards them as query params to GET /api/reports/access-history/{id}.pdf (actor/since/until). Verified: filtered PDF returns valid 213KB.

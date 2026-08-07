@@ -743,7 +743,8 @@ async def logs_pack_pdf(user: dict = Depends(get_current_user)):
 
 
 @reports_router.get("/api/reports/access-history/{user_id}.pdf")
-async def access_history_pdf(user_id: str, user: dict = Depends(get_current_user)):
+async def access_history_pdf(user_id: str, actor: str = None, since: str = None, until: str = None,
+                             user: dict = Depends(get_current_user)):
     from bson import ObjectId
     if user.get("role") != "admin":
         raise HTTPException(403, "Only admins can export access history")
@@ -755,8 +756,19 @@ async def access_history_pdf(user_id: str, user: dict = Depends(get_current_user
     logs = await db.audit_logs.find(
         {"org_id": org_id, "target": member["email"], "action": {"$in": ["team.access", "team.invite"]}},
         {"_id": 0}).sort("ts", -1).to_list(200)
+    if actor:
+        logs = [x for x in logs if x.get("actor") == actor]
+    if since:
+        logs = [x for x in logs if (x.get("ts", "") or "")[:10] >= since]
+    if until:
+        logs = [x for x in logs if (x.get("ts", "") or "")[:10] <= until]
+    filt = []
+    if actor: filt.append(f"actor {actor}")
+    if since: filt.append(f"from {since}")
+    if until: filt.append(f"to {until}")
+    filt_note = f" · Filtered: {', '.join(filt)}" if filt else ""
     parts = [f"Dashboard access history for {member.get('name') or member['email']} ({member['email']}).",
-             f"Exported {datetime.now(timezone.utc).strftime('%B %d, %Y · %H:%M UTC')} — {len(logs)} change(s).", ""]
+             f"Exported {datetime.now(timezone.utc).strftime('%B %d, %Y · %H:%M UTC')} — {len(logs)} change(s){filt_note}.", ""]
     if not logs:
         parts.append("No access changes recorded.")
     for h in logs:
