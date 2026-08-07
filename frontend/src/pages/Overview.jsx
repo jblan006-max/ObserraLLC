@@ -19,6 +19,25 @@ const PIE = ["#3b6ef5", "#12b4d6", "#f5a623", "#e0574a", "#42c98e", "#8a7bf0"];
 const Trend = ({ t }) => t === "up" ? <TrendingUp className="w-3.5 h-3.5 text-low" /> : t === "down" ? <TrendingDown className="w-3.5 h-3.5 text-crit" /> : <Minus className="w-3.5 h-3.5 text-muted-foreground" />;
 const fade = { hidden: { opacity: 0, y: 12 }, show: (i) => ({ opacity: 1, y: 0, transition: { delay: i * 0.05, duration: 0.4, ease: "easeOut" } }) };
 
+function ConnectorHealthBadge() {
+  const { user } = useAuth();
+  const [h, setH] = useState(null);
+  useEffect(() => { if (user?.role === "admin") api.get("/enterprise/live").then((r) => setH(r.data)).catch(() => {}); }, [user]);
+  if (!h) return null;
+  const m = h.m365, s = h.sso;
+  const mCls = !m.configured ? "bg-secondary/60 text-muted-foreground border-border" : m.live ? "bg-low/15 text-low border-low/30" : "bg-crit/15 text-crit border-crit/30";
+  const mTxt = !m.configured ? "M365 MOCKED" : m.live ? "M365 LIVE" : "M365 DEGRADED";
+  const sCls = !s.configured ? null : s.valid ? "bg-low/15 text-low border-low/30" : "bg-med/15 text-med border-med/30";
+  const sTxt = !s.configured ? null : s.valid ? "SSO READY" : "SSO INVALID";
+  return (
+    <div data-testid="connector-health-badge" className="flex items-center gap-1.5">
+      <span className={`text-[10px] font-mono px-2 py-1 rounded-full border ${mCls}`}>{mTxt}</span>
+      {sTxt && <span className={`text-[10px] font-mono px-2 py-1 rounded-full border ${sCls}`}>{sTxt}</span>}
+    </div>
+  );
+}
+
+
 export default function Overview() {
   const { mode } = useAuth();
   const [d, setD] = useState(null);
@@ -70,10 +89,13 @@ export default function Overview() {
             {mode === "executive" ? "Board-ready intelligence — health, business impact & one-click remediation." : "Live control posture, evidence & remediation workflows."}
           </p>
         </motion.div>
-        <button data-testid="board-report-btn" onClick={() => setReport(true)}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-ai/15 border border-ai/40 text-ai font-head font-bold text-sm hover:bg-ai/25 transition-colors">
-          <FileText className="w-4 h-4" /> Generate Board Report
-        </button>
+        <div className="flex items-center gap-3">
+          <ConnectorHealthBadge />
+          <button data-testid="board-report-btn" onClick={() => setReport(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-ai/15 border border-ai/40 text-ai font-head font-bold text-sm hover:bg-ai/25 transition-colors">
+            <FileText className="w-4 h-4" /> Generate Board Report
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-12 gap-5">

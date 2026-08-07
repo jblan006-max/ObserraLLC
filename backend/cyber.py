@@ -30,9 +30,10 @@ async def overview(user: dict = Depends(get_current_user)):
     org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
     m365 = org.get("live_m365") or {}
     live_users = m365.get("user_count") if m365.get("live") else None
+    live_risky = m365.get("risky_users") if m365.get("live") else None
     return {"composition": COMPOSITION, "posture_score": posture, "mitigation_pct": mitigation,
             "control_coverage": coverage, "open_risks": open_risks, "total_risks": len(risks),
-            "live_m365_users": live_users, "risks": top}
+            "live_m365_users": live_users, "live_m365_risky": live_risky, "risks": top}
 
 
 @cyber_router.post("/risks/{ref}/treat")

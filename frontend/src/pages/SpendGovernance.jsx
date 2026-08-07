@@ -46,6 +46,7 @@ export default function SpendGovernance() {
         <div className="bg-card fact-border rounded-xl p-5 lg:col-span-2">
           <div className="flex items-center justify-between text-xs font-mono mb-1"><span className="uppercase tracking-wider text-muted-foreground">Monthly budget</span><span className={statusColor}>{s.budget_usd > 0 ? `$${s.month_cost_usd?.toFixed(2)} / $${s.budget_usd?.toFixed(2)} · ${s.budget_pct}%` : "no cap set"}</span></div>
           {s.budget_usd > 0 && <div className="h-2 rounded-full bg-secondary overflow-hidden mb-2"><div className={`h-full ${barColor}`} style={{ width: `${Math.min(s.budget_pct, 100)}%` }} /></div>}
+          {s.budget_usd > 0 && <div data-testid="sg-forecast" className={`text-[11px] font-mono mb-2 ${s.forecast_over ? "text-crit" : "text-muted-foreground"}`}>Projected month-end: ${s.forecast_usd?.toFixed(2)} ({s.forecast_pct}%){s.forecast_over ? " — on track to exceed cap" : ""}</div>}
           {s.paused && <div data-testid="sg-paused" className="text-[11px] text-crit font-bold mb-2">Advisor auto-paused — cap reached.</div>}
           <div className="flex flex-wrap items-center gap-2">
             <input data-testid="sg-budget-input" type="number" min="0" placeholder={s.budget_usd > 0 ? `current $${s.budget_usd}` : "set $ cap"} value={budgetInput} onChange={(e) => setBudgetInput(e.target.value)} className="w-32 bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ai" />

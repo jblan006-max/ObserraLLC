@@ -188,12 +188,14 @@ async def _run_connector_health():
             continue
         was_live = bool(m.get("live"))
         try:
-            live, user_count, status = await _verify_m365(m["tenant_id"], m["client_id"], m["client_secret"])
+            live, user_count, risky_users, status = await _verify_m365(m["tenant_id"], m["client_id"], m["client_secret"])
         except Exception as e:
-            live, user_count, status = False, None, f"Re-verify failed: {str(e)[:120]}"
+            live, user_count, risky_users, status = False, None, None, f"Re-verify failed: {str(e)[:120]}"
         m.update({"live": live, "status": status, "checked_at": datetime.now(timezone.utc).isoformat()})
         if user_count is not None:
             m["user_count"] = user_count
+        if risky_users is not None:
+            m["risky_users"] = risky_users
         await db.organizations.update_one({"_id": org["_id"]}, {"$set": {"live_m365": m}})
         org_id = str(org["_id"])
         if was_live and not live:

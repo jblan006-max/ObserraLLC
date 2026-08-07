@@ -45,6 +45,7 @@ def _m365_public(m):
         return {"configured": False, "live": False}
     return {"configured": True, "live": bool(m.get("live")), "tenant_id": m.get("tenant_id"),
             "client_id_masked": _mask(m.get("client_id")), "user_count": m.get("user_count"),
+            "risky_users": m.get("risky_users"),
             "status": m.get("status"), "checked_at": m.get("checked_at")}
 
 
@@ -73,22 +74,25 @@ async def _verify_m365(tenant_id, client_id, client_secret):
                 desc = tok.json().get("error_description", "")[:120]
             except Exception:
                 pass
-            return False, None, f"Token error {tok.status_code}: {desc}"
+            return False, None, None, f"Token error {tok.status_code}: {desc}"
         access = tok.json()["access_token"]
         cnt = await c.get("https://graph.microsoft.com/v1.0/users/$count",
                           headers={"Authorization": f"Bearer {access}", "ConsistencyLevel": "eventual"})
         user_count = int(cnt.text) if cnt.status_code == 200 and cnt.text.strip().isdigit() else None
-    return True, user_count, "Connected to Microsoft Graph"
+        risky = await c.get("https://graph.microsoft.com/v1.0/identityProtection/riskyUsers/$count",
+                            headers={"Authorization": f"Bearer {access}", "ConsistencyLevel": "eventual"})
+        risky_users = int(risky.text) if risky.status_code == 200 and risky.text.strip().isdigit() else None
+    return True, user_count, risky_users, "Connected to Microsoft Graph"
 
 
 @live_connectors_router.put("/live/m365")
 async def put_m365(body: M365Body, admin: dict = Depends(require_roles("admin"))):
     try:
-        live, user_count, status = await _verify_m365(body.tenant_id, body.client_id, body.client_secret)
+        live, user_count, risky_users, status = await _verify_m365(body.tenant_id, body.client_id, body.client_secret)
     except Exception as e:
-        live, user_count, status = False, None, f"Verification failed: {str(e)[:120]}"
+        live, user_count, risky_users, status = False, None, None, f"Verification failed: {str(e)[:120]}"
     doc = {"tenant_id": body.tenant_id, "client_id": body.client_id, "client_secret": body.client_secret,
-           "live": live, "user_count": user_count, "status": status, "checked_at": _now()}
+           "live": live, "user_count": user_count, "risky_users": risky_users, "status": status, "checked_at": _now()}
     await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"live_m365": doc}})
     await _log_audit(admin["org_id"], admin["email"], "connector.m365.configure",
                      f"M365 {'LIVE' if live else 'configured (not live)'}: {status}")

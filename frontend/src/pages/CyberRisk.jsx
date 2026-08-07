@@ -43,7 +43,7 @@ export default function CyberRisk() {
         <div data-testid="cyber-composition" className="flex flex-wrap items-center gap-2 mt-3">
           <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1"><Layers className="w-3.5 h-3.5" /> Composed on:</span>
           {data.composition.map((c) => <span key={c} className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-ai/10 text-ai border border-ai/20">{c}</span>)}
-          {data.live_m365_users != null && <span data-testid="cyber-m365-live" className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-low/15 text-low border border-low/30">M365 LIVE · {data.live_m365_users} users</span>}
+          {data.live_m365_users != null && <span data-testid="cyber-m365-live" className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-low/15 text-low border border-low/30">M365 LIVE · {data.live_m365_users} users{data.live_m365_risky != null ? ` · ${data.live_m365_risky} risky` : ""}</span>}
         </div>
       </div>
 

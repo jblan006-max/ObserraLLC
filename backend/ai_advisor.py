@@ -257,10 +257,17 @@ async def advisor_usage(admin: dict = Depends(require_roles("admin"))):
             e["queries"] += 1
     by_user = sorted(({**v, "cost_usd": round(v["cost_usd"], 4)} for v in bu.values()),
                      key=lambda x: x["cost_usd"], reverse=True)
+    from calendar import monthrange
+    now = datetime.now(timezone.utc)
+    dim = monthrange(now.year, now.month)[1]
+    forecast = round(month_cost / now.day * dim, 4) if now.day > 0 else month_cost
+    forecast_pct = round(forecast / budget * 100) if budget > 0 else 0
+    forecast_over = budget > 0 and forecast > budget
     return {"queries": len(logs), "total_tokens": total_tokens, "total_cost_usd": total_cost,
             "today_cost_usd": today_cost, "month_cost_usd": month_cost, "budget_usd": budget,
             "budget_pct": pct, "budget_status": status, "auto_pause": auto_pause, "paused": paused,
-            "alert_threshold": threshold, "trend": trend, "by_user": by_user, "recent": recent}
+            "alert_threshold": threshold, "forecast_usd": forecast, "forecast_pct": forecast_pct,
+            "forecast_over": forecast_over, "trend": trend, "by_user": by_user, "recent": recent}
 
 
 async def spend_rows(org_id: str, scope: str = "all"):

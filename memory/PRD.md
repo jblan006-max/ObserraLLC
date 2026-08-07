@@ -130,6 +130,14 @@ Foundation: Tenant Management · Identity & RBAC | Data: Enterprise Asset Model 
 ## DEFERRED (needs a real test IdP — not built)
 - Full SAML Sign-In (ACS endpoint, assertion parsing, JIT provisioning) — large auth integration; requires integration_expert playbook + a live Okta/Azure test IdP to verify safely. NOT implemented; app login remains Google/JWT.
 
+## Session 2026-06 (Spend Forecast + Connector Health Badge + M365 Risk Signals)
+- **Spend Budget Forecast**: /api/advisor/usage returns forecast_usd/forecast_pct/forecast_over (run-rate: month_cost / day-of-month × days-in-month). Spend Governance page shows "Projected month-end: $X (Y%)", red when on track to exceed cap. Verified: $0.0495 → projected $0.2192.
+- **Connector Health Badge**: Overview header shows admins a live M365 badge (MOCKED / LIVE / DEGRADED) + SSO (READY/INVALID) from GET /api/enterprise/live. Verified via screenshot (M365 MOCKED).
+- **M365 Risk Signals**: _verify_m365 now also pulls Graph identityProtection/riskyUsers/$count (best-effort) and stores risky_users; connector-health cron refreshes it; /api/cyber/overview exposes live_m365_risky and the CyberRisk chip shows "· N risky" when live. (Populates only with live creds + IdentityRiskyUser.Read.All.)
+
+## DEFERRED (needs a real test IdP)
+- Full SAML Sign-In (ACS/assertion/JIT) — still not built; app login remains Google/JWT.
+
 ## Implemented (as of 2026-06)
 - JWT auth (httpOnly cookies, brute-force lockout), org/role, tenant isolation
 - Passwordless QR login (start/approve/poll, 3-min single-use, cross-device)
