@@ -2,7 +2,7 @@ import random
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from db import db
 from auth import get_current_user, require_active_subscription
@@ -79,9 +79,27 @@ async def list_ai_systems(user: dict = Depends(require_active_subscription)):
     return await db.ai_systems.find({"org_id": user["org_id"]}, {"_id": 0}).to_list(500)
 
 
+AI_STATUS = {"sanctioned", "shadow", "killed", "restricted", "decommissioned"}
+AI_RISK_CLASS = {"Low", "Medium", "High", "Critical"}
+
+
 class AISystemUpdate(BaseModel):
     status: str | None = None
     risk_class: str | None = None
+
+    @field_validator("status")
+    @classmethod
+    def _v_status(cls, v):
+        if v is not None and v not in AI_STATUS:
+            raise ValueError(f"Invalid status. Allowed: {sorted(AI_STATUS)}")
+        return v
+
+    @field_validator("risk_class")
+    @classmethod
+    def _v_risk_class(cls, v):
+        if v is not None and v not in AI_RISK_CLASS:
+            raise ValueError(f"Invalid risk_class. Allowed: {sorted(AI_RISK_CLASS)}")
+        return v
 
 
 @api.patch("/ai-systems/{ref}")
@@ -144,7 +162,10 @@ async def decide_rec(ref: str, body: DecisionCreate, user: dict = Depends(get_cu
         raise HTTPException(404, "Recommendation not found")
     await db.recommendations.update_one({"org_id": user["org_id"], "ref": ref},
                                         {"$set": {"status": "Decided"}})
-    dref = f"DEC-{str(await db.decisions.count_documents({'org_id': user['org_id']}) + 1).zfill(3)}"
+    counter = await db.counters.find_one_and_update(
+        {"_id": f"decisions:{user['org_id']}"}, {"$inc": {"seq": 1}},
+        upsert=True, return_document=True)
+    dref = f"DEC-{str(counter['seq']).zfill(3)}"
     decision = {
         "ref": dref, "org_id": user["org_id"], "title": rec["title"],
         "options": [rec["title"], "Defer", "Accept risk"], "chosen": body.chosen,

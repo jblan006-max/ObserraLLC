@@ -15,6 +15,7 @@ import SituationRoom from "@/pages/SituationRoom";
 import AssetIntelligence from "@/pages/AssetIntelligence";
 import KnowledgeGraph from "@/pages/KnowledgeGraph";
 import ControlMonitoring from "@/pages/ControlMonitoring";
+import Team from "@/pages/Team";
 import Reporting from "@/pages/Reporting";
 import PaymentSuccess from "@/pages/PaymentSuccess";
 import QRApprove from "@/pages/QRApprove";
@@ -53,6 +54,7 @@ function App() {
               <Route path="decisions" element={<Decisions />} />
               <Route path="reporting" element={<Reporting />} />
               <Route path="audit" element={<AuditLog />} />
+              <Route path="team" element={<Team />} />
               <Route path="marketplace" element={<Marketplace />} />
               <Route path="billing" element={<Billing />} />
             </Route>

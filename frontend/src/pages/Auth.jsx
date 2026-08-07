@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { formatApiErrorDetail } from "@/lib/api";
 import { QRLogin } from "@/components/QRLogin";
+import { NetworkBackground } from "@/components/NetworkBackground";
 import { ShieldHalf, Loader2 } from "lucide-react";
 
 export default function Auth() {
@@ -31,9 +32,10 @@ export default function Auth() {
     <div className="min-h-screen grid lg:grid-cols-2 grain">
       <div className="relative hidden lg:flex flex-col justify-between p-12 border-r border-border overflow-hidden">
         <img alt="" src="https://images.unsplash.com/photo-1644088379091-d574269d422f?crop=entropy&cs=srgb&fm=jpg&q=85&w=1200"
-          className="absolute inset-0 w-full h-full object-cover opacity-[0.10]" />
+          className="absolute inset-0 w-full h-full object-cover opacity-[0.08]" />
+        <NetworkBackground className="absolute inset-0 w-full h-full opacity-70" />
         <div className="relative">
-          <img src="/logo.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-20 w-auto object-contain" />
+          <img src="/logo.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-20 w-auto object-contain logo-pulse" />
         </div>
         <div className="relative space-y-6">
           <h1 className="font-head font-black text-5xl leading-[1.05] tracking-tight">

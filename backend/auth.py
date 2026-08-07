@@ -272,6 +272,50 @@ async def qr_poll(body: QRPollBody, response: Response):
     raise HTTPException(status_code=410, detail="Session expired or invalid")
 
 
+class InviteBody(BaseModel):
+    email: EmailStr
+    name: str
+    role: str
+
+
+@auth_router.get("/team/members")
+async def team_members(admin: dict = Depends(require_roles("admin"))):
+    members = await db.users.find({"org_id": admin["org_id"]}).sort("created_at", 1).to_list(500)
+    return [{"id": str(m["_id"]), "email": m["email"], "name": m.get("name"),
+             "role": m.get("role"), "created_at": m.get("created_at"),
+             "invited_by": m.get("invited_by")} for m in members]
+
+
+@auth_router.post("/team/invite")
+async def team_invite(body: InviteBody, admin: dict = Depends(require_roles("admin"))):
+    email = body.email.lower()
+    if body.role not in ("executive", "operational", "admin"):
+        raise HTTPException(status_code=400, detail="Invalid role")
+    if await db.users.find_one({"email": email}):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    temp_password = secrets.token_urlsafe(9)
+    doc = {
+        "email": email, "password_hash": hash_password(temp_password), "name": body.name,
+        "role": body.role, "org_id": admin["org_id"], "invited_by": admin["email"],
+        "must_change_password": True, "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    res = await db.users.insert_one(doc)
+    await _log_audit(admin["org_id"], admin["email"], "team.invite", f"Invited {email} as {body.role}")
+    return {"id": str(res.inserted_id), "email": email, "name": body.name,
+            "role": body.role, "temp_password": temp_password}
+
+
+@auth_router.delete("/team/members/{member_id}")
+async def remove_member(member_id: str, admin: dict = Depends(require_roles("admin"))):
+    if member_id == admin["id"]:
+        raise HTTPException(status_code=400, detail="You cannot remove yourself")
+    res = await db.users.delete_one({"_id": ObjectId(member_id), "org_id": admin["org_id"]})
+    if res.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Member not found")
+    await _log_audit(admin["org_id"], admin["email"], "team.remove", f"Removed member {member_id}")
+    return {"ok": True}
+
+
 async def seed_admin():
     email = os.environ["ADMIN_EMAIL"].lower()
     password = os.environ["ADMIN_PASSWORD"]

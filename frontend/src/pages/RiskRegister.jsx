@@ -72,8 +72,8 @@ export default function RiskRegister() {
           </thead>
           <tbody>
             {filtered.map((r) => (
-              <tr key={r.ref} data-testid={`risk-row-${r.ref}`} className="border-b border-border/60 hover:bg-secondary/40 transition-colors">
-                <td className="px-4 py-3 cursor-pointer" onClick={() => setLineage(r.ref)}>
+              <tr key={r.ref} data-testid={`risk-row-${r.ref}`} onClick={() => setLineage(r.ref)} className="border-b border-border/60 hover:bg-secondary/40 transition-colors cursor-pointer">
+                <td className="px-4 py-3">
                   <div className="font-mono text-xs text-ai">{r.ref}</div>
                   <div className="font-medium max-w-xs">{r.title}</div>
                   <div className="text-[11px] text-muted-foreground mt-0.5">{r.business_impact}</div>

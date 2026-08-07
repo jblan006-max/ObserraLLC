@@ -5,7 +5,7 @@ import { AIAdvisor } from "@/components/AIAdvisor";
 import { Footer } from "@/components/Footer";
 import {
   LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
-  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck,
+  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users,
 } from "lucide-react";
 
 function DualModeToggle() {
@@ -35,6 +35,7 @@ const NAV = [
   { to: "/app/decisions", label: "Recommendations", icon: GitBranch },
   { to: "/app/reporting", label: "Evidence & Reporting", icon: FileBarChart, ent: "evidence_reporting" },
   { to: "/app/audit", label: "Audit Log", icon: ScrollText },
+  { to: "/app/team", label: "Team", icon: Users, admin: true },
   { to: "/app/marketplace", label: "Marketplace", icon: Store },
   { to: "/app/billing", label: "Billing", icon: CreditCard },
 ];
@@ -80,7 +81,7 @@ export default function AppShell() {
           <img src="/logo.png" alt="Obserra — Executive Protection & Intelligence LLC" className="h-9 w-auto object-contain" />
         </div>
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          {NAV.map((n) => {
+          {NAV.filter((n) => !n.admin || user?.role === "admin").map((n) => {
             const locked = !owns(n.ent);
             return (
               <NavLink key={n.to} to={locked ? "/app/marketplace" : n.to} end={n.end}

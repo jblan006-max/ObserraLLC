@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { HealthGauge } from "@/components/HealthGauge";
 import { RiskHeatmap } from "@/components/RiskHeatmap";
 import { IntegrationsPanel } from "@/components/IntegrationsPanel";
+import { SyncTicker } from "@/components/SyncTicker";
 import { BoardReportModal } from "@/components/BoardReportModal";
 import { EvidenceLineageModal } from "@/components/EvidenceLineageModal";
 import { CountUp } from "@/components/CountUp";
@@ -139,6 +140,7 @@ export default function Overview() {
         {/* Integrations */}
         <motion.div custom={6} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-12">
           <div className="flex items-center gap-2 mb-3"><Zap className="w-4 h-4 text-primary" /><h2 className="font-head font-bold text-lg">Connected Integrations · One-click Remediation</h2></div>
+          <SyncTicker />
           <IntegrationsPanel integrations={intg} onAction={runAction} running={running} />
         </motion.div>
 
