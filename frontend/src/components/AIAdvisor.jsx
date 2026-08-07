@@ -5,8 +5,8 @@ import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
 const AVATAR = (cls = "w-6 h-6") => (
-  <span className={`inline-flex ${cls} rounded-full overflow-hidden bg-background align-middle shrink-0`}>
-    <img src="/logo.png" alt="Obserra" className="h-full w-auto max-w-none object-cover" style={{ objectPosition: "left center" }} />
+  <span className={`inline-flex items-center justify-center ${cls} rounded-full overflow-hidden bg-background align-middle shrink-0`}>
+    <img src="/brand-mark.png" alt="Obserra" className="h-3/4 w-3/4 object-contain" />
   </span>
 );
 
