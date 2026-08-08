@@ -10,7 +10,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import {
   Target, Wrench, Boxes, ShieldCheck, AlertTriangle, Loader2, Building2, Sparkles,
   ShieldX, ChevronDown, Gauge, DollarSign, Bug, User, FileWarning, Clock, MapPin, Zap,
-  Radar, TrendingUp, Network, ScrollText, PlugZap, CheckCircle2, XCircle,
+  Radar, TrendingUp, Network, ScrollText, PlugZap, CheckCircle2, XCircle, Download,
 } from "lucide-react";
 
 const ACCENT = "255 85% 66%";
@@ -468,7 +468,12 @@ export default function Remediations() {
         </CardShell>
 
         <CardShell testid="rem-ledger" title="Defensibility Ledger — recorded remediation evidence" icon={ScrollText} accent={ACCENT}
-          right={<span className="text-[10px] font-mono text-muted-foreground">{ledger.length} record(s)</span>}>
+          right={<div className="flex items-center gap-2">
+            <span className="text-[10px] font-mono text-muted-foreground">{ledger.length} record(s)</span>
+            <button data-testid="ledger-export-csv" onClick={() => window.open(`${api.defaults.baseURL}/risk-engine/ledger/export?format=csv`, "_blank")} className="flex items-center gap-1 text-[10px] font-head font-bold px-2 py-1 rounded-full bg-secondary/70 hover:bg-secondary transition-colors"><Download className="w-3 h-3" /> CSV</button>
+            <button data-testid="ledger-export-pdf" onClick={() => window.open(`${api.defaults.baseURL}/risk-engine/ledger/export?format=pdf`, "_blank")} className="flex items-center gap-1 text-[10px] font-head font-bold px-2 py-1 rounded-full" style={{ background: `hsl(${ACCENT})`, color: "#050810" }}><Download className="w-3 h-3" /> PDF</button>
+          </div>}>
+
           {!ledger.length ? <EmptyState icon={ScrollText} text="No remediation attempts recorded yet. Every Execute Fix / Verify writes an immutable, board-defensible evidence entry here with the raw provider response." /> : (
             <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
               {ledger.map((e) => <LedgerRow key={e.id} e={e} />)}

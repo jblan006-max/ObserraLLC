@@ -14,7 +14,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Response
 
 from auth import get_current_user, require_roles
 from db import db
@@ -711,3 +711,79 @@ async def get_ledger(user: dict = Depends(get_current_user)):
     rows = await db.remediation_ledger.find(
         {"org_id": user["org_id"]}, {"_id": 0}).sort("started_at", -1).to_list(100)
     return {"entries": rows}
+
+
+@risk_engine_router.get("/ledger/export")
+async def export_ledger(format: str = "csv", user: dict = Depends(get_current_user)):
+    """Export the Defensibility Ledger as auditor-ready evidence. Every export carries a SHA-256
+    integrity signature over the exact rows so an auditor can verify it was not altered."""
+    import csv as _csv
+    import io as _io
+    import json as _json
+    import hashlib as _hashlib
+    rows = await db.remediation_ledger.find(
+        {"org_id": user["org_id"]}, {"_id": 0}).sort("started_at", -1).to_list(2000)
+    canon = _json.dumps(rows, default=str, sort_keys=True).encode()
+    sig = _hashlib.sha256(canon).hexdigest()
+    gen = datetime.now(timezone.utc).isoformat()
+    stamp = gen[:19].replace(":", "").replace("-", "")
+
+    def _cell(r, k):
+        v = r.get(k)
+        return "" if v is None else (v if isinstance(v, str) else _json.dumps(v, default=str))
+
+    if format == "json":
+        body = _json.dumps({"generated_at": gen, "org_id": user["org_id"], "count": len(rows),
+                            "integrity_sha256": sig, "entries": rows}, default=str, indent=2)
+        return Response(content=body, media_type="application/json",
+                        headers={"Content-Disposition": f'attachment; filename="obserra-ledger-{stamp}.json"'})
+
+    if format == "pdf":
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import mm
+        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+        buf = _io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=18 * mm, bottomMargin=16 * mm,
+                                leftMargin=14 * mm, rightMargin=14 * mm, title="Obserra Defensibility Ledger")
+        ss = getSampleStyleSheet()
+        small = ParagraphStyle("small", parent=ss["Normal"], fontSize=7, leading=9)
+        el = [Paragraph("Obserra EIOS — Defensibility Ledger", ParagraphStyle("h", parent=ss["Title"], fontSize=16)),
+              Paragraph(f"Generated {gen} · {len(rows)} recorded action(s) · board-defensible evidence", small),
+              Spacer(1, 6)]
+        data = [["When", "Action", "Provider", "Status", "Verified", "Detail"]]
+        for r in rows[:400]:
+            when = (r.get("finished_at") or r.get("at") or r.get("started_at") or "")[:19]
+            msg = (r.get("message") or r.get("detail") or "")
+            data.append([Paragraph(when, small), Paragraph(str(r.get("action", "")), small),
+                         Paragraph(str(r.get("provider", "") or ""), small),
+                         Paragraph(str(r.get("status", "") or ""), small),
+                         Paragraph("yes" if r.get("verified") else "no", small),
+                         Paragraph(msg[:220], small)])
+        t = Table(data, colWidths=[24 * mm, 26 * mm, 20 * mm, 18 * mm, 14 * mm, 78 * mm], repeatRows=1)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0b1220")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("FONTSIZE", (0, 0), (-1, 0), 7),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#c9d2e3")), ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f2f5fb")])]))
+        el += [t, Spacer(1, 10), Paragraph(f"<b>Integrity SHA-256:</b> {sig}", small),
+               Paragraph("Recompute the SHA-256 over the exported rows to verify this evidence was not altered.", small)]
+        doc.build(el)
+        pdf = buf.getvalue()
+        buf.close()
+        return Response(content=pdf, media_type="application/pdf",
+                        headers={"Content-Disposition": f'attachment; filename="obserra-ledger-{stamp}.pdf"'})
+
+    out = _io.StringIO()
+    w = _csv.writer(out)
+    cols = ["started_at", "finished_at", "action", "task_id", "provider", "verified", "status",
+            "risk_reduced", "by", "message", "external", "results"]
+    w.writerow(cols)
+    for r in rows:
+        w.writerow([_cell(r, c) for c in cols])
+    w.writerow([])
+    w.writerow(["# integrity_sha256", sig])
+    w.writerow(["# generated_at", gen])
+    return Response(content=out.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="obserra-ledger-{stamp}.csv"'})

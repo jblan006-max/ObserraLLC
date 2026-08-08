@@ -1,0 +1,47 @@
+{
+  "summary": "Iter47 — Connector catalog (36 items / 10+ categories) + Auto-Discover live probes + Connect flow + Ledger export CSV/PDF/JSON + No-Mock regressions all VERIFIED. Backend 9/9 pytest PASS in 2.24s. Frontend acceptance verified on https://cyber-dashboard-48.preview.emergentagent.com after cookie auth: 36 catalog cards render, Stripe auto-connects LIVE (real HTTP 200 via STRIPE_SECRET_KEY), the other 35 honestly report credentials_required (counter reads '1/36 live'), GitHub with a bogus token → AUTH FAILED (honest, not fabricated), and Remediations page exposes ledger-export-csv + ledger-export-pdf buttons. Existing connector-m365/openai/teams/sso still render alongside the new catalog. No-Mock regressions (dep-ecdsa honest failure, economics.tprm.total_premium=0 + spend.blended_roi≈26.9) still pass. dep-ecdsa restored to Open in fixture teardown.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verified_backend": [
+    "GET /api/connectors/catalog → 36 items across 10+ categories with manifest.provider_id, auth, capabilities, health, failure_class, connection_state, fields; connected=1 after discovery",
+    "POST /api/connectors/discover → summary.connected>=1 (stripe HTTP 200 via env STRIPE_SECRET_KEY), crowdstrike/zscaler credentials_required + failure_class 'invalid-configuration'; connector-discover entry appended to ledger",
+    "POST /api/connectors/github/connect {creds:{token:'ghp_bogus...'}} → state='auth_failed', honest detail, NOT connected; ledger row written",
+    "POST /api/connectors/github/test → non-connected honest state; POST /api/connectors/github/disconnect → {ok:true} and catalog state returns to 'available'",
+    "GET /api/risk-engine/ledger/export?format=csv → text/csv attachment, header 'started_at,...' + '# integrity_sha256' line",
+    "GET /api/risk-engine/ledger/export?format=pdf → application/pdf, body starts %PDF (reportlab)",
+    "GET /api/risk-engine/ledger/export?format=json → JSON with 64-char integrity_sha256 + entries[]",
+    "POST /api/risk-engine/task/dep-ecdsa/action {remediate} → ok=false, verified=false, 'no fixed release for CVE-2024-23342'",
+    "GET /api/risk-engine/economics → economics.tprm.total_premium=0, economics.spend.blended_roi=26.9"
+  ],
+  "verified_frontend": [
+    "/app/connectors — 36 catalog-connector-<id> cards render; catalog-connected-count = '1/36 live · real connectivity probes, no fake connects'",
+    "Existing Live connectors preserved: connector-m365, connector-openai, connector-teams, connector-sso all visible",
+    "auto-discover-connect click → catalog-stripe-status = 'LIVE' within ~2s; other providers remain 'AVAILABLE'/'CREDENTIALS'",
+    "connect-github click opens connect-form-github modal with connect-field-github-token input; submitting with bogus token 'ghp_fakeTokenBogus...' updates catalog-github-status to 'AUTH FAILED' (honest No-Mock behavior)",
+    "/app/remediations exposes ledger-export-csv and ledger-export-pdf buttons (window.open → /api/risk-engine/ledger/export)"
+  ],
+  "critical_code_review_comments": [
+    "Auth.jsx form submit via Playwright's click on [data-testid=auth-submit] intermittently navigated to '/' WITHOUT dispatching POST /api/auth/login (no request captured in page.on('response')). Filled inputs got cleared on re-render, then /api/auth/me 401 → bounce to /login. Direct API login (context.request.post) always works and sets access_token+refresh_token cookies. Suggest verifying that submit handler is bound before button becomes clickable (busy state race) OR add explicit `onClick` on the submit button as a belt-and-suspenders. Not blocking (API auth path works), but automated E2E flows are impacted.",
+    "connectors_catalog.py at 433 lines is fine, but _probe() has a long if/elif chain per auth method; consider dispatch dict for readability. Timeouts (15s) are reasonable.",
+    "risk_engine.py at 789 lines — carried over from iter45/46, still worth splitting ledger/export + connector dispatch.",
+    "OnboardingTour (data-testid=onboarding-tour, z-9997) continues to intercept clicks on first login for a user — Playwright must remove it. Same UX quirk flagged in iter46.",
+    "ledger-export-csv/pdf use window.open with cookies; SameSite=Lax cookies are sent on top-level navigation so this works, but consider using a signed one-time export URL or a hidden download link with rel='noopener' for defence-in-depth (minor)."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iter47_connectors_export.py",
+    "/app/test_reports/pytest/iter47.xml"
+  ],
+  "action_items": [
+    "Investigate Auth.jsx submit binding — Playwright click on [data-testid=auth-submit] occasionally fails to POST /api/auth/login and causes form to navigate to '/'. Consider adding explicit onClick handler on button OR ensuring form isn't re-mounted between fill and click."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter47_connectors_export.py (NEW)"
+  ],
+  "success_rate": {"backend": "100% (9/9 pytest)", "frontend": "100% — all iter47 acceptance criteria verified"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin, live_only org). Cookie-based auth. For Playwright: prefer context.request.post to /api/auth/login (sets access_token+refresh_token cookies) then page.goto('/app/…'). UI form submit path is currently flaky under automation (see action_items).",
+  "seed_data_creation": "None. GitHub connector_state row created by /connect with bogus token, then cleared by /disconnect in same test. dep-ecdsa restored to Open in pytest fixture teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Playwright login gotcha: page.click('[data-testid=auth-submit]') intermittently navigates to '/' WITHOUT firing POST /api/auth/login (form re-mount race). Reliable workaround: call ctx.request.post('/api/auth/login', ...) to set the access_token/refresh_token cookies, then page.goto('/app/…'). OnboardingTour still needs to be removed via evaluate(). Connectors testids: catalog-connector-<id>, catalog-<id>-status (LIVE/AVAILABLE/CREDENTIALS/AUTH FAILED/UNREACHABLE), auto-discover-connect, connect-<id>, connect-form-<id>, connect-field-<id>-<key>, connect-submit-<id>, test-<id>, disconnect-<id>, catalog-connected-count. Ledger export buttons on /app/remediations: ledger-export-csv, ledger-export-pdf → /api/risk-engine/ledger/export?format=csv|pdf|json (JSON also supported). Stripe is the only provider that auto-connects in this env (STRIPE_SECRET_KEY). All 35 other providers should report credentials_required until real creds are provided — this is the required No-Mock behavior, not a bug.",
+  "rca of the issue": "N/A — no functional bugs. Only a testing-flow observation: automated Playwright submit-click on Auth.jsx occasionally races the form re-render and skips the POST. Verified by monitoring page.on('response') — no /api/auth/login request emitted, only /api/auth/me 401s. Direct API auth via context.request.post is fully functional and unblocks all frontend testing."
+}
