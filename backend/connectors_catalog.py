@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime, timezone
 
 import httpx
+from bson import ObjectId
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
@@ -430,3 +431,64 @@ async def disconnect(cid: str, admin: dict = Depends(require_roles("admin"))):
     await db.connector_state.delete_one({"org_id": admin["org_id"], "cid": cid})
     await _log_audit(admin["org_id"], admin["email"], "connector.disconnect", f"Disconnected {cid}")
     return {"ok": True}
+
+
+@connectors_router.get("/health")
+async def connector_health(user: dict = Depends(get_current_user)):
+    """Compact health feed for the Connector Health widget — every probed catalog connector +
+    every legacy live connector, each with its last re-probe time and a degraded flag (was
+    connected, now not)."""
+    org_id = user["org_id"]
+    idx = await _state_index(org_id)
+    name_by_id = {e["id"]: e for e in CATALOG}
+    items = []
+    for cid, st in idx.items():
+        state = st.get("state")
+        if not state or state == "available":
+            continue
+        e = name_by_id.get(cid) or {"name": cid, "category": "Connector"}
+        hh, fc = _health(state, st.get("http_status"))
+        items.append({"id": cid, "name": e["name"], "category": e.get("category", "Connector"),
+                      "state": state, "health": hh, "failure_class": fc,
+                      "checked_at": st.get("checked_at"), "connected_at": st.get("connected_at"),
+                      "degraded": bool(st.get("connected_at")) and state != "connected"})
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    for key, name in (("live_m365", "Microsoft 365"), ("live_copilot", "Microsoft Copilot"),
+                      ("live_openai", "ChatGPT (OpenAI)"), ("live_sso", "SSO / SAML"),
+                      ("live_teams", "Microsoft Teams")):
+        d = org.get(key)
+        if not d:
+            continue
+        status = (d.get("status") or "").lower()
+        bad = any(k in status for k in ("fail", "error", "unreachable", "degraded", "expired", "unavailable"))
+        on = bool(d.get("live") or d.get("valid"))
+        synced = d.get("synced_at")
+        state = "auth_failed" if bad else ("connected" if (on and synced) else "credentials_required")
+        items.append({"id": key, "name": name, "category": "Live connector", "state": state,
+                      "health": "healthy" if state == "connected" else ("degraded" if bad else "unavailable"),
+                      "failure_class": "unauthorized" if bad else None,
+                      "checked_at": d.get("checked_at"), "connected_at": synced,
+                      "degraded": bool(synced) and bad})
+    items.sort(key=lambda x: (0 if x["degraded"] else 1, x["name"]))
+    healthy = sum(1 for i in items if i["state"] == "connected")
+    degraded = sum(1 for i in items if i["degraded"])
+    last = max((i["checked_at"] for i in items if i.get("checked_at")), default=None)
+    return {"connectors": items, "summary": {"total": len(items), "healthy": healthy,
+                                             "degraded": degraded, "last_check": last}}
+
+
+@connectors_router.get("/discovery-actions")
+async def get_discovery_actions(user: dict = Depends(get_current_user)):
+    """Auto-opened remediation tasks / JIT access reviews from zero-touch discovery."""
+    rows = await db.discovery_actions.find({"org_id": user["org_id"]}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"actions": rows, "open": sum(1 for r in rows if r.get("status") == "open"), "total": len(rows)}
+
+
+@connectors_router.post("/discovery-actions/{aid}/resolve")
+async def resolve_discovery_action(aid: str, admin: dict = Depends(require_roles("admin"))):
+    now = datetime.now(timezone.utc).isoformat()
+    r = await db.discovery_actions.update_one(
+        {"org_id": admin["org_id"], "id": aid},
+        {"$set": {"status": "resolved", "resolved_at": now, "resolved_by": admin.get("email")}})
+    await _log_audit(admin["org_id"], admin["email"], "discovery.action.resolve", f"Resolved discovery action {aid}")
+    return {"ok": r.modified_count > 0}

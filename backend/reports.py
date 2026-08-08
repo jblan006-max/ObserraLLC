@@ -461,6 +461,62 @@ async def build_board_report_pdf(org_id: str, report_text: str,
                       fair_air=fair_air, nist_coverage=nist_coverage)
 
 
+async def _persona_report_text(org_id: str, persona: str) -> str:
+    """Deterministic, evidence-grounded persona report body (markdown) built LIVE from the Unified
+    Risk Correlation Engine — no LLM, so exports are instant and board-defensible."""
+    from risk_engine import correlate
+    c = await correlate(org_id, use_cache=True)
+    p, b, econ = c["portfolio"], c["benchmark"], c["economics"]
+
+    def mm(v):
+        v = v or 0
+        return f"${v/1e6:.1f}M" if v >= 1e6 else f"${v/1e3:,.0f}k"
+
+    if persona == "cfo":
+        tprm, spend = econ["tprm"], econ["spend"]
+        L = ["# CFO Financial Risk Brief",
+             "## Financial Exposure Summary",
+             f"Residual annualized loss expectancy (ALE) is {mm(p['residual_ale'])}, down {p['reduction_pct']}% "
+             f"from an inherent {mm(p['inherent_ale'])}. Monte-Carlo scenario band: P10 {mm(p['p10'])} to P90 {mm(p['p90'])}.",
+             f"Risk ratings: {p['ratings_dist']['Critical']} Critical, {p['ratings_dist']['High']} High, "
+             f"{p['ratings_dist']['Medium']} Medium, {p['ratings_dist']['Low']} Low.",
+             "## Benchmark Position",
+             (b.get("strategic_recommendation")
+              or (f"Modelled per-incident exposure is {b.get('position', 'in line with')} the {b.get('industry')} "
+                  f"industry median" + (f" ({b['ratio']}x)." if b.get("ratio") else "."))),
+             "## Third-Party Risk Premium", tprm["note"]]
+        for v in tprm.get("top_vendors", [])[:5]:
+            L.append(f"- {v['name']} — {v['tier']} tier, {v['data_access']} data access: modelled premium {mm(v['premium'])}.")
+        L += ["## Security-Spend Optimization", spend["note"]]
+        for a in spend.get("by_area", [])[:5]:
+            L.append(f"- {a['area']}: invest {mm(a['cost'])} to retire {mm(a['ale_reduced'])} of exposure (ROI {a['roi']}x).")
+        best = (spend.get("best_area") or {}).get("area", "the highest-ROI area")
+        L += ["## Recommended Financial Decisions",
+              f"Fund {best} first and authorise the top-premium vendor reviews. Every modelled dollar is tied to a "
+              "specific ALE reduction under the FAIR model, so spend maps directly to exposure retired."]
+        return "\n".join(L)
+
+    # SOC remediation plan
+    tasks = c["tasks"][:12]
+    fs, cov, pipe = c["findings_summary"], c["coverage"], c["pipeline"]
+    L = ["# SOC Remediation Plan",
+         "## Open Posture",
+         f"{p['open_findings']} open finding(s) across {p['open_tasks']} prioritized task(s). Severity mix — "
+         f"Critical {fs.get('critical', 0)}, High {fs.get('high', 0)}, Medium {fs.get('medium', 0)}, Low {fs.get('low', 0)}.",
+         f"Remediation coverage: {cov['pct']}% of {cov['open_risks']} open risk(s) have a plan. Pipeline — "
+         f"planned {pipe.get('Planned', 0)}, in progress {pipe.get('In progress', 0)}, applied {pipe.get('Applied', 0)}.",
+         "## Prioritized Remediation Queue"]
+    for t in tasks:
+        kev = " · CISA-KEV (actively exploited)" if t.get("kev") else ""
+        L.append(f"- [{(t['severity'] or 'med').upper()}] {t['title']} — asset {t.get('asset_name') or t.get('asset_ref')} "
+                 f"· SLA {t['sla_days']}d · priority {t['priority_score']} · ${t['ale_at_stake']:,} at stake{kev}.")
+    L.append("## Top Fix Paths")
+    for t in tasks[:5]:
+        steps = "; ".join(t.get("fix_path") or [])
+        L.append(f"- {t['title']}: {steps}" + (f" · run: {t['fix_script']}" if t.get("fix_script") else ""))
+    return "\n".join(L)
+
+
 def _wrap(text, font, size, max_w, canvas):
     words, lines, cur = text.split(), [], ""
     for w in words:
@@ -755,6 +811,24 @@ async def board_pack_pdf(user: dict = Depends(get_current_user)):
 async def board_pack_history(user: dict = Depends(get_current_user)):
     rows = await db.board_pack_history.find({"org_id": user["org_id"]}, {"_id": 0}).sort("generated_at", -1).to_list(24)
     return {"history": rows}
+
+
+@reports_router.post("/api/reports/cfo-brief.pdf")
+async def cfo_brief_pdf(user: dict = Depends(get_current_user)):
+    """Multi-persona export — CFO Financial Risk Brief (branded PDF, live FAIR economics)."""
+    text = await _persona_report_text(user["org_id"], "cfo")
+    buf = await build_board_report_pdf(user["org_id"], text, title="CFO Financial Risk Brief")
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": 'attachment; filename="obserra-cfo-brief.pdf"'})
+
+
+@reports_router.post("/api/reports/soc-plan.pdf")
+async def soc_plan_pdf(user: dict = Depends(get_current_user)):
+    """Multi-persona export — SOC Remediation Plan (branded PDF, live prioritized task queue)."""
+    text = await _persona_report_text(user["org_id"], "soc")
+    buf = await build_board_report_pdf(user["org_id"], text, title="SOC Remediation Plan")
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": 'attachment; filename="obserra-soc-plan.pdf"'})
 
 
 @reports_router.post("/api/reports/email")

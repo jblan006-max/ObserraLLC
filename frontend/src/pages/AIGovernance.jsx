@@ -11,10 +11,12 @@ import { Cpu, AlertOctagon, Ban, Eye, Bot, Sparkles, Cloud, ShieldCheck, Activit
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { AISystemModal } from "@/components/AISystemModal";
 import { AIMonitor } from "@/components/AIMonitor";
+import { RiskDetailModal } from "@/components/RiskDetailModal";
 
 const ACCENT = "350 89% 60%"; // AI Governance → rose
 const riskClassColor = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 90% 55%", Low: "142 70% 45%" };
 const OWASP_COL = { covered: "142 70% 45%", monitored: "35 90% 55%", gap: "0 84% 60%" };
+const OWASP_RATE = { gap: "High", monitored: "Medium", covered: "Low" };
 const GUARD_LABEL = { input_filtering: "Input filtering", output_filtering: "Output filtering", tool_allowlist: "Tool allow-list", human_in_loop: "Human-in-loop" };
 
 function EvalBar({ label, value }) {
@@ -35,6 +37,7 @@ export default function AIGovernance() {
   const [live, setLive] = useState(null);
   const [an, setAn] = useState(null);
   const [selected, setSelected] = useState(null);
+  const [detail, setDetail] = useState(null);
 
   const load = () => {
     api.get("/ai-systems").then((r) => setSystems(r.data));
@@ -61,6 +64,58 @@ export default function AIGovernance() {
 
   const copilot = live?.copilot, openai = live?.openai, m365 = live?.m365;
   const anyLicensed = (copilot?.live) || (openai?.live) || (m365?.live);
+
+  // Universal deep-dives — every risk-bearing card opens the standard AI detail (rating, score,
+  // grounded AI brief + recommended fixes), same pattern as the rest of the platform.
+  const openOwasp = (o) => setDetail({
+    refLabel: o.code, title: o.name, rating: OWASP_RATE[o.status] || "Medium",
+    facets: [
+      { icon: Layers, label: "OWASP LLM control", value: `${o.code} · ${o.name}` },
+      { icon: ShieldCheck, label: "Coverage status", value: (o.status || "").toUpperCase() },
+      { icon: Bot, label: "Agents in scope", value: agentTotal || "—" },
+    ],
+    recommendedActions: o.status === "gap"
+      ? [`No control mapped for ${o.code}. Add a guardrail (input/output filtering, tool allow-list or human-in-loop) covering ${o.name}, then re-evaluate.`]
+      : o.status === "monitored"
+        ? [`${o.code} is monitored but not enforced — promote detection to a blocking guardrail to close residual exposure.`]
+        : [`${o.code} is covered — sustain the guardrail and keep evaluation evidence fresh.`],
+    explainTitle: `${o.code} — ${o.name}`, explainKind: "owasp-llm ai-governance guardrail coverage", explainContext: { owasp: o, guardrails: guardCov, agents: agentTotal },
+  });
+  const openIncident = (i) => setDetail({
+    refLabel: i.ref, title: i.title, rating: i.severity,
+    facets: [
+      { icon: Bot, label: "System", value: i.system },
+      { icon: ShieldAlert, label: "Governance mode", value: i.mode },
+      { icon: Activity, label: "Status", value: i.status },
+    ],
+    recommendedActions: [
+      `Confirm ${i.mode === "block" ? "the blocking guardrail held" : "escalation of the guardrail to block"} for ${i.system}.`,
+      "Review the offending prompt/response, tighten input/output filtering, and record the evidence.",
+    ],
+    explainTitle: i.title, explainKind: "ai-incident governance owasp severity", explainContext: { incident: i },
+  });
+  const openAgentRisk = () => setDetail({
+    refLabel: "AI-AGENTS", title: "AI agent risk distribution", rating: riskDist.find((r) => r.name === "Critical" && r.value > 0) ? "Critical" : riskDist.find((r) => r.name === "High" && r.value > 0) ? "High" : "Medium",
+    facets: [
+      { icon: Bot, label: "Registered agents", value: agentTotal || "—" },
+      { icon: ShieldAlert, label: "Distribution", value: riskDist.map((r) => `${r.name}:${r.value}`).join(" · ") || "—" },
+    ],
+    recommendedActions: [
+      "Bring highest-risk agents under a blocking guardrail set (input/output filtering + tool allow-list).",
+      "Require human-in-loop for any agent with write/tool access to production systems.",
+    ],
+    explainTitle: "AI agent risk posture", explainKind: "ai-agent risk guardrail governance", explainContext: { risk_dist: an?.agents?.risk_dist, guardrails: guardCov, total: agentTotal },
+  });
+  const openGuardrails = () => setDetail({
+    refLabel: "GUARDRAILS", title: "Guardrail coverage", rating: agentTotal && (guardCov.human_in_loop || 0) / agentTotal < 0.5 ? "High" : "Medium",
+    facets: Object.keys(GUARD_LABEL).map((g) => ({ icon: ShieldCheck, label: GUARD_LABEL[g], value: `${guardCov[g] || 0}/${agentTotal}` })),
+    recommendedActions: [
+      "Close the weakest guardrail first — aim for 100% input/output filtering across all agents.",
+      "Add tool allow-lists and human-in-loop to any agent that can call external tools.",
+    ],
+    explainTitle: "Guardrail coverage", explainKind: "guardrail coverage ai governance", explainContext: { guardrails: guardCov, total: agentTotal },
+  });
+
   const LicTile = ({ icon: Icon, label, on, metric, unit, sub, testid }) => (
     <div data-testid={testid} className={`rounded-lg p-4 border ${on ? "border-ai/30 bg-ai/5" : "border-border bg-secondary/30"}`}>
       <div className="flex items-center justify-between mb-2">
@@ -76,7 +131,7 @@ export default function AIGovernance() {
     <div className="rise space-y-5" data-testid="ai-governance-page">
       <div>
         <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2" style={{ color: `hsl(${ACCENT})` }}><Bot className="w-7 h-7" strokeWidth={1.5} /> AI Governance Suite</h1>
-        <p className="text-sm text-muted-foreground mt-1">{isExec ? "AI governance posture — usage analytics, sanctioned vs shadow AI, guardrail coverage & OWASP-LLM exposure." : "Live AI usage analytics, NIST AI RMF mapping, model cards, evaluations, guardrails & incidents."}</p>
+        <p className="text-sm text-muted-foreground mt-1">{isExec ? "AI governance posture — usage analytics, sanctioned vs shadow AI, guardrail coverage & OWASP-LLM exposure. Click any card for the deep-dive." : "Live AI usage analytics, NIST AI RMF mapping, model cards, evaluations, guardrails & incidents. Click any card for the AI deep-dive."}</p>
       </div>
 
       {/* Usage analytics KPIs — always present */}
@@ -116,14 +171,18 @@ export default function AIGovernance() {
         </CardShell>
       </div>
 
-      {/* Agent risk + guardrails + OWASP */}
+      {/* Agent risk + guardrails + OWASP — clickable deep-dives */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <CardShell testid="aig-risk-dist" title="AI agent risk distribution" icon={ShieldAlert} accent={ACCENT}>
-          <BarList items={riskDist} accent={ACCENT} empty="No AI agents registered yet — register agents to classify risk." />
+        <CardShell testid="aig-risk-dist" title="AI agent risk distribution" icon={ShieldAlert} accent={ACCENT}
+          right={agentTotal > 0 && <button data-testid="aig-risk-dist-dd" onClick={openAgentRisk} className="text-[10px] font-mono text-ai hover:underline">Deep-dive →</button>}>
+          <div onClick={() => agentTotal > 0 && openAgentRisk()} className={agentTotal > 0 ? "cursor-pointer" : ""}>
+            <BarList items={riskDist} accent={ACCENT} empty="No AI agents registered yet — register agents to classify risk." />
+          </div>
         </CardShell>
-        <CardShell testid="aig-guardrails" title="Guardrail coverage" icon={ShieldCheck} accent={ACCENT}>
+        <CardShell testid="aig-guardrails" title="Guardrail coverage" icon={ShieldCheck} accent={ACCENT}
+          right={agentTotal > 0 && <button data-testid="aig-guardrails-dd" onClick={openGuardrails} className="text-[10px] font-mono text-ai hover:underline">Deep-dive →</button>}>
           {agentTotal === 0 ? <EmptyState icon={ShieldCheck} text="No agents yet — guardrail coverage appears once AI agents are registered." /> : (
-            <div className="space-y-3">
+            <div className="space-y-3 cursor-pointer" onClick={openGuardrails}>
               {Object.keys(GUARD_LABEL).map((g) => {
                 const n = guardCov[g] || 0; const pct = Math.round((n / agentTotal) * 100);
                 return (
@@ -139,7 +198,8 @@ export default function AIGovernance() {
         <CardShell testid="aig-owasp" title="OWASP LLM Top 10 coverage" icon={Layers} accent={ACCENT}>
           <div className="grid grid-cols-1 gap-1.5 max-h-64 overflow-y-auto pr-1">
             {(an?.owasp_llm || []).map((o) => (
-              <div key={o.code} data-testid={`owasp-${o.code}`} className="flex items-center justify-between gap-2 text-xs bg-secondary/30 rounded-md px-2.5 py-1.5">
+              <div key={o.code} data-testid={`owasp-${o.code}`} onClick={() => openOwasp(o)}
+                className="flex items-center justify-between gap-2 text-xs bg-secondary/30 hover:bg-secondary/60 rounded-md px-2.5 py-1.5 cursor-pointer transition-colors">
                 <span className="truncate"><span className="font-mono text-muted-foreground">{o.code}</span> {o.name}</span>
                 <span className="font-mono text-[9px] uppercase px-1.5 py-0.5 rounded-sm shrink-0" style={{ background: `hsl(${OWASP_COL[o.status]} / 0.15)`, color: `hsl(${OWASP_COL[o.status]})` }}>{o.status}</span>
               </div>
@@ -219,7 +279,8 @@ export default function AIGovernance() {
         <TabsContent value="incidents" className="mt-4 space-y-3">
           {incidents.length === 0 && <EmptyState icon={AlertOctagon} text="No AI incidents — governance monitors sanctioned systems continuously." />}
           {incidents.map((i) => (
-            <div key={i.ref} data-testid={`incident-${i.ref}`} className="bg-card fact-border rounded-lg p-4 flex items-center gap-4">
+            <div key={i.ref} data-testid={`incident-${i.ref}`} onClick={() => openIncident(i)}
+              className="bg-card fact-border rounded-lg p-4 flex items-center gap-4 cursor-pointer hover:bg-secondary/40 transition-colors">
               {i.severity === "Critical" ? <Ban className="w-5 h-5 text-crit" /> : <AlertOctagon className="w-5 h-5 text-high" />}
               <div className="flex-1">
                 <div className="font-medium text-sm">{i.title}</div>
@@ -233,6 +294,7 @@ export default function AIGovernance() {
       </Tabs>
 
       <AISystemModal system={selected} onClose={() => setSelected(null)} onChanged={load} />
+      <RiskDetailModal item={detail} accent={ACCENT} onClose={() => setDetail(null)} />
     </div>
   );
 }

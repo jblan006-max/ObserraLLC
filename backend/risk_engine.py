@@ -251,6 +251,7 @@ async def correlate(org_id: str, use_cache: bool = False) -> dict:
             "internet_facing": internet, "exploitability": expl,
             "blast_radius": {"count": len(blast), "reachable": blast[:8]},
             "compliance_pct": comp, "rating": rating, "score": score, "risk_refs": [x["ref"] for x in a_risks],
+            "discovered": bool(a.get("discovered")), "network": a.get("network"),
         })
     asset_out.sort(key=lambda x: (x["residual_ale"], x["vuln_count"]), reverse=True)
 
@@ -489,6 +490,20 @@ async def engine_summary(org_id: str) -> dict:
 @risk_engine_router.get("")
 async def engine_all(user: dict = Depends(get_current_user)):
     return await correlate(user["org_id"], use_cache=True)
+
+
+@risk_engine_router.get("/discovered")
+async def engine_discovered(user: dict = Depends(get_current_user)):
+    """Live-discovered assets (connected-SaaS devices/users/connectors/repos/CMDB CIs) with their
+    IP/MAC/site network context and the residual ALE they contribute to the portfolio."""
+    c = await correlate(user["org_id"], use_cache=True)
+    disc = [a for a in c["assets"] if a.get("discovered")]
+    disc.sort(key=lambda x: x["residual_ale"], reverse=True)
+    by_source = {}
+    for a in disc:
+        by_source[a.get("source") or "Unknown"] = by_source.get(a.get("source") or "Unknown", 0) + 1
+    return {"assets": disc, "count": len(disc), "total_ale": round(sum(a["residual_ale"] for a in disc)),
+            "by_source": by_source, "generated_at": c["generated_at"]}
 
 
 @risk_engine_router.get("/strategic")

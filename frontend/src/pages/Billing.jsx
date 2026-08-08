@@ -16,7 +16,7 @@ export default function Billing() {
   const [mods, setMods] = useState([]);
   const [portalBusy, setPortalBusy] = useState(false);
 
-  useEffect(() => { api.get("/billing/plans").then((r) => setPlans(r.data)); api.get("/modules").then((r) => setMods(r.data || [])); refreshSub?.(); }, []);
+  useEffect(() => { api.get("/billing/plans").then((r) => setPlans(r.data)).catch(() => setPlans([])); api.get("/modules").then((r) => setMods(r.data || [])).catch(() => setMods([])); refreshSub?.(); }, []);
   useEffect(() => { if (user?.role === "admin") api.get("/billing/access-summary").then((r) => setSummary(r.data)).catch(() => {}); }, [user]);
 
   const openPortal = async () => {
@@ -36,6 +36,14 @@ export default function Billing() {
   };
 
   if (!plans) return <div className="flex items-center justify-center h-96"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
+  if (plans.length === 0) return (
+    <div className="rise max-w-lg mx-auto text-center py-24 space-y-4" data-testid="billing-error">
+      <p className="text-lg font-head font-bold">Couldn't load subscription plans</p>
+      <p className="text-sm text-muted-foreground">The billing service didn't respond. Check your connection and try again.</p>
+      <button data-testid="billing-retry" onClick={() => { setPlans(null); api.get("/billing/plans").then((r) => setPlans(r.data)).catch(() => setPlans([])); }}
+        className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm">Retry</button>
+    </div>
+  );
 
   return (
     <div className="rise space-y-6 max-w-4xl">

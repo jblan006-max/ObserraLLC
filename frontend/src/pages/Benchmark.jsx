@@ -4,13 +4,15 @@ import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { ChartBox } from "@/components/ChartBox";
 import { ComposedChart, Area, Line, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
-import { BarChart3, Loader2, TrendingUp } from "lucide-react";
+import { BarChart3, Loader2, TrendingUp, DollarSign, Building2, Gauge } from "lucide-react";
+import { RiskDetailModal } from "@/components/RiskDetailModal";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
 
 const fmtM = (v) => v == null ? "—" : "$" + (v / 1e6).toFixed(2) + "M";
 const CHART_TT = { background: "hsl(215 38% 10%)", border: "1px solid hsl(215 30% 18%)", borderRadius: 8, fontSize: 12 };
+const ACCENT = "190 90% 50%";
 
 export default function Benchmark() {
   const { user } = useAuth();
@@ -20,6 +22,7 @@ export default function Benchmark() {
   const [trend, setTrend] = useState(null);
   const [peer, setPeer] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [deep, setDeep] = useState(null);
 
   const load = () => Promise.all([
     api.get("/financial/config"),
@@ -41,22 +44,67 @@ export default function Benchmark() {
 
   const bench = basis.benchmark || {};
   const industry = cfg.config?.industry || bench.industry;
+  const modelled = basis.modelled_avg_sle;
+  const ratio = basis.benchmark_ratio;
   const cards = [
-    { k: "industry", label: `${bench.industry || industry} avg breach`, value: fmtM(bench.industry_avg), src: "IBM Cost of a Data Breach — industry table", accent: "35 90% 55%" },
-    { k: "global", label: "Global avg breach", value: fmtM(bench.global_avg), src: "IBM 2026 — global average", accent: "190 90% 50%" },
-    { k: "ai", label: "AI-enabled breach avg", value: fmtM(bench.ai_breach_avg), src: "IBM 2026 — AI-enabled", accent: "266 85% 66%" },
-    { k: "shadow", label: "Shadow-AI cost premium", value: fmtM(bench.shadow_ai_premium), src: "IBM 2025 — shadow-AI premium", accent: "0 84% 60%" },
-    { k: "ransom", label: "Ransomware median loss", value: fmtM(bench.dbir_ransomware_median), src: "Verizon DBIR 2025", accent: "15 80% 55%" },
-    { k: "modelled", label: "Your modelled avg / incident", value: fmtM(basis.modelled_avg_sle), src: basis.benchmark_ratio != null ? `${basis.benchmark_ratio}× vs industry avg` : "modelled from your risks", accent: "142 70% 45%" },
+    { k: "industry", label: `${bench.industry || industry} avg breach`, value: fmtM(bench.industry_avg), raw: bench.industry_avg, src: "IBM Cost of a Data Breach — industry table", accent: "35 90% 55%" },
+    { k: "global", label: "Global avg breach", value: fmtM(bench.global_avg), raw: bench.global_avg, src: "IBM 2026 — global average", accent: "190 90% 50%" },
+    { k: "ai", label: "AI-enabled breach avg", value: fmtM(bench.ai_breach_avg), raw: bench.ai_breach_avg, src: "IBM 2026 — AI-enabled", accent: "266 85% 66%" },
+    { k: "shadow", label: "Shadow-AI cost premium", value: fmtM(bench.shadow_ai_premium), raw: bench.shadow_ai_premium, src: "IBM 2025 — shadow-AI premium", accent: "0 84% 60%" },
+    { k: "ransom", label: "Ransomware median loss", value: fmtM(bench.dbir_ransomware_median), raw: bench.dbir_ransomware_median, src: "Verizon DBIR 2025", accent: "15 80% 55%" },
+    { k: "modelled", label: "Your modelled avg / incident", value: fmtM(modelled), raw: modelled, src: ratio != null ? `${ratio}× vs industry avg` : "modelled from your risks", accent: "142 70% 45%" },
   ];
   const trendPts = trend?.points || [];
 
+  const openBench = (c) => {
+    const above = c.raw != null && modelled != null && modelled > c.raw;
+    setDeep({
+      refLabel: "BENCHMARK", title: c.label,
+      rating: c.k === "modelled" ? (ratio >= 1 ? "High" : ratio >= 0.7 ? "Medium" : "Low") : undefined,
+      score: c.k === "modelled" && ratio != null ? Math.min(100, Math.round(ratio * 60)) : undefined,
+      ale: c.raw,
+      facets: [
+        { icon: DollarSign, label: "Figure", value: c.value },
+        { icon: Building2, label: "Source", value: c.src },
+        { icon: Gauge, label: "Your modelled avg / incident", value: fmtM(modelled) },
+        { icon: TrendingUp, label: "Position", value: ratio != null ? `${ratio}× vs ${industry} avg` : "—" },
+      ],
+      recommendedActions: c.k === "modelled"
+        ? [ratio >= 1
+            ? `Your modelled per-incident exposure (${fmtM(modelled)}) is ${ratio}× the ${industry} average — prioritise controls that cut breach likelihood/impact (MFA everywhere, EDR coverage, backup immutability) to pull the ratio below 1×.`
+            : `Your modelled exposure (${fmtM(modelled)}) sits below the ${industry} average (${ratio}×) — sustain controls and keep the financial basis CRO-signed.`]
+        : [above
+            ? `Your modelled avg/incident (${fmtM(modelled)}) exceeds this ${c.label.toLowerCase()} — treat it as the floor for your board loss scenarios and fund reduction where ROI is highest.`
+            : `Your modelled avg/incident (${fmtM(modelled)}) is below this published figure — use it to sanity-check that your FAIR inputs aren't understated.`],
+      explainTitle: c.label, explainKind: "benchmark breach-cost industry comparison financial-basis",
+      explainContext: { metric: c, modelled_avg_sle: modelled, benchmark_ratio: ratio, industry, benchmark: bench },
+    });
+  };
+
+  const openPeer = (m) => setDeep({
+    refLabel: "PEER", title: m.name,
+    rating: m.percentile >= 75 ? "Low" : m.percentile >= 50 ? "Medium" : "High",
+    score: m.you,
+    facets: [
+      { icon: Gauge, label: "You", value: m.you },
+      { icon: Building2, label: "Peer median", value: m.peer_median },
+      { icon: TrendingUp, label: "Top quartile", value: m.top_quartile },
+      { icon: BarChart3, label: "Percentile", value: `${m.percentile}th` },
+    ],
+    recommendedActions: [
+      m.you >= m.top_quartile
+        ? `${m.name}: you're at/above the top quartile — sustain and use as a board proof-point.`
+        : `${m.name}: close the gap to the top quartile (${m.top_quartile}) — this is where peers in ${peer?.peer_set || "your set"} concentrate investment.`,
+    ],
+    explainTitle: `Peer posture — ${m.name}`, explainKind: "peer benchmark posture percentile", explainContext: { metric: m, peer_set: peer?.peer_set },
+  });
+
   return (
-    <div className="rise space-y-6">
+    <div className="rise space-y-6" data-testid="benchmark-page">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><BarChart3 className="w-7 h-7 text-primary" /> Peer Benchmarking</h1>
-          <p className="text-sm text-muted-foreground mt-1">Your modelled exposure vs. published breach-cost figures for <span className="text-foreground">{industry}</span>. Change the sector to re-benchmark the whole board model.</p>
+          <p className="text-sm text-muted-foreground mt-1">Your modelled exposure vs. published breach-cost figures for <span className="text-foreground">{industry}</span>. Click any card for the AI deep-dive — rating, position vs your model &amp; a grounded recommendation.</p>
         </div>
         <div className="flex items-center gap-2">
           <span className="text-xs text-muted-foreground">Industry</span>
@@ -75,11 +123,13 @@ export default function Benchmark() {
 
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-4" data-testid="benchmark-cards">
         {cards.map((c) => (
-          <div key={c.k} data-testid={`benchmark-card-${c.k}`} className="bg-card fact-border rounded-xl p-5">
+          <button key={c.k} type="button" data-testid={`benchmark-card-${c.k}`} onClick={() => openBench(c)}
+            className="text-left bg-card fact-border rounded-xl p-5 hover:-translate-y-0.5 hover:border-ai/40 transition-all duration-200">
             <div className="text-xs text-muted-foreground mb-1">{c.label}</div>
             <div className="font-head font-black text-2xl lg:text-3xl tracking-tight" style={{ color: `hsl(${c.accent})` }}>{c.value}</div>
             <div className="text-[10px] font-mono text-muted-foreground mt-1">{c.src}</div>
-          </div>
+            <div className="text-[10px] text-ai mt-1">Click for AI insight &amp; recommendation</div>
+          </button>
         ))}
       </div>
 
@@ -114,10 +164,11 @@ export default function Benchmark() {
         <div className="space-y-4" data-testid="benchmark-peer">
           <h2 className="font-head font-bold text-lg">Posture vs. {peer.peer_set} peers</h2>
           {peer.metrics.map((m) => (
-            <div key={m.name} data-testid={`benchmark-peer-${m.name.replace(/\s+/g, "-").toLowerCase()}`} className="bg-card fact-border rounded-xl p-5">
+            <button key={m.name} type="button" data-testid={`benchmark-peer-${m.name.replace(/\s+/g, "-").toLowerCase()}`} onClick={() => openPeer(m)}
+              className="w-full text-left bg-card fact-border rounded-xl p-5 hover:border-ai/40 transition-colors">
               <div className="flex items-center justify-between mb-3">
                 <div className="font-head font-bold text-sm">{m.name}</div>
-                <div className="text-xs font-mono text-muted-foreground">{m.percentile}th percentile</div>
+                <div className="text-xs font-mono text-muted-foreground">{m.percentile}th percentile · <span className="text-ai">deep-dive →</span></div>
               </div>
               <div className="relative h-8 bg-secondary/50 rounded-md overflow-hidden">
                 <div className="absolute top-0 bottom-0 w-px bg-muted-foreground/60" style={{ left: `${m.peer_median}%` }} title={`Peer median ${m.peer_median}`} />
@@ -129,12 +180,14 @@ export default function Benchmark() {
               <div className="flex gap-4 mt-2 text-[10px] font-mono text-muted-foreground">
                 <span>You: {m.you}</span><span>Peer median: {m.peer_median}</span><span className="text-low">Top quartile: {m.top_quartile}</span>
               </div>
-            </div>
+            </button>
           ))}
         </div>
       )}
 
       <p className="text-[11px] text-muted-foreground" data-testid="benchmark-source">Source: {bench.source} · Updated {bench.updated}. These are published industry figures used to benchmark your modelled exposure — decision-support, not guarantees.</p>
+
+      <RiskDetailModal item={deep} accent={ACCENT} onClose={() => setDeep(null)} />
     </div>
   );
 }

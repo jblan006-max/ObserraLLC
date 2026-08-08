@@ -1,0 +1,148 @@
+{
+  "summary": "Iter48 — Backend 10/10 pytest PASS (billing, connectors/health, discovered assets, discovery-actions, persona PDFs board/cfo/soc, snapshot metrics, ai-governance). Frontend: cookie login + all task-listed DYNAMIC deep-dive wirings VERIFIED (discovered-CX-*, owasp-LLM01..08, sr-exposure-LR-001, sg-month-card, benchmark-card-*, cyber-stat-*). BUT the audit sweep also finds a large surface of STATIC KPI/summary cards across every dashboard that are NOT clickable and do NOT open the universal deep-dive modal — this is the per-page gap list the task asked for. Billing does NOT infinite-spin (regression fix confirmed). Executive Snapshot renders and the /api/metrics/dashboard endpoint returns 200. No console errors on happy paths. OnboardingTour still shows on first login and intercepts automated clicks unless skipped.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_working": [
+    "POST /api/auth/login (cookie) 200; /api/auth/me 200",
+    "GET /api/billing/plans 200 (Enterprise plan renders, no infinite spinner)",
+    "GET /api/connectors/health 200 (widget renders '1/35 healthy · daily re-probe' with per-connector last re-probe time)",
+    "GET /api/risk-engine/discovered 200 (2 discovered rows shown: CX-64B2B6D1, CX-2FCB5A43)",
+    "GET /api/connectors/discovery-actions 200",
+    "POST /api/reports/board-pack.pdf 200 application/pdf (%PDF)",
+    "POST /api/reports/cfo-brief.pdf 200 application/pdf",
+    "POST /api/reports/soc-plan.pdf 200 application/pdf",
+    "GET /api/metrics/dashboard 200 (backs snapshot page)",
+    "/app/assets: discovered-CX-* row click → deep-dive-modal opens (rating + facets + AI recommendation, Execute action available)",
+    "/app/ai-governance: owasp-LLM01..LLM08 rows click → deep-dive-modal with 'AI INSIGHT & RECOMMENDATION' + rating (High/Medium/Low)",
+    "/app/situation-room: sr-exposure-LR-001 row click → situation-risk-modal with 'AI RISK RATING & FIX' + residual score",
+    "/app/spend-governance: sg-month-card click → sg-detail-modal opens",
+    "/app/benchmark: benchmark-card-global/shadow/modelled open deep-dive-modal",
+    "/app/cyber-risk: cyber-stat-mitigation and cyber-stat-openrisks open cyber-metric-modal",
+    "/app/reporting: persona-exports card + 3 buttons (export-board/cfo/soc) all wired and post PDFs"
+  ],
+  "per_page_static_card_gap_list": {
+    "/app (Overview)": {
+      "static_cards_no_deep_dive": ["exec-brief-Aggregate-ALE-at-risk","exec-brief-Monte-Carlo-P90","exec-brief-Peer-deviation","exec-brief-Vendor-risk-premium--TPRM-","exec-brief-Security-spend-ROI","exec-brief-Risk-drift--MoM-","exec-brief-Compliance-health","exec-tprm","exec-spend","exec-kpi-health","exec-kpi-posture","exec-kpi-residual","exec-kpi-reduction","exec-loss-range","exec-benchmark"],
+      "note": "Entire ExecBriefing widget (7 brief cards + 8 KPI/summary cards) is static — none open the deep-dive modal."
+    },
+    "/app/assets (AssetIntelligence)": {
+      "static_kpi_cards": ["asset-kpi-total","asset-kpi-exposed","asset-kpi-tls","asset-kpi-exposure","asset-kpi-kev","asset-kpi-cves"],
+      "static_secondary_cards_expected_clickable_per_task": ["asset-criticality","asset-crit-Critical","asset-crit-High","asset-crit-Medium","asset-crit-Low","asset-headers","asset-sources","asset-source-0","asset-source-1","asset-source-2"],
+      "static_connector_health_children": ["conn-health-<provider> (35 tiles inside connector-health-widget are static — clicking a degraded connector should ideally open a deep-dive with re-probe details)"],
+      "working": ["discovered-CX-* rows → deep-dive-modal (OK)"],
+      "note": "Task explicitly says 'criticality/headers/sources secondary cards are clickable and open a deep-dive' — they render but are NOT clickable and do NOT open deep-dive. Also all 6 KPI cards are static. No device-<id> testids present (live_only sparse — 0 managed devices) so Execute hub could not be exercised."
+    },
+    "/app/ai-governance": {
+      "static_kpi_and_summary_cards": ["aig-kpi-queries","aig-kpi-tokens","aig-kpi-cost","aig-kpi-models","aig-kpi-systems","aig-kpi-shadow","aig-by-model","aig-risk-dist","aig-guardrails","aig-owasp","lic-copilot","lic-openai","lic-m365"],
+      "working": ["owasp-LLM01..LLM08 → deep-dive-modal (OK)"],
+      "missing_dynamic_testids": ["incident-<REF> (0 present — likely no live incidents)","agent-<REF> (0 present)","agent-risk card (only 'aig-*' summary tiles found; agent-risk / guardrails secondary card is aig-guardrails but is NOT clickable)"],
+      "note": "Task says 'AI incident rows (incident-<REF>) and the agent-risk / guardrails cards are CLICKABLE and open the deep-dive modal' — incident-* testids not emitted at all; aig-guardrails is static (no cursor:pointer/onClick)."
+    },
+    "/app/benchmark": {
+      "static_cards": ["benchmark-card-industry","benchmark-card-ai","benchmark-card-ransom"],
+      "working": ["benchmark-card-global","benchmark-card-shadow","benchmark-card-modelled → deep-dive-modal"],
+      "note": "3 of 6 benchmark cards are wired, 3 are STATIC. No peer metric cards were detected (peer-* testids not emitted) — either sparse data or not implemented."
+    },
+    "/app/cyber-risk": {
+      "static_cards": ["cyber-stat-posture","cyber-stat-coverage","cyber-ale-LR-001","fair-pipe-0..4","fair-air-vector-0..4","fair-step-0..4","fair-nist-0..1"],
+      "working": ["cyber-stat-mitigation, cyber-stat-openrisks → cyber-metric-modal"],
+      "note": "Task says 'FAIR-AIR vectors open a scenario modal' — fair-air-vector-* are STATIC (no click). 2 of 4 posture stat cards open cyber-metric-modal, 2 are static. Modal content did not clearly show 'Risk Rating: Critical/High/…' string within cyber-metric-modal (has_rating heuristic failed) — main agent should verify AI recommendation and rating are rendered inside cyber-metric-modal."
+    },
+    "/app/spend-governance": {
+      "static_cards": ["(per-teammate rows — none rendered, likely sparse live_only)"],
+      "working": ["sg-month-card → sg-detail-modal"],
+      "note": "Only sg-month-card is the visible card-shaped testid on this page. Task references 'per-teammate rows open the AI detail modal' — no teammate rows present. Likely sparse data, not a bug."
+    },
+    "/app/situation-room": {
+      "static_cards": ["sr-kpi-critical","sr-kpi-high","sr-kpi-risks","sr-kpi-incidents","sr-kpi-events","sr-kpi-mode"],
+      "working": ["sr-exposure-LR-001 → situation-risk-modal (with AI RISK RATING & FIX)"],
+      "note": "All 6 KPI cards are static. Only 1 exposure row (LR-001) exists due to live_only sparse data."
+    },
+    "/app/reporting": {
+      "static_cards": [],
+      "working": ["persona-exports card with export-board / export-cfo / export-soc buttons — all POST PDFs 200"],
+      "note": "OK — buttons trigger real PDF downloads, no gaps."
+    },
+    "/app/snapshot": {
+      "static_cards": ["snap-kpi-residual","snap-kpi-exposure","snap-kpi-risk","snap-kpi-decisions","snap-kpi-critical","snap-kpi-health","snap-metric-mttr","snap-metric-open","snap-metric-patching","snap-metric-high-risk","snapshot-recommendations","snapshot-top-risks"],
+      "working": ["Page renders AI summary at top + snapshot-kpis, snapshot-metrics, snapshot-recommendations sections. No infinite spinner, no console errors."],
+      "note": "Executive Snapshot page loads cleanly, but individual KPI/metric cards and top-risks/recommendations items are STATIC — none open a deep-dive with a per-card AI recommendation."
+    },
+    "/app/compliance": {
+      "static_cards": ["crosswalk-summary-NIST-800-53","crosswalk-summary-CIS-v8","crosswalk-summary-SOC-2","crosswalk-summary-SSDF","crosswalk-summary-PCI-DSS","crosswalk-summary-ISO-27001","crit-tier-Critical","crit-tier-High","crit-tier-Medium","crit-tier-Low"],
+      "note": "All 6 framework crosswalk summary cards and all 4 criticality-tier cards are STATIC — no deep-dive modal on click."
+    },
+    "/app/risks (Risk Register)": {
+      "static_cards": ["rr-kpi-total","rr-kpi-open","rr-kpi-critical","rr-kpi-exposure","rr-kpi-worst","rr-kpi-controls","rr-heatmap","risk-matrix","rr-top-risks","rr-rating","rr-band-Extreme","rr-band-High","rr-band-Moderate","rr-band-Low","rr-loss","rr-trending","rr-deficiencies","rr-initiatives","rr-top-assets","rr-controls-cat","rr-threat-intel","rr-findings-sev"],
+      "note": "Every one of the 22 dashboard cards on the Risk Register page is STATIC. This is the LARGEST gap surface."
+    },
+    "/app/decisions": {
+      "static_cards": ["dec-kpi-recs","dec-kpi-pending","dec-kpi-decided","dec-kpi-applied","dec-kpi-decisions","dec-kpi-conf","dec-status","dec-category","dec-coverage"],
+      "note": "All 9 cards static."
+    },
+    "/app/agents (AI Agents)": {
+      "static_cards": [],
+      "note": "No card-shaped [data-testid] elements detected on the page. Page likely empty due to sparse live_only data (0 AI agents mapped), but empty-state is not annotated with a testid — main agent should confirm graceful empty state."
+    },
+    "/app/controls (Control Monitoring)": {
+      "static_cards": ["control-kpi-total","control-kpi-passing","control-kpi-attention","control-kpi-eff","control-kpi-mat","control-kpi-evidence","compliance-CIS-v8","compliance-ISO-27001","compliance-NIST-800-53","compliance-PCI-DSS","compliance-SOC-2","compliance-SSDF"],
+      "note": "All 6 KPI cards + all 6 per-framework compliance cards are STATIC."
+    },
+    "/app/enterprise": {
+      "static_cards": ["estat-m365","estat-sso","estat-scim","estat-abac","estat-brand","live-m365","sso-form","scim-panel","branding-panel"],
+      "note": "5 status cards + 4 config panels — none open a deep-dive. These are settings/config panels; may not need deep-dive but audit flags them for main agent decision."
+    },
+    "/app/vendors (Vendor / TPRM)": {
+      "static_cards": ["vnd-kpi-total","vnd-kpi-portfolio","vnd-kpi-highrisk","vnd-kpi-attest","vnd-kpi-incidents","vnd-kpi-renewals","vnd-by-tier","vnd-by-category","vnd-by-data"],
+      "note": "All 9 vendor cards static — no vendor-<id> or tprm-* row testids were detected either (likely sparse)."
+    },
+    "/app/billing": {
+      "static_cards": ["plan-enterprise","seats-access-summary"],
+      "note": "OK — Enterprise plan renders, seats visible, no infinite spinner. Regression fix confirmed."
+    }
+  },
+  "critical_code_review_comments": [
+    "OnboardingTour still intercepts first-login clicks on every page — automation must Skip it. Consider persisting the 'tour-seen' flag on first mount for admin/live_only orgs.",
+    "React select hydration warning still present: '<span> cannot be a child of <span>' — non-blocking but should be cleaned up in the shadcn Select rendering.",
+    "AssetIntelligence page: 'criticality/headers/sources secondary cards' were explicitly promised to open a deep-dive per the task, but the DOM shows them as static <div>s without onClick or cursor:pointer.",
+    "AI Governance: incident-<REF> and agent-<REF> testids are not present in the DOM at all — even for a sparse org, the empty-state should still emit the rows or a placeholder testid so acceptance can be verified.",
+    "Cyber-risk: FAIR-AIR vectors (fair-air-vector-0..4) are described as 'open a scenario modal' but are static in the current DOM.",
+    "Massive gap: KPI cards across Overview / Risks / Decisions / Controls / Compliance / Vendors / Snapshot / AI-Governance are non-interactive. If the product mandate is 'every card CLICKABLE opening a standardized Deep-Dive modal', these ~120 cards need to be wired to RiskDetailModal with per-card AI recommendations."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iter48_deep_dive_audit.py",
+    "/app/test_reports/pytest/iter48.xml"
+  ],
+  "action_items": [
+    "Wire ExecBriefing (7 brief cards + 8 KPI cards) on /app to deep-dive-modal.",
+    "Wire /app/assets secondary cards (asset-criticality, asset-headers, asset-sources, asset-source-*, asset-crit-*) to deep-dive-modal per task spec.",
+    "Wire connector-health tiles (conn-health-<provider>) to a deep-dive showing last re-probe details + degraded reason (task explicitly says 'red badge on degrade' and per-connector detail).",
+    "Wire AI Governance: aig-guardrails, aig-kpi-*, aig-by-model, aig-risk-dist to deep-dive-modal. Emit incident-<REF> and agent-<REF> testids even in empty-state.",
+    "Wire benchmark-card-industry, -ai, -ransom (currently 3 of 6 static).",
+    "Wire /app/cyber-risk: cyber-stat-posture, cyber-stat-coverage, fair-pipe-*, fair-air-vector-*, fair-step-*, fair-nist-* to their scenario/detail modals with AI recommendation.",
+    "Wire /app/situation-room sr-kpi-* (6 cards) to deep-dive-modal.",
+    "Wire /app/snapshot snap-kpi-* + snap-metric-* + snapshot-recommendations + snapshot-top-risks to deep-dive-modal per card.",
+    "Wire /app/compliance crosswalk-summary-* (6) and crit-tier-* (4) to deep-dive.",
+    "Wire /app/risks: 22 cards (rr-kpi-*, rr-heatmap, risk-matrix, rr-band-*, rr-loss, rr-trending, rr-deficiencies, rr-initiatives, rr-top-assets, rr-controls-cat, rr-threat-intel, rr-findings-sev) to deep-dive.",
+    "Wire /app/decisions: 9 cards (dec-*) to deep-dive.",
+    "Wire /app/controls: 12 cards (control-kpi-*, compliance-*) to deep-dive.",
+    "Wire /app/vendors: 9 cards (vnd-*) to deep-dive.",
+    "Cyber-metric-modal: verify AI recommendation + explicit Risk Rating (Critical/High/Medium/Low) text is rendered — current DOM snippet shows the modal opens but rating string not detected.",
+    "OnboardingTour intercepts automation on first login — add a way to dismiss programmatically or auto-mark tour-seen for admin roles.",
+    "Fix React hydration warning: '<span> cannot be a child of <span>' inside shadcn Select (visible in console)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter48_deep_dive_audit.py (NEW)"
+  ],
+  "success_rate": {"backend": "100% (10/10 pytest)", "frontend": "task-listed dynamic wirings 100% verified; universal-clickable mandate ~15% (per-page KPI/summary cards are the gap)"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin, live_only). Cookie login via context.request.post to /api/auth/login (per iter47 gotcha — UI form submit is flaky under Playwright).",
+  "seed_data_creation": "None. Live_only sparse dataset preserved (2 discovered assets, 1 risk LR-001, 0 incidents, 0 managed devices, 0 agents).",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Route paths in the ORIGINAL task prompt were wrong for several pages — actual routes are: /app/cyber-risk (not /app/cyber), /app/spend-governance (not /app/spend), /app/situation-room (not /app/situation), /app/risks (not /app/risk-register), /app/agents (not /app/ai-agents), /app/controls (not /app/control-monitoring). App.js uses a catch-all Navigate-to-'/' so wrong paths silently redirect to Overview and look like they render the same cards — do NOT be fooled. Login via context.request.post cookie flow. OnboardingTour must be Skip-clicked on first login of jblan2026 or it intercepts. Universal deep-dive modal testid = 'deep-dive-modal'. Page-specific: cyber-metric-modal, cyber-risk-modal, sg-detail-modal, situation-risk-modal, agent-modal, asset-modal, ai-system-modal. Static-card lists per page are in per_page_static_card_gap_list — these are the main deliverable for wiring in the next iteration.",
+  "rca_of_the_issue": "Not a single bug — task is an audit sweep. Root cause of the gap: task-listed dynamic deep-dive wirings (discovered-*, owasp-*, sr-exposure-*, sg-month-card, benchmark-card-*, cyber-stat-mitigation/openrisks) were correctly implemented, but the platform-wide mandate 'every card CLICKABLE opening deep-dive' has NOT been applied to the KPI/summary cards on Overview, Risk Register, Decisions, Controls, Compliance, Vendors, Snapshot, Situation-Room KPIs, most AI-Governance summary tiles, FAIR-AIR vectors on Cyber-Risk, and 3 of 6 Benchmark cards. Backend endpoints supporting those deep-dives (risk-engine, connectors/health, PDFs) are all functional — this is purely a frontend onClick / modal-wiring surface to fill in."
+}

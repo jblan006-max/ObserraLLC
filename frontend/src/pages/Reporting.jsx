@@ -1,13 +1,24 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { BoardReportModal } from "@/components/BoardReportModal";
-import { FileBarChart, FileText, Loader2, TrendingDown } from "lucide-react";
+import { toast } from "sonner";
+import { FileBarChart, FileText, Loader2, TrendingDown, Download, Coins, ShieldAlert, Package } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip } from "recharts";
 
 export default function Reporting() {
   const [reports, setReports] = useState(null);
   const [trend, setTrend] = useState(null);
   const [open, setOpen] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState("");
+  const downloadPersona = async (path, filename, key) => {
+    setPdfBusy(key);
+    try {
+      const res = await api.post(path, {}, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a"); a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
+    } catch { toast.error("Could not generate the PDF"); }
+    setPdfBusy("");
+  };
 
   const load = () => api.get("/reports").then((r) => setReports(r.data));
   useEffect(() => { load(); api.get("/financials/trend").then((r) => setTrend(r.data)); }, []);
@@ -23,6 +34,24 @@ export default function Reporting() {
           className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-ai/15 border border-ai/40 text-ai font-head font-bold text-sm hover:bg-ai/25 transition-colors">
           <FileText className="w-4 h-4" /> New Board Report
         </button>
+      </div>
+
+      <div data-testid="persona-exports" className="bg-card fact-border rounded-xl p-5">
+        <h2 className="font-head font-bold text-lg flex items-center gap-2 mb-1"><Package className="w-4 h-4 text-ai" /> Multi-persona exports</h2>
+        <p className="text-sm text-muted-foreground mb-4">One-click branded PDFs built live from the Unified Risk Correlation Engine — tailored to each audience.</p>
+        <div className="grid sm:grid-cols-3 gap-3">
+          {[
+            { key: "board", label: "Board Pack", desc: "Cyber risk + financials + FAIR-AIR + NIST coverage", path: "/reports/board-pack.pdf", file: "obserra-board-pack.pdf", icon: FileBarChart },
+            { key: "cfo", label: "CFO Brief", desc: "Financial exposure, TPRM premium & security-spend ROI", path: "/reports/cfo-brief.pdf", file: "obserra-cfo-brief.pdf", icon: Coins },
+            { key: "soc", label: "SOC Plan", desc: "Prioritized remediation queue, SLAs & fix paths", path: "/reports/soc-plan.pdf", file: "obserra-soc-plan.pdf", icon: ShieldAlert },
+          ].map((p) => (
+            <button key={p.key} data-testid={`export-${p.key}`} disabled={!!pdfBusy} onClick={() => downloadPersona(p.path, p.file, p.key)}
+              className="text-left rounded-lg border border-border bg-secondary/30 hover:border-ai/40 hover:bg-ai/5 transition-colors p-4 disabled:opacity-50">
+              <div className="flex items-center gap-2 font-head font-bold text-sm"><p.icon className="w-4 h-4 text-ai" /> {p.label} {pdfBusy === p.key ? <Loader2 className="w-3.5 h-3.5 animate-spin ml-auto" /> : <Download className="w-3.5 h-3.5 text-muted-foreground ml-auto" />}</div>
+              <p className="text-[11px] text-muted-foreground mt-1.5 leading-snug">{p.desc}</p>
+            </button>
+          ))}
+        </div>
       </div>
 
       {trend && (
