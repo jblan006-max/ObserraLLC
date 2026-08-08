@@ -51,7 +51,21 @@ async def overview(user: dict = Depends(require_active_subscription)):
 
 @api.get("/risks")
 async def list_risks(user: dict = Depends(require_active_subscription)):
-    return await db.risks.find({"org_id": user["org_id"]}, {"_id": 0}).sort("residual", -1).to_list(500)
+    org_id = user["org_id"]
+    cfg = await _get_fin_cfg(org_id)
+    risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).sort("residual", -1).to_list(500)
+    assets = await db.assets.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    idx, _ = _asset_crit_index(risks, assets)
+    crit_index = {ref: v["effective"] for ref, v in idx.items()}
+    out = []
+    for r in risks:
+        f = _fin(r, cfg, crit_index)
+        r.pop("_asset_ref", None)
+        out.append({**r, "residual_ale": f["residual_ale"], "inherent_ale": f["inherent_ale"],
+                    "potential_loss": f["sle"], "asset_ref": f["asset_ref"],
+                    "asset_criticality": f["asset_criticality"], "asset_factor": f["asset_factor"],
+                    "rating": _rating_label(r.get("residual", 0))})
+    return out
 
 
 class RiskUpdate(BaseModel):
@@ -550,18 +564,65 @@ async def _get_fin_cfg(org_id):
     }
 
 
-def _fin(r, cfg=None):
+CRIT_FACTOR = {"Critical": 1.5, "High": 1.25, "Medium": 1.0, "Low": 0.6}
+_CRIT_ORDER = ["Low", "Medium", "High", "Critical"]
+
+
+def _rating_label(residual):
+    return "Critical" if residual >= 20 else "High" if residual >= 12 else "Medium" if residual >= 6 else "Low"
+
+
+def _crit_from_risk(r):
+    sev = (r.get("severity") or "").lower()
+    imp = r.get("impact") or 0
+    if r.get("kev") or sev == "critical" or imp >= 5:
+        return "Critical"
+    if sev == "high" or imp == 4:
+        return "High"
+    if sev == "medium" or imp == 3:
+        return "Medium"
+    return "Low"
+
+
+def _asset_crit_index(risks, assets):
+    """Correlate the vulnerability/risk records with the asset inventory. Each asset's EFFECTIVE
+    criticality = max(inventory criticality, worst vuln mapped to it) so a critical vulnerability on
+    an asset raises that asset's risk criticality — and therefore its ALE."""
+    endpoint = next((a for a in assets if "install" in (a.get("type") or "").lower()
+                     or (a.get("source") or "").lower().startswith("live self")), (assets[0] if assets else None))
+    idx = {a["ref"]: {"ref": a["ref"], "name": a.get("name"), "stored": a.get("criticality") or "Medium", "worst": "Low"} for a in assets}
+    for r in risks:
+        ref = r.get("asset_ref") or (endpoint["ref"] if (r.get("derived") and endpoint) else None)
+        r["_asset_ref"] = ref
+        if ref and ref in idx:
+            rc = _crit_from_risk(r)
+            if _CRIT_ORDER.index(rc) > _CRIT_ORDER.index(idx[ref]["worst"]):
+                idx[ref]["worst"] = rc
+    for a in idx.values():
+        a["effective"] = a["stored"] if _CRIT_ORDER.index(a["stored"]) >= _CRIT_ORDER.index(a["worst"]) else a["worst"]
+    return idx, (endpoint["ref"] if endpoint else None)
+
+
+def _fin(r, cfg=None, asset_index=None):
     impact = r.get("impact", 3)
     if cfg and cfg.get("method") == "records" and cfg.get("records"):
         base = int(cfg["records"]) * int(cfg.get("per_record_cost") or 165)
-        sle = round(base * (impact / 5))
+        base_sle = round(base * (impact / 5))
         sle_source = (f"{int(cfg['records']):,} records × ${int(cfg.get('per_record_cost') or 165)}/record "
                       f"× impact {impact}/5 (IBM per-record method)")
     else:
         table = (cfg or {}).get("impact_sle") or SLE_BY_IMPACT
-        sle = table.get(impact, table.get(3, 1_000_000))
+        base_sle = table.get(impact, table.get(3, 1_000_000))
         sle_source = ("org-configured impact→$ table" if cfg and cfg.get("custom_table")
                       else "default impact→$ table (analyst assumption — calibrate for defensibility)")
+    # Asset-criticality correlation: the same vuln on a Critical asset carries a larger loss
+    # magnitude than on a low-criticality asset.
+    asset_ref = r.get("asset_ref") or r.get("_asset_ref")
+    asset_crit = (asset_index or {}).get(asset_ref)
+    factor = CRIT_FACTOR.get(asset_crit, 1.0)
+    sle = round(base_sle * factor)
+    if asset_crit and factor != 1.0:
+        sle_source += f" × {factor}× ({asset_crit}-criticality asset {asset_ref})"
     aro = r.get("likelihood", 3) / 5
     inherent = max(1, r.get("inherent", 10))
     residual = r.get("residual", inherent)
@@ -569,11 +630,12 @@ def _fin(r, cfg=None):
     inherent_ale = sle * aro
     residual_ale = inherent_ale * (residual / inherent)
     return {
-        "sle": sle, "sle_source": sle_source,
+        "sle": sle, "base_sle": base_sle, "sle_source": sle_source,
+        "asset_ref": asset_ref, "asset_criticality": asset_crit, "asset_factor": factor,
         "aro": round(aro, 2), "aro_basis": f"likelihood {r.get('likelihood', 3)}/5",
         "inherent_ale": round(inherent_ale), "residual_ale": round(residual_ale),
         "confidence": conf, "risk_adjusted": round(residual_ale * conf),
-        "math": f"SLE ${sle:,.0f} × ARO {round(aro, 2)} × (residual {residual}/inherent {inherent}) × confidence {conf}",
+        "math": f"SLE ${sle:,.0f} (base ${base_sle:,.0f} × {factor}× asset criticality) × ARO {round(aro, 2)} × (residual {residual}/inherent {inherent}) × confidence {conf}",
     }
 
 
@@ -899,9 +961,12 @@ def _fair_classify(sle, tef, vuln, max_sle):
 async def _fair_data(org_id):
     cfg = await _get_fin_cfg(org_id)
     risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    assets = await db.assets.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    idx, _endpoint = _asset_crit_index(risks, assets)
+    crit_index = {ref: v["effective"] for ref, v in idx.items()}
     recs = await db.recommendations.find({"org_id": org_id}, {"_id": 0}).to_list(500)
     pending = {r.get("risk_ref") for r in recs if r.get("status") == "Pending"}
-    fins = [(r, _fin(r, cfg)) for r in risks]
+    fins = [(r, _fin(r, cfg, crit_index)) for r in risks]
     max_sle = max([f["sle"] for _, f in fins] or [1])
     mc_items, items = [], []
     for r, f in fins:
@@ -915,6 +980,8 @@ async def _fair_data(org_id):
                       "owner": r.get("owner"), "status": r.get("status"),
                       "loss_magnitude": f["sle"], "tef": tef, "vulnerability": vuln, "lef": round(tef * vuln, 2),
                       "residual_ale": f["residual_ale"], "inherent_ale": f["inherent_ale"],
+                      "potential_loss": f["sle"], "residual": r.get("residual"), "rating": _rating_label(r.get("residual", 0)),
+                      "asset_ref": f.get("asset_ref"), "asset_criticality": f.get("asset_criticality"), "asset_factor": f.get("asset_factor"),
                       "p10": band["p10"], "p50": band["p50"], "p90": band["p90"],
                       "driver": driver, "driver_scores": scores, "remediation_pending": r.get("ref") in pending})
     items.sort(key=lambda x: x["residual_ale"], reverse=True)
