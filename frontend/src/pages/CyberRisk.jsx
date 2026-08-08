@@ -8,6 +8,7 @@ import { ChartBox } from "@/components/ChartBox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AIInsight } from "@/components/AIInsight";
 import { AIFix } from "@/components/AIFix";
+import { AIExplain } from "@/components/AIExplain";
 
 const FAIR_ACCENT = "350 80% 58%";
 const TIER = (residual) => residual >= 16 ? "0 84% 60%" : residual >= 9 ? "35 90% 55%" : "142 70% 45%";
@@ -37,14 +38,19 @@ function RiskModal({ risk, onClose }) {
   );
 }
 
-function Stat({ label, value, unit, icon: Icon, accent }) {
+function Stat({ label, value, unit, icon: Icon, accent, onClick, testid }) {
+  const Comp = onClick ? "button" : "div";
   return (
-    <div className="bg-card fact-border rounded-xl p-4" style={accent ? { borderLeft: `3px solid hsl(${accent})` } : {}}>
+    <Comp type={onClick ? "button" : undefined} data-testid={testid} onClick={onClick}
+      className={`text-left w-full bg-card fact-border rounded-xl p-4 ${onClick ? "hover:bg-secondary/30 transition-colors cursor-pointer" : ""}`}
+      style={accent ? { borderLeft: `3px solid hsl(${accent})` } : {}}>
       <div className="text-[10px] font-mono uppercase text-muted-foreground flex items-center gap-1.5">
         {Icon && <Icon className="w-3.5 h-3.5" />} {label}
+        {onClick && <ChevronRight className="w-3 h-3 ml-auto" />}
       </div>
       <div className="font-head font-black text-3xl mt-1">{value}{unit}</div>
-    </div>
+      {onClick && <div className="text-[10px] text-ai mt-0.5">Click for AI insight &amp; recommendation</div>}
+    </Comp>
   );
 }
 
@@ -55,6 +61,7 @@ export default function CyberRisk() {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState("");
   const [selRisk, setSelRisk] = useState(null);
+  const [metric, setMetric] = useState(null);
 
   const load = () => api.get("/cyber/overview").then((r) => setData(r.data));
   useEffect(() => { load(); }, []);
@@ -84,10 +91,10 @@ export default function CyberRisk() {
       <AIInsight dashboard="Risk (FAIR)" accent={FAIR_ACCENT} auto slug="cyber-risk-fair" />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Stat label="Posture score" value={data.posture_score} unit="" icon={Gauge} accent="142 70% 45%" />
-        <Stat label="Risk mitigation" value={data.mitigation_pct} unit="%" icon={TrendingDown} />
-        <Stat label="Control coverage" value={data.control_coverage} unit="%" icon={ShieldCheck} />
-        <Stat label="Open risks" value={`${data.open_risks}/${data.total_risks}`} unit="" icon={ShieldAlert} accent="0 84% 60%" />
+        <Stat label="Posture score" value={data.posture_score} unit="" icon={Gauge} accent="142 70% 45%" testid="cyber-stat-posture" onClick={() => setMetric({ title: "Posture score", kind: "fair-metric", context: { posture_score: data.posture_score, mitigation_pct: data.mitigation_pct, control_coverage: data.control_coverage, open_risks: data.open_risks, total_risks: data.total_risks, live_risk_penalty: data.live_risk_penalty } })} />
+        <Stat label="Risk mitigation" value={data.mitigation_pct} unit="%" icon={TrendingDown} testid="cyber-stat-mitigation" onClick={() => setMetric({ title: "Risk mitigation", kind: "fair-metric", context: { mitigation_pct: data.mitigation_pct, posture_score: data.posture_score, open_risks: data.open_risks, total_risks: data.total_risks } })} />
+        <Stat label="Control coverage" value={data.control_coverage} unit="%" icon={ShieldCheck} testid="cyber-stat-coverage" onClick={() => setMetric({ title: "Control coverage", kind: "fair-metric", context: { control_coverage: data.control_coverage, mitigation_pct: data.mitigation_pct, posture_score: data.posture_score } })} />
+        <Stat label="Open risks" value={`${data.open_risks}/${data.total_risks}`} unit="" icon={ShieldAlert} accent="0 84% 60%" testid="cyber-stat-openrisks" onClick={() => setMetric({ title: "Open risks", kind: "fair-metric", context: { open_risks: data.open_risks, total_risks: data.total_risks, top_risks: (data.risks || []).slice(0, 6).map((r) => ({ ref: r.ref, title: r.title, residual: r.residual, status: r.status })) } })} />
       </div>
 
       <div className="bg-card fact-border rounded-xl overflow-x-auto" data-testid="cyber-top-risks">
@@ -121,6 +128,17 @@ export default function CyberRisk() {
       <FairDashboard overview={data} />
       <FinancialBasis isAdmin={isAdmin} />
       <RiskModal risk={selRisk} onClose={() => setSelRisk(null)} />
+      {metric && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setMetric(null)}>
+          <div data-testid="cyber-metric-modal" onClick={(e) => e.stopPropagation()} className="w-full max-w-lg max-h-[86vh] overflow-y-auto bg-card border rounded-2xl p-6 space-y-4 rise" style={{ borderColor: `hsl(${FAIR_ACCENT} / 0.4)`, boxShadow: `inset 0 1px 0 hsl(${FAIR_ACCENT} / 0.3)` }}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="font-head font-black text-lg tracking-tight">{metric.title}</div>
+              <button data-testid="cyber-metric-close" onClick={() => setMetric(null)} className="shrink-0 text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+            </div>
+            <AIExplain title={metric.title} kind={metric.kind} context={metric.context} accent={FAIR_ACCENT} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

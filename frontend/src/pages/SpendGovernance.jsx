@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Wallet, Loader2, Download, Search, Brain, Gauge } from "lucide-react";
+import { Wallet, Loader2, Download, Search, Brain, Gauge, X } from "lucide-react";
 import { AIInsight } from "@/components/AIInsight";
+import { AIExplain } from "@/components/AIExplain";
 
 const SG_ACCENT = "266 85% 66%";
 
@@ -14,6 +15,7 @@ export default function SpendGovernance() {
   const [q, setQ] = useState("");
   const [results, setResults] = useState(null);
   const [open, setOpen] = useState(null);
+  const [detail, setDetail] = useState(null);
 
   const load = () => api.get("/advisor/usage").then((r) => setS(r.data));
   useEffect(() => { load(); api.get("/advisor/prompts/insights").then((r) => setThemes(r.data)).catch(() => {}); }, []);
@@ -47,7 +49,7 @@ export default function SpendGovernance() {
       <AIInsight dashboard="AI Spend & Governance" accent={SG_ACCENT} auto slug="spend-governance" />
 
       <div className="grid lg:grid-cols-3 gap-4">
-        <div className="bg-card fact-border rounded-xl p-5"><div className="text-[10px] font-mono uppercase text-muted-foreground flex items-center gap-1.5"><Gauge className="w-3.5 h-3.5" /> This month</div><div className="font-head font-black text-3xl mt-1">${s.month_cost_usd?.toFixed(2)}</div><div className="text-xs text-muted-foreground mt-1">{s.total_tokens?.toLocaleString()} tokens · {s.queries} queries all-time</div></div>
+        <button type="button" data-testid="sg-month-card" onClick={() => setDetail({ title: "AI advisor spend — this month", kind: "spend-summary", context: { month_cost_usd: s.month_cost_usd, total_tokens: s.total_tokens, queries: s.queries, budget_usd: s.budget_usd, budget_pct: s.budget_pct, forecast_usd: s.forecast_usd, forecast_over: s.forecast_over, top_users: s.by_user } })} className="text-left bg-card fact-border rounded-xl p-5 hover:bg-secondary/30 transition-colors"><div className="text-[10px] font-mono uppercase text-muted-foreground flex items-center gap-1.5"><Gauge className="w-3.5 h-3.5" /> This month</div><div className="font-head font-black text-3xl mt-1">${s.month_cost_usd?.toFixed(2)}</div><div className="text-xs text-muted-foreground mt-1">{s.total_tokens?.toLocaleString()} tokens · {s.queries} queries all-time · <span className="text-ai">click for AI insight</span></div></button>
         <div className="bg-card fact-border rounded-xl p-5 lg:col-span-2">
           <div className="flex items-center justify-between text-xs font-mono mb-1"><span className="uppercase tracking-wider text-muted-foreground">Monthly budget</span><span className={statusColor}>{s.budget_usd > 0 ? `$${s.month_cost_usd?.toFixed(2)} / $${s.budget_usd?.toFixed(2)} · ${s.budget_pct}%` : "no cap set"}</span></div>
           {s.budget_usd > 0 && <div className="h-2 rounded-full bg-secondary overflow-hidden mb-2"><div className={`h-full ${barColor}`} style={{ width: `${Math.min(s.budget_pct, 100)}%` }} /></div>}
@@ -68,7 +70,7 @@ export default function SpendGovernance() {
           <div className="flex items-center justify-between mb-2"><div className="text-xs font-mono uppercase text-muted-foreground">Spend by teammate (this month)</div><div className="flex gap-2"><button data-testid="sg-csv-month" onClick={() => exportCsv("month")} className="text-[11px] inline-flex items-center gap-1 px-2 py-1 rounded-md bg-secondary/60 border border-border"><Download className="w-3 h-3" /> Month</button><button data-testid="sg-csv-all" onClick={() => exportCsv("all")} className="text-[11px] inline-flex items-center gap-1 px-2 py-1 rounded-md bg-secondary/60 border border-border"><Download className="w-3 h-3" /> All</button></div></div>
           <div className="space-y-1">
             {(s.by_user || []).length === 0 ? <div className="text-xs text-muted-foreground">No spend yet this month.</div> : s.by_user.map((u) => (
-              <div key={u.user} data-testid={`sg-user-${u.user}`} className="flex items-center justify-between text-xs font-mono border-b border-border/50 py-1"><span className="truncate max-w-[60%] text-muted-foreground">{u.user}</span><span className="text-ai">${u.cost_usd.toFixed(4)} · {u.queries}q</span></div>
+              <button type="button" key={u.user} data-testid={`sg-user-${u.user}`} onClick={() => setDetail({ title: `Advisor spend — ${u.user}`, kind: "spend-user", context: { user: u.user, cost_usd: u.cost_usd, queries: u.queries, org_month_cost: s.month_cost_usd, org_budget: s.budget_usd } })} className="w-full flex items-center justify-between text-xs font-mono border-b border-border/50 py-1 hover:bg-secondary/40 rounded px-1 -mx-1 transition-colors"><span className="truncate max-w-[60%] text-muted-foreground">{u.user}</span><span className="text-ai">${u.cost_usd.toFixed(4)} · {u.queries}q</span></button>
             ))}
           </div>
           {s.trend?.length > 0 && (<div className="mt-4"><div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">6-month spend</div><div className="flex items-end gap-1 h-12">{s.trend.map((t) => <div key={t.month} className="flex-1 flex flex-col items-center gap-0.5" title={`${t.month}: $${t.cost_usd.toFixed(2)}`}><div className="w-full bg-ai/60 rounded-sm" style={{ height: `${Math.max(2, (t.cost_usd / trendMax) * 40)}px` }} /><span className="text-[8px] font-mono text-muted-foreground">{t.month.slice(5)}</span></div>)}</div></div>)}
@@ -81,6 +83,18 @@ export default function SpendGovernance() {
           {results && (<div data-testid="sg-results" className="space-y-1 max-h-72 overflow-y-auto">{results.length === 0 ? <div className="text-xs text-muted-foreground">No matches.</div> : results.map((r, i) => (<div key={i} className="text-[11px] border-l border-ai/30 pl-2"><button data-testid={`sg-audit-${i}`} onClick={() => setOpen(open === i ? null : i)} className="text-left w-full hover:bg-secondary/40 rounded px-1 -ml-1"><div className="text-foreground/90 truncate">{r.prompt}</div><div className="font-mono text-muted-foreground">{r.user} · {new Date(r.ts).toLocaleDateString()}{r.cost_usd != null ? ` · $${r.cost_usd.toFixed(4)}` : ""}</div></button>{open === i && <div className="mt-1 mb-1 p-2 rounded bg-secondary/50 text-foreground/80 whitespace-pre-wrap leading-relaxed">{r.response || "No stored answer."}</div>}</div>))}</div>)}
         </div>
       </div>
+
+      {detail && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setDetail(null)}>
+          <div data-testid="sg-detail-modal" onClick={(e) => e.stopPropagation()} className="w-full max-w-lg max-h-[86vh] overflow-y-auto bg-card border rounded-2xl p-6 space-y-4 rise" style={{ borderColor: `hsl(${SG_ACCENT} / 0.4)`, boxShadow: `inset 0 1px 0 hsl(${SG_ACCENT} / 0.3)` }}>
+            <div className="flex items-start justify-between gap-3">
+              <div className="font-head font-black text-lg tracking-tight break-words">{detail.title}</div>
+              <button data-testid="sg-detail-close" onClick={() => setDetail(null)} className="shrink-0 text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+            </div>
+            <AIExplain title={detail.title} kind={detail.kind} context={detail.context} accent={SG_ACCENT} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

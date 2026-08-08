@@ -2,8 +2,10 @@ import { useEffect, useState, useMemo } from "react";
 import ReactFlow, { Background, Controls } from "reactflow";
 import "reactflow/dist/style.css";
 import { api } from "@/lib/api";
-import { Network, Loader2, Sparkle, Send } from "lucide-react";
+import { Network, Loader2, Sparkle, Send, X } from "lucide-react";
 import { AIInsight } from "@/components/AIInsight";
+import { AIFix } from "@/components/AIFix";
+import { AIExplain } from "@/components/AIExplain";
 
 const KG_ACCENT = "225 70% 60%";
 
@@ -26,6 +28,10 @@ export default function KnowledgeGraph() {
   const [busy, setBusy] = useState("");
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
+  const [sel, setSel] = useState(null);
+
+  const labelOf = (id) => (graph?.nodes.find((n) => n.id === id)?.label) || id;
+  const onNodeClick = (_e, node) => { const n = graph?.nodes.find((x) => x.id === node.id); if (n) setSel(n); };
 
   const ask = async () => {
     if (!question.trim()) return;
@@ -111,11 +117,42 @@ export default function KnowledgeGraph() {
       {explanation && <div data-testid="kg-explanation" className="ai-border rounded-lg p-3 text-sm text-foreground bg-ai/5">{explanation}</div>}
 
       <div className="bg-card fact-border rounded-xl overflow-hidden" style={{ height: "62vh" }}>
-        <ReactFlow nodes={nodes} edges={edges} fitView proOptions={{ hideAttribution: true }} nodesDraggable={false} nodesConnectable={false} minZoom={0.3}>
+        <ReactFlow nodes={nodes} edges={edges} onNodeClick={onNodeClick} fitView proOptions={{ hideAttribution: true }} nodesDraggable={false} nodesConnectable={false} minZoom={0.3}>
           <Background color="hsl(215 30% 18%)" gap={22} />
           <Controls showInteractive={false} />
         </ReactFlow>
       </div>
+
+      {sel && (() => {
+        const neighbors = (graph?.edges || []).filter((e) => e.source === sel.id || e.target === sel.id)
+          .map((e) => ({ label: e.label, other: e.source === sel.id ? e.target : e.source }));
+        const tc = (TYPE[sel.type] || TYPE.risk).color;
+        return (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={() => setSel(null)}>
+            <div data-testid="kg-node-modal" onClick={(e) => e.stopPropagation()} className="w-full max-w-lg max-h-[86vh] overflow-y-auto bg-card border rounded-2xl p-6 space-y-4 rise" style={{ borderColor: `hsl(${KG_ACCENT} / 0.4)`, boxShadow: `inset 0 1px 0 hsl(${KG_ACCENT} / 0.3)` }}>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-mono text-[11px] uppercase" style={{ color: `hsl(${tc})` }}>{sel.type} · {sel.id}</div>
+                  <div className="font-head font-black text-xl tracking-tight break-words">{sel.label}</div>
+                </div>
+                <button data-testid="kg-node-close" onClick={() => setSel(null)} className="shrink-0 text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+              </div>
+              {neighbors.length > 0 && (
+                <div className="bg-secondary/20 rounded-lg p-3">
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5">Connections ({neighbors.length})</div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {neighbors.map((n, i) => <span key={i} className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-ai/10 text-ai border border-ai/20">{n.label} → {labelOf(n.other)}</span>)}
+                  </div>
+                </div>
+              )}
+              {sel.type === "risk"
+                ? <AIFix entity="risk" refId={sel.id} accent={KG_ACCENT} />
+                : <AIExplain title={sel.label} kind={`graph-${sel.type}`} accent={KG_ACCENT}
+                    context={{ type: sel.type, id: sel.id, meta: sel.meta, connections: neighbors.map((n) => `${n.label} ${labelOf(n.other)}`) }} />}
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -1,0 +1,50 @@
+{
+  "summary": "Iteration 43 — Compliance Posture control mapping + AI Analyst everywhere + clickable-cards-with-AI. Backend: 10/10 pytest tests PASS (advisor/fix control entity, advisor/insight per-dashboard, /explain, FAIR vs Register differ). Frontend: verified live on 1600x1000 with jblan2026@gmail.com. Key wins: Compliance shows 948 controls across 6 frameworks with fw-risk-<id>/fw-score-<id>/fixLine/AI pill; framework select defaults to '__every__' with all 8 options; 6 crosswalk-summary cards show score AND %; crosswalk-criticality shows 'all mapped controls · 24 controls'; 4 crit-tier tiles; crit-tier click switches mode to '__grid__' and filters rows; grid crosswalk-row opens control-detail-modal with AIFix (ai-fix-rating loaded from /advisor/fix). AI Analyst header present on ALL 8 dashboards with 'Analyze' button label (unique = {'Analyze'}) and 4-5 auto-loaded insight bullets: compliance-posture, situation-room, control-monitoring, ai-agents, spend-governance, knowledge-graph, cyber-risk-fair, Cyber-Risk-Register. Clickable AI details work: Situation sr-exposure-LR-001 → situation-risk-modal + ai-fix-rating='Critical RISK · 74/100'; Control Monitoring control-card-IAM-3 → ai-fix-rating='Medium RISK · 27/100'; Cyber-Risk cyber-stat-posture → cyber-metric-modal with ai-explain-summary+recommendation; cyber-risk-LR-001 row → cyber-risk-modal + ai-fix-rating='Critical RISK · 74/100'; Knowledge Graph react-flow node click → kg-node-modal + ai-explain (vendor/non-risk node); Spend Governance sg-month-card → sg-detail-modal + ai-explain-summary.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CompliancePosture crosswalk-summary card", "issue": "Playwright click on framework summary card sometimes doesn't switch mode from '__every__' to the framework (state stayed at '__every__' after click). Might be a stale-modal-backdrop timing issue; JS-invoked el.click() works. Real user with normal mouse should be fine, but selector-based Playwright automation is flaky.", "selector": "[data-testid^='crosswalk-summary-']", "priority": "LOW"},
+      {"component": "ControlDetailModal", "issue": "Framework controls without an Obserra mapping (e.g. AC-1 met by default) show only a static control-modal-note, NOT the AI risk rating. Acceptance criteria implied every control row must expose ai-fix-rating. Currently only rows with focus.obserraId render AIFix; unmapped 'met-by-default' framework controls do not.", "selector": "control-detail-modal", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "framework-select dropdown", "issues": ["Hydration warning: 'In HTML, <span> cannot be a child of <option>' — <option> uses span/em for styling which triggers React hydration warning in console."]}
+    ]
+  },
+  "verified_testids": {
+    "advisor_endpoints": ["POST /api/advisor/fix (control ref IAM-3) → rating/score/rationale w/ 'effectiveness … baseline' line", "POST /api/advisor/insight scoped for 5 dashboards; FAIR headline ≠ Register headline", "POST /api/advisor/explain returns summary/recommendation/steps/severity"],
+    "compliance": ["crosswalk-panel","crosswalk-framework-select (default __every__, 8 options)","crosswalk-summary-{NIST-800-53,CIS-v8,SOC-2,SSDF,PCI-DSS,ISO-27001} (all with score+%)","crosswalk-criticality header shows 'all mapped controls · 24 controls'","crit-tier-{Critical,High,Medium,Low}","fw-control-* × 948","fw-risk-* × 948","fw-score-* × 948","crosswalk-row-* (grid mode after crit-tier click)","control-detail-modal + ai-fix-rating in grid modal"],
+    "ai_insight_slugs": {"compliance":"ai-insight-run-compliance-posture","situation-room":"ai-insight-run-situation-room","control-monitoring":"ai-insight-run-control-monitoring","ai-agents":"ai-insight-run-ai-agents","spend-governance":"ai-insight-run-spend-governance","knowledge-graph":"ai-insight-run-knowledge-graph","cyber-risk":"ai-insight-run-cyber-risk-fair","risks":"ai-insight-run-Cyber-Risk-Register"},
+    "ai_insight_run_label_unique": ["Analyze"],
+    "clickable_cards": {
+      "situation-room": "sr-exposure-LR-001 → situation-risk-modal + ai-fix-rating='Critical RISK · 74/100'",
+      "control-monitoring": "control-card-IAM-3 → ai-fix-rating='Medium RISK · 27/100'",
+      "cyber-risk stats": "cyber-stat-{posture,mitigation,coverage,openrisks} → cyber-metric-modal + ai-explain-summary + ai-explain-recommendation",
+      "cyber-risk rows": "cyber-risk-LR-001 → cyber-risk-modal + ai-fix-rating='Critical RISK · 74/100'",
+      "knowledge-graph": "react-flow__node click → kg-node-modal + ai-explain (non-risk vendor node)",
+      "spend-governance": "sg-month-card → sg-detail-modal + ai-explain-summary; sg-user-<email> rows also present"
+    }
+  },
+  "critical_code_review_comments": [
+    "The review request lists URLs '/app/control-monitoring' and '/app/ai-agents' but the App.js Router uses '/app/controls' and '/app/agents'. AppShell links use the same actual paths, so this is a doc-only mismatch — not a code bug — but any external link/documentation using the doc URLs will 404 (falls through to Navigate to '/'). Consider adding legacy route redirects.",
+    "ControlDetailModal only renders AIFix when focus.obserraId is present. For a framework control that has NO Obserra mapping and status='met', the modal shows only a static blurb — no ai-fix-rating. If the acceptance requires EVERY control row to expose an AI risk rating + recommendation, wire up an AIExplain fallback (kind='framework-control', context={framework, requirement, status, why}) so unmapped controls still get an AI-generated view.",
+    "Radix Select for framework-select renders <span>/<em> inside <option>, which React emits a hydration warning for. Move rich formatting outside <option> or use a custom Radix Select (SelectItem) instead of native <select>.",
+    "Knowledge Graph nodes rendered by ReactFlow lack per-node data-testid; automation must fall back to '.react-flow__node' CSS. Add data-testid={`kg-node-${n.id}`} on the node component to align with the naming convention used everywhere else.",
+    "Cyber-Risk table row <tr data-testid='cyber-risk-*'> click doesn't reliably fire the React onClick under Playwright's force-click (works with el.click() via evaluate). Wrap the row content in a <button>/[role=button] or move the click handler to a <td> to improve testability and a11y (keyboard access).",
+    "ControlMonitoring exposes 'control-card-<id>' only inside a mobile-only container (hidden at ≥md widths). At desktop widths those cards are `not visible` even though the DOM has them. Add a desktop-visible testid (e.g. `control-row-<id>` on the table row) to keep parity."
+  ],
+  "test_report_links": ["/app/backend/tests/test_iter43_advisor.py", "/app/test_reports/pytest/iter43.xml"],
+  "action_items": [
+    "Decide: should framework controls WITHOUT an Obserra mapping still show an AI risk rating? If yes, wire AIExplain fallback into ControlDetailModal for the 'note' branch. Currently only ~24 mapped Obserra controls get AI ratings.",
+    "Fix hydration warning: remove <span>/<em> from inside <option> in crosswalk-framework-select.",
+    "Add data-testid on ReactFlow KG nodes (kg-node-<id>) and desktop control rows (control-row-<id>) for QA."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter43_advisor.py (NEW)"],
+  "success_rate": {"backend": "100% (10/10 pytest)", "frontend": "~95% — all core criteria verified; 2 minor testability/design comments"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin) — verified via /api/auth/login 200",
+  "seed_data_creation": "None (live_only org)",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "IMPORTANT URL CORRECTION: /app/controls (NOT /app/control-monitoring) and /app/agents (NOT /app/ai-agents). Both other paths hit the 404 catch-all and only render sidebar. Auth: login form is at root; use `page.locator('input[type=password]').first.press('Enter')` after filling. Skip onboarding tour with role=button name=Skip. AI Insight auto-runs on mount — wait up to 25s for ai-insight-item-* nodes. For clicking table rows (cyber-risk-*, sr-exposure-*) prefer JS click via page.evaluate(el.click()) instead of playwright .click() to reliably fire React onClick. Control-card-IAM-3 lives inside 'control-cards-mobile' container hidden at desktop widths — use JS click or shrink viewport <768px. ReactFlow KG nodes have no per-node testid; use '.react-flow__node' selector. LLM calls to /advisor/{fix,insight,explain} take 5-15s (cached 3-5 min server-side); use 25-30s timeouts on ai-fix-rating/ai-explain-summary. Framework-summary card click sometimes doesn't switch mode due to stale-modal-backdrop timing — use el.click() JS fallback.",
+  "rca of the issue": "N/A — no critical bugs. Documentation URL mismatch (/app/control-monitoring vs /app/controls) caused first pass to appear to miss AIInsight; corrected URLs revealed everything works."
+}

@@ -365,6 +365,75 @@ async def advisor_insight(body: InsightReq, user: dict = Depends(require_active_
     return data
 
 
+class ExplainReq(BaseModel):
+    title: str
+    kind: str = "item"
+    context: dict = {}
+
+
+_EXPLAIN_CACHE = {}
+
+
+@advisor_router.post("/explain")
+async def advisor_explain(body: ExplainReq, user: dict = Depends(require_active_subscription)):
+    """Focused AI explanation + recommendation for a single clicked item (a spend line, a graph
+    node, or any card that isn't a CVE-grounded entity). Grounded in the supplied live context."""
+    import re as _re
+    org_id = user["org_id"]
+    now = datetime.now(timezone.utc)
+    key = (org_id, body.kind, body.title)
+    cached = _EXPLAIN_CACHE.get(key)
+    if cached and (now - cached["ts"]).total_seconds() < 300:
+        return cached["data"]
+    if await _is_paused(org_id):
+        raise HTTPException(status_code=429, detail="Advisor paused: monthly spend cap reached.")
+    provider, model = MODEL_ROUTES["executive"]
+    chosen = (await db.organizations.find_one({"_id": ObjectId(org_id)}, {"advisor_model": 1}) or {}).get("advisor_model")
+    if chosen and chosen in _MODEL_PROVIDER:
+        provider, model = _MODEL_PROVIDER[chosen], chosen
+    system = (
+        "You are the Obserra EIOS Advisor. A user clicked a single item; explain what it is and why it "
+        "matters, then give ONE crisp, actionable recommendation. Ground every statement strictly in the "
+        "provided context — never invent numbers, names or refs. Return STRICT JSON only, no markdown: "
+        '{"summary": string (<=220 chars), "recommendation": string (imperative, <=220 chars), '
+        '"steps": [string] (1-3 short imperative steps), "severity": "info"|"opportunity"|"watch"|"risk"}.'
+    )
+    chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"],
+                   session_id=f"explain-{org_id}", system_message=system).with_model(provider, model)
+    prompt = (f"ITEM: {body.title}\nKIND: {body.kind}\nCONTEXT (JSON):\n"
+              f"{json.dumps(body.context, default=str)[:4000]}\n\nProduce the JSON now.")
+    collected = []
+    try:
+        async for ev in chat.stream_message(UserMessage(text=prompt)):
+            if isinstance(ev, TextDelta):
+                collected.append(ev.content)
+            elif isinstance(ev, StreamDone):
+                break
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Advisor unavailable: {e}")
+    raw = "".join(collected).strip()
+    mm = _re.search(r"\{.*\}", raw, _re.S)
+    try:
+        data = json.loads(mm.group(0)) if mm else {}
+    except Exception:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data.setdefault("summary", raw[:200] or "No analysis available.")
+    data.setdefault("recommendation", "")
+    data.setdefault("steps", [])
+    data.setdefault("severity", "info")
+    data["model"] = f"{provider}/{model}"
+    data["generated_at"] = now.isoformat()
+    _EXPLAIN_CACHE[key] = {"ts": now, "data": data}
+    usage = _estimate_usage(f"{provider}/{model}", prompt, system, raw)
+    await db.advisor_logs.insert_one({"org_id": org_id, "user": user["email"], "mode": "explain",
+                                      "model": f"{provider}/{model}", "prompt": f"[explain] {body.title}",
+                                      "response": raw, "usage": usage, "ts": now.isoformat()})
+    await _check_budget(org_id)
+    return data
+
+
 class FixReq(BaseModel):
     entity: str
     ref: str | None = None
