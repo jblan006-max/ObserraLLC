@@ -2,7 +2,7 @@ import os
 import io
 import csv
 import json
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from datetime import datetime, timezone
@@ -414,9 +414,31 @@ async def set_budget(body: BudgetBody, admin: dict = Depends(require_roles("admi
     return {"monthly_usd": val, "auto_pause": update.get("advisor_auto_pause"), "alert_threshold": update.get("advisor_alert_threshold")}
 
 
+async def _run_board_report_job(job_id: str, org_id: str, by: str):
+    try:
+        res = await generate_board_report(org_id, by)
+        await db.report_jobs.update_one({"job_id": job_id}, {"$set": {"status": "done", **res}})
+    except Exception as e:
+        await db.report_jobs.update_one({"job_id": job_id}, {"$set": {"status": "error", "error": str(e)}})
+
+
 @advisor_router.post("/board-report")
-async def board_report(user: dict = Depends(require_active_subscription)):
-    return await generate_board_report(user["org_id"], by=user["email"])
+async def board_report(background_tasks: BackgroundTasks, user: dict = Depends(require_active_subscription)):
+    import uuid
+    job_id = uuid.uuid4().hex
+    now = datetime.now(timezone.utc).isoformat()
+    await db.report_jobs.insert_one({"job_id": job_id, "org_id": user["org_id"],
+                                     "by": user["email"], "status": "running", "created_at": now})
+    background_tasks.add_task(_run_board_report_job, job_id, user["org_id"], user["email"])
+    return {"job_id": job_id, "status": "running"}
+
+
+@advisor_router.get("/board-report/{job_id}")
+async def board_report_status(job_id: str, user: dict = Depends(get_current_user)):
+    job = await db.report_jobs.find_one({"job_id": job_id, "org_id": user["org_id"]}, {"_id": 0})
+    if not job:
+        raise HTTPException(status_code=404, detail="Report job not found")
+    return job
 
 
 async def _autonomy_scorecard(org_id: str) -> str:
@@ -506,18 +528,157 @@ async def _methodology_appendix(org_id):
     return md
 
 
+async def _board_financial_context(org_id):
+    """Rich FAIR/financial grounding for the board report, drawing on ALL app data:
+    portfolio $ exposure, per-risk FAIR decomposition (Loss Magnitude / TEF / Vulnerability / LEF),
+    Monte-Carlo bands, benchmarks, the unremediated risk-acceptance register, and enterprise-wide
+    control / third-party / asset / AI-governance / incident / compliance posture."""
+    from routes import _fin, _get_fin_cfg, _benchmark, _montecarlo, _montecarlo_item
+    cfg = await _get_fin_cfg(org_id)
+    risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    recs = await db.recommendations.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    controls = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    vendors = await db.vendors.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    assets = await db.assets.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    ai_systems = await db.ai_systems.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    incidents = await db.ai_incidents.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    health = await db.health_index.find_one({"org_id": org_id}, {"_id": 0}) or {}
+    pending = {r.get("risk_ref") for r in recs if r.get("status") == "Pending"}
+    mc_items, items = [], []
+    for r in risks:
+        f = _fin(r, cfg)
+        band = _montecarlo_item(f, r)
+        inh, res = max(1, r.get("inherent", 10)), r.get("residual", 10)
+        tef = round(r.get("likelihood", 3) / 5, 2)
+        vuln = round(res / inh, 2)
+        mc_items.append({"sle": f["sle"], "aro": f["aro"], "residual": res, "inherent": inh})
+        items.append({
+            "ref": r.get("ref"), "title": r.get("title"), "status": r.get("status"),
+            "owner": r.get("owner"), "category": r.get("category"),
+            "business_impact": r.get("business_impact"),
+            "residual_score": res, "inherent_score": r.get("inherent"),
+            "sle_usd": f["sle"], "residual_ale_usd": f["residual_ale"], "inherent_ale_usd": f["inherent_ale"],
+            "band_p10_usd": band["p10"], "band_p50_usd": band["p50"], "band_p90_usd": band["p90"],
+            "confidence": f["confidence"], "remediation_pending": r.get("ref") in pending,
+            "fair": {"loss_magnitude_usd": f["sle"], "tef": tef, "vulnerability": vuln,
+                     "lef": round(tef * vuln, 2),
+                     "note": "FAIR: ALE = Loss Magnitude (LM) x Loss Event Frequency (LEF); LEF = TEF x Vulnerability"},
+        })
+    items.sort(key=lambda x: x["residual_ale_usd"], reverse=True)
+    residual_total = sum(i["residual_ale_usd"] for i in items)
+    inherent_total = sum(i["inherent_ale_usd"] for i in items)
+    portfolio = _montecarlo(mc_items)
+    bench = await _benchmark(cfg["industry"])
+    accepted = [i for i in items if i["status"] not in ("Remediated", "Closed", "Resolved")]
+    accepted_total = sum(i["residual_ale_usd"] for i in accepted)
+    signoff = cfg.get("signoff")
+
+    def _low_eff(c):
+        v = c.get("effectiveness")
+        if v is None:
+            v = c.get("coverage")
+        return v is not None and v < 60
+    enterprise = {
+        "health": {"security_score": health.get("score") or health.get("security_score"),
+                   "compliance_pct": health.get("compliance_pct"), "app_health": health.get("app_health")},
+        "controls": {"total": len(controls), "low_effectiveness_gaps": len([c for c in controls if _low_eff(c)])},
+        "third_party_vendors": {"total": len(vendors),
+                                "high_risk": len([v for v in vendors if str(v.get("tier") or v.get("rating") or v.get("risk") or "").lower() in ("high", "critical", "d", "f")])},
+        "assets": {"total": len(assets), "stale": len([a for a in assets if a.get("freshness") == "stale"])},
+        "ai_systems": {"total": len(ai_systems), "shadow_ai": len([a for a in ai_systems if a.get("status") == "shadow"])},
+        "incidents_open": len([i for i in incidents if i.get("status") != "Resolved"]),
+        "pending_recommendations": len(pending),
+    }
+    return {
+        "portfolio": {
+            "residual_ale_usd": round(residual_total), "inherent_ale_usd": round(inherent_total),
+            "reduction_pct": round((inherent_total - residual_total) / inherent_total * 100) if inherent_total else 0,
+            "monte_carlo_p10_usd": portfolio["p10"], "monte_carlo_p50_usd": portfolio["p50"],
+            "monte_carlo_p90_usd": portfolio["p90"], "method": cfg["method"], "industry": cfg["industry"],
+            "fair_basis": "Portfolio ALE aggregates per-risk FAIR estimates (Loss Magnitude x Loss Event Frequency, "
+                          "control-scaled by residual/inherent); range via 2,000-iteration Monte-Carlo.",
+        },
+        "benchmark": {
+            "industry_avg_usd": bench.get("industry_avg"), "global_avg_usd": bench.get("global_avg"),
+            "ai_breach_avg_usd": bench.get("ai_breach_avg"), "shadow_ai_premium_usd": bench.get("shadow_ai_premium"),
+            "dbir_ransomware_median_usd": bench.get("dbir_ransomware_median"),
+            "sources": [bench.get("industry_avg_source"), bench.get("global_avg_source"),
+                        bench.get("ai_breach_source"), bench.get("dbir_source")],
+            "updated": bench.get("updated"),
+        },
+        "risks_ranked": items[:12],
+        "unremediated_acceptance": {
+            "total_residual_ale_accepted_usd": round(accepted_total), "count": len(accepted),
+            "register": [{"ref": i["ref"], "title": i["title"], "owner": i["owner"], "status": i["status"],
+                          "residual_ale_usd": i["residual_ale_usd"], "adverse_p90_usd": i["band_p90_usd"],
+                          "remediation_pending": i["remediation_pending"]} for i in accepted[:10]],
+        },
+        "enterprise_data": enterprise,
+        "calibration_signoff": {"locked": bool((signoff or {}).get("locked")),
+                                "by": (signoff or {}).get("name"), "at": (signoff or {}).get("at")},
+    }
+
+
 async def generate_board_report(org_id: str, by: str):
     context = await _build_context(org_id)
+    try:
+        fin_context = json.dumps(await _board_financial_context(org_id), default=str)
+    except Exception as e:
+        fin_context = "{}"
     chat = LlmChat(
         api_key=os.environ["EMERGENT_LLM_KEY"],
         session_id=f"board-{org_id}",
-        system_message="You are a chief risk officer producing a concise, board-ready enterprise risk & AI governance report. Ground every statement in the provided context and cite refs in square brackets.",
-    ).with_model("anthropic", "claude-sonnet-5")
-    prompt = (f"ENTERPRISE CONTEXT (JSON):\n{context}\n\n"
-              "Write a board report in markdown with these sections and nothing else: "
-              "## Executive Summary, ## Top Enterprise Risks, ## AI Governance Posture, "
-              "## Key Recommendations, ## Decisions Required. "
-              "Cite refs like [CR-001]. Separate FACT vs ESTIMATE. Keep under 380 words.")
+        system_message=(
+            "You are the Chief Risk Officer of the organisation, writing a rigorous, board-grade enterprise "
+            "risk, AI-governance and cyber-financial report for the Board of Directors and Audit Committee. "
+            "Your readers are non-technical directors who make capital-allocation and risk-acceptance decisions. "
+            "Apply genuine analytical reasoning and deduction: connect each technical risk to its business and "
+            "financial consequences, quantify exposure in dollars using ONLY the FAIR figures provided, reason "
+            "about second-order effects and interdependencies between risks, and be explicit about the residual "
+            "exposure the board is IMPLICITLY ACCEPTING by leaving risks unremediated. Never invent numbers — every "
+            "$ figure must come from the FINANCIAL CONTEXT. Cite risk refs like [CR-001]. Label FACT "
+            "(connected/measured), ESTIMATE (modelled) and PREDICTION (forward-looking). Write with the precision "
+            "of a Big-4 board deck: no filler, no generic platitudes — every sentence carries insight."
+        ),
+    ).with_model("anthropic", "claude-opus-4-8")
+    prompt = (
+        f"ENTERPRISE CONTEXT (JSON — risks, AI systems, incidents, health):\n{context}\n\n"
+        f"FINANCIAL CONTEXT (JSON — FAIR quantification, Monte-Carlo bands, benchmarks, risk-acceptance register):\n{fin_context}\n\n"
+        "Produce a board report in markdown with EXACTLY these sections, in order. Reason deeply within each — "
+        "do not restate the data; interpret it, deduce implications, and advise:\n\n"
+        "## Executive Summary\n"
+        "3-5 sentences: the single most important thing the board must understand about enterprise risk posture and "
+        "financial exposure this quarter, including the headline residual $ exposure and its trajectory.\n\n"
+        "## Business Impact Analysis\n"
+        "Translate the top risks into concrete business consequences (revenue, operations, customer trust, regulatory, "
+        "contractual). Reason about cascading/second-order effects and which business capabilities are most exposed. Cite refs.\n\n"
+        "## Risk Analysis\n"
+        "Analytical breakdown of the risk landscape: concentration, what is driving residual score, AI-governance and "
+        "shadow-AI exposure, and interdependencies between risks. Deduce the root themes — not a list.\n\n"
+        "## Financial Exposure & Quantification\n"
+        "Quantify portfolio residual ALE and the Monte-Carlo P10/P50/P90 band in $. Benchmark the modelled exposure "
+        "against the IBM/DBIR industry figures provided and interpret whether the organisation sits above/below peers and "
+        "why. State confidence and limitations. Use ONLY the provided $ figures.\n\n"
+        "## Advanced FAIR Analysis\n"
+        "Perform a rigorous Factor Analysis of Information Risk. For the top exposures, decompose each into its FAIR "
+        "factors using the provided `fair` fields: Loss Magnitude (LM, $), Threat Event Frequency (TEF), Vulnerability "
+        "(control weakness = residual/inherent) and the resulting Loss Event Frequency (LEF = TEF x Vulnerability), and "
+        "show how they combine into ALE (ALE = LM x LEF). Reason about which FAIR factor is the dominant driver of each "
+        "risk's exposure (frequency vs magnitude vs control weakness) and therefore where mitigation buys the most $ "
+        "reduction. Integrate ALL enterprise data provided (control gaps, third-party/vendor risk, stale assets, "
+        "shadow-AI systems, open incidents, compliance posture) to explain WHY the vulnerability and frequency factors "
+        "are what they are — deduce the systemic drivers, do not just restate counts. Cite refs.\n\n"
+        "## Unremediated Risk Acceptance\n"
+        "The most important section for the board. Using the risk-acceptance register, state the TOTAL residual exposure "
+        "(in $) the organisation is currently ACCEPTING by not remediating, list the specific risks being carried "
+        "(ref, owner, residual $ and adverse-case P90 $), flag which have a decision pending vs implicit acceptance, and "
+        "give the board a clear, reasoned view of whether this acceptance is prudent or requires formal sign-off. Name the "
+        "accountable owners.\n\n"
+        "## Recommendations & Decisions Required\n"
+        "Prioritised, specific actions the board must decide on, each tied to a cited risk and the $ exposure it reduces, "
+        "with a confidence level. Distinguish decisions requiring board authority from management actions.\n\n"
+        "Target 700-950 words. Be rigorous, quantified and decision-oriented."
+    )
     collected = []
     try:
         async for ev in chat.stream_message(UserMessage(text=prompt)):
@@ -538,8 +699,8 @@ async def generate_board_report(org_id: str, by: str):
         pass
     now = datetime.now(timezone.utc).isoformat()
     await db.reports.insert_one({"org_id": org_id, "report": report,
-                                 "model": "anthropic/claude-sonnet-5", "generated_at": now, "by": by})
-    return {"report": report, "model": "claude-sonnet-5", "generated_at": now}
+                                 "model": "anthropic/claude-opus-4-8", "generated_at": now, "by": by})
+    return {"report": report, "model": "claude-opus-4-8", "generated_at": now}
 
 
 from routes import _build_graph

@@ -60,7 +60,15 @@ export function BoardReportModal({ open, onClose }) {
     setLoading(true); setReport(""); setMeta(null);
     try {
       const { data } = await api.post("/advisor/board-report");
-      setReport(data.report); setMeta(data);
+      const jobId = data.job_id;
+      let done = false;
+      for (let tries = 0; tries < 90 && !done; tries++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const { data: job } = await api.get(`/advisor/board-report/${jobId}`);
+        if (job.status === "done") { setReport(job.report); setMeta(job); done = true; }
+        else if (job.status === "error") { setReport("Could not generate the board report right now."); done = true; }
+      }
+      if (!done) setReport("The board report is taking longer than expected — please try again.");
     } catch { setReport("Could not generate the board report right now."); }
     setLoading(false);
   };
@@ -131,7 +139,7 @@ export function BoardReportModal({ open, onClose }) {
             <div className="flex flex-col items-center justify-center h-64 gap-3 text-muted-foreground">
               <div className="relative"><Sparkle className="w-8 h-8 text-ai animate-pulse" /></div>
               <p className="text-sm">Synthesizing evidence into a board-ready report…</p>
-              <p className="text-[10px] font-mono">Claude Sonnet 5 · grounded on your live posture</p>
+              <p className="text-[10px] font-mono">Claude Opus 4.8 · deep FAIR analysis on your live posture</p>
             </div>
           ) : (
             <div className="grid md:grid-cols-[160px_1fr] gap-5">

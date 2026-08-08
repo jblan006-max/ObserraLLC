@@ -175,7 +175,7 @@ def _cover_preview_png(brand, org_name, theme) -> bytes:
 def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = None,
                report_date: str = None, version: str = None, chart_series=None, takeaways=None,
                theme: str = "dark", risk_bars=None, exec_summary: str = None, brand=None,
-               bench_line: str = None, signoff_line: str = None, risk_bands=None) -> io.BytesIO:
+               bench_line: str = None, signoff_line: str = None, risk_bands=None, signoff_trail=None) -> io.BytesIO:
     brand = brand or _resolve_brand(None)
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=LETTER, topMargin=0.9 * inch, bottomMargin=0.8 * inch)
@@ -250,6 +250,24 @@ def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = Non
         story += [tbl, Paragraph("Ranges reflect a 1,000-iteration Monte-Carlo per risk (triangular SLE 0.5x-2x, "
                                  "Gaussian ARO). P50 is the expected annualised loss; P90 is the adverse-scenario tail.",
                                  ParagraphStyle("cap", parent=body, fontSize=7.5, textColor=colors.grey))]
+    if signoff_trail:
+        cell2 = ParagraphStyle("tc2", parent=body, fontSize=8.5, leading=11)
+        story += [Spacer(1, 8), Paragraph("Calibration Sign-off Audit Trail", h)]
+        rows2 = [[Paragraph("<b>Action</b>", cell2), Paragraph("<b>Who</b>", cell2), Paragraph("<b>When (UTC)</b>", cell2)]]
+        for e in signoff_trail:
+            action = "Signed off &amp; locked" if e.get("action") == "signoff" else "Unlocked"
+            who = str(e.get("name") or e.get("by") or "—").replace("&", "&amp;")
+            when = str(e.get("at", ""))[:16].replace("T", " ")
+            rows2.append([Paragraph(action, cell2), Paragraph(who, cell2), Paragraph(when, cell2)])
+        t2 = Table(rows2, colWidths=[1.9 * inch, 2.7 * inch, 1.9 * inch])
+        t2.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#c9d6e5")),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eef6fb")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story += [t2, Paragraph("Immutable record of who calibrated the financial model and when — for auditor and board assurance.",
+                                ParagraphStyle("cap2", parent=body, fontSize=7.5, textColor=colors.grey))]
     story.append(Spacer(1, 16))
     story.append(Paragraph("Confidential — decision-support estimates; not legal, financial, regulatory, or security guarantees.",
                            ParagraphStyle("d", parent=body, fontSize=7, textColor=colors.grey)))
@@ -378,12 +396,13 @@ async def _board_metrics(org_id: str, report_text: str = "") -> dict:
         risk_bands.append({"label": r.get("ref") or (r.get("title", "") or "")[:18],
                            "title": (r.get("title", "") or "")[:80],
                            "p10": band["p10"], "p50": band["p50"], "p90": band["p90"]})
+    signoff_trail = list(reversed(((org.get("financial_config") or {}).get("signoff_history") or [])))[:10]
     return {
         "org_name": org.get("name"), "residual": residual, "reduction": reduction,
         "crit": crit, "pending": len(pending), "series": series, "risk_bars": risk_bars,
         "takeaways": takeaways, "exec_summary": _extract_exec_summary(report_text),
         "brand": _resolve_brand(org), "bench_line": bench_line, "signoff_line": signoff_line,
-        "risk_bands": risk_bands,
+        "risk_bands": risk_bands, "signoff_trail": signoff_trail,
     }
 
 
@@ -397,7 +416,7 @@ async def build_board_report_pdf(org_id: str, report_text: str,
                       chart_series=m["series"], takeaways=m["takeaways"], risk_bars=m["risk_bars"],
                       exec_summary=m["exec_summary"], brand=m["brand"],
                       bench_line=m.get("bench_line"), signoff_line=m.get("signoff_line"),
-                      risk_bands=m.get("risk_bands"))
+                      risk_bands=m.get("risk_bands"), signoff_trail=m.get("signoff_trail"))
 
 
 def _wrap(text, font, size, max_w, canvas):
@@ -638,6 +657,22 @@ async def report_pdf(body: ReportBody, user: dict = Depends(get_current_user)):
         fname = "obserra-board-report.pdf"
     return StreamingResponse(buf, media_type="application/pdf",
                              headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+@reports_router.post("/api/reports/board-pack.pdf")
+async def board_pack_pdf(user: dict = Depends(get_current_user)):
+    """One-click board pack: latest board report (with methodology appendix + benchmark
+    references) + exposure trend + per-risk bands + calibration sign-off audit trail, in a single PDF."""
+    from ai_advisor import generate_board_report
+    latest = await db.reports.find_one({"org_id": user["org_id"]}, sort=[("generated_at", -1)])
+    report_text = (latest or {}).get("report")
+    if not report_text:
+        gen = await generate_board_report(user["org_id"], by=user["email"])
+        report_text = gen["report"]
+    buf = await build_board_report_pdf(user["org_id"], report_text,
+                                       title="Board Pack — Cyber Risk & Financials")
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": 'attachment; filename="obserra-board-pack.pdf"'})
 
 
 @reports_router.post("/api/reports/email")

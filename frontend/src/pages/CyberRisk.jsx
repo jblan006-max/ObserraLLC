@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { ShieldAlert, Loader2, Layers, PlayCircle, Gauge, ShieldCheck, TrendingDown, Calculator, BarChart3, Building2, RefreshCw, Sparkles } from "lucide-react";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { ShieldAlert, Loader2, Layers, PlayCircle, Gauge, ShieldCheck, TrendingDown, Calculator, BarChart3, Building2, RefreshCw, Sparkles, FileText, Clock, Target, Activity } from "lucide-react";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ComposedChart, Area, BarChart, Bar } from "recharts";
 
 const TIER = (residual) => residual >= 16 ? "0 84% 60%" : residual >= 9 ? "35 90% 55%" : "142 70% 45%";
 
@@ -40,8 +40,8 @@ export default function CyberRisk() {
   return (
     <div className="rise space-y-6" data-testid="cyber-page">
       <div>
-        <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><ShieldAlert className="w-7 h-7 text-primary" /> Cyber Risk</h1>
-        <p className="text-sm text-muted-foreground mt-1">{isExec ? "Strategic cyber risk posture — business exposure and mitigation at a glance." : "Control-centric cyber risk posture — a kernel-native app composed on the Obserra kernel."}</p>
+        <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><ShieldAlert className="w-7 h-7 text-primary" /> Risk</h1>
+        <p className="text-sm text-muted-foreground mt-1">{isExec ? "Strategic risk posture — FAIR-quantified business exposure and mitigation at a glance." : "Control-centric risk posture — a kernel-native app composed on the Obserra kernel."}</p>
         <div data-testid="cyber-composition" className="flex flex-wrap items-center gap-2 mt-3">
           <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1"><Layers className="w-3.5 h-3.5" /> Composed on:</span>
           {data.composition.map((c) => <span key={c} className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-ai/10 text-ai border border-ai/20">{c}</span>)}
@@ -82,7 +82,100 @@ export default function CyberRisk() {
       </div>
       <p className="text-[11px] text-muted-foreground">Treating a risk opens a remediation workflow and alerts owners — proving the kernel loop.</p>
 
+      <FairDashboard />
       <FinancialBasis isAdmin={isAdmin} />
+    </div>
+  );
+}
+
+function Kpi({ label, value, sub, accent }) {
+  return (
+    <div className="rounded-lg bg-secondary/40 p-3" style={accent ? { borderLeft: `3px solid hsl(${accent})` } : {}}>
+      <div className="text-[10px] font-mono uppercase text-muted-foreground">{label}</div>
+      <div className="font-head font-black text-2xl">{value}</div>
+      <div className="text-[10px] text-muted-foreground">{sub}</div>
+    </div>
+  );
+}
+
+const DRIVER_COLOR = { "Loss magnitude": "0 84% 60%", "Threat frequency": "35 90% 55%", "Control weakness": "190 90% 50%" };
+
+function FairDashboard() {
+  const [d, setD] = useState(null);
+  useEffect(() => { api.get("/financial/fair").then((r) => setD(r.data)).catch(() => {}); }, []);
+  if (!d) return null;
+  const fmt = (n) => n == null ? "—" : n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M` : `$${(n / 1e3).toFixed(0)}k`;
+  const p = d.portfolio;
+  const dc = (name) => DRIVER_COLOR[name] || "215 15% 55%";
+  return (
+    <div className="bg-card fact-border rounded-xl p-5 space-y-5" data-testid="fair-dashboard">
+      <div className="flex flex-wrap items-center gap-2">
+        <Target className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">FAIR risk quantification</h2>
+        <span className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-secondary text-muted-foreground">Factor Analysis of Information Risk</span>
+      </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="fair-kpis">
+        <Kpi label="Residual ALE" value={fmt(p.residual_ale)} sub={`down ${p.reduction_pct}% from inherent`} />
+        <Kpi label="Monte-Carlo P50" value={fmt(p.p50)} sub={`P10 ${fmt(p.p10)} · P90 ${fmt(p.p90)}`} />
+        <Kpi label="Inherent ALE" value={fmt(p.inherent_ale)} sub="pre-control exposure" />
+        <Kpi label="Accepted (unremediated)" value={fmt(d.acceptance.total)} sub={`${d.acceptance.count} open risks carried`} accent="0 84% 60%" />
+      </div>
+      <div>
+        <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2">Exposure by area · FAIR breakdown</div>
+        <div className="grid md:grid-cols-2 gap-3" data-testid="fair-by-area">
+          {d.by_area.map((a) => (
+            <div key={a.area} data-testid={`fair-area-${a.area}`} className="rounded-lg border border-border p-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <div className="font-head font-bold text-sm">{a.area}</div>
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded-sm shrink-0" style={{ background: `hsl(${dc(a.dominant_driver)} / 0.15)`, color: `hsl(${dc(a.dominant_driver)})` }}>{a.dominant_driver}</span>
+              </div>
+              <div className="flex items-end justify-between">
+                <div><div className="font-head font-black text-xl">{fmt(a.residual_ale)}</div><div className="text-[10px] text-muted-foreground">residual ALE · {a.share_pct}% of portfolio</div></div>
+                <div className="text-right text-[10px] text-muted-foreground">{a.count} risk(s)<br />↓{a.reduction_pct}% vs inherent</div>
+              </div>
+              <div className="h-1.5 rounded-full bg-secondary overflow-hidden"><div className="h-full" style={{ width: `${a.share_pct}%`, background: `hsl(${dc(a.dominant_driver)})` }} /></div>
+              <div className="grid grid-cols-2 gap-2 text-[10px] text-muted-foreground">
+                <div>Avg vulnerability <span className="text-foreground font-mono">{a.avg_vulnerability}</span></div>
+                <div>Avg threat freq <span className="text-foreground font-mono">{a.avg_tef}</span></div>
+              </div>
+              {a.top_risk && <div className="text-[10px] text-muted-foreground truncate">Top: <span className="font-mono text-ai">{a.top_risk.ref}</span> {a.top_risk.title}</div>}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="rounded-lg border border-border p-3" data-testid="fair-lec">
+        <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2 flex items-center gap-1"><Activity className="w-3.5 h-3.5" /> Loss exceedance curve · probability annual loss ≥ $X</div>
+        <ResponsiveContainer width="100%" height={190}>
+          <ComposedChart data={d.loss_exceedance}>
+            <XAxis dataKey="loss" type="number" tickFormatter={(v) => `$${(v / 1e6).toFixed(1)}M`} tick={{ fontSize: 10 }} stroke="hsl(215 15% 55%)" />
+            <YAxis dataKey="exceedance_pct" tickFormatter={(v) => `${v}%`} tick={{ fontSize: 10 }} stroke="hsl(215 15% 55%)" width={40} domain={[0, 100]} />
+            <Tooltip formatter={(v) => `${v}% chance`} labelFormatter={(v) => `Annual loss ≥ $${(v / 1e6).toFixed(2)}M`} contentStyle={{ background: "hsl(222 18% 12%)", border: "1px solid hsl(222 12% 22%)", fontSize: 11 }} />
+            <Area type="monotone" dataKey="exceedance_pct" stroke="hsl(0 84% 60%)" fill="hsl(0 84% 60% / 0.15)" strokeWidth={2} name="Exceedance" />
+          </ComposedChart>
+        </ResponsiveContainer>
+        <div className="text-[10px] text-muted-foreground">Y-axis = probability the annual loss meets or exceeds the x-axis dollar amount (3,000-iteration Monte-Carlo over FAIR factors).</div>
+      </div>
+      <div className="rounded-lg border border-border overflow-x-auto" data-testid="fair-risk-table">
+        <table className="w-full text-xs min-w-[780px]">
+          <thead className="text-[10px] font-mono uppercase text-muted-foreground border-b border-border">
+            <tr><th className="text-left px-3 py-2">Risk</th><th className="text-left px-3 py-2">Area</th><th className="text-right px-3 py-2">Loss mag.</th><th className="text-right px-3 py-2">TEF</th><th className="text-right px-3 py-2">Vuln</th><th className="text-right px-3 py-2">LEF</th><th className="text-right px-3 py-2">Residual ALE</th><th className="text-left px-3 py-2">Dominant driver</th></tr>
+          </thead>
+          <tbody>
+            {d.risks.map((i) => (
+              <tr key={i.ref} data-testid={`fair-row-${i.ref}`} className="border-b border-border/60">
+                <td className="px-3 py-2"><div className="font-mono text-ai">{i.ref}</div><div className="truncate max-w-[170px]">{i.title}</div></td>
+                <td className="px-3 py-2 text-muted-foreground">{i.category}</td>
+                <td className="px-3 py-2 text-right">{fmt(i.loss_magnitude)}</td>
+                <td className="px-3 py-2 text-right font-mono">{i.tef}</td>
+                <td className="px-3 py-2 text-right font-mono">{i.vulnerability}</td>
+                <td className="px-3 py-2 text-right font-mono">{i.lef}</td>
+                <td className="px-3 py-2 text-right"><div className="font-bold">{fmt(i.residual_ale)}</div><div className="text-[10px] text-muted-foreground">P10 {fmt(i.p10)} · P90 {fmt(i.p90)}</div></td>
+                <td className="px-3 py-2"><span className="text-[10px] font-mono px-2 py-0.5 rounded-sm" style={{ background: `hsl(${dc(i.driver)} / 0.15)`, color: `hsl(${dc(i.driver)})` }}>{i.driver}</span>{i.remediation_pending && <span className="ml-1 text-[10px] text-med">· fix pending</span>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[11px] text-muted-foreground">FAIR: ALE = Loss Magnitude × Loss Event Frequency (LEF); LEF = Threat Event Frequency (TEF) × Vulnerability (control weakness = residual/inherent). Decision-support estimates, benchmarked against IBM {d.benchmark.industry} avg {fmt(d.benchmark.industry_avg)}.</p>
     </div>
   );
 }
@@ -93,6 +186,7 @@ function FinancialBasis({ isAdmin }) {
   const [saving, setSaving] = useState(false);
   const [trend, setTrend] = useState(null);
   const [hist, setHist] = useState([]);
+  const [packing, setPacking] = useState(false);
   const load = () => Promise.all([api.get("/financial/basis"), api.get("/financial/config"), api.get("/financial/benchmark-trend").catch(() => ({ data: { points: [] } })), api.get("/financial/signoff-history").catch(() => ({ data: { history: [] } }))])
     .then(([b, c, t, h]) => { setBasis(b.data); setCfg(c.data); setTrend(t.data); setHist(h.data.history || []); }).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -110,10 +204,21 @@ function FinancialBasis({ isAdmin }) {
   const signOff = async () => { const name = window.prompt("CRO name to sign off this calibration:"); if (!name) return; try { await api.post("/financial/config/signoff", { name }); toast.success("Calibration locked & CRO-signed"); load(); } catch (e) { toast.error("Sign-off failed"); } };
   const unlock = async () => { try { await api.post("/financial/config/unlock"); toast.success("Calibration unlocked"); load(); } catch (e) { toast.error("Unlock failed"); } };
   const autofillRecords = () => { const s = cfg.suggested_records; if (s?.records) save({ method: "records", records: s.records }); };
+  const boardPack = async () => {
+    setPacking(true);
+    try {
+      const res = await api.post("/reports/board-pack.pdf", {}, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a"); a.href = url; a.download = "obserra-board-pack.pdf"; a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Board pack downloaded");
+    } catch (e) { toast.error("Could not build board pack"); }
+    setPacking(false);
+  };
   const so = cfg.config.signoff;
   return (
     <div className="bg-card fact-border rounded-xl p-5 space-y-5" data-testid="financial-basis">
-      <div className="flex flex-wrap items-center gap-2"><Calculator className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Financial basis &amp; benchmark</h2><span className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-secondary text-muted-foreground">defensible math</span>{basis.signoff?.locked && <span data-testid="fin-approved" className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-low/15 text-low border border-low/30">✓ Approved by {basis.signoff.name} · {String(basis.signoff.at).slice(0, 10)}{basis.signoff.stale ? " (config changed since)" : ""}</span>}</div>
+      <div className="flex flex-wrap items-center gap-2"><Calculator className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Financial basis &amp; benchmark</h2><span className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-secondary text-muted-foreground">defensible math</span>{basis.signoff?.locked && <span data-testid="fin-approved" className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-low/15 text-low border border-low/30">✓ Approved by {basis.signoff.name} · {String(basis.signoff.at).slice(0, 10)}{basis.signoff.stale ? " (config changed since)" : ""}</span>}<button data-testid="board-pack-btn" onClick={boardPack} disabled={packing} className="ml-auto text-xs px-2.5 py-1 rounded-md bg-ai text-white flex items-center gap-1 disabled:opacity-60">{packing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />} Board pack PDF</button></div>
 
       <div className="grid sm:grid-cols-3 gap-3" data-testid="fin-benchmark">
         <div className="rounded-lg bg-secondary/40 p-3">
@@ -150,6 +255,26 @@ function FinancialBasis({ isAdmin }) {
           <div className="text-[10px] font-mono uppercase text-muted-foreground">Board exposure range · Monte-Carlo (P10 – expected – P90)</div>
           <div className="font-head font-black text-xl mt-1">{fmt(basis.scenario.p10)} <span className="text-muted-foreground text-sm">low</span> · {fmt(basis.scenario.p50)} <span className="text-muted-foreground text-sm">expected</span> · {fmt(basis.scenario.p90)} <span className="text-muted-foreground text-sm">high</span></div>
           <div className="text-[10px] text-muted-foreground">2,000-iteration simulation over magnitude &amp; frequency uncertainty — shows the board a defensible band, not a single point.</div>
+        </div>
+      )}
+      {basis.items?.length > 0 && (
+        <div className="rounded-lg border border-border p-3" data-testid="fin-waterfall">
+          <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2 flex items-center gap-1"><BarChart3 className="w-3.5 h-3.5" /> Per-risk uncertainty · P10 → P90 band</div>
+          <ResponsiveContainer width="100%" height={Math.max(170, basis.items.slice(0, 8).length * 34)}>
+            <BarChart layout="vertical" data={basis.items.slice(0, 8).map((i) => ({ ref: i.ref, low: i.ale_low, span: Math.max(0, i.ale_high - i.ale_low), p10: i.ale_low, p50: i.ale_expected, p90: i.ale_high, title: i.title }))} margin={{ left: 4, right: 16 }}>
+              <XAxis type="number" tickFormatter={(v) => `$${(v / 1e6).toFixed(1)}M`} tick={{ fontSize: 10 }} stroke="hsl(215 15% 55%)" />
+              <YAxis type="category" dataKey="ref" tick={{ fontSize: 10 }} stroke="hsl(215 15% 55%)" width={64} />
+              <Tooltip cursor={{ fill: "hsl(222 18% 18% / 0.4)" }} content={({ active, payload }) => (active && payload?.length) ? (
+                <div className="rounded-md p-2 text-[11px]" style={{ background: "hsl(222 18% 12%)", border: "1px solid hsl(222 12% 22%)" }}>
+                  <div className="font-bold text-ai">{payload[0].payload.ref}</div>
+                  <div className="max-w-[220px] text-muted-foreground">{payload[0].payload.title}</div>
+                  <div>P10 {fmt(payload[0].payload.p10)} · P50 {fmt(payload[0].payload.p50)} · P90 {fmt(payload[0].payload.p90)}</div>
+                </div>) : null} />
+              <Bar dataKey="low" stackId="a" fill="transparent" />
+              <Bar dataKey="span" stackId="a" fill="hsl(190 90% 50%)" radius={[3, 3, 3, 3]} />
+            </BarChart>
+          </ResponsiveContainer>
+          <div className="text-[10px] text-muted-foreground mt-1">Bar spans the Monte-Carlo P10–P90 range per risk — longer bars = more uncertainty. Source: modelled SLE × ARO with residual-control scaling (FAIR).</div>
         </div>
       )}
       <div className="text-[11px] text-muted-foreground flex items-start gap-2"><BarChart3 className="w-3.5 h-3.5 mt-0.5 shrink-0" /> <span>DBIR medians for context — ransomware {fmt(bench.dbir_ransomware_median)}, BEC {fmt(bench.dbir_bec_median)} ({bench.dbir_source}). Benchmark source: {bench.source} · updated {bench.updated}{bench.checked_at ? ` · last checked ${new Date(bench.checked_at).toLocaleDateString()}` : ""}.</span></div>
@@ -197,6 +322,13 @@ function FinancialBasis({ isAdmin }) {
                 <option value="records">Records × per-record cost</option>
               </select>
             </label>
+            <label className="text-xs flex items-center gap-2"><Clock className="w-3.5 h-3.5" /> Sign-off reminder
+              <select data-testid="fin-reminder-cadence" value={cfg.config.signoff_reminder_days || 60} onChange={(e) => save({ signoff_reminder_days: Number(e.target.value) })} className="bg-background border border-border rounded-md px-2 py-1 text-xs">
+                <option value={30}>Every 30 days</option>
+                <option value={60}>Every 60 days</option>
+                <option value={90}>Every 90 days</option>
+              </select>
+            </label>
             <button data-testid="fin-refresh" onClick={async () => { await api.post("/financial/benchmark/refresh"); toast.success("Benchmark refreshed"); load(); }} className="text-xs px-2.5 py-1 rounded-md bg-secondary flex items-center gap-1"><RefreshCw className="w-3.5 h-3.5" /> Refresh benchmark</button>
             {saving && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
           </div>
@@ -219,16 +351,19 @@ function FinancialBasis({ isAdmin }) {
       )}
       {trend?.points?.length > 1 && (
         <div className="rounded-lg border border-border p-3" data-testid="fin-trend">
-          <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2 flex items-center gap-1"><TrendingDown className="w-3.5 h-3.5" /> Modelled exposure vs {trend.industry} benchmark (IBM)</div>
-          <ResponsiveContainer width="100%" height={160}>
-            <LineChart data={trend.points}>
+          <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2 flex items-center gap-1"><TrendingDown className="w-3.5 h-3.5" /> Modelled exposure vs {trend.industry} benchmark (IBM) · peer band shaded</div>
+          <ResponsiveContainer width="100%" height={180}>
+            <ComposedChart data={trend.points}>
               <XAxis dataKey="month" tick={{ fontSize: 10 }} stroke="hsl(215 15% 55%)" />
               <YAxis tickFormatter={(v) => `$${(v / 1e6).toFixed(1)}M`} tick={{ fontSize: 10 }} stroke="hsl(215 15% 55%)" width={48} />
-              <Tooltip formatter={(v) => `$${(v / 1e6).toFixed(2)}M`} contentStyle={{ background: "hsl(222 18% 12%)", border: "1px solid hsl(222 12% 22%)", fontSize: 11 }} />
+              <Tooltip formatter={(v, n) => (n === "peer-base" || n === "Peer range") ? null : `$${(v / 1e6).toFixed(2)}M`} contentStyle={{ background: "hsl(222 18% 12%)", border: "1px solid hsl(222 12% 22%)", fontSize: 11 }} />
+              <Area type="monotone" dataKey="peerBase" stackId="peer" stroke="none" fill="transparent" name="peer-base" isAnimationActive={false} />
+              <Area type="monotone" dataKey="peerSpan" stackId="peer" stroke="none" fill="hsl(35 90% 55% / 0.14)" name="Peer range" isAnimationActive={false} />
               <Line type="monotone" dataKey="modelled" stroke="hsl(190 90% 50%)" strokeWidth={2} dot={false} name="Modelled" />
               <Line type="monotone" dataKey="benchmark" stroke="hsl(35 90% 55%)" strokeDasharray="4 4" strokeWidth={2} dot={false} name="IBM avg" />
-            </LineChart>
+            </ComposedChart>
           </ResponsiveContainer>
+          {trend.peer_source && <div className="text-[10px] text-muted-foreground mt-1">Shaded band: {trend.peer_source} ({fmt(trend.peer_low)}–{fmt(trend.peer_high)}). Line source: {trend.source}.</div>}
         </div>
       )}
       {hist.length > 0 && (

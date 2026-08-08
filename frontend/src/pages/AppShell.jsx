@@ -37,11 +37,13 @@ const NAV_SECTIONS = [
     { to: "/app/ai-governance", label: "AI Governance", icon: Cpu },
     { to: "/app/agents", label: "AI Agents", icon: Bot },
   ]},
-  { section: "Cyber Risk", ent: "cyber_risk", cat: true, color: "crit", items: [
+  { section: "Risk", ent: "cyber_risk", cat: true, color: "crit", items: [
     { to: "/app/situation-room", label: "Situation Room", icon: Radar },
     { to: "/app/risks", label: "Risk Register", icon: ListChecks },
     { to: "/app/controls", label: "Control Monitoring", icon: ShieldCheck },
-    { to: "/app/cyber-risk", label: "Cyber Risk", icon: ShieldAlert },
+    { to: "/app/cyber-risk", label: "Risk", icon: ShieldAlert },
+  ]},
+  { section: "Cyber", ent: "cyber_risk", cat: true, color: "crit", items: [
     { to: "/app/security", label: "Security Scanner", icon: ShieldAlert },
   ]},
   { section: "Third-Party Risk", ent: "third_party_risk", cat: true, color: "high", items: [

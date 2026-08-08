@@ -508,6 +508,7 @@ async def _get_fin_cfg(org_id):
         "records": cfg.get("records"),
         "per_record_cost": cfg.get("per_record_cost", 165),
         "signoff": cfg.get("signoff"),
+        "signoff_reminder_days": int(cfg.get("signoff_reminder_days") or 60),
     }
 
 
@@ -544,6 +545,7 @@ class FinConfig(BaseModel):
     method: str | None = None
     records: int | None = None
     per_record_cost: int | None = None
+    signoff_reminder_days: int | None = None
 
 
 class SignoffBody(BaseModel):
@@ -652,11 +654,18 @@ async def _signoff_reminders():
             "industry": cfg.get("industry", "Technology"), "method": cfg.get("method", "flat"),
             "records": cfg.get("records"), "per_record_cost": cfg.get("per_record_cost", 165)})
         if so.get("hash") and so.get("hash") != current:
+            from datetime import datetime, timezone
+            cadence = max(1, int(cfg.get("signoff_reminder_days") or 60))
+            try:
+                days = (datetime.now(timezone.utc) - datetime.fromisoformat(so.get("at"))).days
+            except Exception:
+                days = 0
+            bucket = days // cadence
             await notifications.create(
                 str(org["_id"]), "control_drift", "Financial calibration changed since CRO sign-off",
-                f"The model changed since {so.get('name')} signed off on {str(so.get('at'))[:10]}. "
-                "Re-approve so board numbers stay defensible.", ref="cyber-risk",
-                dedupe_key=f"signoff-stale:{current}")
+                f"The model changed since {so.get('name')} signed off on {str(so.get('at'))[:10]} "
+                f"({days}d ago). Re-approve so board numbers stay defensible.", ref="cyber-risk",
+                dedupe_key=f"signoff-stale:{current}:{bucket}")
 
 
 @api.get("/financial/config")
@@ -677,7 +686,10 @@ async def get_financial_config(user: dict = Depends(get_current_user)):
 async def put_financial_config(body: FinConfig, admin: dict = Depends(require_roles("admin"))):
     org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}) or {}
     cfg = org.get("financial_config") or {}
-    if (cfg.get("signoff") or {}).get("locked"):
+    if body.signoff_reminder_days is not None:
+        cfg["signoff_reminder_days"] = max(1, int(body.signoff_reminder_days))
+    _calib = any(v is not None for v in (body.impact_sle, body.industry, body.method, body.records, body.per_record_cost))
+    if _calib and (cfg.get("signoff") or {}).get("locked"):
         raise HTTPException(409, "Calibration is locked by CRO sign-off — unlock before editing.")
     if body.impact_sle is not None:
         cfg["impact_sle"] = {str(int(k)): int(v) for k, v in body.impact_sle.items()}
@@ -727,12 +739,20 @@ async def benchmark_trend(user: dict = Depends(get_current_user)):
     cfg = await _get_fin_cfg(user["org_id"])
     bench = await _benchmark(cfg["industry"])
     ind = bench.get("industry_avg") or 0
+    peer_low, peer_high = round(ind * 0.55), round(ind * 1.6)
+
+    def _peer(points):
+        for p in points:
+            p["peerBase"], p["peerSpan"] = peer_low, peer_high - peer_low
+        return points
+    peer_meta = {"peer_low": peer_low, "peer_high": peer_high,
+                 "peer_source": f"Industry peer band (est. 25th–75th percentile of {bench.get('industry_avg_source')})"}
     snaps = await db.exposure_snapshots.find({"org_id": user["org_id"]}, {"_id": 0}).sort("month", 1).to_list(24)
     if len(snaps) >= 2:
-        points = [{"month": s.get("label") or s["month"], "modelled": s["modelled_avg_sle"],
-                   "benchmark": s.get("benchmark") or ind} for s in snaps]
+        points = _peer([{"month": s.get("label") or s["month"], "modelled": s["modelled_avg_sle"],
+                         "benchmark": s.get("benchmark") or ind} for s in snaps])
         return {"points": points, "industry": cfg["industry"], "benchmark": ind,
-                "source": bench.get("industry_avg_source"), "real": True}
+                "source": bench.get("industry_avg_source"), "real": True, **peer_meta}
     risks = await db.risks.find({"org_id": user["org_id"]}, {"_id": 0}).to_list(500)
     slis = [_fin(r, cfg)["sle"] for r in risks] or [0]
     avg = sum(slis) / len(slis)
@@ -746,8 +766,9 @@ async def benchmark_trend(user: dict = Depends(get_current_user)):
     if not points:
         points = [{"month": "prev", "modelled": round(avg * 1.05), "benchmark": ind},
                   {"month": "now", "modelled": round(avg), "benchmark": ind}]
+    points = _peer(points)
     return {"points": points, "industry": cfg["industry"], "benchmark": ind,
-            "source": bench.get("industry_avg_source"), "real": False}
+            "source": bench.get("industry_avg_source"), "real": False, **peer_meta}
 
 
 @api.post("/financial/benchmark/refresh")
@@ -800,6 +821,96 @@ async def financials(user: dict = Depends(get_current_user)):
     total_adj = sum(i["risk_adjusted"] for i in items)
     return {"items": items, "total_residual_ale": total_residual, "total_inherent_ale": total_inherent,
             "total_risk_adjusted": total_adj, "avoided": total_inherent - total_residual}
+
+
+def _fair_classify(sle, tef, vuln, max_sle):
+    mag = round(sle / max_sle, 2) if max_sle else 0
+    scores = {"Loss magnitude": mag, "Threat frequency": round(tef, 2), "Control weakness": round(vuln, 2)}
+    return max(scores, key=scores.get), scores
+
+
+async def _fair_data(org_id):
+    cfg = await _get_fin_cfg(org_id)
+    risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    recs = await db.recommendations.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    pending = {r.get("risk_ref") for r in recs if r.get("status") == "Pending"}
+    fins = [(r, _fin(r, cfg)) for r in risks]
+    max_sle = max([f["sle"] for _, f in fins] or [1])
+    mc_items, items = [], []
+    for r, f in fins:
+        inh, res = max(1, r.get("inherent", 10)), r.get("residual", 10)
+        tef = round(r.get("likelihood", 3) / 5, 2)
+        vuln = round(res / inh, 2)
+        band = _montecarlo_item(f, r)
+        driver, scores = _fair_classify(f["sle"], tef, vuln, max_sle)
+        mc_items.append({"sle": f["sle"], "aro": f["aro"], "residual": res, "inherent": inh})
+        items.append({"ref": r.get("ref"), "title": r.get("title"), "category": r.get("category") or "Uncategorised",
+                      "owner": r.get("owner"), "status": r.get("status"),
+                      "loss_magnitude": f["sle"], "tef": tef, "vulnerability": vuln, "lef": round(tef * vuln, 2),
+                      "residual_ale": f["residual_ale"], "inherent_ale": f["inherent_ale"],
+                      "p10": band["p10"], "p50": band["p50"], "p90": band["p90"],
+                      "driver": driver, "driver_scores": scores, "remediation_pending": r.get("ref") in pending})
+    items.sort(key=lambda x: x["residual_ale"], reverse=True)
+    residual_total = sum(i["residual_ale"] for i in items) or 0
+    inherent_total = sum(i["inherent_ale"] for i in items) or 0
+    areas = {}
+    for i in items:
+        a = areas.setdefault(i["category"], {"count": 0, "residual_ale": 0, "inherent_ale": 0,
+                                             "vuln_sum": 0, "tef_sum": 0, "drivers": {}, "top": None})
+        a["count"] += 1
+        a["residual_ale"] += i["residual_ale"]
+        a["inherent_ale"] += i["inherent_ale"]
+        a["vuln_sum"] += i["vulnerability"]
+        a["tef_sum"] += i["tef"]
+        a["drivers"][i["driver"]] = a["drivers"].get(i["driver"], 0) + 1
+        if not a["top"] or i["residual_ale"] > a["top"]["residual_ale"]:
+            a["top"] = {"ref": i["ref"], "title": i["title"], "residual_ale": i["residual_ale"]}
+    by_area = []
+    for name, a in areas.items():
+        dom = max(a["drivers"], key=a["drivers"].get) if a["drivers"] else "—"
+        by_area.append({"area": name, "count": a["count"],
+                        "residual_ale": round(a["residual_ale"]), "inherent_ale": round(a["inherent_ale"]),
+                        "reduction_pct": round((a["inherent_ale"] - a["residual_ale"]) / a["inherent_ale"] * 100) if a["inherent_ale"] else 0,
+                        "avg_vulnerability": round(a["vuln_sum"] / a["count"], 2),
+                        "avg_tef": round(a["tef_sum"] / a["count"], 2),
+                        "dominant_driver": dom, "top_risk": a["top"],
+                        "share_pct": round(a["residual_ale"] / residual_total * 100) if residual_total else 0})
+    by_area.sort(key=lambda x: x["residual_ale"], reverse=True)
+    import random
+    totals = []
+    for _ in range(3000):
+        s = 0.0
+        for it in mc_items:
+            sle_s = random.triangular(it["sle"] * 0.5, it["sle"] * 2.0, it["sle"])
+            aro_s = min(1.0, max(0.0, random.gauss(it["aro"], 0.15)))
+            s += sle_s * aro_s * (it["residual"] / it["inherent"])
+        totals.append(s)
+    totals.sort()
+    n = len(totals) or 1
+
+    def _q(p):
+        return round(totals[min(n - 1, int(p * n))]) if totals else 0
+    portfolio = {"p10": _q(0.10), "p50": _q(0.50), "p90": _q(0.90),
+                 "residual_ale": round(residual_total), "inherent_ale": round(inherent_total),
+                 "reduction_pct": round((inherent_total - residual_total) / inherent_total * 100) if inherent_total else 0}
+    lec = [{"exceedance_pct": round(pp * 100), "loss": _q(1 - pp)}
+           for pp in (0.98, 0.9, 0.8, 0.6, 0.5, 0.4, 0.25, 0.1, 0.05, 0.02)]
+    bench = await _benchmark(cfg["industry"])
+    accepted = [i for i in items if i["status"] not in ("Remediated", "Closed", "Resolved")]
+    driver_dist = {}
+    for i in items:
+        driver_dist[i["driver"]] = driver_dist.get(i["driver"], 0) + 1
+    return {"portfolio": portfolio, "by_area": by_area, "risks": items, "loss_exceedance": lec,
+            "driver_distribution": [{"driver": k, "count": v} for k, v in driver_dist.items()],
+            "acceptance": {"total": round(sum(i["residual_ale"] for i in accepted)), "count": len(accepted)},
+            "benchmark": {"industry": cfg["industry"], "industry_avg": bench.get("industry_avg"),
+                          "source": bench.get("industry_avg_source")},
+            "industry": cfg["industry"]}
+
+
+@api.get("/financial/fair")
+async def fair_dashboard(user: dict = Depends(get_current_user)):
+    return await _fair_data(user["org_id"])
 
 
 # ---------- Decision simulation (what-if) ----------
