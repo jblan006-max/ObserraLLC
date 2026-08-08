@@ -110,6 +110,14 @@ async def startup():
         logger.info("Stripe catalog ready")
     except Exception as e:
         logger.warning(f"Stripe catalog setup skipped: {e}")
+    # First one-click-install boot: go live on THIS endpoint (record it, enable the
+    # daily autonomous engine, run an initial live scan). Backgrounded so startup isn't blocked.
+    try:
+        import asyncio
+        from self_scan import bootstrap_first_install
+        asyncio.create_task(bootstrap_first_install())
+    except Exception as e:
+        logger.warning(f"First-install bootstrap skipped: {e}")
 
 
 @app.on_event("shutdown")
