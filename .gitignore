@@ -118,3 +118,10 @@ frontend/node_modules/.cache/default-development/45.pack
 frontend/node_modules/.cache/default-development/48.pack
 frontend/node_modules/.cache/default-development/49.pack
 frontend/node_modules/.cache/default-development/2.pack
+
+# Keep example env templates tracked (real .env stays ignored above)
+!.env.example
+!**/.env.example
+!backend/.env.example
+!frontend/.env.example
+
