@@ -11,7 +11,7 @@ from reportlab.lib.pagesizes import LETTER
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.lib import colors
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Image as RLImage, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, HRFlowable, Image as RLImage, PageBreak, Table, TableStyle
 
 from db import db
 from auth import get_current_user
@@ -175,7 +175,7 @@ def _cover_preview_png(brand, org_name, theme) -> bytes:
 def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = None,
                report_date: str = None, version: str = None, chart_series=None, takeaways=None,
                theme: str = "dark", risk_bars=None, exec_summary: str = None, brand=None,
-               bench_line: str = None, signoff_line: str = None) -> io.BytesIO:
+               bench_line: str = None, signoff_line: str = None, risk_bands=None) -> io.BytesIO:
     brand = brand or _resolve_brand(None)
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=LETTER, topMargin=0.9 * inch, bottomMargin=0.8 * inch)
@@ -228,6 +228,28 @@ def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = Non
                   Paragraph(bench_line, body)]
     if signoff_line:
         story += [Spacer(1, 4), Paragraph(f"<b>{signoff_line}</b>", body)]
+    if risk_bands:
+        cell = ParagraphStyle("tc", parent=body, fontSize=8.5, leading=11)
+        story += [Spacer(1, 8), Paragraph("Per-Risk Scenario Ranges (Monte-Carlo P10 / P50 / P90)", h)]
+
+        def _m(v):
+            return f"${v/1e6:.2f}M" if v >= 1e6 else f"${v/1e3:.0f}k"
+        rows = [[Paragraph("<b>Risk</b>", cell), Paragraph("<b>P10 (low)</b>", cell),
+                 Paragraph("<b>P50 (expected)</b>", cell), Paragraph("<b>P90 (high)</b>", cell)]]
+        for rb in risk_bands:
+            rows.append([Paragraph(f"{rb['label']} — {rb['title']}", cell), Paragraph(_m(rb['p10']), cell),
+                         Paragraph(_m(rb['p50']), cell), Paragraph(_m(rb['p90']), cell)])
+        tbl = Table(rows, colWidths=[3.0 * inch, 1.05 * inch, 1.35 * inch, 1.05 * inch])
+        tbl.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#c9d6e5")),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eef6fb")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story += [tbl, Paragraph("Ranges reflect a 1,000-iteration Monte-Carlo per risk (triangular SLE 0.5x-2x, "
+                                 "Gaussian ARO). P50 is the expected annualised loss; P90 is the adverse-scenario tail.",
+                                 ParagraphStyle("cap", parent=body, fontSize=7.5, textColor=colors.grey))]
     story.append(Spacer(1, 16))
     story.append(Paragraph("Confidential — decision-support estimates; not legal, financial, regulatory, or security guarantees.",
                            ParagraphStyle("d", parent=body, fontSize=7, textColor=colors.grey)))
@@ -306,7 +328,7 @@ def _extract_exec_summary(text: str) -> str:
 
 
 async def _board_metrics(org_id: str, report_text: str = "") -> dict:
-    from routes import _fin, _get_fin_cfg, _benchmark
+    from routes import _fin, _get_fin_cfg, _benchmark, _montecarlo_item
     from bson import ObjectId
     org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
     risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(500)
@@ -349,11 +371,19 @@ async def _board_metrics(org_id: str, report_text: str = "") -> dict:
     signoff = (org.get("financial_config") or {}).get("signoff")
     signoff_line = (f"Financial calibration approved by {signoff['name']} on {str(signoff.get('at',''))[:10]}"
                     if signoff and signoff.get("locked") else None)
+    paired = sorted(zip(risks, fins), key=lambda rf: rf[1]["residual_ale"], reverse=True)
+    risk_bands = []
+    for r, f in paired[:6]:
+        band = _montecarlo_item(f, r)
+        risk_bands.append({"label": r.get("ref") or (r.get("title", "") or "")[:18],
+                           "title": (r.get("title", "") or "")[:34],
+                           "p10": band["p10"], "p50": band["p50"], "p90": band["p90"]})
     return {
         "org_name": org.get("name"), "residual": residual, "reduction": reduction,
         "crit": crit, "pending": len(pending), "series": series, "risk_bars": risk_bars,
         "takeaways": takeaways, "exec_summary": _extract_exec_summary(report_text),
         "brand": _resolve_brand(org), "bench_line": bench_line, "signoff_line": signoff_line,
+        "risk_bands": risk_bands,
     }
 
 
@@ -366,7 +396,8 @@ async def build_board_report_pdf(org_id: str, report_text: str,
                       report_date=report_date, version=version,
                       chart_series=m["series"], takeaways=m["takeaways"], risk_bars=m["risk_bars"],
                       exec_summary=m["exec_summary"], brand=m["brand"],
-                      bench_line=m.get("bench_line"), signoff_line=m.get("signoff_line"))
+                      bench_line=m.get("bench_line"), signoff_line=m.get("signoff_line"),
+                      risk_bands=m.get("risk_bands"))
 
 
 def _wrap(text, font, size, max_w, canvas):

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { ShieldAlert, Loader2, Layers, PlayCircle, Gauge, ShieldCheck, TrendingDown, Calculator, BarChart3, Building2, RefreshCw } from "lucide-react";
+import { ShieldAlert, Loader2, Layers, PlayCircle, Gauge, ShieldCheck, TrendingDown, Calculator, BarChart3, Building2, RefreshCw, Sparkles } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 const TIER = (residual) => residual >= 16 ? "0 84% 60%" : residual >= 9 ? "35 90% 55%" : "142 70% 45%";
@@ -185,6 +185,12 @@ function FinancialBasis({ isAdmin }) {
                 {cfg.industries.map((x) => <option key={x} value={x}>{x}</option>)}
               </select>
             </label>
+            {cfg.suggested_industry?.industry && cfg.suggested_industry.industry !== cfg.config.industry && (
+              <button data-testid="fin-industry-suggest" onClick={() => save({ industry: cfg.suggested_industry.industry })} title={cfg.suggested_industry.reason}
+                className="text-xs px-2.5 py-1 rounded-md bg-ai/10 text-ai border border-ai/30 flex items-center gap-1">
+                <Sparkles className="w-3.5 h-3.5" /> Use suggested: {cfg.suggested_industry.industry}
+              </button>
+            )}
             <label className="text-xs flex items-center gap-2">Method
               <select data-testid="fin-method" value={cfg.config.method} onChange={(e) => save({ method: e.target.value })} className="bg-background border border-border rounded-md px-2 py-1 text-xs">
                 <option value="flat">Impact→$ table</option>
