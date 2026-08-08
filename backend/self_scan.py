@@ -1636,7 +1636,7 @@ async def promote_upgrade(job_id: str, background: BackgroundTasks, admin: dict 
         raise HTTPException(404, "Job not found")
     if job.get("status") not in ("verified", "requires_approval"):
         raise HTTPException(400, "Only sandbox-verified or approval-pending upgrades can be promoted.")
-    await db.maintenance_jobs.update_one({"id": job_id}, {"$set": {"status": "promoting"}})
+    await db.maintenance_jobs.update_one({"id": job_id}, {"$set": {"status": "promoting", "promoted_by": admin["email"]}})
     background.add_task(_promote_upgrade_job, admin["org_id"], job_id)
     return {"ok": True, "status": "promoting"}
 
@@ -1656,6 +1656,70 @@ async def autonomy_activity(user: dict = Depends(get_current_user)):
     events = await db.autonomy_activity.find(
         {"org_id": user["org_id"]}, {"_id": 0}).sort("ts", -1).to_list(40)
     return {"events": events}
+
+
+async def _finalize_applied_jobs():
+    """After a reload, re-scan orgs with 'applied' jobs and flip to success once the CVE clears."""
+    jobs = await db.maintenance_jobs.find({"status": "applied"}).to_list(500)
+    orgs = {}
+    for j in jobs:
+        orgs.setdefault(j["org_id"], []).append(j)
+    for org_id, js in orgs.items():
+        try:
+            scan = await _execute_scan(org_id)
+            for j in js:
+                fid = j.get("finding_id")
+                cleared = not any(f["id"] == fid and f["status"] == "fail" for f in scan["findings"])
+                if cleared:
+                    await db.maintenance_jobs.update_one({"id": j["id"]}, {"$set": {
+                        "status": "success", "cleared": True, "new_score": scan["score"], "finalized_at": _now()}})
+                    await _log_activity(org_id, "auto-applied", f"Upgrade finalized after reload: {j.get('package')}",
+                                        f"Re-scan confirms cleared. Score {scan['score']}/100.", ref="self-scan")
+        except Exception as e:
+            logger.warning(f"finalize applied failed for {org_id}: {e}")
+
+
+@self_scan_router.post("/restart")
+async def safe_restart(admin: dict = Depends(require_roles("admin"))):
+    """One-click safe restart so applied upgrades fully take effect. Returns immediately; a
+    detached process reloads the backend a moment later, then finalizes applied jobs on boot."""
+    import subprocess
+    applied = await db.maintenance_jobs.count_documents({"org_id": admin["org_id"], "status": "applied"})
+    await _log_activity(admin["org_id"], "restart", "Safe restart triggered",
+                        f"Reloading service to finalize {applied} applied upgrade(s).", ref="self-scan")
+    subprocess.Popen(["sh", "-c", "sleep 1 && sudo supervisorctl restart backend"],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return {"ok": True, "restarting": True, "applied": applied}
+
+
+@self_scan_router.get("/maintenance-history")
+async def maintenance_history(user: dict = Depends(get_current_user)):
+    jobs = await db.maintenance_jobs.find(
+        {"org_id": user["org_id"]},
+        {"_id": 0, "id": 1, "package": 1, "from_version": 1, "to_version": 1, "status": 1,
+         "by": 1, "promoted_by": 1, "dismissed_by": 1, "created_at": 1, "finished_at": 1,
+         "new_score": 1, "rolled_back_to": 1}).sort("created_at", -1).to_list(200)
+    return {"jobs": jobs}
+
+
+@self_scan_router.post("/digest/preview")
+async def digest_preview(admin: dict = Depends(require_roles("admin"))):
+    from datetime import timedelta
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    js = await db.maintenance_jobs.find({"org_id": admin["org_id"], "created_at": {"$gte": since}}).to_list(500)
+    applied = [j for j in js if j.get("status") in ("success", "applied")]
+    rolled = [j for j in js if j.get("status") == "rolled_back"]
+    needs = [j for j in js if j.get("status") == "requires_approval"]
+    detail = f"✅ Auto-applied: {len(applied)} · ↩ Rolled back: {len(rolled)} · ⛔ Needs approval: {len(needs)}"
+    body = detail
+    if needs:
+        body += "\n\nAwaiting approval:\n" + "\n".join(
+            f"• {j.get('package')} {j.get('from_version')}→{j.get('to_version')}" for j in needs[:10])
+    await notifications.create(admin["org_id"], "report", f"[Preview] AI remediation digest — {detail}", body, ref="self-scan")
+    await _post_chat_alert(admin["org_id"], f"🤖 [Preview] Daily AI remediation digest — {detail}",
+                           body + "\n\n(Preview requested by an admin.)")
+    return {"title": f"AI remediation digest — {detail}", "body": body,
+            "counts": {"applied": len(applied), "rolled_back": len(rolled), "needs_approval": len(needs)}}
 
 
 async def _run_kev_digest():

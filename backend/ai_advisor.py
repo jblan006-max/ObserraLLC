@@ -419,6 +419,39 @@ async def board_report(user: dict = Depends(require_active_subscription)):
     return await generate_board_report(user["org_id"], by=user["email"])
 
 
+async def _autonomy_scorecard(org_id: str) -> str:
+    from datetime import timedelta
+    since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    jobs = await db.maintenance_jobs.find({"org_id": org_id, "created_at": {"$gte": since}}).to_list(1000)
+    shipped = [j for j in jobs if j.get("status") in ("success", "applied")]
+    prevented = [j for j in jobs if j.get("status") == "requires_approval"]
+    rolled = [j for j in jobs if j.get("status") == "rolled_back"]
+    contained = await db.containment_events.count_documents(
+        {"org_id": org_id, "status": "auto-contained", "ts": {"$gte": since}})
+    durs = []
+    for j in shipped:
+        try:
+            c = datetime.fromisoformat(j["created_at"])
+            f = datetime.fromisoformat(j["finished_at"])
+            durs.append((f - c).total_seconds())
+        except Exception:
+            pass
+    if durs:
+        avg = sum(durs) / len(durs)
+        mttp = f"{avg/60:.0f} min" if avg < 3600 else f"{avg/3600:.1f} h"
+    else:
+        mttp = "—"
+    return (
+        "\n\n## Autonomy Scorecard\n"
+        f"Autonomous remediation engine activity over the last 30 days [FACT]:\n"
+        f"- Fixes shipped autonomously: {len(shipped)}\n"
+        f"- Outages prevented (sandbox-blocked before shipping): {len(prevented)}\n"
+        f"- Auto-rollbacks on regression: {len(rolled)}\n"
+        f"- Threats auto-contained: {contained}\n"
+        f"- Mean time to patch (queued to live): {mttp}\n"
+    )
+
+
 async def generate_board_report(org_id: str, by: str):
     context = await _build_context(org_id)
     chat = LlmChat(
@@ -441,6 +474,10 @@ async def generate_board_report(org_id: str, by: str):
     except Exception as e:
         collected.append(f"[report generation error: {e}]")
     report = "".join(collected)
+    try:
+        report += await _autonomy_scorecard(org_id)
+    except Exception:
+        pass
     now = datetime.now(timezone.utc).isoformat()
     await db.reports.insert_one({"org_id": org_id, "report": report,
                                  "model": "anthropic/claude-sonnet-5", "generated_at": now, "by": by})

@@ -114,8 +114,9 @@ async def startup():
     # daily autonomous engine, run an initial live scan). Backgrounded so startup isn't blocked.
     try:
         import asyncio
-        from self_scan import bootstrap_first_install
+        from self_scan import bootstrap_first_install, _finalize_applied_jobs
         asyncio.create_task(bootstrap_first_install())
+        asyncio.create_task(_finalize_applied_jobs())
     except Exception as e:
         logger.warning(f"First-install bootstrap skipped: {e}")
 
