@@ -56,6 +56,9 @@ module.exports = {
         med: 'hsl(var(--med))',
         low: 'hsl(var(--low))',
         ai: 'hsl(var(--ai))',
+        amber: 'hsl(35 90% 55% / <alpha-value>)',
+        teal: 'hsl(168 76% 46% / <alpha-value>)',
+        purple: 'hsl(266 85% 66% / <alpha-value>)',
         chart: {
           '1': 'hsl(var(--chart-1))',
           '2': 'hsl(var(--chart-2))',

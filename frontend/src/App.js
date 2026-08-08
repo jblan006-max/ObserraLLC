@@ -10,9 +10,7 @@ import { Loader2 } from "lucide-react";
 import { Splash } from "@/components/Splash";
 import { InstallBanner } from "@/components/InstallBanner";
 
-// Recover from stale code-split chunks after a rebuild/deploy: if a dynamic
-// import fails (old chunk hash no longer on the server), reload once to pull the
-// fresh index.html + chunks instead of hanging on the Suspense spinner.
+// Recover from stale code-split chunks after a rebuild/deploy.
 const lazyWithRetry = (importer) => lazy(async () => {
   try {
     const mod = await importer();
@@ -22,41 +20,32 @@ const lazyWithRetry = (importer) => lazy(async () => {
     if (!sessionStorage.getItem("obserra-chunk-reload")) {
       sessionStorage.setItem("obserra-chunk-reload", "1");
       window.location.reload();
-      return new Promise(() => {}); // hold the spinner briefly while reloading
+      return new Promise(() => {});
     }
     throw err;
   }
 });
 
-// Route-level code splitting: each page (and its heavy deps like recharts)
-// loads on demand instead of shipping in the initial bundle.
-const Overview = lazyWithRetry(() => import("@/pages/Overview"));
-const RiskRegister = lazyWithRetry(() => import("@/pages/RiskRegister"));
-const AIGovernance = lazyWithRetry(() => import("@/pages/AIGovernance"));
-const Decisions = lazyWithRetry(() => import("@/pages/Decisions"));
-const Remediations = lazyWithRetry(() => import("@/pages/Remediations"));
+// Route-level code splitting — Obserra SAP UAC dashboards.
+const SapOverview = lazyWithRetry(() => import("@/pages/SapOverview"));
+const SodCommandCenter = lazyWithRetry(() => import("@/pages/SodCommandCenter"));
+const Identities = lazyWithRetry(() => import("@/pages/Identities"));
+const PrivilegedAccess = lazyWithRetry(() => import("@/pages/PrivilegedAccess"));
+const AccessMonitoring = lazyWithRetry(() => import("@/pages/AccessMonitoring"));
+const Lifecycle = lazyWithRetry(() => import("@/pages/Lifecycle"));
+const HrReconciliation = lazyWithRetry(() => import("@/pages/HrReconciliation"));
+const RoleIntelligence = lazyWithRetry(() => import("@/pages/RoleIntelligence"));
+const AccessRequests = lazyWithRetry(() => import("@/pages/AccessRequests"));
+const Certifications = lazyWithRetry(() => import("@/pages/Certifications"));
+const SapSystems = lazyWithRetry(() => import("@/pages/SapSystems"));
+const UserActivation = lazyWithRetry(() => import("@/pages/UserActivation"));
+const SapAnalytics = lazyWithRetry(() => import("@/pages/SapAnalytics"));
+// Reused platform pages (identical to Obserra).
 const AuditLog = lazyWithRetry(() => import("@/pages/AuditLog"));
+const Team = lazyWithRetry(() => import("@/pages/Team"));
+const Settings = lazyWithRetry(() => import("@/pages/Settings"));
 const Billing = lazyWithRetry(() => import("@/pages/Billing"));
 const Marketplace = lazyWithRetry(() => import("@/pages/Marketplace"));
-const SituationRoom = lazyWithRetry(() => import("@/pages/SituationRoom"));
-const AssetIntelligence = lazyWithRetry(() => import("@/pages/AssetIntelligence"));
-const KnowledgeGraph = lazyWithRetry(() => import("@/pages/KnowledgeGraph"));
-const ControlMonitoring = lazyWithRetry(() => import("@/pages/ControlMonitoring"));
-const Team = lazyWithRetry(() => import("@/pages/Team"));
-const KernelStatus = lazyWithRetry(() => import("@/pages/KernelStatus"));
-const Settings = lazyWithRetry(() => import("@/pages/Settings"));
-const AIAgents = lazyWithRetry(() => import("@/pages/AIAgents"));
-const Enterprise = lazyWithRetry(() => import("@/pages/Enterprise"));
-const AvailableConnectors = lazyWithRetry(() => import("@/pages/AvailableConnectors"));
-const CompliancePosture = lazyWithRetry(() => import("@/pages/CompliancePosture"));
-const SecurityScanner = lazyWithRetry(() => import("@/pages/SecurityScanner"));
-const MobileSnapshot = lazyWithRetry(() => import("@/pages/MobileSnapshot"));
-const VendorRisk = lazyWithRetry(() => import("@/pages/VendorRisk"));
-const CyberRisk = lazyWithRetry(() => import("@/pages/CyberRisk"));
-const Studio = lazyWithRetry(() => import("@/pages/Studio"));
-const SpendGovernance = lazyWithRetry(() => import("@/pages/SpendGovernance"));
-const Benchmark = lazyWithRetry(() => import("@/pages/Benchmark"));
-const Reporting = lazyWithRetry(() => import("@/pages/Reporting"));
 const PaymentSuccess = lazyWithRetry(() => import("@/pages/PaymentSuccess"));
 const QRApprove = lazyWithRetry(() => import("@/pages/QRApprove"));
 
@@ -84,10 +73,6 @@ function Landing() {
 function AppRoutes() {
   const location = useLocation();
   // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
-  // Emergent Google OAuth returns to <origin>/app#session_id=... — process the
-  // session_id FIRST, on whatever route the provider lands on, BEFORE the auth
-  // Gate runs (otherwise the Gate spins forever). Read the fragment from
-  // useLocation().hash (reactive) per the Emergent Auth playbook.
   if (location.hash?.includes("session_id=")) return <AuthCallback />;
   return (
     <Suspense fallback={<PageLoader />}>
@@ -96,31 +81,22 @@ function AppRoutes() {
         <Route path="/qr-approve/:token" element={<QRApprove />} />
         <Route path="/payment/success" element={<Gate><PaymentSuccess /></Gate>} />
         <Route path="/app" element={<Gate><AppShell /></Gate>}>
-          <Route index element={<Overview />} />
-          <Route path="situation-room" element={<SituationRoom />} />
-          <Route path="risks" element={<RiskRegister />} />
-          <Route path="ai-governance" element={<AIGovernance />} />
-          <Route path="assets" element={<AssetIntelligence />} />
-          <Route path="knowledge-graph" element={<KnowledgeGraph />} />
-          <Route path="controls" element={<ControlMonitoring />} />
-          <Route path="decisions" element={<Decisions />} />
-          <Route path="remediations" element={<Remediations />} />
-          <Route path="reporting" element={<Reporting />} />
+          <Route index element={<SapOverview />} />
+          <Route path="sod" element={<SodCommandCenter />} />
+          <Route path="identities" element={<Identities />} />
+          <Route path="privileged" element={<PrivilegedAccess />} />
+          <Route path="monitoring" element={<AccessMonitoring />} />
+          <Route path="lifecycle" element={<Lifecycle />} />
+          <Route path="hr-reconciliation" element={<HrReconciliation />} />
+          <Route path="roles" element={<RoleIntelligence />} />
+          <Route path="access-requests" element={<AccessRequests />} />
+          <Route path="certifications" element={<Certifications />} />
+          <Route path="systems" element={<SapSystems />} />
+          <Route path="activation" element={<UserActivation />} />
+          <Route path="analytics" element={<SapAnalytics />} />
           <Route path="audit" element={<AuditLog />} />
-          <Route path="kernel" element={<KernelStatus />} />
           <Route path="team" element={<Team />} />
           <Route path="settings" element={<Settings />} />
-          <Route path="agents" element={<AIAgents />} />
-          <Route path="vendors" element={<VendorRisk />} />
-          <Route path="cyber-risk" element={<CyberRisk />} />
-          <Route path="studio" element={<Studio />} />
-          <Route path="spend-governance" element={<SpendGovernance />} />
-          <Route path="benchmark" element={<Benchmark />} />
-          <Route path="enterprise" element={<Enterprise />} />
-          <Route path="connectors" element={<AvailableConnectors />} />
-          <Route path="compliance" element={<CompliancePosture />} />
-          <Route path="security" element={<SecurityScanner />} />
-          <Route path="snapshot" element={<MobileSnapshot />} />
           <Route path="marketplace" element={<Marketplace />} />
           <Route path="billing" element={<Billing />} />
         </Route>

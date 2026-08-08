@@ -1,0 +1,378 @@
+import { useEffect, useState, useCallback } from "react";
+import { api } from "@/lib/api";
+import { StatCard, Spinner } from "@/components/dash";
+import { toast } from "sonner";
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
+  PieChart, Pie, Cell, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
+} from "recharts";
+import {
+  UserCheck, UserX, RefreshCw, Search, Ticket, Ban, ToggleRight, Users, Gauge, TriangleAlert, CheckCircle2, Mail, Workflow, Power, UserPlus, Zap,
+} from "lucide-react";
+
+const CHART_TT = { background: "hsl(215 38% 10%)", border: "1px solid hsl(215 30% 18%)", borderRadius: 8, fontSize: 12 };
+const fmtDate = (s) => (s ? new Date(s).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—");
+const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
+
+export default function UserActivation() {
+  const [d, setD] = useState(null);
+  const [tickets, setTickets] = useState(null);
+  const [q, setQ] = useState("");
+  const [dept, setDept] = useState("all");
+  const [status, setStatus] = useState("all");
+  const [license, setLicense] = useState("all");
+  const [sel, setSel] = useState(new Set());
+  const [confirm, setConfirm] = useState(null); // { action, refs, names }
+  const [reason, setReason] = useState("");
+  const [notify, setNotify] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [ticketView, setTicketView] = useState(null);
+  const [bulk, setBulk] = useState(null);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [roleList, setRoleList] = useState([]);
+  const [cf, setCf] = useState({ first_name: "", last_name: "", email: "", department: "Finance", legal_entity: "US01", role: "", roles: [] });
+
+  const load = useCallback(async () => {
+    const p = new URLSearchParams();
+    if (q) p.set("q", q);
+    if (dept !== "all") p.set("department", dept);
+    if (status !== "all") p.set("status", status);
+    const [a, t] = await Promise.all([
+      api.get(`/sap/activation?${p.toString()}`),
+      api.get("/sap/activation/tickets"),
+    ]);
+    setD(a.data); setTickets(t.data);
+  }, [q, dept, status]);
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => { api.get("/sap/roles").then((r) => setRoleList(r.data.roles)).catch(() => {}); }, []);
+
+  if (!d) return <Spinner />;
+
+  const users = license === "all" ? d.users : d.users.filter((u) => u.license_type === license);
+  const toggle = (id) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const allSelected = users.length > 0 && users.every((u) => sel.has(u.user_id));
+  const toggleAll = () => setSel(allSelected ? new Set() : new Set(users.map((u) => u.user_id)));
+
+  const askAction = (action, refs, names) => { setReason(""); setNotify(true); setConfirm({ action, refs, names }); };
+  const runAction = async () => {
+    setBusy(true);
+    try {
+      const { data } = await api.post("/sap/activation/set", { person_refs: confirm.refs, action: confirm.action, reason, work_note: reason, notify });
+      const nums = (data.tickets || []).map((t) => t.number).join(", ");
+      toast.success(`${data.changed} user(s) ${confirm.action === "deactivate" ? "deactivated" : "activated"}`, {
+        description: nums ? `ServiceNow ${nums} opened & auto-closed` : undefined,
+      });
+      setConfirm(null); setSel(new Set()); await load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Action failed"); }
+    setBusy(false);
+  };
+
+  const runBulk = async () => {
+    setBusy(true);
+    try {
+      const { data } = await api.post("/sap/activation/bulk", { action: bulk.action, scope: "all", reason, work_note: reason, notify });
+      toast.success(`${data.changed} user(s) ${bulk.action === "deactivate" ? "deactivated" : "reactivated"}`, { description: `${data.ticket_count} ServiceNow ticket(s) opened & auto-closed` });
+      setBulk(null); setSel(new Set()); await load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Bulk action failed"); }
+    setBusy(false);
+  };
+  const addCf = () => { if (cf.role && !cf.roles.includes(cf.role)) setCf({ ...cf, roles: [...cf.roles, cf.role], role: "" }); };
+  const runCreate = async () => {
+    if (!cf.first_name.trim() || !cf.last_name.trim() || !cf.email.trim()) { toast.error("First, last name and email required"); return; }
+    setBusy(true);
+    try {
+      const { data } = await api.post("/sap/activation/create", { first_name: cf.first_name, last_name: cf.last_name, email: cf.email, department: cf.department, legal_entity: cf.legal_entity, roles: cf.roles, work_note: reason, notify });
+      toast.success(`Created ${data.name}`, { description: `${data.ticket.number} provisioning workflow auto-closed` });
+      setCreateOpen(false); setCf({ first_name: "", last_name: "", email: "", department: "Finance", legal_entity: "US01", role: "", roles: [] }); await load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Create failed"); }
+    setBusy(false);
+  };
+
+  const S = d.summary;
+  const PIE = ["#42c98e", "#e0574a"];
+  const maxLic = Math.max(1, ...d.license_breakdown.map((l) => l.value));
+
+  return (
+    <div className="space-y-6" data-testid="user-activation">
+      {/* SAP-style header */}
+      <div className="rounded-xl overflow-hidden fact-border">
+        <div className="bg-[#0f1e3d] px-5 py-4 flex items-center gap-3">
+          <ToggleRight className="w-5 h-5 text-[#4fc3f7]" />
+          <div className="flex-1 min-w-0">
+            <h1 className="font-head font-black text-lg lg:text-xl text-white truncate" data-testid="ua-title">User Account Activation / Deactivation</h1>
+            <p className="text-[11px] text-white/60">SAP license governance · deactivated users can't log in, license is freed, private content is retained</p>
+          </div>
+          <button data-testid="ua-refresh" onClick={load} className="text-white/70 hover:text-white p-2 rounded-lg hover:bg-white/10"><RefreshCw className="w-4 h-4" /></button>
+        </div>
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <StatCard label="Total users" value={S.total} accent="190 90% 50%" icon={Users} testid="ua-total" />
+        <StatCard label="Activated" value={S.activated} sub="Consuming a license" accent="142 70% 45%" icon={UserCheck} testid="ua-activated" />
+        <StatCard label="Deactivated" value={S.deactivated} sub="License freed · content kept" accent="0 84% 60%" icon={UserX} testid="ua-deactivated" />
+        <StatCard label="License usage" value={`${S.license_usage_pct}%`} sub="Activated of total" accent="35 90% 55%" icon={Gauge} testid="ua-usage" />
+        <StatCard label="Underutilized" value={S.underutilized_licenses} sub="Prof. license · inactive >30d" accent="266 85% 66%" icon={TriangleAlert} testid="ua-underutilized" />
+      </div>
+
+      {/* Analytics */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
+        <div className="lg:col-span-3 bg-card fact-border rounded-xl p-5" data-testid="ua-pie">
+          <h2 className="font-head font-bold text-base mb-1">Activated vs Deactivated</h2>
+          <ResponsiveContainer width="100%" height={180}>
+            <PieChart>
+              <Pie data={d.pie} dataKey="value" nameKey="name" innerRadius={46} outerRadius={70} paddingAngle={3} stroke="none">
+                {d.pie.map((e, i) => <Cell key={e.name} fill={PIE[i]} />)}
+              </Pie>
+              <Tooltip contentStyle={CHART_TT} />
+            </PieChart>
+          </ResponsiveContainer>
+          <div className="flex gap-3 justify-center">
+            {d.pie.map((c, i) => <span key={c.name} className="text-[10px] text-muted-foreground flex items-center gap-1"><span className="w-2 h-2 rounded-full" style={{ background: PIE[i] }} />{c.name} {c.value}</span>)}
+          </div>
+        </div>
+        <div className="lg:col-span-5 bg-card fact-border rounded-xl p-5" data-testid="ua-trend">
+          <h2 className="font-head font-bold text-base mb-1">Activation / Deactivation Trend</h2>
+          <p className="text-[11px] text-muted-foreground mb-2">Last 6 months (from hire/termination + admin actions).</p>
+          <ResponsiveContainer width="100%" height={180}>
+            <LineChart data={d.trend}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(215 30% 18%)" vertical={false} />
+              <XAxis dataKey="month" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
+              <YAxis width={24} tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} allowDecimals={false} />
+              <Tooltip contentStyle={CHART_TT} />
+              <Line type="monotone" dataKey="activated" stroke="#42c98e" strokeWidth={2.5} dot={{ r: 3 }} />
+              <Line type="monotone" dataKey="deactivated" stroke="#e0574a" strokeWidth={2.5} dot={{ r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+        <div className="lg:col-span-4 bg-card fact-border rounded-xl p-5" data-testid="ua-heatmap">
+          <h2 className="font-head font-bold text-base mb-1">Inactivity by Department</h2>
+          <p className="text-[11px] text-muted-foreground mb-3">% of activated users inactive &gt; 30 days.</p>
+          <div className="space-y-2 max-h-[150px] overflow-y-auto pr-1">
+            {d.heatmap.map((h) => (
+              <div key={h.department} className="flex items-center gap-2">
+                <span className="text-[11px] w-24 truncate shrink-0">{h.department}</span>
+                <div className="flex-1 h-3 rounded bg-secondary/60 overflow-hidden">
+                  <div className="h-full rounded" style={{ width: `${Math.max(4, h.inactive_pct)}%`, background: `hsl(${h.inactive_pct >= 40 ? "0 84% 60%" : h.inactive_pct >= 15 ? "35 90% 55%" : "142 70% 45%"})` }} />
+                </div>
+                <span className="text-[10px] font-mono text-muted-foreground w-8 text-right">{h.inactive_pct}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* ServiceNow automation */}
+      <div className="bg-card fact-border rounded-xl p-5" data-testid="ua-automation">
+        <div className="flex items-center gap-2 mb-1"><Zap className="w-4 h-4 text-amber" /><h2 className="font-head font-bold text-lg">ServiceNow Automation</h2></div>
+        <p className="text-[11px] text-muted-foreground mb-3">One-click, work-note-enabled ServiceNow workflows that kick off and complete automatically — create, deactivate all, or reactivate all accounts.</p>
+        <div className="flex flex-wrap gap-2">
+          <Button data-testid="ua-create-user" onClick={() => { setReason(""); setNotify(true); setCreateOpen(true); }} className="gap-1.5"><UserPlus className="w-4 h-4" /> Create User</Button>
+          <Button data-testid="ua-deactivate-all" variant="outline" className="gap-1.5 text-crit border-crit/30" onClick={() => { setReason(""); setNotify(true); setBulk({ action: "deactivate" }); }}><Power className="w-4 h-4" /> Deactivate All Active ({S.activated})</Button>
+          <Button data-testid="ua-reactivate-all" variant="outline" className="gap-1.5 text-low border-low/30" onClick={() => { setReason(""); setNotify(true); setBulk({ action: "activate" }); }}><UserCheck className="w-4 h-4" /> Reactivate All ({S.deactivated})</Button>
+        </div>
+      </div>
+
+      {/* Toolbar */}
+      <div className="bg-card fact-border rounded-xl">
+        <div className="flex flex-wrap items-center gap-2 p-3 border-b border-border">
+          <div className="flex items-center gap-2 rounded-lg border border-border bg-background/50 px-2.5 h-9 flex-1 min-w-[180px]">
+            <Search className="w-3.5 h-3.5 text-muted-foreground" />
+            <input data-testid="ua-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name or email…" className="bg-transparent text-sm outline-none w-full" />
+          </div>
+          <Select value={license} onValueChange={setLicense}><SelectTrigger data-testid="ua-filter-license" className="w-[170px] h-9"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="all">All license types</SelectItem>{d.license_types.map((l) => <SelectItem key={l} value={l}>{l}</SelectItem>)}</SelectContent></Select>
+          <Select value={dept} onValueChange={setDept}><SelectTrigger data-testid="ua-filter-dept" className="w-[150px] h-9"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="all">All departments</SelectItem>{d.departments.map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent></Select>
+          <Select value={status} onValueChange={setStatus}><SelectTrigger data-testid="ua-filter-status" className="w-[140px] h-9"><SelectValue /></SelectTrigger>
+            <SelectContent><SelectItem value="all">All statuses</SelectItem><SelectItem value="Activated">Activated</SelectItem><SelectItem value="Deactivated">Deactivated</SelectItem></SelectContent></Select>
+        </div>
+
+        {sel.size > 0 && (
+          <div className="flex items-center gap-3 px-4 py-2.5 bg-primary/10 border-b border-border" data-testid="ua-bulk-bar">
+            <span className="text-xs font-medium">{sel.size} selected</span>
+            <Button data-testid="ua-bulk-activate" size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => askAction("activate", [...sel], `${sel.size} users`)}><UserCheck className="w-3.5 h-3.5" /> Activate</Button>
+            <Button data-testid="ua-bulk-deactivate" size="sm" className="h-8 gap-1.5 bg-crit hover:bg-crit/90" onClick={() => askAction("deactivate", [...sel], `${sel.size} users`)}><Ban className="w-3.5 h-3.5" /> Deactivate</Button>
+          </div>
+        )}
+
+        {/* SAP-style users table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm" data-testid="ua-table">
+            <thead>
+              <tr className="text-left text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border">
+                <th className="p-3 w-8"><Checkbox checked={allSelected} onCheckedChange={toggleAll} data-testid="ua-select-all" /></th>
+                <th className="p-3">User Name</th><th className="p-3">Name</th><th className="p-3">Display Name</th><th className="p-3">Email</th>
+                <th className="p-3">Roles</th><th className="p-3">SAML Mapping</th><th className="p-3">License</th>
+                <th className="p-3">Last Login</th><th className="p-3">Deactivated</th><th className="p-3 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((u) => (
+                <tr key={u.user_id} className="border-b border-border/50 hover:bg-secondary/30" data-testid={`ua-row-${u.user_id}`}>
+                  <td className="p-3"><Checkbox checked={sel.has(u.user_id)} onCheckedChange={() => toggle(u.user_id)} data-testid={`ua-check-${u.user_id}`} /></td>
+                  <td className="p-3 font-mono text-xs">{u.user_name}</td>
+                  <td className="p-3 font-medium whitespace-nowrap">
+                    <span className="inline-flex items-center gap-1.5">
+                      {u.is_user_deactivated && <Ban className="w-3.5 h-3.5 text-crit shrink-0" title="Deactivated" />}
+                      {u.name}
+                    </span>
+                  </td>
+                  <td className="p-3 text-xs">{u.display_name}</td>
+                  <td className="p-3 text-muted-foreground text-xs">{u.email}</td>
+                  <td className="p-3 text-xs" title={u.roles.join(", ")}>{u.role_count}{u.roles[0] ? ` · ${u.roles[0].replace(/^Z_|^SAP_/, "")}` : ""}</td>
+                  <td className="p-3 text-xs text-muted-foreground">{u.saml_user_mapping}</td>
+                  <td className="p-3 text-xs whitespace-nowrap">{u.license_type}</td>
+                  <td className="p-3 text-xs whitespace-nowrap">
+                    {fmtDate(u.last_login)}
+                    {u.inactivity_flag && <span className="ml-1 text-[9px] text-amber font-mono">{u.inactive_days}d</span>}
+                  </td>
+                  <td className="p-3">
+                    <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded ${u.is_user_deactivated ? "bg-crit/15 text-crit" : "bg-low/15 text-low"}`}>{u.is_user_deactivated ? "TRUE" : "FALSE"}</span>
+                  </td>
+                  <td className="p-3 text-right whitespace-nowrap">
+                    {u.status === "Activated" ? (
+                      <button data-testid={`ua-deactivate-${u.user_id}`} onClick={() => askAction("deactivate", [u.user_id], u.name)} className="text-crit hover:bg-crit/10 rounded-md p-1.5" title="Deactivate user"><Ban className="w-4 h-4" /></button>
+                    ) : (
+                      <button data-testid={`ua-activate-${u.user_id}`} onClick={() => askAction("activate", [u.user_id], u.name)} className="text-low hover:bg-low/10 rounded-md p-1.5" title="Activate user"><UserCheck className="w-4 h-4" /></button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+              {users.length === 0 && <tr><td colSpan={11} className="p-8 text-center text-sm text-muted-foreground">No users match these filters.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ServiceNow workflow tickets */}
+      <div className="bg-card fact-border rounded-xl p-5" data-testid="ua-tickets">
+        <div className="flex items-center gap-2 mb-1">
+          <Workflow className="w-4 h-4 text-ai" />
+          <h2 className="font-head font-bold text-lg">ServiceNow Workflow</h2>
+          <span className="text-[10px] font-mono text-muted-foreground ml-2">{tickets?.closed || 0} auto-closed · {tickets?.open || 0} open</span>
+        </div>
+        <p className="text-[11px] text-muted-foreground mb-3">Every activation/deactivation opens a ServiceNow ticket workflow that provisions/revokes access and closes automatically. Syncs to ServiceNow when the CON-SNOW connector is live.</p>
+        <div className="space-y-2">
+          {(tickets?.tickets || []).slice(0, 8).map((t) => (
+            <button key={t.number} data-testid={`ua-ticket-${t.number}`} onClick={() => setTicketView(t)} className="w-full text-left flex items-center gap-3 p-3 rounded-lg bg-secondary/30 hover:bg-secondary/60 transition-colors">
+              <Ticket className="w-4 h-4 text-ai shrink-0" />
+              <span className="font-mono text-xs w-24 shrink-0">{t.number}</span>
+              <div className="flex-1 min-w-0"><div className="text-sm truncate">{t.type} · {t.person_name}</div><div className="text-[10px] text-muted-foreground">{fmtDT(t.opened_at)} · resolved in {t.duration_sec}s</div></div>
+              <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-low/15 text-low shrink-0 flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />{t.state}</span>
+            </button>
+          ))}
+          {(!tickets?.tickets || tickets.tickets.length === 0) && <p className="text-sm text-muted-foreground py-4 text-center">No workflow tickets yet — activate or deactivate a user to kick one off.</p>}
+        </div>
+      </div>
+
+      {/* Confirm dialog */}
+      <Dialog open={!!confirm} onOpenChange={(o) => !o && setConfirm(null)}>
+        <DialogContent data-testid="ua-confirm-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {confirm?.action === "deactivate" ? <Ban className="w-5 h-5 text-crit" /> : <UserCheck className="w-5 h-5 text-low" />}
+              {confirm?.action === "deactivate" ? "Deactivate" : "Activate"} — {confirm?.names}
+            </DialogTitle>
+            <DialogDescription>
+              {confirm?.action === "deactivate"
+                ? "This user will no longer be able to log in and their license will be freed. Private content is retained under the account. A ServiceNow ticket will be opened and auto-closed."
+                : "This restores login access and re-provisions the account (consuming a license). A ServiceNow provisioning request will be opened and auto-closed."}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Textarea data-testid="ua-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason (e.g. paternity leave, license recovery)…" rows={2} />
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <Checkbox checked={notify} onCheckedChange={(v) => setNotify(!!v)} data-testid="ua-notify" />
+              <Mail className="w-3.5 h-3.5 text-muted-foreground" /> Email the user about this change
+            </label>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirm(null)}>Cancel</Button>
+            <Button data-testid="ua-confirm-btn" disabled={busy} onClick={runAction} className={confirm?.action === "deactivate" ? "bg-crit hover:bg-crit/90" : "bg-low hover:bg-low/90"}>
+              {busy ? "Working…" : confirm?.action === "deactivate" ? "Deactivate" : "Activate"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Ticket timeline dialog */}
+      <Dialog open={!!ticketView} onOpenChange={(o) => !o && setTicketView(null)}>
+        <DialogContent data-testid="ua-ticket-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Ticket className="w-5 h-5 text-ai" /> {ticketView?.number}</DialogTitle>
+            <DialogDescription>{ticketView?.type} · {ticketView?.person_name} · {ticketView?.email}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-0">
+            {ticketView?.stages?.map((s, i) => (
+              <div key={i} className="flex gap-3 pb-4 relative">
+                <div className="flex flex-col items-center">
+                  <span className={`w-3 h-3 rounded-full ${s.state === "Closed" ? "bg-low" : "bg-ai"} z-10`} />
+                  {i < ticketView.stages.length - 1 && <span className="w-px flex-1 bg-border" />}
+                </div>
+                <div className="pb-1 -mt-0.5">
+                  <div className="text-sm font-medium">{s.state}</div>
+                  <div className="text-[11px] text-muted-foreground">{s.note}</div>
+                  <div className="text-[10px] font-mono text-muted-foreground/70">{fmtDT(s.at)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="text-[11px] text-muted-foreground border-t border-border pt-3">
+            Auto-closed after {ticketView?.duration_sec}s · {ticketView?.synced_to_servicenow ? "synced to ServiceNow" : "pending ServiceNow sync (connector not yet live)"}
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Bulk automation dialog */}
+      <Dialog open={!!bulk} onOpenChange={(o) => !o && setBulk(null)}>
+        <DialogContent data-testid="ua-bulk-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">{bulk?.action === "deactivate" ? <Power className="w-5 h-5 text-crit" /> : <UserCheck className="w-5 h-5 text-low" />}{bulk?.action === "deactivate" ? `Deactivate all ${S.activated} active users` : `Reactivate all ${S.deactivated} deactivated users`}</DialogTitle>
+            <DialogDescription>{bulk?.action === "deactivate" ? "Turns off every active account, freeing all licenses (content retained). A ServiceNow ticket is opened & auto-closed per user." : "Restores login for every deactivated user (consuming licenses). A ServiceNow provisioning request is opened & auto-closed per user."}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Textarea data-testid="ua-bulk-note" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="ServiceNow work note (added to every ticket)…" rows={2} />
+            <label className="flex items-center gap-2 text-sm cursor-pointer"><Checkbox checked={notify} onCheckedChange={(v) => setNotify(!!v)} /> <Mail className="w-3.5 h-3.5 text-muted-foreground" /> Email affected users</label>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setBulk(null)}>Cancel</Button><Button data-testid="ua-bulk-confirm" disabled={busy} onClick={runBulk} className={bulk?.action === "deactivate" ? "bg-crit hover:bg-crit/90" : "bg-low hover:bg-low/90"}>{busy ? "Running…" : bulk?.action === "deactivate" ? "Deactivate All" : "Reactivate All"}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Create user dialog */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent data-testid="ua-create-dialog">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><UserPlus className="w-5 h-5 text-primary" /> Create SAP User</DialogTitle><DialogDescription>Provisions a new SAP account via an auto-processing ServiceNow request.</DialogDescription></DialogHeader>
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <Input data-testid="cf-first" value={cf.first_name} onChange={(e) => setCf({ ...cf, first_name: e.target.value })} placeholder="First name" />
+              <Input data-testid="cf-last" value={cf.last_name} onChange={(e) => setCf({ ...cf, last_name: e.target.value })} placeholder="Last name" />
+            </div>
+            <Input data-testid="cf-email" value={cf.email} onChange={(e) => setCf({ ...cf, email: e.target.value })} placeholder="Email" />
+            <div className="grid grid-cols-2 gap-2">
+              <Select value={cf.department} onValueChange={(v) => setCf({ ...cf, department: v })}><SelectTrigger data-testid="cf-dept" className="h-9"><SelectValue /></SelectTrigger><SelectContent>{["Finance", "Procurement", "Treasury", "Sales", "HR", "IT Basis", "Master Data"].map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent></Select>
+              <Select value={cf.legal_entity} onValueChange={(v) => setCf({ ...cf, legal_entity: v })}><SelectTrigger data-testid="cf-le" className="h-9"><SelectValue /></SelectTrigger><SelectContent>{["US01", "DE01", "UK01", "IN01"].map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent></Select>
+            </div>
+            <div className="flex gap-2">
+              <Select value={cf.role} onValueChange={(v) => setCf({ ...cf, role: v })}><SelectTrigger data-testid="cf-role" className="h-9 flex-1"><SelectValue placeholder="Add role…" /></SelectTrigger><SelectContent>{roleList.map((r) => <SelectItem key={r.ref} value={r.ref}>{r.name}</SelectItem>)}</SelectContent></Select>
+              <Button variant="outline" className="h-9" data-testid="cf-add-role" onClick={addCf}>Add</Button>
+            </div>
+            {cf.roles.length > 0 && <div className="flex flex-wrap gap-1.5">{cf.roles.map((r) => <span key={r} className="text-[10px] font-mono px-2 py-0.5 rounded bg-secondary">{r}</span>)}</div>}
+            <Textarea data-testid="cf-note" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="ServiceNow work note…" rows={2} />
+            <label className="flex items-center gap-2 text-sm cursor-pointer"><Checkbox checked={notify} onCheckedChange={(v) => setNotify(!!v)} /> <Mail className="w-3.5 h-3.5 text-muted-foreground" /> Email welcome to the user</label>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button><Button data-testid="cf-submit" disabled={busy} onClick={runCreate}>{busy ? "Provisioning…" : "Create & Provision"}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}

@@ -32,6 +32,7 @@ from self_scan import self_scan_router
 from dashboards import dash_router
 from risk_engine import risk_engine_router
 from connectors_catalog import connectors_router
+from sap_uac import sap_router, seed_sap_uac
 from starlette.middleware.sessions import SessionMiddleware
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -62,6 +63,7 @@ app.include_router(self_scan_router)
 app.include_router(dash_router)
 app.include_router(connectors_router)
 app.include_router(risk_engine_router)
+app.include_router(sap_router)
 
 _cors = os.environ.get("CORS_ORIGINS", "*").strip()
 _cors_kwargs = {"allow_origin_regex": ".*"} if _cors == "*" else {"allow_origins": [o.strip() for o in _cors.split(",") if o.strip()]}
@@ -110,6 +112,13 @@ async def startup():
     await db.notifications.create_index([("org_id", 1), ("created_at", -1)])
     await db.notifications.create_index([("org_id", 1), ("dedupe_key", 1)])
     await seed_admin()
+    try:
+        orgs = await db.organizations.find({}, {"_id": 1}).to_list(1000)
+        for o in orgs:
+            await seed_sap_uac(str(o["_id"]))
+        logger.info("SAP UAC access snapshot ready")
+    except Exception as e:
+        logger.warning(f"SAP UAC seed skipped: {e}")
     try:
         from deploy import regenerate_guides
         regenerate_guides()

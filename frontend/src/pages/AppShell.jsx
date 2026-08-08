@@ -1,10 +1,8 @@
 import { Suspense, useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate, useLocation, Navigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
-import { AIAdvisor } from "@/components/AIAdvisor";
-import { OnboardingTour } from "@/components/OnboardingTour";
+import { SapAdvisor } from "@/components/SapAdvisor";
 import { LockedGate } from "@/components/LockedGate";
-import { FirstRunWizard } from "@/components/FirstRunWizard";
 import { NotificationBell } from "@/components/NotificationBell";
 import ForcePasswordReset from "@/pages/ForcePasswordReset";
 import { Footer } from "@/components/Footer";
@@ -12,35 +10,28 @@ import { DeepDiveProvider } from "@/context/DeepDiveContext";
 import { InstallButton } from "@/components/InstallButton";
 import {
   LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
-  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp,
+  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp, ToggleRight,
 } from "lucide-react";
 
-// Per-route accent so each dashboard has its own colour identity (breaks the monotone slate).
+// Per-route accent so each dashboard has its own colour identity.
 const ROUTE_ACCENT = [
-  ["/app/compliance", "152 65% 45%"],
-  ["/app/cyber-risk", "190 90% 50%"],
-  ["/app/risks", "190 90% 50%"],
-  ["/app/situation-room", "0 84% 62%"],
-  ["/app/controls", "168 76% 46%"],
-  ["/app/security", "24 90% 55%"],
-  ["/app/decisions", "260 85% 66%"],
-  ["/app/remediations", "255 85% 66%"],
-  ["/app/assets", "38 92% 55%"],
-  ["/app/ai-governance", "330 82% 60%"],
-  ["/app/agents", "280 80% 66%"],
-  ["/app/vendors", "18 85% 57%"],
-  ["/app/reporting", "142 70% 45%"],
-  ["/app/studio", "292 80% 66%"],
-  ["/app/benchmark", "210 92% 62%"],
-  ["/app/knowledge-graph", "175 72% 50%"],
-  ["/app/kernel", "222 70% 62%"],
-  ["/app/team", "200 85% 56%"],
-  ["/app/enterprise", "232 72% 64%"],
-  ["/app/spend-governance", "160 72% 48%"],
-  ["/app/settings", "220 15% 60%"],
-  ["/app/marketplace", "265 80% 66%"],
-  ["/app/billing", "150 60% 50%"],
+  ["/app/analytics", "210 92% 62%"],
+  ["/app/sod", "0 84% 60%"],
+  ["/app/privileged", "35 90% 55%"],
+  ["/app/monitoring", "168 76% 46%"],
+  ["/app/identities", "190 90% 50%"],
+  ["/app/activation", "152 65% 45%"],
+  ["/app/lifecycle", "260 85% 66%"],
+  ["/app/hr-reconciliation", "330 82% 60%"],
+  ["/app/access-requests", "142 70% 45%"],
+  ["/app/certifications", "38 92% 55%"],
+  ["/app/roles", "280 80% 66%"],
+  ["/app/systems", "210 92% 62%"],
   ["/app/audit", "35 90% 55%"],
+  ["/app/team", "200 85% 56%"],
+  ["/app/settings", "220 15% 60%"],
+  ["/app/billing", "150 60% 50%"],
+  ["/app/marketplace", "265 80% 66%"],
 ];
 function routeAccent(path) {
   if (path === "/app") return "222 90% 62%";
@@ -66,49 +57,34 @@ function DualModeToggle() {
 
 const NAV_SECTIONS = [
   { section: null, items: [
-    { to: "/app", label: "Overview", icon: LayoutDashboard, end: true },
+    { to: "/app", label: "Executive Overview", icon: LayoutDashboard, end: true },
+    { to: "/app/analytics", label: "SAP Analytics", icon: BarChart3 },
   ]},
-  { section: "Risk", ent: "cyber_risk", cat: true, color: "crit", items: [
-    { to: "/app/cyber-risk", label: "Risk (FAIR)", icon: ShieldAlert },
-    { to: "/app/risks", label: "Risk Register", icon: ListChecks },
-    { to: "/app/compliance", label: "Compliance Posture", icon: ShieldCheck, ent: "reporting_board" },
-    { to: "/app/remediations", label: "Remediations", icon: Wrench },
+  { section: "Access Risk", cat: true, color: "crit", items: [
+    { to: "/app/sod", label: "SoD Command Center", icon: ShieldAlert },
+    { to: "/app/privileged", label: "Privileged Access", icon: Lock },
+    { to: "/app/monitoring", label: "Access Monitoring", icon: Radar },
   ]},
-  { section: "Cyber", ent: "cyber_risk", cat: true, color: "crit", items: [
-    { to: "/app/situation-room", label: "Situation Room", icon: Radar },
-    { to: "/app/controls", label: "Control Monitoring", icon: ShieldCheck },
-    { to: "/app/security", label: "Security Scanner", icon: ShieldAlert },
-    { to: "/app/decisions", label: "Recommendations", icon: GitBranch },
-    { to: "/app/assets", label: "Asset Intelligence", icon: Boxes, ent: "asset_intelligence" },
+  { section: "Identity & Workforce", cat: true, color: "ai", items: [
+    { to: "/app/identities", label: "Identities", icon: Users },
+    { to: "/app/activation", label: "User Activation", icon: ToggleRight },
+    { to: "/app/lifecycle", label: "Joiner / Mover / Leaver", icon: GitBranch },
+    { to: "/app/hr-reconciliation", label: "HR Reconciliation", icon: Building },
   ]},
-  { section: "AI Governance", ent: "ai_governance", cat: true, color: "ai", items: [
-    { to: "/app/ai-governance", label: "AI Governance", icon: Cpu },
-    { to: "/app/agents", label: "AI Agents", icon: Bot },
+  { section: "Governance", cat: true, color: "low", items: [
+    { to: "/app/access-requests", label: "Access Requests", icon: ListChecks },
+    { to: "/app/certifications", label: "Certifications", icon: ShieldCheck },
+    { to: "/app/roles", label: "Role Intelligence", icon: Layers },
   ]},
-  { section: "Third-Party Risk", ent: "third_party_risk", cat: true, color: "high", items: [
-    { to: "/app/vendors", label: "Third-Party Risk", icon: Building },
-  ]},
-  { section: "Reporting", ent: "reporting_board", cat: true, color: "low", items: [
-    { to: "/app/reporting", label: "Evidence & Reporting", icon: FileBarChart },
-    { to: "/app/studio", label: "Studio", icon: Sparkles },
-    { to: "/app/benchmark", label: "Benchmarking", icon: BarChart3 },
-    { to: "/app/knowledge-graph", label: "Knowledge Graph", icon: Network },
-    { to: "/app/snapshot", label: "Exec Snapshot", icon: Smartphone },
-  ]},
-  { section: "Audit & Evidence", ent: "audit_evidence", cat: true, color: "med", items: [
-    { to: "/app/audit", label: "Audit Log", icon: ScrollText },
+  { section: "Sources", cat: true, color: "primary", items: [
+    { to: "/app/systems", label: "Connector Health", icon: Plug },
   ]},
   { section: "Admin", admin: true, items: [
-    { to: "/app/kernel", label: "Platform Kernel", icon: Layers },
-    { to: "/app/team", label: "Team", icon: Users },
-    { to: "/app/enterprise", label: "Enterprise", icon: Building2 },
-    { to: "/app/connectors", label: "Available Connectors", icon: Plug },
-    { to: "/app/spend-governance", label: "AI Spend", icon: Wallet },
-  ]},
-  { section: "Account", items: [
+    { to: "/app/audit", label: "Audit Log", icon: ScrollText },
+    { to: "/app/team", label: "Team", icon: Building2 },
     { to: "/app/settings", label: "Settings", icon: Settings },
-    { to: "/app/marketplace", label: "Marketplace", icon: Store },
     { to: "/app/billing", label: "Billing", icon: CreditCard },
+    { to: "/app/marketplace", label: "Marketplace", icon: Store },
   ]},
 ];
 
@@ -320,9 +296,7 @@ export default function AppShell() {
         <Footer />
       </div>
 
-      <AIAdvisor />
-      <OnboardingTour />
-      <FirstRunWizard />
+      <SapAdvisor />
     </div>
     </DeepDiveProvider>
   );
