@@ -216,6 +216,10 @@ export default function SecurityScanner() {
     try { await api.post(`/self-scan/maintenance/${id}/promote`); await loadJobs(); toast.success("Promoting sandbox-verified upgrade to live…"); }
     catch (e) { toast.error(e?.response?.data?.detail || "Promote failed"); }
   };
+  const dismissJob = async (id) => {
+    try { await api.post(`/self-scan/maintenance/${id}/dismiss`); await loadJobs(); toast.success("Dismissed — kept on the previous version"); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Dismiss failed"); }
+  };
   const fmtDur = (s) => (s == null ? "—" : s < 1 ? "instant" : s < 60 ? `${Math.round(s)}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${(s / 3600).toFixed(1)}h`);
 
   const toggleDeviceItem = async (item, done) => {
@@ -314,6 +318,14 @@ export default function SecurityScanner() {
                 <input type="checkbox" checked={engine?.auto_promote !== false} onChange={(e) => patchEngine({ auto_promote: e.target.checked })} />
                 Auto-apply sandbox-verified upgrades <span className="text-muted-foreground">(off = manual override with alerts)</span>
               </label>
+              <label className="flex items-center gap-2 text-[11px] cursor-pointer ml-1" data-testid="engine-autorollback">
+                <input type="checkbox" checked={engine?.auto_rollback !== false} onChange={(e) => patchEngine({ auto_rollback: e.target.checked })} />
+                Auto-rollback on regression <span className="text-muted-foreground">(revert if the next scan's score drops)</span>
+              </label>
+              <label className="flex items-center gap-2 text-[11px] cursor-pointer ml-1" data-testid="engine-canary">
+                <input type="checkbox" checked={!!engine?.canary_promote} onChange={(e) => patchEngine({ canary_promote: e.target.checked })} />
+                Canary promote <span className="text-muted-foreground">(hold a live health window before widening)</span>
+              </label>
             </>
           )}
         </div>
@@ -366,18 +378,40 @@ export default function SecurityScanner() {
             </div>
           </div>
         )}
+        {jobs.some((j) => j.status === "requires_approval") && (
+          <div className="mt-4 border-t border-border pt-4" data-testid="outage-review-queue">
+            <div className="flex items-center gap-2 mb-3"><AlertTriangle className="w-4 h-4 text-crit" /><h3 className="font-head font-bold text-sm">Outage review queue — upgrades the sandbox flagged as breaking ({jobs.filter((j) => j.status === "requires_approval").length})</h3></div>
+            <div className="space-y-2">
+              {jobs.filter((j) => j.status === "requires_approval").map((j) => (
+                <div key={j.id} data-testid={`outage-${j.package}`} className="p-3 rounded-lg bg-crit/5 border border-crit/20">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium">{j.package} <span className="font-mono text-muted-foreground">{j.from_version} → {j.to_version || "patched"}</span></div>
+                      <div className="text-[11px] text-crit mt-0.5">Sandbox detected a potential outage — the live service was NOT changed.</div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button data-testid={`outage-override-${j.package}`} onClick={() => { if (window.confirm(`Override the outage warning and apply ${j.package} → ${j.to_version} to live?`)) promoteJob(j.id); }} className="px-3 py-1.5 rounded-md bg-high text-white text-xs font-bold flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Override &amp; apply</button>
+                      <button data-testid={`outage-dismiss-${j.package}`} onClick={() => dismissJob(j.id)} className="px-3 py-1.5 rounded-md bg-secondary text-xs font-bold">Dismiss</button>
+                    </div>
+                  </div>
+                  {j.log && <pre data-testid={`outage-log-${j.package}`} className="mt-2 text-[10px] font-mono whitespace-pre-wrap max-h-40 overflow-auto bg-background/60 rounded-md p-2 text-muted-foreground">{j.log}</pre>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         {jobs.length > 0 && (
           <div className="mt-4 border-t border-border pt-4" data-testid="maintenance-jobs">
             <div className="flex items-center gap-2 mb-3"><Wrench className="w-4 h-4 text-primary" /><h3 className="font-head font-bold text-sm">Patch-apply jobs (upgrade → re-pin → re-scan)</h3></div>
             <div className="space-y-2">
               {jobs.slice(0, 6).map((j) => {
-                const jc = j.status === "success" ? "142 70% 45%" : (j.status === "failed" || j.status === "requires_approval") ? "0 84% 60%" : j.status === "applied" ? "35 90% 55%" : j.status === "verified" ? "199 70% 50%" : "48 90% 55%";
+                const jc = j.status === "success" ? "142 70% 45%" : (j.status === "failed" || j.status === "requires_approval") ? "0 84% 60%" : (j.status === "applied" || j.status === "rolled_back") ? "35 90% 55%" : j.status === "dismissed" ? "215 15% 55%" : j.status === "verified" ? "199 70% 50%" : "48 90% 55%";
                 const running = ["queued", "running", "promoting"].includes(j.status);
                 return (
                   <div key={j.id} data-testid={`job-${j.package}`} className="p-3 rounded-lg bg-secondary/40 flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="text-sm font-medium truncate">{j.package} <span className="font-mono text-muted-foreground">{j.from_version} → {j.to_version || "patched"}</span></div>
-                      <div className="text-[11px] text-muted-foreground">{j.status === "success" ? "✓ Re-scan confirms CVE cleared" : j.status === "applied" ? "Upgraded — restart may be needed to fully clear" : j.status === "requires_approval" ? "⛔ Potential outage detected — needs manual approval, live untouched" : j.status === "failed" ? "Rejected — sandbox check failed, live untouched" : j.status === "verified" ? "🧪 Verified in sandbox — promote to apply live" : j.status === "promoting" ? "Promoting to live & re-scanning…" : "Verifying in isolated sandbox…"}{j.new_score != null ? ` · score ${j.new_score}` : ""}</div>
+                      <div className="text-[11px] text-muted-foreground">{j.status === "success" ? "✓ Re-scan confirms CVE cleared" : j.status === "applied" ? "Upgraded — restart may be needed to fully clear" : j.status === "rolled_back" ? "↩ Auto-rolled back — regression detected, live restored to previous version" : j.status === "dismissed" ? "Dismissed — kept on the previous version" : j.status === "requires_approval" ? "⛔ Potential outage detected — needs manual approval, live untouched" : j.status === "failed" ? "Rejected — sandbox check failed, live untouched" : j.status === "verified" ? "🧪 Verified in sandbox — promote to apply live" : j.status === "promoting" ? "Promoting to live & re-scanning…" : "Verifying in isolated sandbox…"}{j.new_score != null ? ` · score ${j.new_score}` : ""}</div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {j.status === "verified" && <button data-testid={`promote-${j.package}`} onClick={() => promoteJob(j.id)} className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-bold flex items-center gap-1"><Sparkles className="w-3.5 h-3.5" /> Promote</button>}

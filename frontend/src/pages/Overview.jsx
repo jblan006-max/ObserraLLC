@@ -18,7 +18,7 @@ import {
 import {
   TrendingUp, TrendingDown, Minus, ShieldAlert, AlertTriangle, Cpu, GitBranch, Loader2,
   FileText, Zap, Activity, DollarSign, Percent, ShieldCheck, Wallet, Bug, Clock, Building,
-  Gauge, MailWarning, Layers, Plug,
+  Gauge, MailWarning, Layers, Plug, Bot,
 } from "lucide-react";
 
 const RECMAP = { "CR-001": "entra_enforce_pim", "CR-004": "casb_quarantine_shadow", "CR-002": "tenable_patch_critical", "CR-005": "entra_enforce_mfa" };
@@ -77,7 +77,7 @@ function QuarterChart({ title, data, kind = "bar", color = "hsl(190 90% 50%)", s
   );
 }
 
-function ExecutiveOverview({ health, m, momentum, onLineage }) {
+function ExecutiveOverview({ health, m, momentum, activity, onLineage }) {
   const strategicKpis = [
     { icon: DollarSign, label: "Residual exposure / yr", value: fmtM(m.exposure_residual_ale), accent: "15 80% 55%", sub: "Modeled annualized loss", testid: "exec-kpi-residual" },
     { icon: ShieldCheck, label: "Exposure avoided", value: fmtM(m.exposure_avoided), accent: "142 70% 45%", sub: "Inherent − residual", testid: "exec-kpi-avoided" },
@@ -181,6 +181,25 @@ function ExecutiveOverview({ health, m, momentum, onLineage }) {
               ))}
             </div>
           )}
+        </motion.div>
+      )}
+
+      {activity && activity.length > 0 && (
+        <motion.div custom={5} variants={fade} initial="hidden" animate="show" className="col-span-full bg-card fact-border rounded-xl p-6" data-testid="exec-autonomy-activity">
+          <div className="flex items-center gap-2 mb-4"><Bot className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Autonomy Activity <span className="text-xs font-normal text-muted-foreground">· AI fixes shipping live</span></h2></div>
+          <div className="space-y-2">
+            {activity.slice(0, 8).map((e) => {
+              const map = { "auto-fix": ["#42c98e", "AUTO-FIX"], "auto-upgrade": ["#12b4d6", "UPGRADE"], "auto-applied": ["#42c98e", "APPLIED"], rollback: ["#f5a623", "ROLLBACK"], "needs-approval": ["#e0574a", "APPROVAL"], contained: ["#8a7bf0", "CONTAINED"], digest: ["#94a3b8", "DIGEST"] };
+              const [c, lbl] = map[e.kind] || ["#94a3b8", (e.kind || "EVENT").toUpperCase()];
+              return (
+                <div key={e.id} data-testid="autonomy-item" className="flex items-center gap-3 text-xs">
+                  <span className="font-mono uppercase text-[9px] px-1.5 py-0.5 rounded-sm shrink-0" style={{ background: `${c}22`, color: c }}>{lbl}</span>
+                  <span className="min-w-0 flex-1 truncate"><span className="text-foreground/90 font-medium">{e.title}</span>{e.detail ? <span className="text-muted-foreground"> — {e.detail}</span> : null}</span>
+                  <span className="text-[10px] text-muted-foreground shrink-0">{new Date(e.ts).toLocaleString()}</span>
+                </div>
+              );
+            })}
+          </div>
         </motion.div>
       )}
 
@@ -299,12 +318,14 @@ export default function Overview() {
   const [lineage, setLineage] = useState(null);
   const [report, setReport] = useState(false);
   const [momentum, setMomentum] = useState(null);
+  const [autonomy, setAutonomy] = useState([]);
 
   const load = useCallback(async () => {
-    const [o, a, au, ig, mt, rm] = await Promise.all([
+    const [o, a, au, ig, mt, rm, ac] = await Promise.all([
       api.get("/overview"), api.get("/analytics"), api.get("/audit-logs"), api.get("/integrations"), api.get("/metrics/dashboard"), api.get("/remediation/activity"),
+      api.get("/self-scan/activity").catch(() => ({ data: { events: [] } })),
     ]);
-    setD(o.data); setAn(a.data); setAudit(au.data.slice(0, 8)); setIntg(ig.data); setMetrics(mt.data); setMomentum(rm.data);
+    setD(o.data); setAn(a.data); setAudit(au.data.slice(0, 8)); setIntg(ig.data); setMetrics(mt.data); setMomentum(rm.data); setAutonomy(ac.data.events || []);
   }, []);
 
   useEffect(() => { load(); const t = setInterval(() => load(), 20000); return () => clearInterval(t); }, [load]);
@@ -341,7 +362,7 @@ export default function Overview() {
       </div>
 
       {isExec
-        ? <ExecutiveOverview health={d.health} m={metrics.executive} momentum={momentum} onLineage={setLineage} />
+        ? <ExecutiveOverview health={d.health} m={metrics.executive} momentum={momentum} activity={autonomy} onLineage={setLineage} />
         : <OperationalOverview d={d} an={an} audit={audit} intg={intg} running={running} runAction={runAction} onLineage={setLineage} m={metrics} />}
 
       <BoardReportModal open={report} onClose={() => setReport(false)} />

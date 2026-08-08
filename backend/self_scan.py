@@ -458,7 +458,19 @@ async def _ai_review(findings):
 
 def _default_engine():
     return {"enabled": False, "paused": False, "auto_apply_config": True,
-            "auto_promote": True, "cadence": "daily"}
+            "auto_promote": True, "auto_rollback": True, "canary_promote": False,
+            "cadence": "daily"}
+
+
+async def _log_activity(org_id, kind, title, detail="", severity=None, ref=None):
+    """Append an autonomy-activity event so leadership can watch the engine work live."""
+    try:
+        await db.autonomy_activity.insert_one({
+            "id": str(uuid.uuid4()), "org_id": org_id, "ts": _now(),
+            "kind": kind, "title": title, "detail": detail,
+            "severity": severity, "ref": ref})
+    except Exception as e:
+        logger.warning(f"activity log failed: {e}")
 
 
 async def _run_autonomous(org_id, trigger="schedule", force=False):
@@ -490,6 +502,8 @@ async def _run_autonomous(org_id, trigger="schedule", force=False):
             await notifications.create(
                 org_id, "security", f"Auto-remediated: {f['title']}",
                 f"{remediation} Compliance controls updated automatically.", ref="self-scan")
+            await _log_activity(org_id, "auto-fix", f"Auto-remediated: {f['title']}",
+                                remediation, severity=f.get("severity"), ref="self-scan")
         else:
             # Dependency upgrades are AI-driven first: launch a sandbox-verified upgrade job
             # that auto-applies when no outage is detected, and only flags for human approval
@@ -513,6 +527,9 @@ async def _run_autonomous(org_id, trigger="schedule", force=False):
                     org_id, "security", f"AI auto-upgrading: {f['title']}",
                     f"{rationale} Verifying in an isolated sandbox — auto-applying live if no outage is detected.",
                     ref="self-scan", dedupe_key=f"auto-upgrade:{f['id']}")
+                await _log_activity(org_id, "auto-upgrade", f"AI auto-upgrading: {f.get('package') or f['title']}",
+                                    f"{f.get('current_version')} → {f.get('fixed_version')} — sandbox-verifying before auto-applying.",
+                                    severity=f.get("severity"), ref="self-scan")
                 continue
             existing = await db.scan_approvals.find_one(
                 {"org_id": org_id, "finding_id": f["id"], "status": "pending"})
@@ -632,6 +649,8 @@ class EngineCfg(BaseModel):
     paused: bool | None = None
     auto_apply_config: bool | None = None
     auto_promote: bool | None = None
+    auto_rollback: bool | None = None
+    canary_promote: bool | None = None
 
 
 @self_scan_router.get("/engine")
@@ -639,6 +658,8 @@ async def get_engine(user: dict = Depends(get_current_user)):
     org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
     eng = org.get("auto_engine") or _default_engine()
     eng.setdefault("auto_promote", True)
+    eng.setdefault("auto_rollback", True)
+    eng.setdefault("canary_promote", False)
     pending = await db.scan_approvals.find(
         {"org_id": user["org_id"], "status": "pending"}, {"_id": 0}).sort("created_at", -1).to_list(100)
     history = await db.scan_approvals.find(
@@ -658,6 +679,10 @@ async def set_engine(body: EngineCfg, admin: dict = Depends(require_roles("admin
         eng["auto_apply_config"] = body.auto_apply_config
     if body.auto_promote is not None:
         eng["auto_promote"] = body.auto_promote
+    if body.auto_rollback is not None:
+        eng["auto_rollback"] = body.auto_rollback
+    if body.canary_promote is not None:
+        eng["canary_promote"] = body.canary_promote
     await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"auto_engine": eng}})
     return eng
 
@@ -879,6 +904,8 @@ async def _flag_for_approval(org_id, job_id, package, target, reason, log, verif
     await _post_chat_alert(
         org_id, f"⛔ Approval required — potential outage: {package} → {target}",
         f"{reason}\nThe live service was NOT modified. Open Obserra → Security Scanner to review and manually override/approve.")
+    await _log_activity(org_id, "needs-approval", f"Held for approval — potential outage: {package} → {target}",
+                        reason, severity="high", ref="self-scan")
 
 
 
@@ -1358,6 +1385,8 @@ async def _add_containment(org_id, kind, severity, subject, description, action,
                                    ref="self-scan", dedupe_key=f"contain:{kind}:{subject}")
         await _post_chat_alert(org_id, f"🛡 Auto-contained threat: {subject}",
                                f"{action}\n{description}\nReview in Obserra → Security Scanner.")
+        await _log_activity(org_id, "contained", f"Auto-contained threat: {subject}",
+                            f"{action} — {description}", severity=severity, ref="self-scan")
     else:
         await notifications.create(org_id, "control_drift", f"Threat detected — containment awaiting approval: {subject}",
                                    f"{description} Approve containment in Security Scanner (playbook: review).",
@@ -1492,6 +1521,39 @@ async def containment_metrics(user: dict = Depends(get_current_user)):
             "contained_count": len(ttc), "reviewed_count": len(ttr), "total": len(evs), "trend": trend}
 
 
+async def _rollback_versions(prev_versions):
+    args = [f"{p}=={v}" for p, v in prev_versions.items()]
+    proc = await asyncio.create_subprocess_exec(
+        sys.executable, "-m", "pip", "install", "-U", *args,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    try:
+        await asyncio.wait_for(proc.communicate(), timeout=190)
+    except asyncio.TimeoutError:
+        proc.kill()
+        return False
+    return proc.returncode == 0
+
+
+async def _canary_probe(samples=5, delay=2.0):
+    """Canary window: repeatedly probe the LIVE service health; pass only if every probe
+    stays healthy, so a destabilising promote auto-rolls back."""
+    base = _target_base() or "http://127.0.0.1:8001"
+    url = base.rstrip("/") + "/api/self-scan/ping"
+    ok = 0
+    for _ in range(samples):
+        try:
+            async with httpx.AsyncClient(timeout=5) as c:
+                r = await c.get(url)
+                if r.status_code == 200:
+                    ok += 1
+        except Exception:
+            pass
+        await asyncio.sleep(delay)
+    if ok == samples:
+        return True, f"Canary healthy — {ok}/{samples} live health probes passed."
+    return False, f"Canary unhealthy — only {ok}/{samples} live health probes passed."
+
+
 async def _promote_upgrade_job(org_id, job_id):
     async def setjob(**k):
         await db.maintenance_jobs.update_one({"id": job_id}, {"$set": k})
@@ -1503,6 +1565,16 @@ async def _promote_upgrade_job(org_id, job_id):
     if not versions:
         await setjob(status="failed", finished_at=_now(), log="No verified versions to promote.")
         return
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    eng = org.get("auto_engine") or {}
+    baseline = (await db.self_scans.find_one({"org_id": org_id}, sort=[("ts", -1)]) or {}).get("score")
+    import importlib.metadata as _im
+    prev_versions = {}
+    for p in versions:
+        try:
+            prev_versions[p] = _im.version(p)
+        except Exception:
+            pass
     try:
         args = [f"{p}=={v}" for p, v in versions.items()]
         proc = await asyncio.create_subprocess_exec(
@@ -1516,14 +1588,43 @@ async def _promote_upgrade_job(org_id, job_id):
         for p, v in versions.items():
             _pin_requirement(p, v)
         scan = await _execute_scan(org_id)
+        new_score = scan["score"]
         cleared = not any(f["id"] == finding_id and f["status"] == "fail" for f in scan["findings"])
-        await setjob(status="success" if cleared else "applied", finished_at=_now(),
-                     cleared=cleared, new_score=scan["score"], scan_id=scan["id"],
-                     log="Promoted verified upgrade to live.\n" + logtxt)
-        msg = (f"Promoted & re-scan confirms cleared. Score {scan['score']}/100." if cleared
-               else f"Promoted to live; a restart may be needed to fully clear. Score {scan['score']}/100.")
+        # Canary: hold the live service under a short health window; widen only if it stays up.
+        canary_ok, canary_msg = True, ""
+        if eng.get("canary_promote"):
+            canary_ok, canary_msg = await _canary_probe()
+        # Rollback on regression: revert if the health score dropped or the canary failed.
+        regressed = (baseline is not None and new_score < baseline)
+        if eng.get("auto_rollback", True) and (regressed or not canary_ok) and prev_versions:
+            reason = ("canary health check failed" if not canary_ok
+                      else f"health score dropped {baseline} → {new_score}")
+            await _rollback_versions(prev_versions)
+            for p, v in prev_versions.items():
+                _pin_requirement(p, v)
+            rscan = await _execute_scan(org_id)
+            await setjob(status="rolled_back", finished_at=_now(),
+                         new_score=rscan["score"], scan_id=rscan["id"],
+                         rolled_back_to=prev_versions,
+                         log=f"AUTO-ROLLBACK — {reason}. Reverted to "
+                             f"{', '.join(f'{p}=={v}' for p, v in prev_versions.items())}.\n{canary_msg}\n\n{logtxt}")
+            rmsg = f"Auto-rolled back {', '.join(args)} — {reason}. Live restored to the previous versions."
+            await notifications.create(org_id, "control_drift", f"Upgrade auto-rolled back: {', '.join(args)}", rmsg, ref="self-scan")
+            await _post_chat_alert(org_id, f"↩ Auto-rollback: {', '.join(args)}", rmsg)
+            await _log_activity(org_id, "rollback", f"Auto-rolled back: {', '.join(args)}", reason, severity="high", ref="self-scan")
+            return
+        status = "success" if cleared else "applied"
+        await setjob(status=status, finished_at=_now(),
+                     cleared=cleared, new_score=new_score, scan_id=scan["id"],
+                     canary=("passed" if eng.get("canary_promote") else None),
+                     log=("Promoted verified upgrade to live." + (f" Canary: {canary_msg}" if canary_msg else "")) + "\n" + logtxt)
+        msg = (f"Promoted & re-scan confirms cleared. Score {new_score}/100." if cleared
+               else f"Promoted to live; a restart may be needed to fully clear. Score {new_score}/100.")
+        if eng.get("canary_promote"):
+            msg = "Canary held — widened to live. " + msg
         await notifications.create(org_id, "security", f"Upgrade promoted: {', '.join(args)}", msg, ref="self-scan")
         await _post_chat_alert(org_id, f"✅ Upgrade promoted to live: {', '.join(args)}", msg)
+        await _log_activity(org_id, "auto-applied", f"Upgrade applied to live: {', '.join(args)}", msg, ref="self-scan")
     except Exception as e:
         await setjob(status="failed", finished_at=_now(), log=f"Promote error: {str(e)[:400]}")
 
@@ -1538,6 +1639,23 @@ async def promote_upgrade(job_id: str, background: BackgroundTasks, admin: dict 
     await db.maintenance_jobs.update_one({"id": job_id}, {"$set": {"status": "promoting"}})
     background.add_task(_promote_upgrade_job, admin["org_id"], job_id)
     return {"ok": True, "status": "promoting"}
+
+
+@self_scan_router.post("/maintenance/{job_id}/dismiss")
+async def dismiss_upgrade(job_id: str, admin: dict = Depends(require_roles("admin"))):
+    job = await db.maintenance_jobs.find_one({"org_id": admin["org_id"], "id": job_id})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    await db.maintenance_jobs.update_one(
+        {"id": job_id}, {"$set": {"status": "dismissed", "dismissed_by": admin["email"], "finished_at": _now()}})
+    return {"ok": True, "status": "dismissed"}
+
+
+@self_scan_router.get("/activity")
+async def autonomy_activity(user: dict = Depends(get_current_user)):
+    events = await db.autonomy_activity.find(
+        {"org_id": user["org_id"]}, {"_id": 0}).sort("ts", -1).to_list(40)
+    return {"events": events}
 
 
 async def _run_kev_digest():
@@ -1555,3 +1673,27 @@ async def _run_kev_digest():
         await _post_chat_alert(
             org_id, f"📋 Daily KEV digest: {len(cl)} new exploited CVE(s) in your stack",
             f"{', '.join(cl[:15])}\nJump to remediation → Obserra → Security Scanner.")
+
+
+async def _run_upgrade_digest():
+    """Daily rollup: what the AI auto-applied vs what still needs a human (last 24h)."""
+    since = (datetime.now(timezone.utc) - __import__("datetime").timedelta(hours=24)).isoformat()
+    jobs = await db.maintenance_jobs.find({"created_at": {"$gte": since}}).to_list(2000)
+    by_org = {}
+    for j in jobs:
+        by_org.setdefault(j["org_id"], []).append(j)
+    for org_id, js in by_org.items():
+        applied = [j for j in js if j.get("status") in ("success", "applied")]
+        rolled = [j for j in js if j.get("status") == "rolled_back"]
+        needs = [j for j in js if j.get("status") == "requires_approval"]
+        if not (applied or rolled or needs):
+            continue
+        detail = f"✅ Auto-applied: {len(applied)} · ↩ Rolled back: {len(rolled)} · ⛔ Needs approval: {len(needs)}"
+        body = detail
+        if needs:
+            body += "\n\nAwaiting approval:\n" + "\n".join(
+                f"• {j.get('package')} {j.get('from_version')}→{j.get('to_version')}" for j in needs[:10])
+        await notifications.create(org_id, "report", f"AI remediation digest — {detail}", body, ref="self-scan")
+        await _post_chat_alert(org_id, f"🤖 Daily AI remediation digest — {detail}",
+                               body + "\n\nOpen Obserra → Security Scanner for details.")
+        await _log_activity(org_id, "digest", "Daily remediation digest sent", detail, ref="self-scan")
