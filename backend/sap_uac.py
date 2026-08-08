@@ -9,16 +9,25 @@ so live SAP / ADP / IZ8 / AD / Entra / ServiceNow connectors slot in later witho
 the engine or the API contract.
 """
 import os
+import io
+import csv
 import json
+import hmac
 import random
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException
+
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from db import db
 from auth import get_current_user
 
 sap_router = APIRouter(prefix="/api/sap")
+
+# Emergent managed email proxy (constant — never read from env, survives deploy).
+EMAIL_BASE_URL = "https://integrations.emergentagent.com"
 
 
 from sap_data import (FUNCTIONS, SOD_RULES, SEV_WEIGHT, ROLE_CATALOG, ROLE_BY_REF,
@@ -553,7 +562,8 @@ async def get_autoremediation(user: dict = Depends(get_current_user)):
     for c in conflicts:
         if c.get("status") == "Open":
             open_by_sev[c["severity"]] = open_by_sev.get(c["severity"], 0) + 1
-    return {"config": {k: cfg[k] for k in ("enabled", "severities", "action")},
+    return {"config": {**{k: cfg[k] for k in ("enabled", "severities", "action")},
+                       "last_cron_at": cfg.get("last_cron_at"), "last_cron_count": cfg.get("last_cron_count")},
             "candidates": len(cand),
             "candidate_accounts": [{"account_ref": r, "rules": sorted({c["rule_name"] for c in cs}), "count": len(cs)}
                                    for r, cs in list(cand.items())[:25]],
@@ -610,12 +620,19 @@ async def jml(user: dict = Depends(get_current_user)):
             transfers = [c for c in _hr_conflicts_for(p)
                          if c["field"] in ("legal_entity", "manager", "job_title", "worker_type")]
             if transfers:
+                acct_roles = sorted({r for a in p["accounts"] for r in a.get("roles", [])})
+                birthright = {rc["ref"] for rc in ROLE_CATALOG if rc.get("dept") == p["department"]}
+                current_roles = [{"ref": r, "name": ROLE_BY_REF.get(r, {}).get("name", r)} for r in acct_roles]
+                carried_over = [cr for cr in current_roles if cr["ref"] not in birthright]
                 movers.append({"ref": p["ref"], "name": p["name"], "department": p["department"],
                                "hr_authority": p["hr_authority"], "accounts": len(p["accounts"]),
                                "roles": sum(len(a.get("roles", [])) for a in p["accounts"]),
                                "score": p["risk"]["score"], "rating": p["risk"]["rating"],
                                "changes": [{"field": c["field"], "from": c["adp_value"], "to": c["iz8_value"],
-                                            "authoritative": c["authoritative_value"]} for c in transfers]})
+                                            "authoritative": c["authoritative_value"]} for c in transfers],
+                               "current_roles": current_roles,
+                               "birthright_roles": [{"ref": rc["ref"], "name": rc["name"]} for rc in ROLE_CATALOG if rc.get("dept") == p["department"]],
+                               "carried_over": carried_over, "carried_over_count": len(carried_over)})
     leavers.sort(key=lambda x: -x["score"])
     movers.sort(key=lambda x: -x["score"])
     return {"joiners": joiners, "movers": movers, "leavers": leavers,
