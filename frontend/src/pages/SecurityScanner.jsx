@@ -375,7 +375,7 @@ export default function SecurityScanner() {
         <div className="bg-card fact-border rounded-xl p-6" data-testid="scan-trend">
           <div className="flex items-center gap-2 mb-3"><TrendingUp className="w-5 h-5 text-ai" /><h2 className="font-head font-bold text-lg">Security score trajectory</h2><span className="text-[11px] text-muted-foreground">{trend.length} scans</span></div>
           <div style={{ width: "100%", height: 200, minHeight: 200 }}>
-            <ResponsiveContainer>
+            <ResponsiveContainer minWidth={0} minHeight={180}>
               <AreaChart data={trend} margin={{ top: 6, right: 12, left: -18, bottom: 0 }}>
                 <defs>
                   <linearGradient id="scoreFill" x1="0" y1="0" x2="0" y2="1">
