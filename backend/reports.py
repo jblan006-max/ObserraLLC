@@ -175,7 +175,8 @@ def _cover_preview_png(brand, org_name, theme) -> bytes:
 def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = None,
                report_date: str = None, version: str = None, chart_series=None, takeaways=None,
                theme: str = "dark", risk_bars=None, exec_summary: str = None, brand=None,
-               bench_line: str = None, signoff_line: str = None, risk_bands=None, signoff_trail=None) -> io.BytesIO:
+               bench_line: str = None, signoff_line: str = None, risk_bands=None, signoff_trail=None,
+               fair_air=None, nist_coverage=None) -> io.BytesIO:
     brand = brand or _resolve_brand(None)
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=LETTER, topMargin=0.9 * inch, bottomMargin=0.8 * inch)
@@ -268,6 +269,45 @@ def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = Non
         ]))
         story += [t2, Paragraph("Immutable record of who calibrated the financial model and when — for auditor and board assurance.",
                                 ParagraphStyle("cap2", parent=body, fontSize=7.5, textColor=colors.grey))]
+    if fair_air:
+        story += [Spacer(1, 12), Paragraph("AI Risk Quantification — FAIR-AIR (AI Risk Reduction)", h),
+                  Paragraph("Quantified GenAI risk scenarios produced by advanced-reasoning synthesis across all "
+                            "dashboards. Evidence base: International AI Safety Report 2026 (Bengio), IBM, Verizon DBIR, "
+                            "The Open Group FAIR&#8482;, NIST AI RMF (AI 100-1).", sub)]
+        kd_s = ParagraphStyle("kd", parent=body, fontSize=8.5, textColor=colors.grey, leftIndent=14)
+        for s in fair_air:
+            stmt = re.sub(r"\*\*", "", str(s.get("statement") or ""))
+            story.append(Paragraph(f"•&nbsp;&nbsp;<b>{s.get('vector','')}</b>: {stmt}", bullet))
+            if s.get("why_risk"):
+                story.append(Paragraph(f"Why it's a risk: {s['why_risk']}", kd_s))
+            if s.get("key_driver"):
+                story.append(Paragraph(f"Key driver: {s['key_driver']}", kd_s))
+            ctrls = s.get("recommended_controls") or []
+            if ctrls:
+                story.append(Paragraph("Controls: " + "; ".join(str(c) for c in ctrls), kd_s))
+    if nist_coverage:
+        summ = (nist_coverage or {}).get("summary") or {}
+        story += [Spacer(1, 12), Paragraph("NIST AI RMF (AI 100-1) — Controls Coverage &amp; Compliance", h)]
+        fnline = " · ".join(f"{b.get('f')} {b.get('cov')}%" for b in summ.get("by_fn", []))
+        story += [Paragraph(f"Overall coverage <b>{summ.get('overall',0)}%</b>; {summ.get('met',0)}/{summ.get('total',0)} "
+                            f"controls met; frameworks: {', '.join(summ.get('frameworks',[]))}. By function: {fnline}.", body)]
+        ncell = ParagraphStyle("ncell", parent=body, fontSize=8, leading=10)
+        nrows = [[Paragraph("<b>Control</b>", ncell), Paragraph("<b>NIST</b>", ncell),
+                  Paragraph("<b>Type</b>", ncell), Paragraph("<b>Coverage</b>", ncell)]]
+        for c in (nist_coverage or {}).get("controls", []):
+            lab = "Met" if c["cov"] >= 80 else "Partial" if c["cov"] >= 40 else "Gap"
+            nrows.append([Paragraph(c["c"], ncell), Paragraph(c["fn"], ncell),
+                          Paragraph(c["type"], ncell), Paragraph(f"{c['cov']}% &#183; {lab}", ncell)])
+        ntbl = Table(nrows, colWidths=[3.05 * inch, 1.0 * inch, 1.05 * inch, 1.3 * inch])
+        ntbl.setStyle(TableStyle([
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#c9d6e5")),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eef6fb")),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]))
+        story += [ntbl, Paragraph("Coverage computed from live control effectiveness, scan evidence, connector, vendor "
+                                  "and AI-system posture. Frameworks: NIST AI RMF · ISO/IEC 42001 · SOC 2 · EU AI Act · GDPR.",
+                                  ParagraphStyle("cap3", parent=body, fontSize=7.5, textColor=colors.grey))]
     story.append(Spacer(1, 16))
     story.append(Paragraph("Confidential — decision-support estimates; not legal, financial, regulatory, or security guarantees.",
                            ParagraphStyle("d", parent=body, fontSize=7, textColor=colors.grey)))
@@ -408,7 +448,8 @@ async def _board_metrics(org_id: str, report_text: str = "") -> dict:
 
 async def build_board_report_pdf(org_id: str, report_text: str,
                                  title: str = "Executive Board Report", theme: str = "dark",
-                                 report_date: str = None, version: str = None) -> io.BytesIO:
+                                 report_date: str = None, version: str = None,
+                                 fair_air=None, nist_coverage=None) -> io.BytesIO:
     m = await _board_metrics(org_id, report_text)
     cover_org = m["brand"]["name"] if m["brand"].get("watermark") is None else m["org_name"]
     return _build_pdf(report_text, title, cover=True, org_name=cover_org, theme=theme,
@@ -416,7 +457,8 @@ async def build_board_report_pdf(org_id: str, report_text: str,
                       chart_series=m["series"], takeaways=m["takeaways"], risk_bars=m["risk_bars"],
                       exec_summary=m["exec_summary"], brand=m["brand"],
                       bench_line=m.get("bench_line"), signoff_line=m.get("signoff_line"),
-                      risk_bands=m.get("risk_bands"), signoff_trail=m.get("signoff_trail"))
+                      risk_bands=m.get("risk_bands"), signoff_trail=m.get("signoff_trail"),
+                      fair_air=fair_air, nist_coverage=nist_coverage)
 
 
 def _wrap(text, font, size, max_w, canvas):
@@ -663,14 +705,27 @@ async def report_pdf(body: ReportBody, user: dict = Depends(get_current_user)):
 async def board_pack_pdf(user: dict = Depends(get_current_user)):
     """One-click board pack: latest board report (with methodology appendix + benchmark
     references) + exposure trend + per-risk bands + calibration sign-off audit trail, in a single PDF."""
-    from ai_advisor import generate_board_report
+    from ai_advisor import generate_board_report, generate_fair_air_analysis
+    from routes import _nist_ai_rmf_coverage
     latest = await db.reports.find_one({"org_id": user["org_id"]}, sort=[("generated_at", -1)])
     report_text = (latest or {}).get("report")
     if not report_text:
         gen = await generate_board_report(user["org_id"], by=user["email"])
         report_text = gen["report"]
+    try:
+        nist_cov = await _nist_ai_rmf_coverage(user["org_id"])
+    except Exception:
+        nist_cov = None
+    fa = await db.fair_air_jobs.find_one({"org_id": user["org_id"], "status": "done"}, sort=[("created_at", -1)])
+    fair_air = (fa or {}).get("scenarios")
+    if not fair_air:
+        try:
+            fair_air = (await generate_fair_air_analysis(user["org_id"])).get("scenarios")
+        except Exception:
+            fair_air = None
     buf = await build_board_report_pdf(user["org_id"], report_text,
-                                       title="Board Pack — Cyber Risk & Financials")
+                                       title="Board Pack — Cyber Risk & Financials",
+                                       fair_air=fair_air, nist_coverage=nist_cov)
     return StreamingResponse(buf, media_type="application/pdf",
                              headers={"Content-Disposition": 'attachment; filename="obserra-board-pack.pdf"'})
 

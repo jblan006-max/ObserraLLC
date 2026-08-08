@@ -441,6 +441,33 @@ async def board_report_status(job_id: str, user: dict = Depends(get_current_user
     return job
 
 
+AI_SAFETY_EVIDENCE = {
+    "international_ai_safety_report_2026": {
+        "chair": "Yoshua Bengio",
+        "publisher": "International AI Safety Report 2026 (internationalaisafetyreport.org)",
+        "why_ai_is_a_risk": [
+            "AI is lowering the barrier to cyberattacks — actors use AI to generate malicious code, find vulnerabilities and package attack tooling for less-skilled attackers.",
+            "The cyber offense-defense balance is worsening — AI increases attacker speed, scale and access to advanced tooling while defenses lag.",
+            "Offense is becoming more autonomous — AI agents can run longer cyber tasks (AI-assisted today, trending toward autonomous).",
+            "Evaluation is getting harder — models can distinguish testing from deployment and exploit test loopholes, so dangerous capabilities can go undetected pre-release.",
+            "Empirical incidents show AI systems acting against instructions and using deception to avoid oversight (loss-of-control risk).",
+        ],
+        "risk_categories": [
+            "Malicious use (cyberattacks, fraud, influence ops, deepfakes, bio/chem misuse)",
+            "Technical failures (unreliable reasoning, loss of control, test-vs-deploy divergence)",
+            "Systemic risks (autonomy, institutions, labor markets)",
+        ],
+    }
+}
+
+_ALLOWED_GPT = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"]
+_DEFAULT_MODEL = "gpt-5.4"
+
+
+def _pick_model(m):
+    return m if m in _ALLOWED_GPT else _DEFAULT_MODEL
+
+
 async def _all_dashboards_context(org_id: str) -> dict:
     """Synthesis context pulling from EVERY dashboard so FAIR-AIR reasoning is holistic:
     financial/FAIR + security scanner + compliance crosswalk + autonomous remediation +
@@ -484,10 +511,11 @@ async def _all_dashboards_context(org_id: str) -> dict:
         "connectors": {"connected_sources": connected, "catalog_size": len(ent_conns) + len(conns)},
         "threat_intel": {"kev_count": kev_set.get("count"), "kev_version": kev_set.get("version"),
                          "updated": intel.get("updated") or intel.get("checked_at")},
+        "external_evidence": AI_SAFETY_EVIDENCE,
     }
 
 
-async def generate_fair_air_analysis(org_id: str):
+async def generate_fair_air_analysis(org_id: str, model: str = None):
     """LLM-produced FAIR-AIR quantified scenario statements per GenAI risk vector, grounded in org data."""
     import re as _re
     try:
@@ -506,9 +534,11 @@ async def generate_fair_air_analysis(org_id: str):
             "(1) identify the threat actor, asset and loss event; (2) estimate Loss Event Frequency from the provided "
             "frequency/benchmark signals; (3) estimate Loss Magnitude from the FAIR Loss-Magnitude and IBM/DBIR figures; "
             "(4) reason about second-order effects, control weaknesses and the dominant risk driver; (5) derive a defensible "
-            "probability % and $ loss. Do ALL reasoning internally and output ONLY the final JSON array — no working, no prose."
+            "probability % and $ loss. Ground WHY each vector is a material risk in the provided external_evidence "
+            "(International AI Safety Report 2026, chaired by Yoshua Bengio) alongside IBM/DBIR/FAIR. "
+            "Do ALL reasoning internally and output ONLY the final JSON array — no working, no prose."
         ),
-    ).with_model("anthropic", "claude-opus-4-8")
+    ).with_model("openai", _pick_model(model))
     prompt = (
         f"CONTEXT (JSON — SYNTHESIZED FROM ALL DASHBOARDS: FAIR quantification, benchmarks, AI-system posture, "
         f"security-scanner findings/KEV, compliance crosswalk, autonomous-remediation activity, threat containment, "
@@ -523,9 +553,11 @@ async def generate_fair_air_analysis(org_id: str):
         "- loss_usd: integer $ loss, grounded in the FAIR Loss-Magnitude / benchmark figures.\n"
         "- key_driver: the single most important risk driver to target (e.g. phishing click-rate among staff with sensitive-data access).\n"
         "- nist_functions: subset of [\"GOVERN\",\"MAP\",\"MEASURE\",\"MANAGE\"].\n"
-        "- recommended_controls: 2-3 items, each \"<control name> (<NIST AI RMF ref>)\".\n\n"
+        "- recommended_controls: 2-3 items, each \"<control name> (<NIST AI RMF ref>)\".\n"
+        "- why_risk: ONE sentence on WHY this is a material risk, citing the evidence base "
+        "(International AI Safety Report 2026 (Bengio) / IBM / DBIR / FAIR).\n\n"
         "Return ONLY a JSON array (no markdown, no prose) of objects with keys: "
-        "vector, probability_pct, loss_usd, statement, key_driver, nist_functions, recommended_controls."
+        "vector, probability_pct, loss_usd, statement, key_driver, why_risk, nist_functions, recommended_controls."
     )
     collected = []
     async for ev in chat.stream_message(UserMessage(text=prompt)):
@@ -542,26 +574,31 @@ async def generate_fair_air_analysis(org_id: str):
         except Exception:
             scenarios = []
     now = datetime.now(timezone.utc).isoformat()
-    return {"scenarios": scenarios, "model": "claude-opus-4-8", "generated_at": now}
+    return {"scenarios": scenarios, "model": _pick_model(model), "generated_at": now}
 
 
-async def _run_fair_air_job(job_id: str, org_id: str):
+async def _run_fair_air_job(job_id: str, org_id: str, model: str = None):
     try:
-        res = await generate_fair_air_analysis(org_id)
+        res = await generate_fair_air_analysis(org_id, model)
         await db.fair_air_jobs.update_one({"job_id": job_id}, {"$set": {"status": "done", **res}})
     except Exception as e:
         await db.fair_air_jobs.update_one({"job_id": job_id}, {"$set": {"status": "error", "error": str(e)}})
 
 
+class FairAirBody(BaseModel):
+    model: str = ""
+
+
 @advisor_router.post("/fair-air")
-async def fair_air_start(background_tasks: BackgroundTasks, user: dict = Depends(require_active_subscription)):
+async def fair_air_start(body: FairAirBody, background_tasks: BackgroundTasks, user: dict = Depends(require_active_subscription)):
     import uuid
     job_id = uuid.uuid4().hex
     now = datetime.now(timezone.utc).isoformat()
-    await db.fair_air_jobs.insert_one({"job_id": job_id, "org_id": user["org_id"],
+    model = _pick_model(body.model)
+    await db.fair_air_jobs.insert_one({"job_id": job_id, "org_id": user["org_id"], "model": model,
                                        "by": user["email"], "status": "running", "created_at": now})
-    background_tasks.add_task(_run_fair_air_job, job_id, user["org_id"])
-    return {"job_id": job_id, "status": "running"}
+    background_tasks.add_task(_run_fair_air_job, job_id, user["org_id"], model)
+    return {"job_id": job_id, "status": "running", "model": model}
 
 
 @advisor_router.get("/fair-air/{job_id}")
@@ -569,6 +606,88 @@ async def fair_air_status(job_id: str, user: dict = Depends(get_current_user)):
     job = await db.fair_air_jobs.find_one({"job_id": job_id, "org_id": user["org_id"]}, {"_id": 0})
     if not job:
         raise HTTPException(status_code=404, detail="Analysis job not found")
+    return job
+
+
+async def generate_fair_air_vector(org_id: str, vector: str, model: str = None):
+    """Deep-dive FAIR-AIR analysis for a SINGLE GenAI risk vector with tailored mitigations."""
+    import re as _re
+    try:
+        ctx = json.dumps(await _all_dashboards_context(org_id), default=str)
+    except Exception:
+        ctx = "{}"
+    chat = LlmChat(
+        api_key=os.environ["EMERGENT_LLM_KEY"],
+        session_id=f"fair-air-vec-{org_id}",
+        system_message=(
+            "You are a FAIR-AIR analyst (FAIR Institute methodology) doing a focused deep-dive on ONE GenAI risk "
+            "vector, quantifying it in financial terms grounded in the provided context. Never invent data beyond "
+            "reasoned FAIR estimates. The purpose is to enable secure AI adoption, not block it.\n\n"
+            "ADVANCED REASONING MODE — internally reason step by step (threat actor, asset, loss event; Loss Event "
+            "Frequency from the frequency/benchmark signals; Loss Magnitude from FAIR/IBM/DBIR figures; second-order "
+            "effects, control weaknesses, dominant driver; defensible probability % and $ loss). Ground WHY this vector "
+            "is a material risk in the provided external_evidence (International AI Safety Report 2026, Bengio) alongside "
+            "IBM/DBIR/FAIR. Output ONLY the JSON."
+        ),
+    ).with_model("openai", _pick_model(model))
+    prompt = (
+        f"CONTEXT (JSON — SYNTHESIZED FROM ALL DASHBOARDS):\n{ctx}\n\n"
+        f"Deep-dive the single GenAI risk vector: \"{vector}\". Synthesize across every dashboard. "
+        "Return ONLY a JSON object (no markdown, no prose) with keys:\n"
+        "vector (string), summary (2-3 sentence board-grade narrative), expected_loss_usd (number),\n"
+        "scenarios (array of 2-3 objects: statement in the form 'There is a X% probability in the next year that "
+        "<who> will <event>, which will lead to $Y in losses.', probability_pct number, loss_usd number, key_driver string),\n"
+        "top_drivers (array of 2-4 strings — the key risk drivers to target),\n"
+        "mitigations (array of 3-5 objects: action string, nist_ref string e.g. 'MANAGE 2.1', impact string describing the $ or risk reduction)."
+    )
+    collected = []
+    async for ev in chat.stream_message(UserMessage(text=prompt)):
+        if isinstance(ev, TextDelta):
+            collected.append(ev.content)
+        elif isinstance(ev, StreamDone):
+            break
+    raw = "".join(collected).strip()
+    m = _re.search(r"\{.*\}", raw, _re.DOTALL)
+    obj = {}
+    if m:
+        try:
+            obj = json.loads(m.group(0))
+        except Exception:
+            obj = {}
+    obj.setdefault("vector", vector)
+    return {"analysis": obj, "model": _pick_model(model), "generated_at": datetime.now(timezone.utc).isoformat()}
+
+
+async def _run_fair_air_vector_job(job_id: str, org_id: str, vector: str, model: str = None):
+    try:
+        res = await generate_fair_air_vector(org_id, vector, model)
+        await db.fair_air_vector_jobs.update_one({"job_id": job_id}, {"$set": {"status": "done", **res}})
+    except Exception as e:
+        await db.fair_air_vector_jobs.update_one({"job_id": job_id}, {"$set": {"status": "error", "error": str(e)}})
+
+
+class VectorBody(BaseModel):
+    vector: str
+    model: str = ""
+
+
+@advisor_router.post("/fair-air/vector")
+async def fair_air_vector_start(body: VectorBody, background_tasks: BackgroundTasks, user: dict = Depends(require_active_subscription)):
+    import uuid
+    job_id = uuid.uuid4().hex
+    now = datetime.now(timezone.utc).isoformat()
+    model = _pick_model(body.model)
+    await db.fair_air_vector_jobs.insert_one({"job_id": job_id, "org_id": user["org_id"], "vector": body.vector,
+                                              "model": model, "by": user["email"], "status": "running", "created_at": now})
+    background_tasks.add_task(_run_fair_air_vector_job, job_id, user["org_id"], body.vector, model)
+    return {"job_id": job_id, "status": "running", "model": model}
+
+
+@advisor_router.get("/fair-air/vector/{job_id}")
+async def fair_air_vector_status(job_id: str, user: dict = Depends(get_current_user)):
+    job = await db.fair_air_vector_jobs.find_one({"job_id": job_id, "org_id": user["org_id"]}, {"_id": 0})
+    if not job:
+        raise HTTPException(status_code=404, detail="Vector analysis not found")
     return job
 
 
@@ -771,7 +890,7 @@ async def generate_board_report(org_id: str, by: str):
             "(connected/measured), ESTIMATE (modelled) and PREDICTION (forward-looking). Write with the precision "
             "of a Big-4 board deck: no filler, no generic platitudes — every sentence carries insight."
         ),
-    ).with_model("anthropic", "claude-opus-4-8")
+    ).with_model("openai", _DEFAULT_MODEL)
     prompt = (
         f"ENTERPRISE CONTEXT (JSON — risks, AI systems, incidents, health):\n{context}\n\n"
         f"FINANCIAL CONTEXT (JSON — FAIR quantification, Monte-Carlo bands, benchmarks, risk-acceptance register):\n{fin_context}\n\n"

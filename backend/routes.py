@@ -1026,6 +1026,112 @@ async def fair_dashboard(user: dict = Depends(get_current_user)):
     return await _fair_data(user["org_id"])
 
 
+# ---------- NIST AI RMF controls coverage (computed from LIVE evidence) ----------
+_NIST_AI_CONTROLS = [
+    {"c": "AI Acceptable-Use Policy", "type": "Governance", "fn": "GOVERN 1.1", "vec": "Shadow GenAI", "fw": ["NIST AI RMF", "ISO 42001", "EU AI Act"], "sig": "policy"},
+    {"c": "Approved AI-tool catalog + SSO gating", "type": "Preventive", "fn": "GOVERN 2.1", "vec": "Shadow GenAI", "fw": ["NIST AI RMF", "ISO 42001", "SOC 2"], "sig": "catalog_sso"},
+    {"c": "AI system inventory & registry", "type": "Governance", "fn": "MAP 1.1", "vec": "All vectors", "fw": ["NIST AI RMF", "ISO 42001", "EU AI Act"], "sig": "inventory"},
+    {"c": "DLP: block sensitive data to public LLMs", "type": "Preventive", "fn": "MANAGE 2.1", "vec": "Shadow GenAI", "fw": ["NIST AI RMF", "SOC 2", "GDPR"], "sig": "dlp"},
+    {"c": "Training-data provenance & licensing review", "type": "Governance", "fn": "MAP 2.3", "vec": "Foundational LLM", "fw": ["NIST AI RMF", "EU AI Act", "GDPR"], "sig": "ai_gov_low"},
+    {"c": "Bias & fairness testing before release", "type": "Detective", "fn": "MEASURE 2.11", "vec": "Foundational LLM", "fw": ["NIST AI RMF", "ISO 42001", "EU AI Act"], "sig": "ai_gov_low"},
+    {"c": "Model-output validation & success criteria", "type": "Detective", "fn": "MEASURE 2.7", "vec": "Hosting on LLMs", "fw": ["NIST AI RMF", "ISO 42001"], "sig": "ai_gov"},
+    {"c": "Prompt-injection testing & input filtering", "type": "Preventive", "fn": "MEASURE 2.7", "vec": "Managed LLMs", "fw": ["NIST AI RMF", "SOC 2"], "sig": "scan"},
+    {"c": "Third-party LLM vendor security assessment", "type": "Governance", "fn": "GOVERN 6.1", "vec": "Managed LLMs", "fw": ["NIST AI RMF", "SOC 2", "ISO 42001"], "sig": "vendor"},
+    {"c": "Data minimization for third-party LLM calls", "type": "Preventive", "fn": "MANAGE 2.2", "vec": "Managed LLMs", "fw": ["NIST AI RMF", "GDPR"], "sig": "data_prot"},
+    {"c": "Phishing-resistant MFA + user awareness", "type": "Preventive", "fn": "MANAGE 4.1", "vec": "Active cyber attack", "fw": ["NIST AI RMF", "SOC 2"], "sig": "identity"},
+    {"c": "Continuous vuln scanning + CISA-KEV monitoring", "type": "Detective", "fn": "MEASURE 2.4", "vec": "Active cyber attack", "fw": ["NIST AI RMF", "SOC 2"], "sig": "scan_kev"},
+    {"c": "Human-in-the-loop review of high-risk output", "type": "Corrective", "fn": "MANAGE 1.2", "vec": "Hosting / Foundational", "fw": ["NIST AI RMF", "EU AI Act"], "sig": "ai_gov_low"},
+    {"c": "Model monitoring & drift detection", "type": "Detective", "fn": "MEASURE 2.12", "vec": "Hosting / Foundational", "fw": ["NIST AI RMF", "ISO 42001"], "sig": "ai_gov"},
+    {"c": "AI incident-response runbook", "type": "Corrective", "fn": "MANAGE 4.1", "vec": "All vectors", "fw": ["NIST AI RMF", "SOC 2"], "sig": "resilience"},
+    {"c": "FAIR-AIR quantification & board reporting", "type": "Governance", "fn": "MEASURE 2.1", "vec": "All vectors", "fw": ["NIST AI RMF"], "sig": "fairair"},
+]
+
+
+async def _nist_ai_rmf_coverage(org_id: str):
+    """Compute per-control coverage % for the NIST AI RMF AI-controls library from LIVE org evidence:
+    control effectiveness by category, latest self-scan score/KEV, scan-evidence alignment, connector,
+    vendor, AI-system posture, calibration sign-off and autonomy engine state."""
+    from bson import ObjectId as _OID
+    controls = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    cat_sum, cat_n = {}, {}
+    for c in controls:
+        cat = c.get("category") or "General"
+        cat_sum[cat] = cat_sum.get(cat, 0) + (c.get("effectiveness") or 0)
+        cat_n[cat] = cat_n.get(cat, 0) + 1
+
+    def ce(cat, d=50):
+        return round(cat_sum[cat] / cat_n[cat]) if cat_n.get(cat) else d
+    overall_eff = round(sum((c.get("effectiveness") or 0) for c in controls) / len(controls)) if controls else 50
+    scan = await db.self_scans.find_one({"org_id": org_id}, {"_id": 0}, sort=[("ts", -1)]) or {}
+    scan_score = scan.get("score") or 70
+    kev = len(scan.get("kev_matches") or [])
+    ai_systems = await db.ai_systems.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    ai_total = len(ai_systems)
+    shadow = len([a for a in ai_systems if a.get("status") == "shadow"])
+    vendors = await db.vendors.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    vhigh = len([v for v in vendors if str(v.get("tier") or v.get("rating") or v.get("risk") or "").lower() in ("high", "critical", "d", "f")])
+    vtotal = len(vendors) or 1
+    org = await db.organizations.find_one({"_id": _OID(org_id)}) or {}
+    signoff = (org.get("financial_config") or {}).get("signoff") or {}
+    engine_on = bool((org.get("auto_engine") or {}).get("enabled"))
+    signed = bool(signoff.get("locked"))
+    ev = await db.scan_evidence.find_one({"org_id": org_id}, {"_id": 0}) or {}
+    aligned = sum(len(v) for v in (ev.get("aligned") or {}).values())
+    gaps = sum(len(v) for v in (ev.get("gaps") or {}).values())
+    align_ratio = round(aligned / (aligned + gaps) * 100) if (aligned + gaps) else 60
+    conns = await db.enterprise_connectors.find({"org_id": org_id}, {"_id": 0, "connected": 1}).to_list(200)
+    conn_ratio = round(len([c for c in conns if c.get("connected")]) / len(conns) * 100) if conns else 40
+    fa = await db.fair_air_jobs.find_one({"org_id": org_id, "status": "done"})
+
+    def clamp(v):
+        return max(5, min(100, round(v)))
+
+    def sig_cov(sig):
+        if sig == "policy":
+            return clamp(45 + (30 if signed else 0) + (25 if engine_on else 0) - (10 if shadow else 0))
+        if sig == "catalog_sso":
+            return clamp(0.55 * ce("Identity & Access") + 0.45 * conn_ratio)
+        if sig == "inventory":
+            return clamp((90 if ai_total else 45) - (round(shadow / ai_total * 30) if ai_total else 0))
+        if sig == "dlp":
+            return clamp(ce("Data Protection") - 12)
+        if sig == "ai_gov":
+            return clamp(ce("AI Governance"))
+        if sig == "ai_gov_low":
+            return clamp(ce("AI Governance") * 0.55)
+        if sig == "scan":
+            return clamp(scan_score * 0.7)
+        if sig == "scan_kev":
+            return clamp(scan_score - kev * 8)
+        if sig == "vendor":
+            return clamp(ce("Third Party") * (1 - vhigh / vtotal * 0.5))
+        if sig == "data_prot":
+            return clamp(ce("Data Protection") * 0.8)
+        if sig == "identity":
+            return clamp(ce("Identity & Access"))
+        if sig == "resilience":
+            return clamp(ce("Resilience"))
+        if sig == "fairair":
+            return clamp(85 + (15 if fa else 0))
+        return clamp(overall_eff)
+    out = [{"c": c["c"], "type": c["type"], "fn": c["fn"], "vec": c["vec"], "fw": c["fw"], "cov": sig_cov(c["sig"])}
+           for c in _NIST_AI_CONTROLS]
+    overall = round(sum(x["cov"] for x in out) / len(out)) if out else 0
+    met = len([x for x in out if x["cov"] >= 80])
+    frameworks = sorted({f for x in out for f in x["fw"]})
+    by_fn = []
+    for f in ["GOVERN", "MAP", "MEASURE", "MANAGE"]:
+        it = [x for x in out if x["fn"].startswith(f)]
+        by_fn.append({"f": f, "cov": round(sum(x["cov"] for x in it) / len(it)) if it else 0})
+    return {"controls": out, "summary": {"overall": overall, "met": met, "total": len(out),
+                                         "frameworks": frameworks, "by_fn": by_fn}}
+
+
+@api.get("/financial/nist-coverage")
+async def nist_coverage(user: dict = Depends(get_current_user)):
+    return await _nist_ai_rmf_coverage(user["org_id"])
+
+
 # ---------- Decision simulation (what-if) ----------
 _POINT_COST = {"Identity & Access": 42000, "Vulnerability Mgmt": 55000, "AI Governance": 60000,
                "Third Party": 30000, "Resilience": 38000, "Data Protection": 48000}

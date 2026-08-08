@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { ShieldAlert, Loader2, Layers, PlayCircle, Gauge, ShieldCheck, TrendingDown, Calculator, BarChart3, Building2, RefreshCw, Sparkles, FileText, Clock, Target, Activity, BookOpen } from "lucide-react";
-import { Line, XAxis, YAxis, Tooltip, ComposedChart, Area } from "recharts";
+import { ShieldAlert, Loader2, Layers, PlayCircle, Gauge, ShieldCheck, TrendingDown, Calculator, BarChart3, Building2, RefreshCw, Sparkles, FileText, Clock, Target, Activity, BookOpen, Cpu, Crosshair } from "lucide-react";
+import { Line, XAxis, YAxis, Tooltip, ComposedChart, Area, ReferenceDot } from "recharts";
 import { ChartBox } from "@/components/ChartBox";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const TIER = (residual) => residual >= 16 ? "0 84% 60%" : residual >= 9 ? "35 90% 55%" : "142 70% 45%";
 
@@ -122,6 +123,15 @@ function FactorNode({ label, abbr, value, desc, accent = "215 15% 55%", children
   );
 }
 
+const GPT_MODELS = [
+  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol · max compute" },
+  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra · high" },
+  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna · high" },
+  { id: "gpt-5.5", label: "GPT-5.5 · high" },
+  { id: "gpt-5.4", label: "GPT-5.4 · balanced (default)" },
+  { id: "gpt-5.4-mini", label: "GPT-5.4 Mini · fast" },
+];
+
 const FAIR_AIR_ILLUSTRATIVE = [
   { v: "Shadow GenAI", p: 5, loss: "$5M", stmt: "employees leak company-sensitive information via an open-source LLM (e.g. ChatGPT)", driver: "# of employees with access to sensitive data using unsanctioned AI tools" },
   { v: "Foundational LLM", p: 8, loss: "$10M", stmt: "a model trained without bias/integrity safeguards produces harmful or non-compliant output", driver: "% of training data without vetted permissions & provenance" },
@@ -132,15 +142,23 @@ const FAIR_AIR_ILLUSTRATIVE = [
 
 function FairDashboard({ overview }) {
   const [d, setD] = useState(null);
+  const [nist, setNist] = useState(null);
   const [aiScenarios, setAiScenarios] = useState(null);
   const [aiBusy, setAiBusy] = useState(false);
   const [aiModel, setAiModel] = useState("");
-  useEffect(() => { api.get("/financial/fair").then((r) => setD(r.data)).catch(() => {}); }, []);
+  const [aiModelSel, setAiModelSel] = useState("gpt-5.4");
+  const [vec, setVec] = useState(null);
+  const [vecBusy, setVecBusy] = useState(false);
+  const [vecData, setVecData] = useState(null);
+  useEffect(() => {
+    api.get("/financial/fair").then((r) => setD(r.data)).catch(() => {});
+    api.get("/financial/nist-coverage").then((r) => setNist(r.data)).catch(() => {});
+  }, []);
   if (!d) return null;
   const analyzeAI = async () => {
     setAiBusy(true);
     try {
-      const { data } = await api.post("/advisor/fair-air");
+      const { data } = await api.post("/advisor/fair-air", { model: aiModelSel });
       const jid = data.job_id;
       let tries = 0;
       const poll = async () => {
@@ -149,11 +167,29 @@ function FairDashboard({ overview }) {
           if (r.data.status === "done") { setAiScenarios(r.data.scenarios || []); setAiModel(r.data.model || "AI"); setAiBusy(false); toast.success("FAIR-AIR AI analysis ready"); return; }
           if (r.data.status === "error") { setAiBusy(false); toast.error("AI analysis failed"); return; }
         } catch (e) {}
-        if (tries++ > 45) { setAiBusy(false); toast.error("AI analysis timed out"); return; }
+        if (tries++ > 60) { setAiBusy(false); toast.error("AI analysis timed out"); return; }
         setTimeout(poll, 2000);
       };
       setTimeout(poll, 2000);
     } catch (e) { setAiBusy(false); toast.error(e.response?.data?.detail || "AI analysis failed"); }
+  };
+  const openVector = async (name) => {
+    setVec({ name }); setVecData(null); setVecBusy(true);
+    try {
+      const { data } = await api.post("/advisor/fair-air/vector", { vector: name, model: aiModelSel });
+      const jid = data.job_id;
+      let tries = 0;
+      const poll = async () => {
+        try {
+          const r = await api.get(`/advisor/fair-air/vector/${jid}`);
+          if (r.data.status === "done") { setVecData(r.data.analysis || {}); setVecBusy(false); return; }
+          if (r.data.status === "error") { setVecBusy(false); toast.error("Vector analysis failed"); return; }
+        } catch (e) {}
+        if (tries++ > 60) { setVecBusy(false); toast.error("Vector analysis timed out"); return; }
+        setTimeout(poll, 2000);
+      };
+      setTimeout(poll, 2000);
+    } catch (e) { setVecBusy(false); toast.error(e.response?.data?.detail || "Vector analysis failed"); }
   };
   const fmt = (n) => n == null ? "—" : n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M` : `$${(n / 1e3).toFixed(0)}k`;
   const p = d.portfolio;
@@ -239,9 +275,10 @@ function FairDashboard({ overview }) {
             ["Managed LLMs", "Third-party LLM APIs — prompt-injection data leakage & vendor controls."],
             ["Active cyber attack", "Adversaries using LLMs — AI-enhanced phishing & zero-day discovery."],
           ].map(([t, s], i) => (
-            <div key={t} data-testid={`fair-air-vector-${i}`} className="rounded-md border border-ai/20 bg-background/40 p-2">
-              <div className="font-head font-bold text-[11px] text-ai">{t}</div>
+            <div key={t} data-testid={`fair-air-vector-${i}`} onClick={() => openVector(t)} className="text-left rounded-md border border-ai/20 bg-background/40 p-2 hover:border-ai/60 hover:bg-ai/[0.06] transition-colors cursor-pointer group">
+              <div className="flex items-center justify-between gap-1"><div className="font-head font-bold text-[11px] text-ai">{t}</div><Sparkles className="w-3 h-3 text-ai opacity-0 group-hover:opacity-100 transition-opacity shrink-0" /></div>
               <div className="text-[10px] text-muted-foreground mt-0.5 leading-snug">{s}</div>
+              <div className="text-[8px] font-mono uppercase text-ai/70 mt-1">Click → AI deep-dive</div>
             </div>
           ))}
         </div>
@@ -264,10 +301,17 @@ function FairDashboard({ overview }) {
         <div className="mt-3" data-testid="fair-air-scenarios">
           <div className="flex flex-wrap items-center gap-2 mb-1.5">
             <div className="text-[10px] font-mono uppercase text-muted-foreground flex items-center gap-1"><Calculator className="w-3.5 h-3.5" /> Quantified scenarios &amp; key risk drivers (FAIR-AIR output)</div>
-            <button data-testid="fair-air-analyze-btn" onClick={analyzeAI} disabled={aiBusy} className="ml-auto text-xs px-2.5 py-1 rounded-md bg-ai text-white flex items-center gap-1 disabled:opacity-60">
-              {aiBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} {aiBusy ? "Analyzing…" : "Analyze with AI"}
-            </button>
+            <div className="ml-auto flex items-center gap-1.5">
+              <Cpu className="w-3.5 h-3.5 text-muted-foreground" />
+              <select data-testid="fair-air-model-select" value={aiModelSel} onChange={(e) => setAiModelSel(e.target.value)} disabled={aiBusy} className="text-xs bg-secondary border border-border rounded-md px-2 py-1 text-foreground disabled:opacity-60" title="Higher versions use more inference compute → more accurate reasoning (International AI Safety Report 2026)">
+                {GPT_MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+              </select>
+              <button data-testid="fair-air-analyze-btn" onClick={analyzeAI} disabled={aiBusy} className="text-xs px-2.5 py-1 rounded-md bg-ai text-white flex items-center gap-1 disabled:opacity-60">
+                {aiBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} {aiBusy ? "Analyzing…" : "Analyze with AI"}
+              </button>
+            </div>
           </div>
+          <div className="text-[9px] text-muted-foreground mb-1.5" data-testid="fair-air-compute-note">More inference compute (higher model version) = more accurate reasoning &amp; deeper cross-dashboard synthesis. <span className="text-foreground/70">Source: International AI Safety Report 2026 (Fig. 1.6).</span></div>
           {aiScenarios && (
             <div className="text-[10px] text-ai mb-1.5 flex items-center gap-1 flex-wrap" data-testid="fair-air-ai-badge"><Sparkles className="w-3 h-3 shrink-0" /> AI-generated by {aiModel} (advanced reasoning) · grounded in your risk, AI-system &amp; benchmark data · expected annual AI loss ≈ {fmt(aiScenarios.reduce((s, x) => s + (Number(x.probability_pct) || 0) / 100 * (Number(x.loss_usd) || 0), 0))}</div>
           )}
@@ -278,6 +322,7 @@ function FairDashboard({ overview }) {
                   <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm bg-ai/12 text-ai shrink-0">{s.vector || s.v}</span>
                   <span className="text-[11px] leading-snug flex-1 min-w-0">{s.statement ? s.statement : <><b className="text-high">{s.p}% probability</b> in the next year that {s.stmt}, leading to <b>{s.loss}</b> in losses.</>}</span>
                 </div>
+                {s.why_risk && <div className="text-[10px] text-muted-foreground mt-1"><span className="font-semibold text-ai/90">Why it's a risk:</span> {s.why_risk}</div>}
                 <div className="text-[10px] text-muted-foreground mt-1"><span className="font-semibold text-foreground/80">Key risk driver:</span> {s.key_driver || s.driver}</div>
                 {(s.recommended_controls?.length > 0 || s.nist_functions?.length > 0) && (
                   <div className="flex items-center gap-1.5 mt-1 flex-wrap">
@@ -309,7 +354,7 @@ function FairDashboard({ overview }) {
           <div className="text-[10px] text-muted-foreground mt-1.5">FAIR-AIR supplies the quantitative <b>Measure</b> layer; the four functions together make the AI-risk reasoning auditable and standards-backed. Ref: NIST AI Risk Management Framework (AI 100-1) · The Open Group FAIR™ · FAIR Institute FAIR-AIR playbook.</div>
         </div>
         {(() => {
-          const CONTROLS = [
+          const CONTROLS = (nist?.controls?.length ? nist.controls : [
             { c: "AI Acceptable-Use Policy", type: "Governance", fn: "GOVERN 1.1", vec: "Shadow GenAI", cov: 100, fw: ["NIST AI RMF", "ISO 42001", "EU AI Act"] },
             { c: "Approved AI-tool catalog + SSO gating", type: "Preventive", fn: "GOVERN 2.1", vec: "Shadow GenAI", cov: 90, fw: ["NIST AI RMF", "ISO 42001", "SOC 2"] },
             { c: "AI system inventory & registry", type: "Governance", fn: "MAP 1.1", vec: "All vectors", cov: 100, fw: ["NIST AI RMF", "ISO 42001", "EU AI Act"] },
@@ -326,7 +371,7 @@ function FairDashboard({ overview }) {
             { c: "Model monitoring & drift detection", type: "Detective", fn: "MEASURE 2.12", vec: "Hosting / Foundational", cov: 30, fw: ["NIST AI RMF", "ISO 42001"] },
             { c: "AI incident-response runbook", type: "Corrective", fn: "MANAGE 4.1", vec: "All vectors", cov: 100, fw: ["NIST AI RMF", "SOC 2"] },
             { c: "FAIR-AIR quantification & board reporting", type: "Governance", fn: "MEASURE 2.1", vec: "All vectors", cov: 100, fw: ["NIST AI RMF"] },
-          ];
+          ]);
           const fnColor = (fn) => fn.startsWith("GOVERN") ? "265 70% 65%" : fn.startsWith("MAP") ? "190 90% 50%" : fn.startsWith("MEASURE") ? "35 90% 55%" : "142 70% 45%";
           const covColor = (v) => v >= 80 ? "142 70% 45%" : v >= 40 ? "35 90% 55%" : "0 84% 60%";
           const covLabel = (v) => v >= 80 ? "Met" : v >= 40 ? "Partial" : "Gap";
@@ -336,7 +381,7 @@ function FairDashboard({ overview }) {
           const byFn = ["GOVERN", "MAP", "MEASURE", "MANAGE"].map((f) => { const it = CONTROLS.filter((c) => c.fn.startsWith(f)); return { f, cov: it.length ? Math.round(it.reduce((s, c) => s + c.cov, 0) / it.length) : 0 }; });
           return (
           <div className="mt-3 rounded-md border border-border p-2.5" data-testid="fair-nist-controls">
-            <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2 flex items-center gap-1"><Layers className="w-3.5 h-3.5" /> AI risks mapped to NIST AI RMF — controls coverage &amp; compliance</div>
+            <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2 flex items-center gap-1"><Layers className="w-3.5 h-3.5" /> AI risks mapped to NIST AI RMF — controls coverage &amp; compliance <span className="text-[8px] font-mono px-1 py-0.5 rounded-sm" style={{ background: nist ? "hsl(142 70% 45% / 0.15)" : "hsl(215 15% 55% / 0.15)", color: nist ? "hsl(142 70% 45%)" : "hsl(215 15% 55%)" }}>{nist ? "LIVE" : "SAMPLE"}</span></div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3" data-testid="fair-nist-summary">
               <div className="rounded-md bg-secondary/40 p-2"><div className="text-[9px] font-mono uppercase text-muted-foreground">Overall coverage</div><div className="font-head font-black text-xl" style={{ color: `hsl(${covColor(overall)})` }}>{overall}%</div></div>
               <div className="rounded-md bg-secondary/40 p-2"><div className="text-[9px] font-mono uppercase text-muted-foreground">Controls met</div><div className="font-head font-black text-xl">{implemented}/{CONTROLS.length}</div></div>
@@ -427,10 +472,31 @@ function FairDashboard({ overview }) {
             <YAxis dataKey="exceedance_pct" tickFormatter={(v) => `${v}%`} tick={{ fontSize: 10 }} stroke="hsl(215 15% 55%)" width={40} domain={[0, 100]} />
             <Tooltip formatter={(v) => `${v}% chance`} labelFormatter={(v) => `Annual loss ≥ $${(v / 1e6).toFixed(2)}M`} contentStyle={{ background: "hsl(222 18% 12%)", border: "1px solid hsl(222 12% 22%)", fontSize: 11 }} />
             <Area type="monotone" dataKey="exceedance_pct" stroke="hsl(0 84% 60%)" fill="hsl(0 84% 60% / 0.15)" strokeWidth={2} name="Exceedance" />
+            {aiScenarios && aiScenarios.map((s, i) => (
+              <ReferenceDot key={i} x={Number(s.loss_usd) || 0} y={Math.min(100, Math.max(0, Number(s.probability_pct) || 0))} r={5} fill="hsl(190 90% 50%)" stroke="#fff" strokeWidth={1} ifOverflow="extendDomain" />
+            ))}
           </ComposedChart>
         </ChartBox>
-        <div className="text-[10px] text-muted-foreground">Y-axis = probability the annual loss meets or exceeds the x-axis dollar amount (3,000-iteration Monte-Carlo over FAIR factors).</div>
+        <div className="text-[10px] text-muted-foreground">Y-axis = probability the annual loss meets or exceeds the x-axis dollar amount (3,000-iteration Monte-Carlo over FAIR factors).{aiScenarios && <span className="text-ai"> Cyan dots = AI FAIR-AIR scenarios positioned by their $ loss &amp; probability.</span>}</div>
       </div>
+      <Dialog open={!!vec} onOpenChange={(o) => { if (!o) { setVec(null); setVecData(null); } }}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="fair-vector-modal">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-ai"><Crosshair className="w-4 h-4" /> {vec?.name} — FAIR-AIR deep-dive</DialogTitle>
+          </DialogHeader>
+          {vecBusy && <div className="py-10 flex flex-col items-center gap-2 text-muted-foreground" data-testid="fair-vector-loading"><Loader2 className="w-6 h-6 animate-spin text-ai" /><div className="text-xs text-center">Running advanced-reasoning analysis ({aiModelSel})…<br />synthesizing across all dashboards</div></div>}
+          {!vecBusy && vecData && (
+            <div className="space-y-3" data-testid="fair-vector-content">
+              {vecData.summary && <p className="text-sm text-foreground/90 leading-snug">{vecData.summary}</p>}
+              {vecData.expected_loss_usd != null && <div className="text-xs font-mono text-high">Expected annual loss ≈ {fmt(Number(vecData.expected_loss_usd))}</div>}
+              {vecData.scenarios?.length > 0 && (<div><div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Quantified scenarios</div><div className="space-y-1.5">{vecData.scenarios.map((sc, i) => (<div key={i} className="rounded-md border border-border bg-secondary/20 p-2 text-[11px]">{sc.statement || `${sc.probability_pct}% → ${fmt(Number(sc.loss_usd))}`}{sc.key_driver && <div className="text-[10px] text-muted-foreground mt-0.5">Driver: {sc.key_driver}</div>}</div>))}</div></div>)}
+              {vecData.top_drivers?.length > 0 && (<div><div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Key risk drivers</div><ul className="list-disc pl-4 text-[11px] text-muted-foreground space-y-0.5">{vecData.top_drivers.map((t, i) => <li key={i}>{t}</li>)}</ul></div>)}
+              {vecData.mitigations?.length > 0 && (<div><div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Tailored mitigations (NIST AI RMF)</div><div className="space-y-1.5">{vecData.mitigations.map((m, i) => (<div key={i} className="rounded-md border border-ai/20 bg-ai/[0.05] p-2 text-[11px]"><div className="flex items-center gap-2"><span className="font-semibold text-foreground/90 flex-1">{m.action}</span>{m.nist_ref && <span className="text-[8px] font-mono px-1 py-0.5 rounded-sm bg-ai/15 text-ai shrink-0">{m.nist_ref}</span>}</div>{m.impact && <div className="text-[10px] text-muted-foreground mt-0.5">{m.impact}</div>}</div>))}</div></div>)}
+            </div>
+          )}
+          {!vecBusy && !vecData && <div className="py-8 text-center text-xs text-muted-foreground">No analysis returned. Try again.</div>}
+        </DialogContent>
+      </Dialog>
       <div className="rounded-lg border border-border overflow-x-auto" data-testid="fair-risk-table">
         <table className="w-full text-xs min-w-[780px]">
           <thead className="text-[10px] font-mono uppercase text-muted-foreground border-b border-border">
