@@ -3,16 +3,43 @@ import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
 import { SapInsight } from "@/components/SapInsight";
 import { useDeepDive } from "@/context/DeepDiveContext";
-import { KeyRound, ShieldAlert, Users, MoonStar } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { KeyRound, ShieldAlert, Users, MoonStar, Ban, Lock, ShieldCheck } from "lucide-react";
 
 const fmtDate = (s) => (s ? new Date(s).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "—");
+
+const PRIV_META = {
+  revoke_privileged: { label: "Revoke privileged", btn: "bg-crit hover:bg-crit/90", tone: "text-crit",
+    desc: "Removes SAP_ALL and every privileged role from this account (non-privileged access is kept). Fires the automated ServiceNow → HR (ADP/IZ8) → SAP → AD/Entra workflow." },
+  lock: { label: "Emergency lock", btn: "bg-crit hover:bg-crit/90", tone: "text-crit",
+    desc: "Locks the SAP account, terminates sessions, deactivates the owner and disables directory sign-in. Fires the automated ServiceNow lock workflow." },
+  recertify: { label: "Recertify", btn: "bg-ai hover:bg-ai/90", tone: "text-ai",
+    desc: "Opens a privileged-access recertification task with entitlement and last-use evidence for the account owner to review." },
+};
 
 export default function PrivilegedAccess() {
   const { openDeepDive } = useDeepDive();
   const [d, setD] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+  const [reason, setReason] = useState("");
+  const [busy, setBusy] = useState(false);
   const load = useCallback(async () => { const { data } = await api.get("/sap/privileged"); setD(data); }, []);
   useEffect(() => { load(); }, [load]);
   if (!d) return <Spinner />;
+
+  const askAction = (action, row) => { setReason(""); setConfirm({ action, row }); };
+  const runAction = async () => {
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/sap/privileged/${confirm.row.ref}/action`, { action: confirm.action, reason });
+      toast.success(`${PRIV_META[confirm.action].label} — done`, { description: `ServiceNow ${data.ticket.number} opened & auto-closed` });
+      setConfirm(null); window.dispatchEvent(new Event("sap-data-changed")); await load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
+    setBusy(false);
+  };
 
   const open = (r) => openDeepDive({
     accent: r.sap_all ? "0 84% 60%" : "35 90% 55%", refLabel: r.ref, title: `${r.sap_user} · ${r.person_name}`,
@@ -48,7 +75,7 @@ export default function PrivilegedAccess() {
       <div className="bg-card fact-border rounded-xl overflow-x-auto">
         <table className="w-full text-sm" data-testid="priv-table">
           <thead><tr className="text-left text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border">
-            <th className="p-3">SAP User</th><th className="p-3">Person</th><th className="p-3">System</th><th className="p-3">Type</th><th className="p-3">Privileged Roles</th><th className="p-3">Flags</th><th className="p-3">Last Login</th>
+            <th className="p-3">SAP User</th><th className="p-3">Person</th><th className="p-3">System</th><th className="p-3">Type</th><th className="p-3">Privileged Roles</th><th className="p-3">Flags</th><th className="p-3">Last Login</th><th className="p-3 text-right">Actions</th>
           </tr></thead>
           <tbody>
             {d.privileged.map((r) => (
@@ -64,11 +91,31 @@ export default function PrivilegedAccess() {
                   {r.lock_state === "locked" && <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">LOCKED</span>}
                 </td>
                 <td className="p-3 text-xs">{fmtDate(r.last_login)}</td>
+                <td className="p-3 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
+                  <div className="inline-flex items-center gap-1 justify-end">
+                    {(r.sap_all || r.roles.length > 0) && <button data-testid={`priv-revoke-${r.ref}`} title="Revoke privileged roles" onClick={() => askAction("revoke_privileged", r)} className="text-crit hover:bg-crit/10 rounded-md p-1.5"><Ban className="w-4 h-4" /></button>}
+                    {r.lock_state !== "locked" && <button data-testid={`priv-lock-${r.ref}`} title="Emergency lock" onClick={() => askAction("lock", r)} className="text-crit hover:bg-crit/10 rounded-md p-1.5"><Lock className="w-4 h-4" /></button>}
+                    <button data-testid={`priv-recertify-${r.ref}`} title="Recertify" onClick={() => askAction("recertify", r)} className="text-ai hover:bg-ai/10 rounded-md p-1.5"><ShieldCheck className="w-4 h-4" /></button>
+                  </div>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      <Dialog open={!!confirm} onOpenChange={(o) => !o && setConfirm(null)}>
+        <DialogContent data-testid="priv-confirm-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">{confirm && PRIV_META[confirm.action].label} — {confirm?.row?.sap_user}</DialogTitle>
+            <DialogDescription>{confirm && PRIV_META[confirm.action].desc}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Textarea data-testid="priv-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="ServiceNow work note / reason…" rows={2} />
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setConfirm(null)}>Cancel</Button><Button data-testid="priv-confirm-btn" disabled={busy} onClick={runAction} className={confirm ? PRIV_META[confirm.action].btn : ""}>{busy ? "Working…" : confirm && PRIV_META[confirm.action].label}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -49,6 +49,31 @@ export default function SodCommandCenter() {
 
   if (!data) return <Spinner />;
 
+  const openRule = async (r) => {
+    try {
+      const { data } = await api.get(`/sap/sod/rules/${r.ref}`);
+      const ru = data.rule;
+      openDeepDive({
+        accent: SEV[ru.severity], refLabel: ru.ref, title: ru.name, rating: ru.severity,
+        facets: [
+          { label: "Risk area", value: ru.area },
+          { label: "Business risk", value: ru.business_risk },
+          { label: "Violations", value: `${data.counts.total} total · ${data.counts.open} open · ${data.counts.mitigated} mitigated` },
+          { label: data.function_a.label, value: `T-codes: ${data.function_a.tcodes.join(", ") || "—"}` },
+          { label: data.function_b.label, value: `T-codes: ${data.function_b.tcodes.join(", ") || "—"}` },
+          { label: "Current holders", value: data.holders.slice(0, 8).map((h) => h.person_name).join(", ") || "None currently" },
+        ],
+        recommendedActions: [
+          `Prevent any single identity from holding both “${data.function_a.label}” and “${data.function_b.label}”.`,
+          data.counts.open > 0 ? `Remediate ${data.counts.open} open violation(s): remove one conflicting role or attach a mitigating control with evidence.` : "No open violations — keep this rule under continuous monitoring.",
+        ],
+        complianceRefs: ["SOX ITGC", "NIST AC-5", "ISO 27001 A.5.3"],
+        explainTitle: `${ru.name} — SoD rule`, explainKind: "SAP segregation of duties rule and its toxic function combination",
+        explainContext: { rule: data },
+      });
+    } catch (e) { toast.error("Could not load rule detail"); }
+  };
+
   const openConflict = (c) => openDeepDive({
     accent: SEV[c.severity], refLabel: c.conflict_ref, title: c.rule_name, rating: c.severity,
     facets: [
@@ -136,13 +161,13 @@ export default function SodCommandCenter() {
           <div className="flex items-center gap-2 mb-3"><ScrollText className="w-4 h-4 text-primary" /><h2 className="font-head font-bold text-base">SoD Rule Library</h2></div>
           <div className="space-y-2 max-h-[280px] overflow-y-auto pr-1">
             {rules.map((r) => (
-              <div key={r.ref} className="flex items-start gap-3 p-2.5 rounded-lg bg-secondary/30" data-testid={`sod-rule-${r.ref}`}>
+              <button key={r.ref} onClick={() => openRule(r)} data-testid={`sod-rule-${r.ref}`} className="w-full text-left flex items-start gap-3 p-2.5 rounded-lg bg-secondary/30 hover:bg-secondary/60 transition-colors">
                 <Chip v={r.severity} />
                 <div className="min-w-0">
                   <div className="text-sm font-medium">{r.name} <span className="text-[10px] font-mono text-muted-foreground">· {r.ref} · {r.area}</span></div>
                   <div className="text-[11px] text-muted-foreground">{r.function_a_label} ✕ {r.function_b_label}</div>
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </div>

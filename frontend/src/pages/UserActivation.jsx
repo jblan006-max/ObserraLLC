@@ -17,7 +17,7 @@ import {
   PieChart, Pie, Cell, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
 } from "recharts";
 import {
-  UserCheck, UserX, RefreshCw, Search, Ticket, Ban, ToggleRight, Users, Gauge, TriangleAlert, CheckCircle2, Mail, Workflow, Power, UserPlus, Zap, PauseCircle, PlayCircle,
+  UserCheck, UserX, RefreshCw, Search, Ticket, Ban, ToggleRight, Users, Gauge, TriangleAlert, CheckCircle2, Mail, Workflow, Power, UserPlus, Zap, PauseCircle, PlayCircle, Sparkles,
 } from "lucide-react";
 
 const CHART_TT = { background: "hsl(215 38% 10%)", border: "1px solid hsl(215 30% 18%)", borderRadius: 8, fontSize: 12 };
@@ -51,6 +51,7 @@ export default function UserActivation() {
   const [ticketView, setTicketView] = useState(null);
   const [bulk, setBulk] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [suggesting, setSuggesting] = useState(false);
   const [roleList, setRoleList] = useState([]);
   const [cf, setCf] = useState({ first_name: "", last_name: "", email: "", department: "Finance", legal_entity: "US01", role: "", roles: [] });
 
@@ -104,6 +105,16 @@ export default function UserActivation() {
     setBusy(false);
   };
   const addCf = () => { if (cf.role && !cf.roles.includes(cf.role)) setCf({ ...cf, roles: [...cf.roles, cf.role], role: "" }); };
+  const aiFill = async () => {
+    setSuggesting(true);
+    try {
+      const { data } = await api.post("/sap/activation/create/suggest", { department: cf.department });
+      setCf({ first_name: data.first_name, last_name: data.last_name, email: data.email, department: data.department, legal_entity: data.legal_entity, role: "", roles: data.roles || [] });
+      setReason(data.work_note || "");
+      toast.success("AI drafted a new-hire profile", { description: `${data.first_name} ${data.last_name} · ${data.department} · ${(data.role_names || []).join(", ") || "birthright roles"}` });
+    } catch (e) { toast.error("AI auto-fill failed"); }
+    setSuggesting(false);
+  };
   const runCreate = async () => {
     if (!cf.first_name.trim() || !cf.last_name.trim() || !cf.email.trim()) { toast.error("First, last name and email required"); return; }
     setBusy(true);
@@ -384,6 +395,10 @@ export default function UserActivation() {
         <DialogContent data-testid="ua-create-dialog">
           <DialogHeader><DialogTitle className="flex items-center gap-2"><UserPlus className="w-5 h-5 text-primary" /> Create SAP User</DialogTitle><DialogDescription>Provisions a new SAP account via an auto-processing ServiceNow request.</DialogDescription></DialogHeader>
           <div className="space-y-2">
+            <Button type="button" variant="outline" data-testid="cf-ai-fill" disabled={suggesting} onClick={aiFill} className="w-full gap-1.5 border-ai/40 text-ai hover:bg-ai/10">
+              {suggesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+              {suggesting ? "Drafting with AI…" : "AI Auto-fill all fields"}
+            </Button>
             <div className="grid grid-cols-2 gap-2">
               <Input data-testid="cf-first" value={cf.first_name} onChange={(e) => setCf({ ...cf, first_name: e.target.value })} placeholder="First name" />
               <Input data-testid="cf-last" value={cf.last_name} onChange={(e) => setCf({ ...cf, last_name: e.target.value })} placeholder="Last name" />

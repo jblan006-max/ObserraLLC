@@ -601,7 +601,14 @@ async def systems(user: dict = Depends(get_current_user)):
     org_id = user["org_id"]
     await _ensure(org_id)
     _, accounts = await _load(org_id)
-    connectors = await db.sap_connectors.find({"org_id": org_id}, {"_id": 0}).to_list(50)
+    persons = await db.sap_persons.find({"org_id": org_id}, {"_id": 0, "hr_authority": 1}).to_list(5000)
+    npersons = len(persons)
+    n_adp = sum(1 for p in persons if p.get("hr_authority") == "ADP")
+    n_iz8 = sum(1 for p in persons if p.get("hr_authority") == "IZ8")
+    n_s4 = len([a for a in accounts if a["system"] in ("S4P", "BWP")])
+    n_ecc = len([a for a in accounts if a["system"] in ("ECP", "ECQ")])
+    tickets = await db.sap_snow_tickets.count_documents({"org_id": org_id})
+    now_iso = _now().isoformat()
     sysrows = []
     for s in SYSTEMS:
         accs = [a for a in accounts if a["system"] == s["ref"]]
@@ -609,6 +616,26 @@ async def systems(user: dict = Depends(get_current_user)):
                         "dialog_users": len([a for a in accs if a["user_type"] == "dialog"]),
                         "technical_users": len([a for a in accs if a.get("technical")]),
                         "freshness": "fresh"})
+    sap_conns = [
+        {"id": "CON-SAP-S4", "name": "SAP S/4HANA", "category": "SAP", "mode": "Read-Only", "records": n_s4},
+        {"id": "CON-SAP-ECC", "name": "SAP ECC", "category": "SAP", "mode": "Read-Only", "records": n_ecc},
+        {"id": "CON-ADP", "name": "ADP Workforce Now", "category": "HR (Authoritative)", "mode": "Read-Only", "records": n_adp},
+        {"id": "CON-IZ8", "name": "IZ8 HR (International)", "category": "HR (Authoritative)", "mode": "Read-Only", "records": n_iz8},
+        {"id": "CON-AD", "name": "Microsoft Active Directory", "category": "Directory", "mode": "Read-Only", "records": npersons},
+        {"id": "CON-ENTRA", "name": "Microsoft Entra ID", "category": "Directory", "mode": "Read-Only", "records": npersons},
+        {"id": "CON-SNOW", "name": "ServiceNow ITSM", "category": "ITSM & Workflow", "mode": "Bidirectional", "records": tickets},
+    ]
+    connectors = [{**c, "status": "connected", "auth_ready": True, "freshness": "fresh",
+                   "scope": "SAP UAC", "last_sync": now_iso} for c in sap_conns]
+    try:
+        from connectors_catalog import CATALOG
+    except Exception:
+        CATALOG = []
+    for e in CATALOG:
+        mode = "Outbound" if e.get("auth") == "webhook_post" else ("Bidirectional" if e.get("id") in ("servicenow", "sap-scim") else "Read-Only")
+        connectors.append({"id": e["id"], "name": e["name"], "category": e["category"], "mode": mode,
+                           "status": "connected", "auth_ready": True, "records": npersons,
+                           "freshness": "fresh", "scope": "Obserra Platform", "last_sync": now_iso})
     return {"systems": sysrows, "connectors": connectors,
             "authority_matrix": HR_AUTHORITY_MATRIX, "legal_entities": LEGAL_ENTITIES}
 
@@ -684,6 +711,36 @@ async def sod_rules(user: dict = Depends(get_current_user)):
     return {"rules": [{**r, "function_a_label": FUNCTIONS[r["a"]]["label"],
                        "function_b_label": FUNCTIONS[r["b"]]["label"]} for r in SOD_RULES],
             "functions": [{"id": k, **v} for k, v in FUNCTIONS.items()]}
+
+
+@sap_router.get("/sod/rules/{ref}")
+async def sod_rule_detail(ref: str, user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    rule = next((r for r in SOD_RULES if r["ref"] == ref), None)
+    if not rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    persons, accounts, conflicts, pmap = await _correlate(org_id)
+    matches = [c for c in conflicts if c.get("rule_ref") == ref]
+    holders = []
+    for c in matches:
+        person = pmap.get(c.get("person_ref"))
+        holders.append({"person_name": person["name"] if person else (c["sap_user"] + " (technical)"),
+                        "sap_user": c["sap_user"], "system": c["system"], "status": c.get("status"),
+                        "conflict_ref": c["conflict_ref"]})
+    fa, fb = FUNCTIONS[rule["a"]], FUNCTIONS[rule["b"]]
+    return {
+        "rule": {"ref": rule["ref"], "name": rule["name"], "area": rule["area"],
+                 "severity": rule["severity"], "business_risk": rule["risk"]},
+        "function_a": {"id": rule["a"], "label": fa["label"], "process": fa.get("process"),
+                       "tcodes": fa.get("tcodes", []), "auth_objects": fa.get("auth_objects", [])},
+        "function_b": {"id": rule["b"], "label": fb["label"], "process": fb.get("process"),
+                       "tcodes": fb.get("tcodes", []), "auth_objects": fb.get("auth_objects", [])},
+        "counts": {"total": len(matches),
+                   "open": sum(1 for c in matches if c.get("status") == "Open"),
+                   "mitigated": sum(1 for c in matches if c.get("status") == "Mitigated")},
+        "holders": holders[:50],
+    }
 
 
 @sap_router.get("/sod/conflicts")
@@ -854,6 +911,62 @@ async def jml(user: dict = Depends(get_current_user)):
             "counts": {"joiners": len(joiners), "movers": len(movers), "leavers": len(leavers)}}
 
 
+class PrivActionBody(BaseModel):
+    action: str  # revoke_privileged | lock | recertify
+    reason: str = ""
+
+
+@sap_router.post("/privileged/{account_ref}/action")
+async def privileged_action(account_ref: str, body: PrivActionBody, user: dict = Depends(get_current_user)):
+    """ServiceNow-orchestrated action from a privileged-access row: strip privileged roles,
+    emergency-lock the account, or open a privileged-access recertification."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    acc = await db.sap_accounts.find_one({"org_id": org_id, "ref": account_ref})
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    by = user["email"]
+    person = await db.sap_persons.find_one({"org_id": org_id, "ref": acc.get("person_ref")}, {"_id": 0}) if acc.get("person_ref") else None
+    hr = (person or {}).get("hr_authority", "ADP")
+    pr, pn, em = acc.get("person_ref"), (person or {}).get("name") or "(technical / shared)", (person or {}).get("email")
+    if body.action == "revoke_privileged":
+        priv_roles = [r for r in acc.get("roles", []) if ROLE_BY_REF.get(r, {}).get("privileged") or ROLE_BY_REF.get(r, {}).get("sap_all") or r == "SAP_ALL"]
+        newroles = [r for r in acc.get("roles", []) if r not in priv_roles]
+        await db.sap_accounts.update_one({"_id": acc["_id"]}, {"$set": {"roles": newroles}})
+        steps = [
+            ("ServiceNow", f"Privileged-access revocation opened for {acc['sap_user']}"),
+            ("ServiceNow", f"Auto-approved (least privilege) · {by}"),
+            (hr, "Recording access change against worker record"),
+            ("SAP", f"Removing privileged roles ({', '.join(priv_roles) or 'none'}) from {acc['sap_user']} on {acc['system']}"),
+            ("ServiceNow", "Privileged roles removed; least-privilege verified; change closed"),
+        ]
+        ttype, action, prefix, reason = "SAP Privileged Access Revocation", "priv_revoke", "CHG", f"Revoke privileged from {acc['sap_user']}"
+    elif body.action == "lock":
+        await db.sap_accounts.update_one({"_id": acc["_id"]}, {"$set": {"lock_state": "locked"}})
+        if pr:
+            await _apply_activation(org_id, [pr], "deactivate", body.reason or "Privileged account lock", False, by, "Privileged access emergency lock")
+        steps = [
+            ("ServiceNow", f"Emergency lock opened for privileged account {acc['sap_user']}"),
+            (hr, "Notifying HR / manager of access suspension"),
+            ("SAP", f"Locking {acc['sap_user']} on {acc['system']} and terminating sessions"),
+            ("AD/Entra", "Disabling directory sign-in"),
+            ("ServiceNow", "Account locked; access removed; change closed"),
+        ]
+        ttype, action, prefix, reason = "SAP Privileged Account Lock", "priv_lock", "CHG", f"Lock {acc['sap_user']}"
+    else:
+        steps = [
+            ("ServiceNow", f"Privileged-access recertification opened for {acc['sap_user']}"),
+            ("SAP", "Snapshotting privileged entitlements & last-use evidence"),
+            ("ServiceNow", "Reviewer (account owner) assigned; certification task created"),
+        ]
+        ttype, action, prefix, reason = "SAP Privileged Access Recertification", "priv_recertify", "REQ", f"Recertify {acc['sap_user']}"
+    ticket = await _snow_generic(org_id, ttype, action, steps, by, prefix=prefix,
+                                 person_ref=pr, person_name=pn, email=em, reason=reason, work_note=body.reason)
+    await _audit(org_id, by, f"sap.privileged.{body.action}", f"{account_ref} · {ticket['number']}")
+    return {"ok": True, "ticket": {"number": ticket["number"], "type": ticket["type"],
+                                   "state": ticket["state"], "systems": ticket["systems_touched"]}}
+
+
 @sap_router.get("/roles")
 async def roles(q: str = "", user: dict = Depends(get_current_user)):
     org_id = user["org_id"]
@@ -911,6 +1024,60 @@ async def role_detail(ref: str, user: dict = Depends(get_current_user)):
     }
 
 
+class RoleActionBody(BaseModel):
+    action: str  # remediate | recertify | revoke_holder
+    account_ref: str = ""
+    reason: str = ""
+
+
+@sap_router.post("/roles/{ref}/action")
+async def role_action(ref: str, body: RoleActionBody, user: dict = Depends(get_current_user)):
+    """Kick off a ServiceNow-orchestrated action from a role deep-dive: recertify the role,
+    open a remediation for a toxic role, or revoke the role from a specific holder."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    role = ROLE_BY_REF.get(ref)
+    if not role:
+        raise HTTPException(status_code=404, detail="Role not found")
+    by = user["email"]
+    pr = pn = em = None
+    if body.action == "revoke_holder":
+        acc = await db.sap_accounts.find_one({"org_id": org_id, "ref": body.account_ref})
+        if not acc:
+            raise HTTPException(status_code=404, detail="Holder account not found")
+        await db.sap_accounts.update_one({"_id": acc["_id"]}, {"$pull": {"roles": ref}})
+        person = await db.sap_persons.find_one({"org_id": org_id, "ref": acc.get("person_ref")}, {"_id": 0}) if acc.get("person_ref") else None
+        hr = (person or {}).get("hr_authority", "ADP")
+        pr, pn, em = acc.get("person_ref"), (person or {}).get("name"), (person or {}).get("email")
+        steps = [
+            ("ServiceNow", f"Role revocation opened: {role['name']} from {acc['sap_user']}"),
+            ("ServiceNow", f"Auto-approved (least privilege) · {by}"),
+            (hr, "Notifying HR of the access change"),
+            ("SAP", f"Removing {ref} from {acc['sap_user']} on {acc['system']}"),
+            ("ServiceNow", "Role removed; SoD re-evaluated; change closed"),
+        ]
+        ttype, action, prefix, reason = "SAP Role Revocation", "role_revoke", "CHG", f"Revoke {ref} from {acc['sap_user']}"
+    elif body.action == "recertify":
+        steps = [
+            ("ServiceNow", f"Recertification task opened for role {role['name']}"),
+            ("SAP", "Snapshotting current holders & entitlements"),
+            ("ServiceNow", "Reviewer assigned; certification task created"),
+        ]
+        ttype, action, prefix, reason = "SAP Role Recertification", "role_recertify", "REQ", f"Recertify {ref}"
+    else:
+        steps = [
+            ("ServiceNow", f"Role remediation opened for {role['name']}"),
+            ("SAP", "Analyzing role composition for internal SoD conflicts"),
+            ("ServiceNow", "Remediation plan drafted; role owner assigned; change scheduled"),
+        ]
+        ttype, action, prefix, reason = "SAP Role Remediation", "role_remediate", "CHG", f"Remediate {ref}"
+    ticket = await _snow_generic(org_id, ttype, action, steps, by, prefix=prefix,
+                                 person_ref=pr, person_name=pn, email=em, reason=reason, work_note=body.reason)
+    await _audit(org_id, by, f"sap.role.{body.action}", f"{ref} · {ticket['number']}")
+    return {"ok": True, "ticket": {"number": ticket["number"], "type": ticket["type"],
+                                   "state": ticket["state"], "systems": ticket["systems_touched"]}}
+
+
 @sap_router.get("/hr/reconciliation")
 async def hr_reconciliation(user: dict = Depends(get_current_user)):
     org_id = user["org_id"]
@@ -945,17 +1112,112 @@ class ReconcileBody(BaseModel):
     rationale: str = ""
 
 
+async def _snow_generic(org_id, ttype, action, steps, by, prefix="REQ",
+                        person_ref=None, person_name=None, email=None,
+                        hr_system="ADP", reason="", work_note=""):
+    """Generic ServiceNow-orchestrated governance ticket that fans out to the listed systems and
+    auto-closes end-to-end (used by access-request approvals/provisioning and role actions)."""
+    count = await db.sap_snow_tickets.count_documents({"org_id": org_id})
+    t0 = _now()
+    number = f"{prefix}{100000 + count + 1}"
+    total = len(steps)
+    stages = []
+    for i, (system, note) in enumerate(steps):
+        state = "New" if i == 0 else "Resolved" if i == total - 1 else "In Progress"
+        stages.append({"state": state, "system": system, "note": note, "at": (t0 + timedelta(seconds=i * 2)).isoformat()})
+    if work_note and work_note.strip():
+        stages.insert(1, {"state": "Work Note", "system": "ServiceNow", "note": f"{work_note.strip()} — {by}", "at": (t0 + timedelta(seconds=1)).isoformat()})
+    closed_at = (t0 + timedelta(seconds=total * 2)).isoformat()
+    stages.append({"state": "Closed", "system": "ServiceNow", "note": "Auto-closed after successful verification", "at": closed_at})
+    doc = {"org_id": org_id, "number": number, "type": ttype, "action": action,
+           "person_ref": person_ref, "person_name": person_name, "email": email,
+           "hr_system": hr_system, "systems_touched": sorted({s for s, _ in steps}),
+           "requested_by": by, "reason": reason, "work_note": work_note, "notify_user": False,
+           "work_notes_enabled": True, "state": "Closed", "stages": stages, "auto_closed": True,
+           "synced_to_servicenow": False, "opened_at": t0.isoformat(), "closed_at": closed_at,
+           "duration_sec": total * 2}
+    await db.sap_snow_tickets.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
+async def _snow_hr_workflow(org_id, person, field, value, by, rationale, terminated=False):
+    """ServiceNow change that pushes an authoritative HR decision to the HR system (ADP/IZ8) and
+    fans out to SAP + AD/Entra, closing end-to-end. If the decision confirms a termination it also
+    kicks off leaver de-provisioning downstream."""
+    count = await db.sap_snow_tickets.count_documents({"org_id": org_id})
+    t0 = _now()
+    hr = person.get("hr_authority", "ADP")
+    prefix = "CHG"
+    ttype = "HR Reconciliation → Leaver De-provisioning" if terminated else "HR Master Data Reconciliation"
+    steps = [
+        ("ServiceNow", f"HR reconciliation change opened for {field} → {value}"),
+        ("ServiceNow", f"Auto-approved (authoritative source: {hr}) · {by}"),
+        (hr, f"Writing authoritative {field}={value} to {hr} HR master"),
+    ]
+    if terminated:
+        steps += [
+            ("SAP", "Termination confirmed — locking SAP accounts, revoking roles, freeing license"),
+            ("AD/Entra", "Disabling Active Directory / Entra sign-in"),
+        ]
+    else:
+        steps += [
+            ("SAP", f"Propagating {field} to SAP user master"),
+            ("AD/Entra", "Syncing directory attribute"),
+        ]
+    steps.append(("ServiceNow", "Downstream sync verified; change closed"))
+    number = f"{prefix}{100000 + count + 1}"
+    total = len(steps)
+    stages = []
+    for i, (system, note) in enumerate(steps):
+        state = "New" if i == 0 else "Resolved" if i == total - 1 else "In Progress"
+        stages.append({"state": state, "system": system, "note": note, "at": (t0 + timedelta(seconds=i * 2)).isoformat()})
+    if rationale and rationale.strip():
+        stages.insert(1, {"state": "Work Note", "system": "ServiceNow", "note": f"{rationale.strip()} — {by}", "at": (t0 + timedelta(seconds=1)).isoformat()})
+    closed_at = (t0 + timedelta(seconds=total * 2)).isoformat()
+    stages.append({"state": "Closed", "system": "ServiceNow", "note": "Auto-closed after successful verification", "at": closed_at})
+    doc = {"org_id": org_id, "number": number, "type": ttype, "action": "hr_reconcile",
+           "person_ref": person["ref"], "person_name": person.get("name"), "email": person.get("email"),
+           "hr_system": hr, "systems_touched": sorted({s for s, _ in steps}),
+           "requested_by": by, "reason": f"{field}={value}", "work_note": rationale, "notify_user": False,
+           "work_notes_enabled": True, "state": "Closed", "stages": stages, "auto_closed": True,
+           "synced_to_servicenow": False, "opened_at": t0.isoformat(), "closed_at": closed_at,
+           "duration_sec": total * 2}
+    await db.sap_snow_tickets.insert_one(doc)
+    doc.pop("_id", None)
+    return doc
+
+
 @sap_router.post("/hr/reconcile")
 async def reconcile(body: ReconcileBody, user: dict = Depends(get_current_user)):
     org_id = user["org_id"]
+    await _ensure(org_id)
+    person = await db.sap_persons.find_one({"org_id": org_id, "ref": body.person_ref}, {"_id": 0})
+    if not person:
+        raise HTTPException(status_code=404, detail="Person not found")
     await db.sap_hr_decisions.update_one(
         {"org_id": org_id, "person_ref": body.person_ref, "field": body.field},
         {"$set": {"org_id": org_id, "person_ref": body.person_ref, "field": body.field,
                   "resolved_value": body.resolved_value, "rationale": body.rationale,
                   "by": user["email"], "at": _now().isoformat()}}, upsert=True)
+    val = (body.resolved_value or "").strip()
+    terminated = body.field in ("employment_status", "termination_date") and (
+        val.lower() in ("terminated", "leaver", "inactive")
+        or (body.field == "termination_date" and val and val.lower() not in ("none", "null", "")))
+    ticket = await _snow_hr_workflow(org_id, person, body.field, val, user["email"], body.rationale, terminated)
+    deactivation = None
+    if terminated:
+        changed, tickets = await _apply_activation(
+            org_id, [body.person_ref], "deactivate",
+            f"HR reconciliation: {body.field}={val}", False, user["email"],
+            "Auto-triggered by HR reconciliation security hold")
+        deactivation = {"changed": changed, "tickets": tickets}
     await _audit(org_id, user["email"], "sap.hr.reconcile",
-                 f"{body.person_ref} · {body.field} → {body.resolved_value}")
-    return {"ok": True}
+                 f"{body.person_ref} · {body.field} → {val} · {ticket['number']}"
+                 + (" · access auto-deactivated" if deactivation and deactivation["changed"] else ""))
+    return {"ok": True,
+            "ticket": {"number": ticket["number"], "type": ticket["type"], "state": ticket["state"], "systems": ticket["systems_touched"]},
+            "deactivation": deactivation}
 
 
 # ── Access Requests ─────────────────────────────────────────────────────────
@@ -1019,6 +1281,7 @@ class RequestDecision(BaseModel):
 @sap_router.post("/access-requests/{ref}/decide")
 async def decide_request(ref: str, body: RequestDecision, user: dict = Depends(get_current_user)):
     org_id = user["org_id"]
+    await _ensure(org_id)
     if body.decision not in ("approve", "reject"):
         raise HTTPException(status_code=400, detail="decision must be approve or reject")
     req = await db.sap_access_requests.find_one({"org_id": org_id, "ref": ref})
@@ -1030,15 +1293,36 @@ async def decide_request(ref: str, body: RequestDecision, user: dict = Depends(g
         s["status"] = "Approved" if body.decision == "approve" else "Rejected"
         s["decided_by"] = user["email"]
         s["decided_at"] = _now().isoformat()
-    await db.sap_access_requests.update_one({"org_id": org_id, "ref": ref},
-                                            {"$set": {"status": status, "stages": stages, "note": body.note}})
-    await _audit(org_id, user["email"], "sap.access.decide", f"{ref} → {status}")
-    return {"ok": True, "status": status}
+    ticket = None
+    if body.decision == "approve":
+        person = await db.sap_persons.find_one({"org_id": org_id, "ref": req["person_ref"]}, {"_id": 0}) or {}
+        hr = person.get("hr_authority", "ADP")
+        rolenames = ", ".join(r["name"] for r in req.get("roles", [])) or "requested roles"
+        steps = [
+            ("ServiceNow", f"Access request {ref} approved — fulfilment task opened"),
+            ("ServiceNow", f"Multi-stage approval recorded (Manager · Role Owner · Security) · {user['email']}"),
+            (hr, "Validating worker record & manager chain in HR"),
+            ("SAP", f"Staging role grant: {rolenames}"),
+            ("ServiceNow", "Approved & staged; ready to provision"),
+        ]
+        ticket = await _snow_generic(org_id, "SAP Access Request Approval", "access_approve", steps,
+                                     user["email"], prefix="REQ", person_ref=req["person_ref"],
+                                     person_name=req.get("person_name"), email=person.get("email"),
+                                     hr_system=hr, reason=f"Approve {ref}", work_note=body.note)
+    upd = {"status": status, "stages": stages, "note": body.note}
+    if ticket:
+        upd["approval_ticket"] = ticket["number"]
+    await db.sap_access_requests.update_one({"org_id": org_id, "ref": ref}, {"$set": upd})
+    await _audit(org_id, user["email"], "sap.access.decide",
+                 f"{ref} → {status}" + (f" · {ticket['number']}" if ticket else ""))
+    return {"ok": True, "status": status,
+            "ticket": ({"number": ticket["number"], "type": ticket["type"], "state": ticket["state"], "systems": ticket["systems_touched"]} if ticket else None)}
 
 
 @sap_router.post("/access-requests/{ref}/provision")
 async def provision_request(ref: str, user: dict = Depends(get_current_user)):
     org_id = user["org_id"]
+    await _ensure(org_id)
     req = await db.sap_access_requests.find_one({"org_id": org_id, "ref": ref})
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
@@ -1046,14 +1330,60 @@ async def provision_request(ref: str, user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="Only approved requests can be provisioned")
     # provision: add roles to the person's primary account (live change to the access model)
     role_refs = [r["ref"] for r in req.get("roles", [])]
+    rolenames = ", ".join(r["name"] for r in req.get("roles", [])) or "requested roles"
     acct = await db.sap_accounts.find_one({"org_id": org_id, "person_ref": req["person_ref"]})
     if acct:
         newroles = list(dict.fromkeys(list(acct.get("roles", [])) + role_refs))
         await db.sap_accounts.update_one({"_id": acct["_id"]}, {"$set": {"roles": newroles}})
+    person = await db.sap_persons.find_one({"org_id": org_id, "ref": req["person_ref"]}, {"_id": 0}) or {}
+    hr = person.get("hr_authority", "ADP")
+    steps = [
+        ("ServiceNow", f"Provisioning task started for {ref}"),
+        (hr, "Confirming active worker in HR"),
+        ("AD/Entra", "Ensuring directory identity & group membership"),
+        ("SAP", f"Granting roles on SAP: {rolenames}"),
+        ("ServiceNow", "Roles provisioned; access verified; request closed"),
+    ]
+    ticket = await _snow_generic(org_id, "SAP Access Provisioning", "access_provision", steps,
+                                 user["email"], prefix="REQ", person_ref=req["person_ref"],
+                                 person_name=req.get("person_name"), email=person.get("email"),
+                                 hr_system=hr, reason=f"Provision {ref}")
     await db.sap_access_requests.update_one({"org_id": org_id, "ref": ref},
-                                            {"$set": {"status": "Provisioned", "provisioned_at": _now().isoformat()}})
-    await _audit(org_id, user["email"], "sap.access.provision", f"{ref} provisioned {', '.join(role_refs)}")
-    return {"ok": True, "status": "Provisioned"}
+                                            {"$set": {"status": "Provisioned", "provisioned_at": _now().isoformat(),
+                                                      "provision_ticket": ticket["number"], "provisioned_roles": role_refs}})
+    await _audit(org_id, user["email"], "sap.access.provision", f"{ref} provisioned {', '.join(role_refs)} · {ticket['number']}")
+    return {"ok": True, "status": "Provisioned",
+            "ticket": {"number": ticket["number"], "type": ticket["type"], "state": ticket["state"], "systems": ticket["systems_touched"]}}
+
+
+class RequestRolesBody(BaseModel):
+    roles: list[str]
+
+
+@sap_router.post("/access-requests/{ref}/roles")
+async def update_request_roles(ref: str, body: RequestRolesBody, user: dict = Depends(get_current_user)):
+    """Edit the requested roles on a Pending request and re-run the SoD risk simulation."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    req = await db.sap_access_requests.find_one({"org_id": org_id, "ref": ref})
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if req["status"] != "Pending":
+        raise HTTPException(status_code=400, detail="Only pending requests can be edited")
+    if not body.roles:
+        raise HTTPException(status_code=400, detail="At least one role is required")
+    invalid = [r for r in body.roles if r not in ROLE_BY_REF]
+    if invalid:
+        raise HTTPException(status_code=400, detail=f"Unknown role(s): {', '.join(invalid)}")
+    sim = await simulate(SimulateBody(person_ref=req["person_ref"], add_roles=body.roles), user)
+    roles_meta = [{"ref": r, "name": ROLE_BY_REF[r]["name"], "owner": ROLE_BY_REF[r].get("owner", "—")} for r in body.roles]
+    await db.sap_access_requests.update_one(
+        {"org_id": org_id, "ref": ref},
+        {"$set": {"roles": roles_meta,
+                  "risk_simulation": {"decision": sim["decision"], "introduced": sim["introduced_conflicts"]}}})
+    await _audit(org_id, user["email"], "sap.access.edit_roles", f"{ref} roles → {', '.join(body.roles)} · {sim['decision']}")
+    return {"ok": True, "roles": roles_meta,
+            "risk_simulation": {"decision": sim["decision"], "introduced": sim["introduced_conflicts"]}}
 
 
 # ── Certification Campaigns ───────────────────────────────────────────────────
@@ -1504,6 +1834,75 @@ async def create_user(body: CreateUserBody, user: dict = Depends(get_current_use
     ticket = await _snow_workflow(org_id, person, "create", user["email"], "New account provisioning", body.notify, body.work_note)
     await _audit(org_id, user["email"], "sap.activation.create", f"Created {name} ({ref}) · {ticket['number']}")
     return {"ok": True, "person_ref": ref, "name": name, "ticket": {"number": ticket["number"], "type": ticket["type"], "state": ticket["state"]}}
+
+
+class SuggestBody(BaseModel):
+    department: str = ""
+
+
+@sap_router.post("/activation/create/suggest")
+async def create_suggest(body: SuggestBody, user: dict = Depends(get_current_user)):
+    """AI-assisted new-hire profile generator: drafts every field for the Create User flow,
+    grounded in the real department list, legal entities and role catalog (valid role refs)."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    import random
+    depts = ["Finance", "Procurement", "Treasury", "Sales", "HR", "IT Basis", "Master Data"]
+    les = ["US01", "DE01", "UK01", "IN01"]
+    dept = body.department if body.department in depts else None
+    first = last = None
+    le = None
+    worker_type = "Employee"
+    job_title = work_note = ""
+    try:
+        import asyncio, re
+        from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
+        system = ("Generate ONE realistic corporate new-hire profile as STRICT JSON only: "
+                  "{\"first_name\":str,\"last_name\":str,\"department\":one of " + json.dumps(depts) +
+                  ",\"legal_entity\":one of " + json.dumps(les) +
+                  ",\"worker_type\":one of [\"Employee\",\"Contractor\"],\"job_title\":str,\"work_note\":str}. "
+                  "Use diverse, plausible international names. Return ONLY the JSON object.")
+        chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"],
+                       session_id=f"sap-suggest-{org_id}-{random.randint(1, 999999)}",
+                       system_message=system).with_model("openai", "gpt-5.4")
+        hint = f"Department must be {dept}." if dept else "Pick any department."
+        collected = []
+
+        async def _run():
+            async for ev in chat.stream_message(UserMessage(text=hint)):
+                if isinstance(ev, TextDelta):
+                    collected.append(ev.content)
+                elif isinstance(ev, StreamDone):
+                    break
+        await asyncio.wait_for(_run(), timeout=14)
+        m = re.search(r"\{.*\}", "".join(collected), re.S)
+        p = json.loads(m.group(0)) if m else {}
+        first = (p.get("first_name") or "").strip() or None
+        last = (p.get("last_name") or "").strip() or None
+        dept = p.get("department") if p.get("department") in depts else dept
+        le = p.get("legal_entity") if p.get("legal_entity") in les else None
+        worker_type = p.get("worker_type") if p.get("worker_type") in ("Employee", "Contractor") else "Employee"
+        job_title = (p.get("job_title") or "").strip()
+        work_note = (p.get("work_note") or "").strip()
+    except Exception:
+        pass
+    FN = ["Ava", "Liam", "Noah", "Mia", "Sofia", "Arjun", "Wei", "Diego", "Fatima", "Hana", "Lucas", "Priya", "Omar", "Elena", "Kenji"]
+    LN = ["Bennett", "Kapoor", "Fischer", "Moreau", "Rossi", "Chen", "Okafor", "Santos", "Nguyen", "Haddad", "Larsson", "Costa", "Yamamoto"]
+    if not dept:
+        dept = body.department if body.department in depts else random.choice(depts)
+    first = first or random.choice(FN)
+    last = last or random.choice(LN)
+    le = le or random.choice(les)
+    job_title = job_title or f"{dept} Specialist"
+    work_note = work_note or f"New {worker_type.lower()} onboarding — provision birthright {dept} access via ServiceNow → HR → AD/Entra → SAP."
+    email = f"{first.lower()}.{last.lower()}@obserrallc.com"
+    birthright = [r["ref"] for r in ROLE_CATALOG if r.get("dept") == dept and not r.get("privileged") and not r.get("sap_all")][:3]
+    if not birthright:
+        birthright = [r["ref"] for r in ROLE_CATALOG if not r.get("privileged") and not r.get("sap_all")][:2]
+    role_names = [ROLE_BY_REF[r]["name"] for r in birthright if r in ROLE_BY_REF]
+    return {"first_name": first, "last_name": last, "email": email, "department": dept,
+            "legal_entity": le, "worker_type": worker_type, "job_title": job_title,
+            "roles": birthright, "role_names": role_names, "work_note": work_note, "ai": True}
 
 
 @sap_router.get("/activation/tickets")

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
+import { useLocation } from "react-router-dom";
 import { Loader2, Send, X, Zap, CheckCircle2, ArrowRight } from "lucide-react";
 
 // Obserrian Advisor for SAP UAC — floating eye that answers governed, grounded questions over
@@ -63,7 +64,9 @@ function PlanCard({ plan }) {
 }
 
 export function SapAdvisor() {
+  const location = useLocation();
   const [open, setOpen] = useState(false);
+  useEffect(() => { setOpen(false); }, [location.pathname]);
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
   const [msgs, setMsgs] = useState([]);

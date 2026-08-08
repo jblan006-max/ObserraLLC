@@ -3,16 +3,58 @@ import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
 import { SapInsight } from "@/components/SapInsight";
 import { useDeepDive } from "@/context/DeepDiveContext";
-import { UserPlus, UserX, GitBranch } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { UserPlus, UserX, GitBranch, Ban, PauseCircle, PlayCircle, Power } from "lucide-react";
+
+const VERB = { activate: "reactivated", deactivate: "deactivated", suspend: "suspended" };
+const ACTION_META = {
+  deactivate: { label: "Deactivate", Icon: Ban, btn: "bg-crit hover:bg-crit/90", tone: "text-crit",
+    desc: "Locks all residual SAP accounts, revokes roles and frees the license. Fires the automated ServiceNow → HR (ADP/IZ8) → SAP → AD/Entra deactivation workflow." },
+  suspend: { label: "Suspend", Icon: PauseCircle, btn: "bg-amber hover:bg-amber/90", tone: "text-amber",
+    desc: "Temporarily locks SAP sign-in (license retained). Fires the automated ServiceNow suspension workflow." },
+  activate: { label: "Reactivate", Icon: PlayCircle, btn: "bg-low hover:bg-low/90", tone: "text-low",
+    desc: "Restores SAP access (consuming a license). Fires the automated ServiceNow reactivation workflow." },
+};
 
 const fmtDate = (s) => (s ? new Date(s).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—");
 
 export default function Lifecycle() {
   const { openDeepDive } = useDeepDive();
   const [d, setD] = useState(null);
+  const [confirm, setConfirm] = useState(null);
+  const [bulk, setBulk] = useState(null);
+  const [reason, setReason] = useState("");
+  const [notify, setNotify] = useState(true);
+  const [busy, setBusy] = useState(false);
   const load = useCallback(async () => { const { data } = await api.get("/sap/jml"); setD(data); }, []);
   useEffect(() => { load(); }, [load]);
   if (!d) return <Spinner />;
+
+  const askAction = (action, refs, names) => { setReason(""); setNotify(true); setConfirm({ action, refs, names }); };
+  const runAction = async () => {
+    setBusy(true);
+    try {
+      const { data } = await api.post("/sap/activation/set", { person_refs: confirm.refs, action: confirm.action, reason, work_note: reason, notify });
+      const nums = (data.tickets || []).map((t) => t.number).join(", ");
+      toast.success(`${data.changed} worker(s) ${VERB[confirm.action] || "updated"}`, { description: nums ? `ServiceNow ${nums} opened & auto-closed` : undefined });
+      setConfirm(null); window.dispatchEvent(new Event("sap-data-changed")); await load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
+    setBusy(false);
+  };
+  const runBulk = async () => {
+    setBusy(true);
+    try {
+      const refs = d.leavers.map((l) => l.ref);
+      const { data } = await api.post("/sap/activation/set", { person_refs: refs, action: bulk.action, reason: reason || "Bulk leaver de-provisioning", work_note: reason, notify });
+      toast.success(`${data.changed} terminated worker(s) ${VERB[bulk.action] || "updated"}`, { description: `${(data.tickets || []).length} ServiceNow ticket(s) opened & auto-closed` });
+      setBulk(null); window.dispatchEvent(new Event("sap-data-changed")); await load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
+    setBusy(false);
+  };
 
   const openLeaver = (l) => openDeepDive({
     accent: "0 84% 60%", refLabel: l.ref, title: `${l.name} — residual access`, rating: "Critical", score: l.score,
@@ -44,14 +86,27 @@ export default function Lifecycle() {
       </div>
 
       <div className="bg-card fact-border rounded-xl p-5" data-testid="jml-leavers-panel">
-        <div className="flex items-center gap-2 mb-3"><UserX className="w-4 h-4 text-crit" /><h2 className="font-head font-bold text-lg">Terminated — Residual Access (Critical)</h2></div>
+        <div className="flex items-center justify-between gap-2 mb-3">
+          <div className="flex items-center gap-2"><UserX className="w-4 h-4 text-crit" /><h2 className="font-head font-bold text-lg">Terminated — Residual Access (Critical)</h2></div>
+          {d.leavers.length > 0 && (
+            <Button data-testid="jml-deactivate-all" size="sm" className="gap-1.5 bg-crit hover:bg-crit/90" onClick={() => { setReason(""); setNotify(true); setBulk({ action: "deactivate" }); }}>
+              <Power className="w-3.5 h-3.5" /> Deactivate All Residual ({d.leavers.length})
+            </Button>
+          )}
+        </div>
         <div className="space-y-2">
           {d.leavers.map((l) => (
-            <button key={l.ref} data-testid={`jml-leaver-${l.ref}`} onClick={() => openLeaver(l)} className="w-full text-left flex items-center gap-3 p-3 rounded-lg bg-crit/5 hover:bg-crit/10 border border-crit/20 transition-colors">
-              <span className="font-head font-black text-xl text-crit w-10">{l.score}</span>
-              <div className="flex-1 min-w-0"><div className="text-sm font-medium">{l.name}</div><div className="text-[11px] text-muted-foreground">{l.department} · terminated {fmtDate(l.termination_date)} · {l.residual_accounts} active account(s){l.ad_enabled ? " · AD still enabled" : ""}</div></div>
-              <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full bg-crit/15 text-crit">Critical</span>
-            </button>
+            <div key={l.ref} data-testid={`jml-leaver-${l.ref}`} className="flex items-center gap-3 p-3 rounded-lg bg-crit/5 border border-crit/20">
+              <button onClick={() => openLeaver(l)} data-testid={`jml-leaver-open-${l.ref}`} className="flex items-center gap-3 flex-1 min-w-0 text-left hover:opacity-80 transition-opacity">
+                <span className="font-head font-black text-xl text-crit w-10">{l.score}</span>
+                <div className="flex-1 min-w-0"><div className="text-sm font-medium">{l.name}</div><div className="text-[11px] text-muted-foreground">{l.department} · terminated {fmtDate(l.termination_date)} · {l.residual_accounts} active account(s){l.ad_enabled ? " · AD still enabled" : ""}</div></div>
+              </button>
+              <div className="flex items-center gap-1 shrink-0">
+                <button data-testid={`jml-deactivate-${l.ref}`} onClick={() => askAction("deactivate", [l.ref], l.name)} title="Deactivate (lock residual access)" className="text-crit hover:bg-crit/10 rounded-md p-1.5"><Ban className="w-4 h-4" /></button>
+                <button data-testid={`jml-suspend-${l.ref}`} onClick={() => askAction("suspend", [l.ref], l.name)} title="Suspend (temporary hold)" className="text-amber hover:bg-amber/10 rounded-md p-1.5"><PauseCircle className="w-4 h-4" /></button>
+                <button data-testid={`jml-reactivate-${l.ref}`} onClick={() => askAction("activate", [l.ref], l.name)} title="Reactivate access" className="text-low hover:bg-low/10 rounded-md p-1.5"><PlayCircle className="w-4 h-4" /></button>
+              </div>
+            </div>
           ))}
           {d.leavers.length === 0 && <p className="text-sm text-low py-3">No terminated workers with residual SAP access. ✓</p>}
         </div>
@@ -71,6 +126,34 @@ export default function Lifecycle() {
           </table>
         </div>
       </div>
+
+      <Dialog open={!!confirm} onOpenChange={(o) => !o && setConfirm(null)}>
+        <DialogContent data-testid="jml-confirm-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">{confirm && (() => { const M = ACTION_META[confirm.action]; const I = M.Icon; return <I className={`w-5 h-5 ${M.tone}`} />; })()}{confirm && ACTION_META[confirm.action].label} — {confirm?.names}</DialogTitle>
+            <DialogDescription>{confirm && ACTION_META[confirm.action].desc}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Textarea data-testid="jml-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="ServiceNow work note / reason…" rows={2} />
+            <label className="flex items-center gap-2 text-sm cursor-pointer"><Checkbox checked={notify} onCheckedChange={(v) => setNotify(!!v)} /> Notify stakeholders</label>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setConfirm(null)}>Cancel</Button><Button data-testid="jml-confirm-btn" disabled={busy} onClick={runAction} className={confirm ? ACTION_META[confirm.action].btn : ""}>{busy ? "Working…" : confirm && ACTION_META[confirm.action].label}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!bulk} onOpenChange={(o) => !o && setBulk(null)}>
+        <DialogContent data-testid="jml-bulk-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Power className="w-5 h-5 text-crit" /> Deactivate all {d.leavers.length} terminated workers</DialogTitle>
+            <DialogDescription>Locks every residual SAP account, revokes roles and frees licenses. A ServiceNow → HR (ADP/IZ8) → SAP → AD/Entra workflow is opened &amp; auto-closed per worker.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Textarea data-testid="jml-bulk-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="ServiceNow work note / reason…" rows={2} />
+            <label className="flex items-center gap-2 text-sm cursor-pointer"><Checkbox checked={notify} onCheckedChange={(v) => setNotify(!!v)} /> Notify stakeholders</label>
+          </div>
+          <DialogFooter><Button variant="outline" onClick={() => setBulk(null)}>Cancel</Button><Button data-testid="jml-bulk-confirm" disabled={busy} onClick={runBulk} className="bg-crit hover:bg-crit/90">{busy ? "Running…" : "Deactivate All"}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

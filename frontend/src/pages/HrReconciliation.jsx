@@ -25,8 +25,11 @@ export default function HrReconciliation() {
   const runRec = async () => {
     setBusy(true);
     try {
-      await api.post("/sap/hr/reconcile", { person_ref: rec.person.person_ref, field: rec.conflict.field, resolved_value: String(val), rationale });
-      toast.success("Conflict reconciled"); setRec(null); await load();
+      const { data } = await api.post("/sap/hr/reconcile", { person_ref: rec.person.person_ref, field: rec.conflict.field, resolved_value: String(val), rationale });
+      const num = data?.ticket?.number;
+      const deact = data?.deactivation?.changed ? " · access auto-deactivated" : "";
+      toast.success("Conflict reconciled", { description: (num ? `ServiceNow ${num} opened & auto-closed` : "HR master updated") + deact });
+      setRec(null); window.dispatchEvent(new Event("sap-data-changed")); await load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
     setBusy(false);
   };
@@ -74,7 +77,7 @@ export default function HrReconciliation() {
                   <div key={i} className="flex items-center justify-between text-xs py-1 border-t border-border/40">
                     <div><span className="font-medium">{c.field}</span> · ADP=<span className="font-mono">{String(c.adp_value)}</span> vs IZ8=<span className="font-mono">{String(c.iz8_value)}</span></div>
                     {c.state === "RECONCILED" ? <span className="text-[10px] text-ai flex items-center gap-1"><CheckCircle2 className="w-3 h-3" />{String(c.resolved_value)}</span>
-                      : <button data-testid={`hr-reconcile-${p.person_ref}-${c.field}`} onClick={() => openRec(p, c)} className="text-ai text-[11px] hover:underline">Reconcile</button>}
+                      : <Button data-testid={`hr-reconcile-${p.person_ref}-${c.field}`} size="sm" variant="outline" className="h-7 px-2.5 text-ai border-ai/40 hover:bg-ai/10" onClick={() => openRec(p, c)}>Reconcile</Button>}
                   </div>
                 ))}
               </div>
