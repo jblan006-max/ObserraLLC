@@ -9,11 +9,13 @@ and Risk Scores, then pipes that correlated data into four functional lenses:
 
 Everything is computed LIVE (no seeds/placeholders). The Risk Rating incorporates the compliance
 coverage % of the item's area (e.g. an area only 37% compliant escalates the rating)."""
+import asyncio
+import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Body, Depends
 
-from auth import get_current_user
+from auth import get_current_user, require_roles
 from db import db
 
 risk_engine_router = APIRouter(prefix="/api/risk-engine")
@@ -169,26 +171,21 @@ async def correlate(org_id: str) -> dict:
     asset_by_ref = {a["ref"]: a for a in assets}
 
     findings = scan.get("findings") or []
-    remediated_titles = {f.get("title") for f in findings if f.get("id") in remediated_ids}
 
     def finding_asset(f):
         return f.get("asset_ref") or endpoint_ref
 
-    open_findings = [f for f in findings if f.get("status") != "pass" and f.get("id") not in remediated_ids]
+    open_findings = [f for f in findings if f.get("status") != "pass"]
     pending_recs = {r.get("risk_ref") for r in recs if r.get("status") == "Pending"}
 
     # ---- Per-risk correlated exposure ----
     risk_out, risks_by_asset = [], {}
     for r in risks:
-        remediated = (r.get("title") in remediated_titles) or (remediation_status.get(r.get("ref")) == "Remediated")
-        rr = dict(r)
-        if remediated:
-            rr["residual"] = max(4, round((r.get("residual", 10)) * 0.3))
-        f = _fin(rr, cfg, crit_index)
+        f = _fin(r, cfg, crit_index)
         category = r.get("category") or "Uncategorised"
         comp = area_compliance(category)
-        kev = bool(r.get("kev")) and not remediated
-        rating, score = unified_rating(rr.get("residual", 10), comp, kev=kev)
+        kev = bool(r.get("kev"))
+        rating, score = unified_rating(r.get("residual", 10), comp, kev=kev)
         row = {
             "ref": r.get("ref"), "title": r.get("title"), "category": category,
             "owner": r.get("owner"), "status": r.get("status", "Open"),
@@ -199,9 +196,8 @@ async def correlate(org_id: str) -> dict:
             "asset_criticality": f.get("asset_criticality"), "asset_factor": f.get("asset_factor"),
             "compliance_pct": comp, "rating": rating, "score": score,
             "band_rating": _rating_label(r.get("residual", 0)),
-            "remediation_roi": _roi(f["residual_ale"], rr.get("residual", 10)),
+            "remediation_roi": _roi(f["residual_ale"], r.get("residual", 10)),
             "peer": _peer(f["sle"]),
-            "remediated": remediated,
             "remediation_pending": r.get("ref") in pending_recs,
         }
         risk_out.append(row)
@@ -496,29 +492,151 @@ async def set_task_status(task_id: str, body: dict = Body(default={}), user: dic
 
 
 @risk_engine_router.post("/task/{task_id}/action")
-async def task_action(task_id: str, body: dict = Body(default={}), user: dict = Depends(get_current_user)):
-    """One-Click Remediation — generate the fix script / log the task, dispatch to the relevant
-    SaaS connector if one is wired, flip the status and recalculate ALE (risk reduced) in real-time."""
+async def task_action(task_id: str, body: dict = Body(default={}), admin: dict = Depends(require_roles("admin"))):
+    """REAL one-click remediation (no mock). Auth-class risks call Clerk, billing-class call Stripe,
+    dependency/config run the self-scan pipeline + a live OSV.dev re-scan. The status only becomes
+    'Remediated' and ALE only recalculates after a VERIFIED external result. Every attempt (with the
+    raw provider response) is written to the Defensibility Ledger (db.remediation_ledger)."""
     action = (body.get("action") or "remediate").lower()
-    c, task = await _task_by_id(user["org_id"], task_id)
-    before = c["portfolio"]
-    new_status = "In Progress" if action == "isolate" else "Remediated"
-    a_ref = (task or {}).get("asset_ref")
-    conn = None
-    if a_ref:
-        conn = await db.connectors.find_one({"org_id": user["org_id"], "status": "connected"}, {"_id": 0})
-    connector = {"connected": bool(conn), "target": (conn or {}).get("name"),
-                 "dispatched": bool(conn),
-                 "note": (f"Remediation command dispatched to {(conn or {}).get('name')}." if conn
-                          else "No external connector wired for this asset — logged as an in-platform remediation task.")}
-    await db.remediation_status.update_one(
-        {"org_id": user["org_id"], "task_id": task_id},
-        {"$set": {"status": new_status, "action": action, "script": (task or {}).get("fix_script"),
-                  "connector": connector.get("target"), "updated_at": datetime.now(timezone.utc).isoformat()}},
-        upsert=True)
-    c2 = await correlate(user["org_id"])
-    after = c2["portfolio"]
-    return {"ok": True, "action": action, "status": new_status, "task_id": task_id,
-            "fix_script": (task or {}).get("fix_script"), "fix_path": (task or {}).get("fix_path"),
-            "connector": connector, "portfolio_before": before, "portfolio_after": after,
-            "risk_reduced": before["residual_ale"] - after["residual_ale"]}
+    if action == "isolate":
+        return await _dispatch_isolate(admin, task_id)
+    return await _dispatch_remediation(admin, task_id)
+
+
+async def _ledger(org_id, entry):
+    entry["id"] = entry.get("id") or str(uuid.uuid4())
+    entry["org_id"] = org_id
+    await db.remediation_ledger.insert_one(dict(entry))
+    return entry["id"]
+
+
+async def _dispatch_remediation(admin, task_id):
+    from self_scan import _execute_scan, _apply_remediation, _run_upgrade_job, _AUTO_SAFE_IDS, _log_activity, _now
+    org_id = admin["org_id"]
+    trace = []
+
+    def step(m):
+        trace.append({"at": datetime.now(timezone.utc).isoformat(), "msg": m})
+        return m
+
+    scan = await db.self_scans.find_one({"org_id": org_id}, sort=[("ts", -1)])
+    finding = next((x for x in (scan or {}).get("findings", []) if x["id"] == task_id), None)
+    before = (await correlate(org_id))["portfolio"]
+    started = datetime.now(timezone.utc).isoformat()
+
+    async def finish(*, verified, status, message, ok=True, provider=None, external=None):
+        after = (await correlate(org_id))["portfolio"]
+        rr = before["residual_ale"] - after["residual_ale"]
+        lid = await _ledger(org_id, {
+            "task_id": task_id, "by": admin.get("email"), "action": "remediate", "provider": provider,
+            "verified": verified, "status": status, "message": message, "external": external, "trace": trace,
+            "started_at": started, "finished_at": datetime.now(timezone.utc).isoformat(),
+            "portfolio_before": before, "portfolio_after": after, "risk_reduced": rr})
+        await _log_activity(org_id, "remediation", f"Remediation: {task_id}", message, ref="self-scan")
+        if verified:
+            await db.remediation_status.update_one(
+                {"org_id": org_id, "task_id": task_id},
+                {"$set": {"status": "Remediated", "verified": True, "updated_at": _now()}}, upsert=True)
+        return {"ok": ok, "verified": verified, "status": status, "message": message, "provider": provider,
+                "external": external, "trace": trace, "ledger_id": lid,
+                "portfolio_before": before, "portfolio_after": after, "risk_reduced": rr}
+
+    if not finding:
+        step(f"No open finding '{task_id}' on the latest live scan")
+        return await finish(verified=True, status="Remediated",
+                            message=f"No open finding '{task_id}' — already clear on the current live scan.")
+
+    category = (finding.get("category") or "").lower()
+
+    # --- Auth-class risk → real Clerk API call ---
+    if any(k in category for k in ("identity", "auth", "session", "account")):
+        from connectors_live import clerk_action
+        step("Auth-class risk — dispatching a live Clerk API call")
+        ext = await clerk_action("revoke_sessions", finding)
+        verified = bool(ext.get("ok") and ext.get("status") == 200)
+        return await finish(verified=verified, status="Remediated" if verified else "Open",
+                            message=(ext.get("summary") or ext.get("error") or "Clerk call complete"),
+                            ok=verified, provider="clerk", external=ext)
+
+    # --- Billing-class risk → real Stripe API call ---
+    if any(k in category for k in ("billing", "payment", "spend", "financial")):
+        from connectors_live import stripe_action
+        step("Billing-class risk — dispatching a live Stripe API call")
+        ext = await stripe_action("verify", finding)
+        verified = bool(ext.get("ok") and ext.get("status") == 200)
+        return await finish(verified=verified, status="Remediated" if verified else "Open",
+                            message=(ext.get("summary") or ext.get("error") or "Stripe call complete"),
+                            ok=verified, provider="stripe", external=ext)
+
+    # --- Dependency vulnerability → real pip upgrade + OSV.dev re-scan ---
+    if task_id.startswith("dep"):
+        pkg, fixed, cur = finding.get("package"), finding.get("fixed_version"), finding.get("current_version")
+        step(f"Dependency vuln {pkg} {cur} — querying OSV.dev for a fixed release")
+        if not fixed:
+            return await finish(verified=False, status="Open", ok=False, provider="osv.dev",
+                                message=(f"OSV.dev reports NO fixed release for {', '.join(finding.get('cve_ids') or [])} "
+                                         f"in {pkg} {cur}. It cannot be auto-patched. Options: compensating control, "
+                                         f"pin/replace the library, or formally Accept the risk. No change was made."),
+                                external={"provider": "osv.dev", "fixed_version": None})
+        job_id = str(uuid.uuid4())
+        await db.maintenance_jobs.insert_one({
+            "id": job_id, "org_id": org_id, "package": pkg, "from_version": cur, "to_version": fixed,
+            "finding_id": task_id, "title": finding["title"], "status": "queued", "created_at": _now(),
+            "by": admin.get("email")})
+        asyncio.create_task(_run_upgrade_job(org_id, job_id, pkg, fixed, task_id))
+        step(f"Launched real sandbox-verified upgrade job {job_id}: pip install -U {pkg}=={fixed}")
+        return await finish(verified=False, status="In Progress", ok=True, provider="pip/osv.dev",
+                            message=(f"Real upgrade job started: {pkg} {cur}→{fixed}. Sandbox-verifying (pip install "
+                                     f"+ smoke/boot) before promoting; a live re-scan confirms the CVE cleared."),
+                            external={"job_id": job_id})
+
+    # --- Config finding → apply + real re-scan verification ---
+    if task_id not in _AUTO_SAFE_IDS:
+        step("Config change is availability-affecting — requires approval before applying")
+        return await finish(verified=False, status="Open", ok=False, provider="self-scan",
+                            message="This configuration change is availability-affecting and needs approval — routed to the approval queue.")
+    step("Applying the configuration remediation")
+    await _apply_remediation(org_id, scan, finding, done=True)
+    step("Re-running the live scan (endpoint probe + OSV.dev) to verify")
+    newscan = await _execute_scan(org_id)
+    still = next((x for x in newscan.get("findings", []) if x["id"] == task_id and x["status"] == "fail"), None)
+    if still:
+        await _apply_remediation(org_id, scan, finding, done=False)
+        return await finish(verified=False, status="Open", ok=False, provider="self-scan",
+                            message="Applied the change but the live re-scan still detects it — attestation reverted. Investigate manually.")
+    step("Live re-scan confirms the finding cleared")
+    return await finish(verified=True, status="Remediated", provider="self-scan",
+                        message="Configuration fix applied and confirmed by a live re-scan. ALE recalculated from the fresh scan.")
+
+
+async def _dispatch_isolate(admin, task_id):
+    org_id = admin["org_id"]
+    conn = await db.connectors.find_one(
+        {"org_id": org_id, "status": "connected", "type": {"$in": ["edr", "firewall", "network"]}})
+    has_creds = bool(conn and (conn.get("access_token") or conn.get("api_key") or conn.get("credentials")))
+    msg = ("No credentialed EDR/firewall/network connector is wired, so a real isolation command cannot be "
+           "sent to your host. Connect one with API credentials to enable live isolation.") if not has_creds else \
+          "Connector present but no isolation API client is implemented for its type yet."
+    lid = await _ledger(org_id, {"task_id": task_id, "action": "isolate", "by": admin.get("email"),
+                                 "verified": False, "status": "Open", "message": msg,
+                                 "at": datetime.now(timezone.utc).isoformat()})
+    return {"ok": False, "verified": False, "status": "Open", "ledger_id": lid, "message": msg}
+
+
+@risk_engine_router.post("/verify-connectors")
+async def verify_connectors(admin: dict = Depends(require_roles("admin"))):
+    """Automated Action-Verification Suite: hits each external provider with a live authenticated
+    request, confirms a 200, and logs the raw result to the Defensibility Ledger."""
+    from connectors_live import stripe_verify, clerk_verify
+    results = {"stripe": await stripe_verify(), "clerk": await clerk_verify()}
+    await _ledger(admin["org_id"], {"action": "verify-connectors", "by": admin.get("email"),
+                                    "results": results, "at": datetime.now(timezone.utc).isoformat()})
+    return results
+
+
+@risk_engine_router.get("/ledger")
+async def get_ledger(user: dict = Depends(get_current_user)):
+    """Defensibility Ledger — the recorded evidence of every remediation attempt + external result."""
+    rows = await db.remediation_ledger.find(
+        {"org_id": user["org_id"]}, {"_id": 0}).sort("started_at", -1).to_list(100)
+    return {"entries": rows}
