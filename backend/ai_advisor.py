@@ -185,6 +185,11 @@ async def _check_budget(org_id: str):
                     "<p style=\"font-size:11px;color:#9ca3af\">Obserra — Executive Protection &amp; Intelligence LLC</p></div>")
             for r in recips:
                 await notifications.send_email(r["email"], "AI Advisor projected to exceed monthly cap", html)
+            from self_scan import _post_chat_alert
+            await _post_chat_alert(
+                org_id, "💸 AI advisor spend projected to exceed cap",
+                f"At the current pace, advisor spend is projected to reach ${round(forecast, 2)} by month-end — over the "
+                f"${budget} monthly cap (currently ${spent}, {round(pct)}%). Review usage or adjust the cap in Obserra.")
             await db.organizations.update_one({"_id": ObjectId(org_id)}, {"$set": {"advisor_forecast_notified": mk}})
 
 

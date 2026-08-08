@@ -10,7 +10,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import {
   Target, Wrench, Boxes, ShieldCheck, AlertTriangle, Loader2, Building2, Sparkles,
   ShieldX, ChevronDown, Gauge, DollarSign, Bug, User, FileWarning, Clock, MapPin, Zap,
-  Radar, TrendingUp, Network, ScrollText, PlugZap, CheckCircle2, XCircle, Download,
+  Radar, TrendingUp, Network, ScrollText, PlugZap, CheckCircle2, XCircle, Download, ListPlus,
 } from "lucide-react";
 
 const ACCENT = "255 85% 66%";
@@ -112,6 +112,7 @@ export default function Remediations() {
   const [detailBusy, setDetailBusy] = useState(false);
   const [actionResult, setActionResult] = useState(null);
   const [ledger, setLedger] = useState([]);
+  const [plan, setPlan] = useState([]);
   const [verify, setVerify] = useState(null);
   const [verifyBusy, setVerifyBusy] = useState(false);
 
@@ -122,6 +123,7 @@ export default function Remediations() {
     api.get("/risk-engine/exposure").then((r) => setExp(r.data)).catch(() => setExp(null));
     api.get("/risk-engine/compliance").then((r) => setComp(r.data)).catch(() => setComp(null));
     api.get("/controls/compliance").then((r) => setFw((r.data.frameworks || []).map((f) => ({ framework: f.framework, coverage: f.coverage })))).catch(() => setFw([]));
+    api.get("/risk-engine/plan").then((r) => setPlan(r.data.tasks || [])).catch(() => setPlan([]));
     loadLedger();
   };
   useEffect(() => { load(); }, []);
@@ -192,6 +194,10 @@ export default function Remediations() {
   };
   const quickStatus = async (taskId, status) => {
     try { const { data } = await api.post(`/risk-engine/task/${taskId}/status`, { status }); toast.success(`${status} — ALE ${money(data.portfolio_after.residual_ale)}`); load(); }
+    catch { toast.error("Status update failed"); }
+  };
+  const setPlanStatus = async (taskId, status) => {
+    try { await api.post(`/risk-engine/plan/${taskId}/status`, { status }); toast.success(`Plan task ${status}`); api.get("/risk-engine/plan").then((r) => setPlan(r.data.tasks || [])); }
     catch { toast.error("Status update failed"); }
   };
 
@@ -417,6 +423,34 @@ export default function Remediations() {
                 })}
               </tbody>
             </table>
+          </div>
+        )}
+      </CardShell>
+
+      <CardShell testid="rem-plan" title="Remediation Plan — added from deep-dives" icon={ListPlus} accent={ACCENT}
+        right={<span className="text-[10px] font-mono text-muted-foreground">{plan.length} task(s)</span>}>
+        {!plan.length ? <EmptyState icon={ListPlus} text="No manual plan tasks yet. Open any card's deep-dive and click 'Add to remediation plan' to track it here with its $ at stake." /> : (
+          <div className="space-y-2">
+            {plan.map((t) => (
+              <div key={t.task_id} data-testid={`plan-task-${t.task_id}`} className="rounded-lg bg-secondary/30 p-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-sm truncate min-w-0">{t.title}</span>
+                  <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                    {t.at_stake != null && <Pill label={`${money(t.at_stake)} at stake`} tone="15 80% 55%" />}
+                    <Select value={t.status} onValueChange={(v) => setPlanStatus(t.task_id, v)}>
+                      <SelectTrigger data-testid={`plan-status-${t.task_id}`} className="w-32 h-8 text-xs bg-secondary/60"><SelectValue /></SelectTrigger>
+                      <SelectContent>{["Open", "In Progress", "Remediated", "Accepted"].map((s) => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="text-[10px] font-mono text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
+                  {t.ref && <span>{t.ref}</span>}
+                  {t.reduction_if_fixed != null && <span style={{ color: "hsl(142 70% 45%)" }}>~{money(t.reduction_if_fixed)} reduction if fixed</span>}
+                  {t.created_at && <span>· added {new Date(t.created_at).toLocaleDateString()}</span>}
+                </div>
+                {t.recommendation && <div className="text-[11px] text-muted-foreground mt-1 leading-snug">{t.recommendation}</div>}
+              </div>
+            ))}
           </div>
         )}
       </CardShell>

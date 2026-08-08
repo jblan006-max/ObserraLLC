@@ -18,6 +18,7 @@ from fastapi import APIRouter, Body, Depends, Response
 
 from auth import get_current_user, require_roles
 from db import db
+from pydantic import BaseModel
 
 risk_engine_router = APIRouter(prefix="/api/risk-engine")
 
@@ -565,6 +566,52 @@ _VALID_STATUS = ("Open", "In Progress", "Remediated", "Accepted")
 async def _task_by_id(org_id, task_id):
     c = await correlate(org_id)
     return c, next((t for t in c["tasks"] if t["id"] == task_id), None)
+
+
+class PlanBody(BaseModel):
+    title: str
+    ref: str = ""
+    source: str = ""
+    recommendation: str = ""
+    severity: str = ""
+    context: dict = {}
+
+
+@risk_engine_router.post("/plan")
+async def add_to_plan(body: PlanBody, user: dict = Depends(get_current_user)):
+    """Turn any deep-dive card into a tracked remediation-plan task. The $ at stake is grounded
+    via the same live impact estimate used across the platform (no fabrication)."""
+    from ai_advisor import _impact_estimate, _engine_summary_safe
+    eng = await _engine_summary_safe(user["org_id"])
+    impact = _impact_estimate(body.context or {}, eng)
+    task_id = f"plan-{uuid.uuid4().hex[:10]}"
+    doc = {
+        "org_id": user["org_id"], "task_id": task_id, "title": body.title[:200], "ref": body.ref[:120],
+        "source": body.source[:120], "recommendation": (body.recommendation or "")[:600],
+        "severity": body.severity or "Medium", "status": "Open",
+        "at_stake": impact.get("at_stake"), "at_stake_scope": impact.get("at_stake_scope"),
+        "reduction_if_fixed": impact.get("reduction_if_fixed"), "reduction_scope": impact.get("reduction_scope"),
+        "created_by": user.get("email"), "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    await db.remediation_plan.insert_one(dict(doc))
+    return {"ok": True, "task": doc}
+
+
+@risk_engine_router.get("/plan")
+async def list_plan(user: dict = Depends(get_current_user)):
+    tasks = await db.remediation_plan.find({"org_id": user["org_id"]}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    return {"tasks": tasks}
+
+
+@risk_engine_router.post("/plan/{task_id}/status")
+async def set_plan_status(task_id: str, body: dict = Body(default={}), user: dict = Depends(get_current_user)):
+    status = body.get("status", "Open")
+    if status not in _VALID_STATUS:
+        status = "Open"
+    await db.remediation_plan.update_one(
+        {"org_id": user["org_id"], "task_id": task_id},
+        {"$set": {"status": status, "updated_at": datetime.now(timezone.utc).isoformat()}})
+    return {"ok": True, "task_id": task_id, "status": status}
 
 
 @risk_engine_router.post("/task/{task_id}/status")

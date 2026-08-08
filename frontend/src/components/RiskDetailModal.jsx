@@ -1,6 +1,8 @@
 import { useState } from "react";
-import { X, Loader2, Wrench, ShieldX, Users, CheckCircle2, XCircle, Clock, Terminal, ShieldCheck } from "lucide-react";
+import { X, Loader2, Wrench, ShieldX, Users, CheckCircle2, XCircle, Clock, Terminal, ShieldCheck, ListPlus } from "lucide-react";
 import { AIExplain } from "@/components/AIExplain";
+import { api } from "@/lib/api";
+import { toast } from "sonner";
 
 const RATE = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 90% 55%", Low: "142 70% 45%" };
 const money = (n) => n == null ? "—" : n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `$${Math.round(n / 1e3)}k` : `$${Math.round(n || 0)}`;
@@ -41,6 +43,36 @@ function ActionResult({ result }) {
         <pre className="text-[10px] font-mono bg-[#0a0e17] border border-border rounded-lg p-2 overflow-x-auto max-h-56 overflow-y-auto">{JSON.stringify(evidence, null, 2)}</pre>
       )}
     </div>
+  );
+}
+
+// One-click: turn any deep-dive card into a tracked remediation-plan task (grounded $ at stake).
+function AddToPlanButton({ item, accent }) {
+  const [state, setState] = useState("idle");
+  const add = async () => {
+    setState("adding");
+    try {
+      await api.post("/risk-engine/plan", {
+        title: item.title || item.explainTitle || "Untitled item",
+        ref: item.refLabel || "", source: item.explainKind || "deep-dive",
+        recommendation: (item.recommendedActions && item.recommendedActions[0]) || "",
+        severity: item.rating || "", context: item.explainContext || {},
+      });
+      setState("added");
+      toast.success("Added to remediation plan — tracked in Remediations");
+    } catch (e) {
+      setState("idle");
+      toast.error(e?.response?.data?.detail || "Could not add to plan");
+    }
+  };
+  const added = state === "added";
+  return (
+    <button data-testid="deep-dive-add-plan" disabled={state !== "idle"} onClick={add}
+      className="flex items-center gap-1.5 text-xs font-head font-bold px-3 py-2 rounded-lg border disabled:opacity-70 transition-colors"
+      style={{ borderColor: `hsl(${added ? "142 70% 45%" : accent} / 0.5)`, color: added ? "hsl(142 70% 45%)" : `hsl(${accent})` }}>
+      {state === "adding" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : added ? <CheckCircle2 className="w-3.5 h-3.5" /> : <ListPlus className="w-3.5 h-3.5" />}
+      {added ? "Added to plan" : "Add to remediation plan"}
+    </button>
   );
 }
 
@@ -116,6 +148,9 @@ export function RiskDetailModal({ item, accent = "255 85% 66%", busy, result, on
             <pre data-testid="deep-dive-script" className="text-[11px] font-mono bg-[#0a0e17] border border-border rounded-lg p-2.5 overflow-x-auto">{item.fixScript}</pre>
           </div>
         )}
+
+        {/* Add any card to the tracked remediation plan */}
+        <div className="pt-1"><AddToPlanButton key={`${item.refLabel || ""}|${item.title || ""}`} item={item} accent={accent} /></div>
 
         {/* Integrated Action Hub */}
         {hub ? (

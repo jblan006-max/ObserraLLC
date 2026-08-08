@@ -222,5 +222,10 @@ User's FINAL COMMAND satisfied: every KPI/summary card across all dashboards is 
 - **$ at stake / reduction if fixed on every deep-dive** (`ai_advisor.py` `_deep_num`/`_impact_estimate`, returned on BOTH LLM-success and fallback paths; rendered by `AIExplain` `ai-impact` banner): item-scope real $ where the card carries it; else honest portfolio residual-ALE (`$10.22M` live) with a modelled ~35% reduction — labelled `item`/`portfolio`/`modelled`, never fabricated. Fixed a bug where the LLM-success path was missing `data.update(impact)`.
 - VERIFIED via testing_agent iteration_50.json: all 5 items 100% pass; regressions intact (spend month-card, report-compose, section toggles, PDF export). Backend curl confirms item/portfolio/modelled scopes + cached responses retain fields.
 
+## Spend Alerts + Add-to-Remediation-Plan — DONE (Jun 2026)
+- **Slack/Teams spend ping** (`ai_advisor.py` `_check_budget` forecast branch): when projected month-end advisor spend is on track to exceed the monthly cap, in addition to the existing in-app + email alert it now posts a `_post_chat_alert` to the org's Teams/Slack webhook (deduped once per month via `advisor_forecast_notified`). Code-verified (`_post_chat_alert` exists + dedupe); live trigger requires a configured webhook + forecast-over.
+- **"Add to remediation plan" from any deep-dive** (`RiskDetailModal.jsx` AddToPlanButton → `POST /risk-engine/plan`): one click turns any card into a tracked task. NEW `db.remediation_plan` collection + endpoints `POST /risk-engine/plan`, `GET /risk-engine/plan`, `POST /risk-engine/plan/{id}/status`. The stored $ at stake / reduction is grounded via the same `_impact_estimate` (no fabrication). Surfaced on the Remediations page in a new "Remediation Plan — added from deep-dives" card (`rem-plan`) with per-task status dropdowns (Open/In Progress/Remediated/Accepted) and the $ pill.
+- VERIFIED: curl create→list→status all 200 (portfolio $10.22M, modelled $3.58M reduction); screenshot confirms button → "Added to plan" toast and the task appears on Remediations with status control. Test artifacts cleaned from the live org.
+
 
 
