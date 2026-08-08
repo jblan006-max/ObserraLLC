@@ -376,7 +376,7 @@ async def _board_metrics(org_id: str, report_text: str = "") -> dict:
     for r, f in paired[:6]:
         band = _montecarlo_item(f, r)
         risk_bands.append({"label": r.get("ref") or (r.get("title", "") or "")[:18],
-                           "title": (r.get("title", "") or "")[:34],
+                           "title": (r.get("title", "") or "")[:80],
                            "p10": band["p10"], "p50": band["p50"], "p90": band["p90"]})
     return {
         "org_name": org.get("name"), "residual": residual, "reduction": reduction,
