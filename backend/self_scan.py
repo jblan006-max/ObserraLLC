@@ -60,7 +60,7 @@ _COUPLED = {
 # Containment playbook — per threat-kind × severity: "auto" (contain instantly) or "review".
 _DEFAULT_PLAYBOOK = {
     "dependency": {"critical": "auto", "high": "review", "medium": "review", "low": "review"},
-    "identity": {"critical": "auto", "high": "auto", "medium": "review", "low": "review"},
+    "identity": {"critical": "auto", "high": "review", "medium": "review", "low": "review"},
     "device": {"critical": "auto", "high": "review", "medium": "review", "low": "review"},
 }
 
@@ -457,7 +457,8 @@ async def _ai_review(findings):
 
 
 def _default_engine():
-    return {"enabled": False, "paused": False, "auto_apply_config": True, "cadence": "daily"}
+    return {"enabled": False, "paused": False, "auto_apply_config": True,
+            "auto_promote": True, "cadence": "daily"}
 
 
 async def _run_autonomous(org_id, trigger="schedule", force=False):
@@ -490,6 +491,29 @@ async def _run_autonomous(org_id, trigger="schedule", force=False):
                 org_id, "security", f"Auto-remediated: {f['title']}",
                 f"{remediation} Compliance controls updated automatically.", ref="self-scan")
         else:
+            # Dependency upgrades are AI-driven first: launch a sandbox-verified upgrade job
+            # that auto-applies when no outage is detected, and only flags for human approval
+            # if the sandbox proves the upgrade would break the running service.
+            if cls == "dependency" and f.get("fixed_version"):
+                busy = await db.maintenance_jobs.find_one(
+                    {"org_id": org_id, "finding_id": f["id"],
+                     "status": {"$in": ["queued", "running", "verified", "promoting"]}})
+                if busy:
+                    continue
+                job_id = str(uuid.uuid4())
+                await db.maintenance_jobs.insert_one({
+                    "id": job_id, "org_id": org_id, "package": f.get("package"),
+                    "from_version": f.get("current_version"), "to_version": f.get("fixed_version"),
+                    "finding_id": f["id"], "title": f["title"], "status": "queued",
+                    "created_at": _now(), "by": "ai-engine"})
+                asyncio.create_task(_run_upgrade_job(
+                    org_id, job_id, f.get("package"), f.get("fixed_version"), f["id"]))
+                queued.append(f["id"])
+                await notifications.create(
+                    org_id, "security", f"AI auto-upgrading: {f['title']}",
+                    f"{rationale} Verifying in an isolated sandbox — auto-applying live if no outage is detected.",
+                    ref="self-scan", dedupe_key=f"auto-upgrade:{f['id']}")
+                continue
             existing = await db.scan_approvals.find_one(
                 {"org_id": org_id, "finding_id": f["id"], "status": "pending"})
             if existing:
@@ -607,12 +631,14 @@ class EngineCfg(BaseModel):
     enabled: bool | None = None
     paused: bool | None = None
     auto_apply_config: bool | None = None
+    auto_promote: bool | None = None
 
 
 @self_scan_router.get("/engine")
 async def get_engine(user: dict = Depends(get_current_user)):
     org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
     eng = org.get("auto_engine") or _default_engine()
+    eng.setdefault("auto_promote", True)
     pending = await db.scan_approvals.find(
         {"org_id": user["org_id"], "status": "pending"}, {"_id": 0}).sort("created_at", -1).to_list(100)
     history = await db.scan_approvals.find(
@@ -630,6 +656,8 @@ async def set_engine(body: EngineCfg, admin: dict = Depends(require_roles("admin
         eng["paused"] = body.paused
     if body.auto_apply_config is not None:
         eng["auto_apply_config"] = body.auto_apply_config
+    if body.auto_promote is not None:
+        eng["auto_promote"] = body.auto_promote
     await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"auto_engine": eng}})
     return eng
 
@@ -788,6 +816,72 @@ def _pin_requirement(package, target):
     return changed
 
 
+async def _sandbox_boot_check(sbpy, sandbox, job_id):
+    """Boot a minimal FastAPI app inside the sandbox venv and hit /health to prove the
+    upgraded framework actually serves live requests (a real outage detector)."""
+    import socket
+    up = await asyncio.create_subprocess_exec(
+        sbpy, "-m", "pip", "install", "-q", "uvicorn",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    try:
+        await asyncio.wait_for(up.communicate(), timeout=150)
+    except asyncio.TimeoutError:
+        up.kill()
+        return False, "Could not install an ASGI server in the sandbox to run the boot check."
+    with open(f"{sandbox}/obserra_boot.py", "w") as fh:
+        fh.write("from fastapi import FastAPI\napp = FastAPI()\n"
+                 "@app.get('/health')\ndef _h():\n    return {'ok': True}\n")
+    s = socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    proc = await asyncio.create_subprocess_exec(
+        sbpy, "-m", "uvicorn", "obserra_boot:app", "--host", "127.0.0.1", "--port", str(port),
+        cwd=sandbox, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+    try:
+        for _ in range(24):
+            await asyncio.sleep(0.75)
+            if proc.returncode is not None:
+                break
+            try:
+                async with httpx.AsyncClient(timeout=3) as c:
+                    r = await c.get(f"http://127.0.0.1:{port}/health")
+                    if r.status_code == 200:
+                        return True, f"Live boot check passed — FastAPI served /health on sandbox port {port}."
+            except Exception:
+                continue
+        tail = ""
+        if proc.returncode is not None and proc.stdout is not None:
+            try:
+                out = await asyncio.wait_for(proc.stdout.read(), timeout=5)
+                tail = (out or b"").decode(errors="replace")[-600:]
+            except Exception:
+                tail = ""
+        return False, "Live boot check FAILED — the upgraded framework did not serve /health.\n" + tail
+    finally:
+        try:
+            proc.kill()
+            await asyncio.wait_for(proc.communicate(), timeout=10)
+        except Exception:
+            pass
+
+
+async def _flag_for_approval(org_id, job_id, package, target, reason, log, verified=None):
+    """Halt an upgrade for human review because the sandbox detected a potential outage."""
+    await db.maintenance_jobs.update_one({"id": job_id}, {"$set": {
+        "status": "requires_approval", "finished_at": _now(), "requires_approval": True,
+        "verified_versions": verified or {},
+        "log": f"HUMAN APPROVAL REQUIRED — {reason}\n\n{log}"}})
+    await notifications.create(
+        org_id, "control_drift", f"Approval required — upgrade may cause an outage: {package} → {target}",
+        f"{reason} The live environment was NOT changed. Review & approve in Security Scanner.",
+        ref="self-scan", dedupe_key=f"upgrade-approval:{package}:{target}")
+    await _post_chat_alert(
+        org_id, f"⛔ Approval required — potential outage: {package} → {target}",
+        f"{reason}\nThe live service was NOT modified. Open Obserra → Security Scanner to review and manually override/approve.")
+
+
+
 async def _run_upgrade_job(org_id, job_id, package, target, finding_id):
     async def setjob(**k):
         await db.maintenance_jobs.update_one({"id": job_id}, {"$set": k})
@@ -826,9 +920,9 @@ async def _run_upgrade_job(org_id, job_id, package, target, finding_id):
         logtxt = (out or b"").decode(errors="replace")[-3500:]
         if proc.returncode != 0:
             shutil.rmtree(sandbox, ignore_errors=True)
-            await setjob(status="failed", finished_at=_now(), log="Sandbox install failed:\n" + logtxt)
-            await notifications.create(org_id, "security", f"Upgrade rejected (sandbox): {package} → {target}",
-                                       "Sandbox install failed — live environment untouched.", ref="self-scan")
+            await _flag_for_approval(org_id, job_id, package, target,
+                                     "Sandbox dependency install failed — needs manual review.",
+                                     "Sandbox install failed:\n" + logtxt, {})
             return
         # Smoke-import coupled frameworks inside the sandbox.
         mods = [m for m in {"fastapi", "starlette", "pydantic"} if m in [p.lower() for p in pkgs]]
@@ -854,20 +948,43 @@ async def _run_upgrade_job(org_id, job_id, package, target, finding_id):
                     verified[p.strip()] = ver.strip()
         except Exception:
             verified = {package: target}
-        shutil.rmtree(sandbox, ignore_errors=True)
+        # Smoke-import must pass before we even attempt a live boot.
         if not smoke_ok:
-            await setjob(status="failed", finished_at=_now(), log=smoke_msg + "\n\n" + logtxt)
-            await notifications.create(org_id, "security", f"Upgrade rejected (sandbox smoke-test): {package} → {target}",
-                                       "Coupled-framework import failed in sandbox — NOT promoted. Live untouched.", ref="self-scan")
-            await _post_chat_alert(org_id, f"⛔ Upgrade blocked in sandbox: {package} → {target}", smoke_msg)
+            shutil.rmtree(sandbox, ignore_errors=True)
+            await _flag_for_approval(org_id, job_id, package, target,
+                                     "Coupled-framework import failed in the sandbox — potential outage.",
+                                     smoke_msg + "\n\n" + logtxt, verified)
             return
+        # Real boot + health check: prove the upgraded framework actually serves live traffic.
+        boot_ok, boot_msg = True, "No framework change — live boot check not required."
+        if mods:
+            boot_ok, boot_msg = await _sandbox_boot_check(sbpy, sandbox, job_id)
+        shutil.rmtree(sandbox, ignore_errors=True)
+        if not boot_ok:
+            await _flag_for_approval(org_id, job_id, package, target,
+                                     "Upgrade would take the service down (sandbox boot/health check failed).",
+                                     boot_msg + "\n\n" + smoke_msg, verified)
+            return
+        # Sandbox fully passed — no outage detected. Record the verified snapshot.
         vtxt = ", ".join(f"{k}={v}" for k, v in verified.items())
-        await setjob(status="verified", finished_at=_now(), verified_versions=verified, bumped=vtxt,
-                     log=f"Sandbox verified ({vtxt}). {smoke_msg}\n\n{logtxt}")
-        msg = f"Upgrade verified in an isolated sandbox ({vtxt}). Promote to apply it live — zero restart risk until you do."
-        await notifications.create(org_id, "security", f"Upgrade verified — ready to promote: {package} → {target}",
-                                   msg, ref="self-scan")
-        await _post_chat_alert(org_id, f"🧪 Upgrade verified in sandbox: {package} → {target}", msg)
+        await setjob(status="verified", verified_versions=verified, bumped=vtxt,
+                     log=f"Sandbox verified ({vtxt}). {smoke_msg} {boot_msg}\n\n{logtxt}")
+        org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+        auto_promote = (org.get("auto_engine") or {}).get("auto_promote", True)
+        if auto_promote:
+            # AI-driven: auto-apply live (pins new versions + re-scans to confirm the CVE cleared).
+            await notifications.create(org_id, "security", f"Upgrade verified — auto-applying: {package} → {target}",
+                                       f"Sandbox passed install, import and live boot/health checks ({vtxt}). Auto-promoting to live now.",
+                                       ref="self-scan")
+            await _post_chat_alert(org_id, f"🧪 Sandbox passed — auto-applying: {package} → {target}",
+                                   f"Install, import and live boot checks all passed ({vtxt}). Promoting to live automatically — no human approval required.")
+            await _promote_upgrade_job(org_id, job_id)
+        else:
+            # Manual override enabled: hold at verified and alert a human to promote it.
+            msg = f"Upgrade verified in an isolated sandbox ({vtxt}). Manual override is ON — promote to apply it live."
+            await notifications.create(org_id, "control_drift", f"Upgrade verified — awaiting manual promotion: {package} → {target}",
+                                       msg, ref="self-scan")
+            await _post_chat_alert(org_id, f"🧪 Upgrade verified — manual promotion required: {package} → {target}", msg)
     except Exception as e:
         shutil.rmtree(sandbox, ignore_errors=True)
         await setjob(status="failed", finished_at=_now(), log=f"Job error: {str(e)[:500]}")
@@ -1416,8 +1533,8 @@ async def promote_upgrade(job_id: str, background: BackgroundTasks, admin: dict 
     job = await db.maintenance_jobs.find_one({"org_id": admin["org_id"], "id": job_id})
     if not job:
         raise HTTPException(404, "Job not found")
-    if job.get("status") != "verified":
-        raise HTTPException(400, "Only sandbox-verified upgrades can be promoted.")
+    if job.get("status") not in ("verified", "requires_approval"):
+        raise HTTPException(400, "Only sandbox-verified or approval-pending upgrades can be promoted.")
     await db.maintenance_jobs.update_one({"id": job_id}, {"$set": {"status": "promoting"}})
     background.add_task(_promote_upgrade_job, admin["org_id"], job_id)
     return {"ok": True, "status": "promoting"}

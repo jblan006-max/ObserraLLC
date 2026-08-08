@@ -310,6 +310,10 @@ export default function SecurityScanner() {
                 <input type="checkbox" checked={!!engine?.auto_apply_config} onChange={(e) => patchEngine({ auto_apply_config: e.target.checked })} />
                 Auto-apply safe config fixes
               </label>
+              <label className="flex items-center gap-2 text-[11px] cursor-pointer ml-1" data-testid="engine-autopromote">
+                <input type="checkbox" checked={engine?.auto_promote !== false} onChange={(e) => patchEngine({ auto_promote: e.target.checked })} />
+                Auto-apply sandbox-verified upgrades <span className="text-muted-foreground">(off = manual override with alerts)</span>
+              </label>
             </>
           )}
         </div>
@@ -367,16 +371,17 @@ export default function SecurityScanner() {
             <div className="flex items-center gap-2 mb-3"><Wrench className="w-4 h-4 text-primary" /><h3 className="font-head font-bold text-sm">Patch-apply jobs (upgrade → re-pin → re-scan)</h3></div>
             <div className="space-y-2">
               {jobs.slice(0, 6).map((j) => {
-                const jc = j.status === "success" ? "142 70% 45%" : j.status === "failed" ? "0 84% 60%" : j.status === "applied" ? "35 90% 55%" : j.status === "verified" ? "199 70% 50%" : "48 90% 55%";
+                const jc = j.status === "success" ? "142 70% 45%" : (j.status === "failed" || j.status === "requires_approval") ? "0 84% 60%" : j.status === "applied" ? "35 90% 55%" : j.status === "verified" ? "199 70% 50%" : "48 90% 55%";
                 const running = ["queued", "running", "promoting"].includes(j.status);
                 return (
                   <div key={j.id} data-testid={`job-${j.package}`} className="p-3 rounded-lg bg-secondary/40 flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="text-sm font-medium truncate">{j.package} <span className="font-mono text-muted-foreground">{j.from_version} → {j.to_version || "patched"}</span></div>
-                      <div className="text-[11px] text-muted-foreground">{j.status === "success" ? "✓ Re-scan confirms CVE cleared" : j.status === "applied" ? "Upgraded — restart may be needed to fully clear" : j.status === "failed" ? "Rejected — sandbox check failed, live untouched" : j.status === "verified" ? "🧪 Verified in sandbox — promote to apply live" : j.status === "promoting" ? "Promoting to live & re-scanning…" : "Verifying in isolated sandbox…"}{j.new_score != null ? ` · score ${j.new_score}` : ""}</div>
+                      <div className="text-[11px] text-muted-foreground">{j.status === "success" ? "✓ Re-scan confirms CVE cleared" : j.status === "applied" ? "Upgraded — restart may be needed to fully clear" : j.status === "requires_approval" ? "⛔ Potential outage detected — needs manual approval, live untouched" : j.status === "failed" ? "Rejected — sandbox check failed, live untouched" : j.status === "verified" ? "🧪 Verified in sandbox — promote to apply live" : j.status === "promoting" ? "Promoting to live & re-scanning…" : "Verifying in isolated sandbox…"}{j.new_score != null ? ` · score ${j.new_score}` : ""}</div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       {j.status === "verified" && <button data-testid={`promote-${j.package}`} onClick={() => promoteJob(j.id)} className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-bold flex items-center gap-1"><Sparkles className="w-3.5 h-3.5" /> Promote</button>}
+                      {j.status === "requires_approval" && <button data-testid={`override-${j.package}`} onClick={() => { if (window.confirm(`Override the outage warning and apply ${j.package} → ${j.to_version} to live?`)) promoteJob(j.id); }} className="px-3 py-1.5 rounded-md bg-high text-white text-xs font-bold flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Override &amp; apply</button>}
                       <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: `hsl(${jc} / 0.15)`, color: `hsl(${jc})` }}>{running && <Loader2 className="w-3 h-3 animate-spin" />}{j.status}</span>
                     </div>
                   </div>
