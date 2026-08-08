@@ -174,7 +174,8 @@ def _cover_preview_png(brand, org_name, theme) -> bytes:
 
 def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = None,
                report_date: str = None, version: str = None, chart_series=None, takeaways=None,
-               theme: str = "dark", risk_bars=None, exec_summary: str = None, brand=None) -> io.BytesIO:
+               theme: str = "dark", risk_bars=None, exec_summary: str = None, brand=None,
+               bench_line: str = None, signoff_line: str = None) -> io.BytesIO:
     brand = brand or _resolve_brand(None)
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=LETTER, topMargin=0.9 * inch, bottomMargin=0.8 * inch)
@@ -222,6 +223,11 @@ def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = Non
         story += [Spacer(1, 8), Paragraph("Key Takeaways &amp; Recommended Actions", h)]
         for t in takeaways:
             story.append(Paragraph(f"•&nbsp;&nbsp;{t}", bullet))
+    if bench_line:
+        story += [Spacer(1, 8), Paragraph("Financial Benchmark (vs published data)", h),
+                  Paragraph(bench_line, body)]
+    if signoff_line:
+        story += [Spacer(1, 4), Paragraph(f"<b>{signoff_line}</b>", body)]
     story.append(Spacer(1, 16))
     story.append(Paragraph("Confidential — decision-support estimates; not legal, financial, regulatory, or security guarantees.",
                            ParagraphStyle("d", parent=body, fontSize=7, textColor=colors.grey)))
@@ -300,13 +306,14 @@ def _extract_exec_summary(text: str) -> str:
 
 
 async def _board_metrics(org_id: str, report_text: str = "") -> dict:
-    from routes import _fin
+    from routes import _fin, _get_fin_cfg, _benchmark
     from bson import ObjectId
     org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
     risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(500)
     recs = await db.recommendations.find({"org_id": org_id}, {"_id": 0}).to_list(500)
     health = await db.health_index.find_one({"org_id": org_id}, {"_id": 0}) or {}
-    fins = [_fin(r) for r in risks]
+    fcfg = await _get_fin_cfg(org_id)
+    fins = [_fin(r, fcfg) for r in risks]
     residual = sum(f["residual_ale"] for f in fins)
     inherent = sum(f["inherent_ale"] for f in fins)
     reduction = round((inherent - residual) / inherent * 100) if inherent else 0
@@ -330,11 +337,22 @@ async def _board_metrics(org_id: str, report_text: str = "") -> dict:
     if pending:
         takeaways.append(f"{len(pending)} recommendation(s) await executive authority — approve to release the projected risk reduction.")
     takeaways.append("Maintain evidence freshness and quarterly control testing to keep every figure audit-ready and board-defensible.")
+    slis = [f["sle"] for f in fins] or [0]
+    avg_sle = round(sum(slis) / len(slis))
+    bench = await _benchmark(fcfg["industry"])
+    bratio = round(avg_sle / bench["industry_avg"], 2) if bench.get("industry_avg") else None
+    bench_line = (f"Modelled per-incident ${avg_sle/1e6:.2f}M vs IBM {bench['industry']} avg "
+                  f"${(bench.get('industry_avg') or 0)/1e6:.2f}M"
+                  + (f" ({bratio}x {'above' if bratio and bratio > 1 else 'in line with'} published)" if bratio else "")
+                  + f"; DBIR ransomware median ${bench.get('dbir_ransomware_median',0)/1e3:.0f}k. Source: IBM/Verizon DBIR ({bench.get('updated')}).")
+    signoff = (org.get("financial_config") or {}).get("signoff")
+    signoff_line = (f"Financial calibration approved by {signoff['name']} on {str(signoff.get('at',''))[:10]}"
+                    if signoff and signoff.get("locked") else None)
     return {
         "org_name": org.get("name"), "residual": residual, "reduction": reduction,
         "crit": crit, "pending": len(pending), "series": series, "risk_bars": risk_bars,
         "takeaways": takeaways, "exec_summary": _extract_exec_summary(report_text),
-        "brand": _resolve_brand(org),
+        "brand": _resolve_brand(org), "bench_line": bench_line, "signoff_line": signoff_line,
     }
 
 
@@ -346,7 +364,8 @@ async def build_board_report_pdf(org_id: str, report_text: str,
     return _build_pdf(report_text, title, cover=True, org_name=cover_org, theme=theme,
                       report_date=report_date, version=version,
                       chart_series=m["series"], takeaways=m["takeaways"], risk_bars=m["risk_bars"],
-                      exec_summary=m["exec_summary"], brand=m["brand"])
+                      exec_summary=m["exec_summary"], brand=m["brand"],
+                      bench_line=m.get("bench_line"), signoff_line=m.get("signoff_line"))
 
 
 def _wrap(text, font, size, max_w, canvas):

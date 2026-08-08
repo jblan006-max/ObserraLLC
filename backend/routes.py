@@ -396,7 +396,8 @@ async def assets(user: dict = Depends(get_current_user)):
 # ---------- Financial quantification (FAIR-style) ----------
 SLE_BY_IMPACT = {5: 8_000_000, 4: 3_000_000, 3: 1_000_000, 2: 300_000, 1: 75_000}
 
-# Published external benchmarks (stored figures, updated on request — no live scrape dependency).
+# Published external benchmarks — PRELOADED from the IBM Cost of a Data Breach report and Verizon
+# DBIR, stored in the DB and re-checked at most once per year (see _maybe_refresh_benchmarks).
 BENCHMARKS = {
     "updated": "2026-07-29",
     "source": ("IBM Cost of a Data Breach 2026 (global avg $4.99M) & 2025 industry table; "
@@ -414,15 +415,74 @@ BENCHMARKS = {
 }
 
 
-def _benchmark(industry):
+async def _get_benchmarks():
+    from datetime import datetime, timezone
+    doc = await db.app_benchmarks.find_one({"_id": "global"})
+    if not doc:
+        doc = {**BENCHMARKS, "_id": "global", "checked_at": datetime.now(timezone.utc).isoformat()}
+        await db.app_benchmarks.insert_one(dict(doc))
+    return doc
+
+
+async def _maybe_refresh_benchmarks(force=False):
+    """Preloaded from IBM/DBIR; best-effort re-fetch at most once per year. Keeps the stored
+    figures on any failure so the board never sees a broken number."""
+    import re as _re
+    from datetime import datetime, timezone, timedelta
+    import httpx
+    doc = await _get_benchmarks()
+    try:
+        last = datetime.fromisoformat(doc.get("checked_at") or "1970-01-01T00:00:00+00:00")
+    except Exception:
+        last = datetime(1970, 1, 1, tzinfo=timezone.utc)
+    if not force and datetime.now(timezone.utc) - last < timedelta(days=365):
+        return doc
+    updates = {"checked_at": datetime.now(timezone.utc).isoformat()}
+    try:
+        async with httpx.AsyncClient(timeout=8, follow_redirects=True) as c:
+            r = await c.get("https://newsroom.ibm.com/2026-07-29-ibm-study-one-in-four-malicious-breaches-are-ai-enabled,-costing-companies-6-million-on-average")
+            m = _re.search(r"\$([0-9]+(?:\.[0-9]+)?)\s*million", r.text)
+            if m:
+                val = int(float(m.group(1)) * 1_000_000)
+                if 1_000_000 <= val <= 20_000_000:
+                    updates["global_avg"] = val
+                    updates["updated"] = datetime.now(timezone.utc).date().isoformat()
+    except Exception:
+        pass
+    await db.app_benchmarks.update_one({"_id": "global"}, {"$set": updates})
+    return await _get_benchmarks()
+
+
+async def _benchmark(industry):
+    b = await _get_benchmarks()
     return {
         "industry": industry,
-        "industry_avg": BENCHMARKS["industries"].get(industry),
-        "global_avg": BENCHMARKS["global_avg"],
-        "dbir_ransomware_median": BENCHMARKS["dbir_ransomware_median"],
-        "dbir_bec_median": BENCHMARKS["dbir_bec_median"],
-        "source": BENCHMARKS["source"], "updated": BENCHMARKS["updated"],
+        "industry_avg": (b.get("industries") or {}).get(industry),
+        "industry_avg_source": "IBM Cost of a Data Breach 2025 (industry table)",
+        "global_avg": b.get("global_avg"),
+        "global_avg_source": "IBM Cost of a Data Breach 2026 (global avg)",
+        "dbir_ransomware_median": b.get("dbir_ransomware_median"),
+        "dbir_bec_median": b.get("dbir_bec_median"),
+        "dbir_source": "Verizon DBIR 2025 (incident-loss medians)",
+        "source": b.get("source"), "updated": b.get("updated"), "checked_at": b.get("checked_at"),
     }
+
+
+async def _suggested_records(org_id):
+    """Records-at-risk auto-fill from connected data sources (M365/Entra + Tenable + CASB)."""
+    conn = await db.connectors.find_one({"org_id": org_id, "id": "entra"}) or {}
+    identities = (conn.get("records_ingested", 0) or 0) + 1893 + 612
+    est = identities * 50 if identities else 0
+    return {"records": est,
+            "source": f"connected sources — {identities:,} directory/asset records × 50 avg records/identity (MOCKED_LIVE)"}
+
+
+def _cfg_hash(cfg):
+    import hashlib
+    import json
+    payload = json.dumps({k: cfg.get(k) for k in ("impact_sle", "industry", "method", "records", "per_record_cost")},
+                         sort_keys=True, default=str)
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
 async def _get_fin_cfg(org_id):
@@ -436,6 +496,7 @@ async def _get_fin_cfg(org_id):
         "method": cfg.get("method", "flat"),
         "records": cfg.get("records"),
         "per_record_cost": cfg.get("per_record_cost", 165),
+        "signoff": cfg.get("signoff"),
     }
 
 
@@ -474,19 +535,50 @@ class FinConfig(BaseModel):
     per_record_cost: int | None = None
 
 
+class SignoffBody(BaseModel):
+    name: str
+
+
+def _montecarlo(items, iters=2000):
+    """Monte-Carlo the portfolio residual exposure into a low/expected/high band (P10/P50/P90)."""
+    import random
+    if not items:
+        return {"p10": 0, "p50": 0, "p90": 0}
+    totals = []
+    for _ in range(iters):
+        s = 0.0
+        for it in items:
+            sle_s = random.triangular(it["sle"] * 0.5, it["sle"] * 2.0, it["sle"])
+            aro_s = min(1.0, max(0.0, random.gauss(it["aro"], 0.15)))
+            ratio = it["residual"] / max(1, it["inherent"])
+            s += sle_s * aro_s * ratio
+        totals.append(s)
+    totals.sort()
+
+    def _pct(p):
+        return round(totals[min(len(totals) - 1, int(p * len(totals)))])
+    return {"p10": _pct(0.10), "p50": _pct(0.50), "p90": _pct(0.90)}
+
+
 @api.get("/financial/config")
 async def get_financial_config(user: dict = Depends(get_current_user)):
     cfg = await _get_fin_cfg(user["org_id"])
-    return {"config": {**cfg, "impact_sle": {str(k): v for k, v in cfg["impact_sle"].items()}},
-            "benchmark": _benchmark(cfg["industry"]),
-            "industries": sorted(BENCHMARKS["industries"].keys()),
-            "default_impact_sle": {str(k): v for k, v in SLE_BY_IMPACT.items()}}
+    signoff = cfg.get("signoff")
+    if signoff:
+        signoff = {**signoff, "stale": signoff.get("hash") != _cfg_hash(cfg)}
+    return {"config": {**cfg, "impact_sle": {str(k): v for k, v in cfg["impact_sle"].items()}, "signoff": signoff},
+            "benchmark": await _benchmark(cfg["industry"]),
+            "industries": sorted((await _get_benchmarks()).get("industries", {}).keys()),
+            "default_impact_sle": {str(k): v for k, v in SLE_BY_IMPACT.items()},
+            "suggested_records": await _suggested_records(user["org_id"])}
 
 
 @api.put("/financial/config")
 async def put_financial_config(body: FinConfig, admin: dict = Depends(require_roles("admin"))):
     org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}) or {}
     cfg = org.get("financial_config") or {}
+    if (cfg.get("signoff") or {}).get("locked"):
+        raise HTTPException(409, "Calibration is locked by CRO sign-off — unlock before editing.")
     if body.impact_sle is not None:
         cfg["impact_sle"] = {str(int(k)): int(v) for k, v in body.impact_sle.items()}
     if body.industry is not None:
@@ -501,27 +593,54 @@ async def put_financial_config(body: FinConfig, admin: dict = Depends(require_ro
     return await get_financial_config(admin)
 
 
+@api.post("/financial/config/signoff")
+async def signoff_config(body: SignoffBody, admin: dict = Depends(require_roles("admin"))):
+    from datetime import datetime, timezone
+    cfg = await _get_fin_cfg(admin["org_id"])
+    signoff = {"name": body.name, "by": admin["email"], "at": datetime.now(timezone.utc).isoformat(),
+               "locked": True, "hash": _cfg_hash(cfg)}
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"financial_config.signoff": signoff}})
+    return {"ok": True, "signoff": signoff}
+
+
+@api.post("/financial/config/unlock")
+async def unlock_config(admin: dict = Depends(require_roles("admin"))):
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"financial_config.signoff.locked": False}})
+    return {"ok": True}
+
+
 @api.post("/financial/benchmark/refresh")
 async def refresh_benchmark(admin: dict = Depends(require_roles("admin"))):
     cfg = await _get_fin_cfg(admin["org_id"])
-    return {"ok": True, "benchmark": _benchmark(cfg["industry"]),
-            "note": "Stored published figures (IBM/Verizon DBIR); updated on request — no live scrape dependency."}
+    await _maybe_refresh_benchmarks(force=True)
+    return {"ok": True, "benchmark": await _benchmark(cfg["industry"]),
+            "note": "Preloaded from IBM/Verizon DBIR; auto-checked yearly and refreshable on request."}
 
 
 @api.get("/financial/basis")
 async def financial_basis(user: dict = Depends(get_current_user)):
     cfg = await _get_fin_cfg(user["org_id"])
     risks = await db.risks.find({"org_id": user["org_id"]}, {"_id": 0}).to_list(500)
-    items = [{"ref": r["ref"], "title": r["title"], "category": r.get("category"),
-              "impact": r.get("impact"), "likelihood": r.get("likelihood"),
-              "residual": r["residual"], "inherent": r["inherent"], **_fin(r, cfg)} for r in risks]
+    items = []
+    for r in risks:
+        f = _fin(r, cfg)
+        f["ale_low"] = round(f["residual_ale"] * 0.5)
+        f["ale_high"] = round(f["residual_ale"] * 2.0)
+        items.append({"ref": r["ref"], "title": r["title"], "category": r.get("category"),
+                      "impact": r.get("impact"), "likelihood": r.get("likelihood"),
+                      "residual": r["residual"], "inherent": r["inherent"], **f})
     items.sort(key=lambda x: x["residual_ale"], reverse=True)
     slis = [i["sle"] for i in items] or [0]
     modelled_avg_sle = round(sum(slis) / len(slis))
-    bench = _benchmark(cfg["industry"])
+    bench = await _benchmark(cfg["industry"])
     ratio = round(modelled_avg_sle / bench["industry_avg"], 2) if bench.get("industry_avg") else None
+    scenario = _montecarlo(items)
+    signoff = cfg.get("signoff")
+    if signoff:
+        signoff = {**signoff, "stale": signoff.get("hash") != _cfg_hash(cfg)}
     return {"items": items, "modelled_avg_sle": modelled_avg_sle, "modelled_max_sle": max(slis),
             "benchmark": bench, "benchmark_ratio": ratio, "method": cfg["method"], "custom_table": cfg["custom_table"],
+            "scenario": scenario, "signoff": signoff,
             "disclaimer": ("Per-incident magnitudes are modelling assumptions from your configured impact→$ table "
                            "(or records × per-record cost), benchmarked against published industry figures. "
                            "Decision-support estimates — not guarantees.")}

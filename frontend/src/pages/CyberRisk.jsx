@@ -104,9 +104,13 @@ function FinancialBasis({ isAdmin }) {
     catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
     setSaving(false);
   };
+  const signOff = async () => { const name = window.prompt("CRO name to sign off this calibration:"); if (!name) return; try { await api.post("/financial/config/signoff", { name }); toast.success("Calibration locked & CRO-signed"); load(); } catch (e) { toast.error("Sign-off failed"); } };
+  const unlock = async () => { try { await api.post("/financial/config/unlock"); toast.success("Calibration unlocked"); load(); } catch (e) { toast.error("Unlock failed"); } };
+  const autofillRecords = () => { const s = cfg.suggested_records; if (s?.records) save({ method: "records", records: s.records }); };
+  const so = cfg.config.signoff;
   return (
     <div className="bg-card fact-border rounded-xl p-5 space-y-5" data-testid="financial-basis">
-      <div className="flex items-center gap-2"><Calculator className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Financial basis &amp; benchmark</h2><span className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-secondary text-muted-foreground">defensible math</span></div>
+      <div className="flex flex-wrap items-center gap-2"><Calculator className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Financial basis &amp; benchmark</h2><span className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-secondary text-muted-foreground">defensible math</span>{basis.signoff?.locked && <span data-testid="fin-approved" className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-low/15 text-low border border-low/30">✓ Approved by {basis.signoff.name} · {String(basis.signoff.at).slice(0, 10)}{basis.signoff.stale ? " (config changed since)" : ""}</span>}</div>
 
       <div className="grid sm:grid-cols-3 gap-3" data-testid="fin-benchmark">
         <div className="rounded-lg bg-secondary/40 p-3">
@@ -115,9 +119,10 @@ function FinancialBasis({ isAdmin }) {
           <div className="text-[10px] text-muted-foreground">avg SLE · max {fmt(basis.modelled_max_sle)}</div>
         </div>
         <div className="rounded-lg bg-secondary/40 p-3">
-          <div className="text-[10px] font-mono uppercase text-muted-foreground">{bench.industry} benchmark (IBM)</div>
+          <div className="text-[10px] font-mono uppercase text-muted-foreground">{bench.industry} benchmark</div>
           <div className="font-head font-black text-2xl">{fmt(bench.industry_avg)}</div>
-          <div className="text-[10px] text-muted-foreground">global avg {fmt(bench.global_avg)}</div>
+          <div className="text-[10px] text-muted-foreground">{bench.industry_avg_source}</div>
+          <div className="text-[10px] text-muted-foreground">global {fmt(bench.global_avg)} · {bench.global_avg_source}</div>
         </div>
         <div className="rounded-lg p-3" style={{ background: `hsl(${ratioColor} / 0.12)` }} data-testid="fin-ratio">
           <div className="text-[10px] font-mono uppercase text-muted-foreground">Your model vs benchmark</div>
@@ -125,7 +130,14 @@ function FinancialBasis({ isAdmin }) {
           <div className="text-[10px] text-muted-foreground">{ratio == null ? "" : ratio > 1.25 ? "above published avg" : ratio < 0.75 ? "below published avg" : "in line with published avg"}</div>
         </div>
       </div>
-      <div className="text-[11px] text-muted-foreground flex items-start gap-2"><BarChart3 className="w-3.5 h-3.5 mt-0.5 shrink-0" /> <span>DBIR medians for context — ransomware {fmt(bench.dbir_ransomware_median)}, BEC {fmt(bench.dbir_bec_median)}. Source: {bench.source} (updated {bench.updated}).</span></div>
+      {basis.scenario && (
+        <div className="rounded-lg bg-ai/5 border border-ai/20 p-3" data-testid="fin-scenario">
+          <div className="text-[10px] font-mono uppercase text-muted-foreground">Board exposure range · Monte-Carlo (P10 – expected – P90)</div>
+          <div className="font-head font-black text-xl mt-1">{fmt(basis.scenario.p10)} <span className="text-muted-foreground text-sm">low</span> · {fmt(basis.scenario.p50)} <span className="text-muted-foreground text-sm">expected</span> · {fmt(basis.scenario.p90)} <span className="text-muted-foreground text-sm">high</span></div>
+          <div className="text-[10px] text-muted-foreground">2,000-iteration simulation over magnitude &amp; frequency uncertainty — shows the board a defensible band, not a single point.</div>
+        </div>
+      )}
+      <div className="text-[11px] text-muted-foreground flex items-start gap-2"><BarChart3 className="w-3.5 h-3.5 mt-0.5 shrink-0" /> <span>DBIR medians for context — ransomware {fmt(bench.dbir_ransomware_median)}, BEC {fmt(bench.dbir_bec_median)} ({bench.dbir_source}). Benchmark source: {bench.source} · updated {bench.updated}{bench.checked_at ? ` · last checked ${new Date(bench.checked_at).toLocaleDateString()}` : ""}.</span></div>
 
       <div className="rounded-lg border border-border overflow-x-auto" data-testid="fin-math-table">
         <table className="w-full text-xs min-w-[720px]">
@@ -147,7 +159,11 @@ function FinancialBasis({ isAdmin }) {
 
       {isAdmin && (
         <div className="rounded-lg bg-secondary/30 p-4 space-y-3" data-testid="fin-config">
-          <div className="flex items-center gap-2 text-sm font-bold"><Building2 className="w-4 h-4" /> Calibrate the model (admin)</div>
+          <div className="flex items-center gap-2 text-sm font-bold"><Building2 className="w-4 h-4" /> Calibrate the model (admin)
+            {so?.locked
+              ? <button data-testid="fin-unlock" onClick={unlock} className="ml-auto text-xs px-2.5 py-1 rounded-md bg-high/15 text-high border border-high/30">🔒 Locked — unlock to edit</button>
+              : <button data-testid="fin-signoff" onClick={signOff} className="ml-auto text-xs px-2.5 py-1 rounded-md bg-low/15 text-low border border-low/30">Lock &amp; CRO sign-off</button>}
+          </div>
           <div className="flex flex-wrap items-center gap-3">
             <label className="text-xs flex items-center gap-2">Industry
               <select data-testid="fin-industry" value={cfg.config.industry} onChange={(e) => save({ industry: e.target.value })} className="bg-background border border-border rounded-md px-2 py-1 text-xs">

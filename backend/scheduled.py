@@ -293,6 +293,8 @@ async def daily_drift_digest(request: Request, background_tasks: BackgroundTasks
     background_tasks.add_task(_run_autonomous_all, "schedule")
     background_tasks.add_task(_run_kev_digest)
     background_tasks.add_task(_run_upgrade_digest)
+    from routes import _maybe_refresh_benchmarks
+    background_tasks.add_task(_maybe_refresh_benchmarks)
     return {"status": "accepted"}
 
 
