@@ -33,38 +33,34 @@ const NAV_SECTIONS = [
   { section: null, items: [
     { to: "/app", label: "Overview", icon: LayoutDashboard, end: true },
   ]},
+  { section: "Risk", ent: "cyber_risk", cat: true, color: "crit", items: [
+    { to: "/app/cyber-risk", label: "Risk (FAIR)", icon: ShieldAlert },
+    { to: "/app/risks", label: "Risk Register", icon: ListChecks },
+    { to: "/app/compliance", label: "Compliance Posture", icon: ShieldCheck, ent: "reporting_board" },
+  ]},
+  { section: "Cyber", ent: "cyber_risk", cat: true, color: "crit", items: [
+    { to: "/app/situation-room", label: "Situation Room", icon: Radar },
+    { to: "/app/controls", label: "Control Monitoring", icon: ShieldCheck },
+    { to: "/app/security", label: "Security Scanner", icon: ShieldAlert },
+    { to: "/app/decisions", label: "Remediations", icon: GitBranch },
+    { to: "/app/assets", label: "Asset Intelligence", icon: Boxes, ent: "asset_intelligence" },
+  ]},
   { section: "AI Governance", ent: "ai_governance", cat: true, color: "ai", items: [
     { to: "/app/ai-governance", label: "AI Governance", icon: Cpu },
     { to: "/app/agents", label: "AI Agents", icon: Bot },
   ]},
-  { section: "Risk", ent: "cyber_risk", cat: true, color: "crit", items: [
-    { to: "/app/situation-room", label: "Situation Room", icon: Radar },
-    { to: "/app/risks", label: "Risk Register", icon: ListChecks },
-    { to: "/app/controls", label: "Control Monitoring", icon: ShieldCheck },
-    { to: "/app/cyber-risk", label: "Risk", icon: ShieldAlert },
-  ]},
-  { section: "Cyber", ent: "cyber_risk", cat: true, color: "crit", items: [
-    { to: "/app/security", label: "Security Scanner", icon: ShieldAlert },
-  ]},
   { section: "Third-Party Risk", ent: "third_party_risk", cat: true, color: "high", items: [
     { to: "/app/vendors", label: "Third-Party Risk", icon: Building },
   ]},
-  { section: "Asset Intelligence", ent: "asset_intelligence", cat: true, color: "primary", items: [
-    { to: "/app/assets", label: "Asset Intelligence", icon: Boxes },
+  { section: "Reporting", ent: "reporting_board", cat: true, color: "low", items: [
+    { to: "/app/reporting", label: "Evidence & Reporting", icon: FileBarChart },
+    { to: "/app/studio", label: "Studio", icon: Sparkles },
+    { to: "/app/benchmark", label: "Benchmarking", icon: BarChart3 },
+    { to: "/app/knowledge-graph", label: "Knowledge Graph", icon: Network },
+    { to: "/app/snapshot", label: "Exec Snapshot", icon: Smartphone },
   ]},
   { section: "Audit & Evidence", ent: "audit_evidence", cat: true, color: "med", items: [
     { to: "/app/audit", label: "Audit Log", icon: ScrollText },
-  ]},
-  { section: "Reporting & Board", ent: "reporting_board", cat: true, color: "low", items: [
-    { to: "/app/compliance", label: "Compliance Posture", icon: ShieldCheck },
-    { to: "/app/snapshot", label: "Exec Snapshot", icon: Smartphone },
-    { to: "/app/reporting", label: "Evidence & Reporting", icon: FileBarChart },
-  ]},
-  { section: "Dashboards", items: [
-    { to: "/app/knowledge-graph", label: "Knowledge Graph", icon: Network },
-    { to: "/app/decisions", label: "Recommendations", icon: GitBranch },
-    { to: "/app/studio", label: "Studio", icon: Sparkles },
-    { to: "/app/benchmark", label: "Benchmarking", icon: BarChart3 },
   ]},
   { section: "Admin", admin: true, items: [
     { to: "/app/kernel", label: "Platform Kernel", icon: Layers },

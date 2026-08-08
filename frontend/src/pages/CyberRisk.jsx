@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { ShieldAlert, Loader2, Layers, PlayCircle, Gauge, ShieldCheck, TrendingDown, Calculator, BarChart3, Building2, RefreshCw, Sparkles, FileText, Clock, Target, Activity } from "lucide-react";
+import { ShieldAlert, Loader2, Layers, PlayCircle, Gauge, ShieldCheck, TrendingDown, Calculator, BarChart3, Building2, RefreshCw, Sparkles, FileText, Clock, Target, Activity, BookOpen } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ComposedChart, Area, BarChart, Bar } from "recharts";
 
 const TIER = (residual) => residual >= 16 ? "0 84% 60%" : residual >= 9 ? "35 90% 55%" : "142 70% 45%";
@@ -99,6 +99,11 @@ function Kpi({ label, value, sub, accent }) {
 }
 
 const DRIVER_COLOR = { "Loss magnitude": "0 84% 60%", "Threat frequency": "35 90% 55%", "Control weakness": "190 90% 50%" };
+const DRIVER_WHY = {
+  "Loss magnitude": "driven by the high single-loss cost — mitigation that lowers impact/records exposed cuts $ most",
+  "Threat frequency": "driven by how often the event is expected — reducing occurrence rate cuts $ most",
+  "Control weakness": "driven by weak residual controls — strengthening controls cuts exposure most",
+};
 
 function FairDashboard() {
   const [d, setD] = useState(null);
@@ -106,6 +111,7 @@ function FairDashboard() {
   if (!d) return null;
   const fmt = (n) => n == null ? "—" : n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M` : `$${(n / 1e3).toFixed(0)}k`;
   const p = d.portfolio;
+  const k = d.kpis || {};
   const dc = (name) => DRIVER_COLOR[name] || "215 15% 55%";
   return (
     <div className="bg-card fact-border rounded-xl p-5 space-y-5" data-testid="fair-dashboard">
@@ -113,12 +119,44 @@ function FairDashboard() {
         <Target className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">FAIR risk quantification</h2>
         <span className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-secondary text-muted-foreground">Factor Analysis of Information Risk</span>
       </div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="fair-kpis">
-        <Kpi label="Residual ALE" value={fmt(p.residual_ale)} sub={`down ${p.reduction_pct}% from inherent`} />
-        <Kpi label="Monte-Carlo P50" value={fmt(p.p50)} sub={`P10 ${fmt(p.p10)} · P90 ${fmt(p.p90)}`} />
-        <Kpi label="Inherent ALE" value={fmt(p.inherent_ale)} sub="pre-control exposure" />
-        <Kpi label="Accepted (unremediated)" value={fmt(d.acceptance.total)} sub={`${d.acceptance.count} open risks carried`} accent="0 84% 60%" />
+      <div className="rounded-lg bg-ai/5 border border-ai/20 p-3 space-y-1.5" data-testid="fair-formula">
+        <div className="text-[10px] font-mono uppercase text-muted-foreground">How this is calculated (FAIR)</div>
+        <div className="font-mono text-sm text-foreground">ALE = Loss Magnitude (LM) × Loss Event Frequency (LEF)</div>
+        <div className="font-mono text-sm text-foreground">LEF = Threat Event Frequency (TEF) × Vulnerability</div>
+        <div className="text-[10px] text-muted-foreground leading-relaxed">
+          <b>LM</b> = $ cost of a single loss event (your configured SLE / per-record model). <b>TEF</b> = how often the threat acts (likelihood ÷ 5).
+          <b> Vulnerability</b> = residual ÷ inherent (control weakness). <b>ALE</b> = expected annual loss; the P10–P90 band comes from a 2,000+ iteration Monte-Carlo over these factors.
+        </div>
       </div>
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="fair-kpis">
+        <Kpi label="$ at Risk (residual ALE)" value={fmt(k.dollars_at_risk)} sub={`down ${k.reduction_pct}% from inherent ${fmt(p.inherent_ale)}`} accent="0 84% 60%" />
+        <Kpi label="Worst case (P90)" value={fmt(k.worst_case_p90)} sub="10% adverse-case scenario" />
+        <Kpi label="Remediation ROI" value={`${k.remediation_roi}×`} sub={`retire ${fmt(k.remediation_reduction)} for ~${fmt(k.remediation_cost)}`} accent="150 60% 45%" />
+        <Kpi label="Accepted (carried)" value={fmt(k.accepted_exposure)} sub={`${d.acceptance.count} open risks unremediated`} />
+      </div>
+      {d.deductions?.length > 0 && (
+        <div className="rounded-lg border border-ai/20 bg-ai/5 p-3" data-testid="fair-deductions">
+          <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2 flex items-center gap-1"><Sparkles className="w-3.5 h-3.5 text-ai" /> FAIR-based deductions</div>
+          <ul className="space-y-1.5">
+            {d.deductions.map((t, i) => (
+              <li key={i} data-testid={`fair-deduction-${i}`} className="text-xs flex gap-2"><span className="text-ai mt-0.5">▸</span><span>{t}</span></li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {d.kpi_references?.length > 0 && (
+        <details className="rounded-lg border border-border p-3" data-testid="fair-kpi-refs">
+          <summary className="text-[10px] font-mono uppercase text-muted-foreground cursor-pointer flex items-center gap-1"><BookOpen className="w-3.5 h-3.5" /> Why these KPIs — board benchmarks (Gartner · NACD · FAIR · WEF)</summary>
+          <ul className="mt-3 space-y-2.5">
+            {d.kpi_references.map((r, i) => (
+              <li key={i} data-testid={`fair-kpi-ref-${i}`} className="text-[11px]">
+                <div className="font-semibold text-foreground">{r.kpi} — <span className="text-ai">{r.source}</span></div>
+                <div className="text-muted-foreground">{r.why} <a href={r.url} target="_blank" rel="noreferrer" className="text-ai underline whitespace-nowrap">source ↗</a></div>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
       <div>
         <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2">Exposure by area · FAIR breakdown</div>
         <div className="grid md:grid-cols-2 gap-3" data-testid="fair-by-area">
@@ -138,6 +176,7 @@ function FairDashboard() {
                 <div>Avg threat freq <span className="text-foreground font-mono">{a.avg_tef}</span></div>
               </div>
               {a.top_risk && <div className="text-[10px] text-muted-foreground truncate">Top: <span className="font-mono text-ai">{a.top_risk.ref}</span> {a.top_risk.title}</div>}
+              <div className="text-[10px] text-muted-foreground"><span className="font-semibold text-foreground/80">Why:</span> {DRIVER_WHY[a.dominant_driver] || ""}</div>
             </div>
           ))}
         </div>
@@ -175,7 +214,15 @@ function FairDashboard() {
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-muted-foreground">FAIR: ALE = Loss Magnitude × Loss Event Frequency (LEF); LEF = Threat Event Frequency (TEF) × Vulnerability (control weakness = residual/inherent). Decision-support estimates, benchmarked against IBM {d.benchmark.industry} avg {fmt(d.benchmark.industry_avg)}.</p>
+      <div className="space-y-1" data-testid="fair-references">
+        <p className="text-[11px] text-muted-foreground">FAIR: ALE = Loss Magnitude × Loss Event Frequency (LEF); LEF = Threat Event Frequency (TEF) × Vulnerability (control weakness = residual/inherent). Decision-support estimates, benchmarked against IBM {d.benchmark.industry} avg {fmt(d.benchmark.industry_avg)}.</p>
+        {d.references?.length > 0 && (
+          <div className="text-[10px] text-muted-foreground">
+            <span className="font-mono uppercase tracking-wide">References</span>
+            <ul className="list-disc pl-4 mt-0.5 space-y-0.5">{d.references.map((r, i) => <li key={i}>{r}</li>)}{d.benchmark.updated && <li>Benchmark table updated {d.benchmark.updated}</li>}</ul>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

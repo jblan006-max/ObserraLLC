@@ -823,6 +823,30 @@ async def financials(user: dict = Depends(get_current_user)):
             "total_risk_adjusted": total_adj, "avoided": total_inherent - total_residual}
 
 
+KPI_REFERENCES = [
+    {"kpi": "$ at Risk (residual ALE)",
+     "source": "Gartner — Outcome-Driven Metrics (ODM) / CARE",
+     "why": "Gartner's board guidance recommends expressing residual cyber risk for critical services in financial terms, so directors see the exposure that remains after controls rather than raw activity metrics.",
+     "url": "https://www.gartner.com/en/articles/cybersecurity-metrics"},
+    {"kpi": "$ at Risk & Worst case (P90)",
+     "source": "NACD Director's Handbook on Cyber-Risk Oversight (2026), Principle 5",
+     "why": "NACD directs boards to view top risks as probable frequency × financial impact and to model the financial implications of potential incidents, including adverse-case scenarios.",
+     "url": "https://www.nacdonline.org/all-governance/governance-resources/governance-research/director-handbooks/2026-cyber-risk-oversight/cyber-risk-handbook-principles-2026/principle-5-guide-cybersecurity-risk-measurement-reporting/"},
+    {"kpi": "Remediation ROI (ROSI)",
+     "source": "FAIR Institute — Redefining ROSI · ENISA Return on Security Investment",
+     "why": "ROSI compares the expected loss avoided by a remediation against its cost — the FAIR/ENISA-standard way to justify security spend and prioritise the greatest risk buy-down for the board.",
+     "url": "https://www.fairinstitute.org/blog/redefining-rosi-return-on-security-investment"},
+    {"kpi": "Accepted (carried) exposure",
+     "source": "NACD Cyber-Risk Oversight — board risk appetite",
+     "why": "Boards are asked to set cyber-risk appetite in financial terms and decide how much risk to accept, mitigate or transfer; the accepted-exposure figure makes that acceptance explicit and auditable.",
+     "url": "https://www.nacdonline.org/all-governance/governance-resources/governance-research/director-handbooks/2026-cyber-risk-oversight/cyber-risk-handbook-toolkit-2026/board-level-cybersecurity-metrics/"},
+    {"kpi": "FAIR quantification method",
+     "source": "World Economic Forum (via FAIR Institute)",
+     "why": "The WEF advises boards of directors to understand the economic drivers and impact of cyber risk; FAIR is the open standard used here to express risk in those economic terms.",
+     "url": "https://www.fairinstitute.org/blog/world-economic-forum-report-advises-boards-of-directors-to-understand-the-economic-drivers-and-impact-of-cyber-risk"},
+]
+
+
 def _fair_classify(sle, tef, vuln, max_sle):
     mag = round(sle / max_sle, 2) if max_sle else 0
     scores = {"Loss magnitude": mag, "Threat frequency": round(tef, 2), "Control weakness": round(vuln, 2)}
@@ -900,11 +924,56 @@ async def _fair_data(org_id):
     driver_dist = {}
     for i in items:
         driver_dist[i["driver"]] = driver_dist.get(i["driver"], 0) + 1
+
+    def _rem_cost(score):
+        return 250000 if score >= 16 else 150000 if score >= 11 else 80000 if score >= 6 else 30000
+    ach_reduction, est_cost = 0.0, 0.0
+    for i in accepted:
+        rs = i.get("residual_score") or 10
+        rf = max(0.0, (rs - 4) / rs)
+        ach_reduction += i["residual_ale"] * rf
+        est_cost += _rem_cost(rs)
+    roi = round(ach_reduction / est_cost, 1) if est_cost else 0
+    driver_res = {}
+    for i in items:
+        driver_res[i["driver"]] = driver_res.get(i["driver"], 0) + i["residual_ale"]
+    top_driver = max(driver_res, key=driver_res.get) if driver_res else "—"
+    top_driver_share = round(driver_res.get(top_driver, 0) / residual_total * 100) if residual_total else 0
+    accepted_total = round(sum(i["residual_ale"] for i in accepted))
+    worst_single = max((i["p90"] for i in items), default=0)
+    ind_avg = bench.get("industry_avg") or 0
+    kpis = {"dollars_at_risk": round(residual_total), "worst_case_p90": portfolio["p90"],
+            "risk_reduced": round(inherent_total - residual_total), "reduction_pct": portfolio["reduction_pct"],
+            "accepted_exposure": accepted_total, "remediation_roi": roi,
+            "remediation_reduction": round(ach_reduction), "remediation_cost": round(est_cost)}
+
+    def _m(v):
+        return f"${v / 1e6:.1f}M" if v >= 1e6 else f"${v / 1e3:.0f}k"
+    lever = ("strengthening residual controls" if top_driver == "Control weakness"
+             else "reducing how often the event occurs" if top_driver == "Threat frequency"
+             else "lowering loss magnitude (records / business impact)")
+    deductions = []
+    if by_area:
+        ta = by_area[0]
+        deductions.append(f"{ta['area']} is the largest exposure at {_m(ta['residual_ale'])} ({ta['share_pct']}% of portfolio), dominated by {ta['dominant_driver'].lower()}.")
+    deductions.append(f"{top_driver} drives {top_driver_share}% of residual exposure — the highest-leverage lever for $ reduction is {lever}.")
+    n_pending = sum(1 for i in accepted if i["remediation_pending"])
+    deductions.append(f"The organisation is carrying {_m(accepted_total)} of unremediated exposure across {len(accepted)} risk{'s' if len(accepted) != 1 else ''}; {n_pending} {'has' if n_pending == 1 else 'have'} a fix pending.")
+    if est_cost:
+        deductions.append(f"Remediating open risks could retire ~{_m(round(ach_reduction))} of annual loss for an estimated {_m(round(est_cost))} spend — about {roi}x return on remediation.")
+    if ind_avg and worst_single:
+        deductions.append(f"Your adverse-case single risk ({_m(worst_single)}) is {round(worst_single / ind_avg, 1)}x the IBM {cfg['industry']} average breach cost ({_m(ind_avg)}).")
+    deductions.append(f"There is a 10% chance annual loss exceeds {_m(portfolio['p90'])} (P90) — use this as the board's adverse-case planning figure.")
+
     return {"portfolio": portfolio, "by_area": by_area, "risks": items, "loss_exceedance": lec,
             "driver_distribution": [{"driver": k, "count": v} for k, v in driver_dist.items()],
-            "acceptance": {"total": round(sum(i["residual_ale"] for i in accepted)), "count": len(accepted)},
+            "acceptance": {"total": accepted_total, "count": len(accepted)},
+            "kpis": kpis, "deductions": deductions, "kpi_references": KPI_REFERENCES,
             "benchmark": {"industry": cfg["industry"], "industry_avg": bench.get("industry_avg"),
-                          "source": bench.get("industry_avg_source")},
+                          "global_avg": bench.get("global_avg"), "source": bench.get("industry_avg_source"),
+                          "updated": bench.get("updated")},
+            "references": [s for s in [bench.get("industry_avg_source"), bench.get("global_avg_source"),
+                                       bench.get("ai_breach_source"), bench.get("dbir_source")] if s],
             "industry": cfg["industry"]}
 
 
