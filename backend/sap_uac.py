@@ -869,19 +869,84 @@ async def access_monitoring(user: dict = Depends(get_current_user)):
     dormant, orphan, service = [], [], []
     for a in accounts:
         person = pmap.get(a.get("person_ref"))
+        try:
+            days_dormant = (_now() - datetime.fromisoformat(a["last_login"])).days if a.get("last_login") else None
+        except Exception:
+            days_dormant = None
         base = {"ref": a["ref"], "sap_user": a["sap_user"], "system": a["system"],
+                "person_ref": a.get("person_ref"),
                 "person_name": person["name"] if person else "(no owner)",
                 "user_type": a["user_type"], "last_login": a["last_login"],
-                "privileged": a["flags"]["privileged"], "lock_state": a["lock_state"]}
+                "days_dormant": days_dormant,
+                "roles": [ROLE_BY_REF[r]["name"] for r in a.get("roles", []) if r in ROLE_BY_REF],
+                "owner": a.get("owner"),
+                "privileged": a["flags"]["privileged"], "sap_all": a["flags"].get("sap_all", False),
+                "lock_state": a["lock_state"]}
         if a["flags"]["dormant"]:
             dormant.append(base)
         if a["flags"]["orphan"]:
             orphan.append({**base, "reason": "Terminated owner" if (person and person["status"] == "Terminated")
                            else ("Ownerless technical account" if a.get("technical") else "No linked person")})
         if a.get("technical") or a["user_type"] in ("system", "communication", "emergency"):
-            service.append({**base, "owner": a.get("owner"), "account_type": a["user_type"]})
+            service.append({**base, "account_type": a["user_type"]})
     return {"dormant": dormant, "orphan": orphan, "service_accounts": service,
             "counts": {"dormant": len(dormant), "orphan": len(orphan), "service": len(service)}}
+
+
+class AccountActionBody(BaseModel):
+    action: str  # lock | recertify | deactivate | revoke_all
+    reason: str = ""
+
+
+@sap_router.post("/accounts/{account_ref}/action")
+async def account_action(account_ref: str, body: AccountActionBody, user: dict = Depends(get_current_user)):
+    """ServiceNow-orchestrated action from any account row (dormant / orphan / service / technical):
+    emergency-lock, de-provision, revoke all roles, or open a recertification."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    acc = await db.sap_accounts.find_one({"org_id": org_id, "ref": account_ref})
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    by = user["email"]
+    person = await db.sap_persons.find_one({"org_id": org_id, "ref": acc.get("person_ref")}, {"_id": 0}) if acc.get("person_ref") else None
+    hr = (person or {}).get("hr_authority", "ADP")
+    pr, pn, em = acc.get("person_ref"), (person or {}).get("name") or "(technical / shared)", (person or {}).get("email")
+    if body.action == "lock":
+        await db.sap_accounts.update_one({"_id": acc["_id"]}, {"$set": {"lock_state": "locked"}})
+        steps = [("ServiceNow", f"Account lock opened for {acc['sap_user']}"),
+                 (hr, "Recording access change against worker record"),
+                 ("SAP", f"Locking {acc['sap_user']} on {acc['system']} and terminating sessions"),
+                 ("AD/Entra", "Disabling directory sign-in"),
+                 ("ServiceNow", "Account locked; change closed")]
+        ttype, action, prefix, reason = "SAP Account Lock", "acct_lock", "CHG", f"Lock {acc['sap_user']}"
+    elif body.action == "deactivate":
+        if pr:
+            await _apply_activation(org_id, [pr], "deactivate", body.reason or "Dormant/orphan de-provisioning", False, by, "Access-monitoring de-provisioning")
+        else:
+            await db.sap_accounts.update_one({"_id": acc["_id"]}, {"$set": {"lock_state": "locked", "roles": []}})
+        steps = [("ServiceNow", f"De-provisioning opened for {acc['sap_user']}"),
+                 (hr, "Confirming worker status in HR"),
+                 ("SAP", f"Locking {acc['sap_user']}, revoking roles, freeing license"),
+                 ("AD/Entra", "Disabling directory sign-in"),
+                 ("ServiceNow", "Access removed; change closed")]
+        ttype, action, prefix, reason = "SAP Account De-provisioning", "acct_deactivate", "CHG", f"Deactivate {acc['sap_user']}"
+    elif body.action == "revoke_all":
+        await db.sap_accounts.update_one({"_id": acc["_id"]}, {"$set": {"roles": []}})
+        steps = [("ServiceNow", f"Full role revocation opened for {acc['sap_user']}"),
+                 (hr, "Recording access change"),
+                 ("SAP", f"Removing all roles from {acc['sap_user']} on {acc['system']}"),
+                 ("ServiceNow", "Roles removed; change closed")]
+        ttype, action, prefix, reason = "SAP Account Role Revocation", "acct_revoke_all", "CHG", f"Revoke all roles from {acc['sap_user']}"
+    else:
+        steps = [("ServiceNow", f"Access recertification opened for {acc['sap_user']}"),
+                 ("SAP", "Snapshotting entitlements & last-use evidence"),
+                 ("ServiceNow", "Reviewer (account owner) assigned; certification task created")]
+        ttype, action, prefix, reason = "SAP Access Recertification", "acct_recertify", "REQ", f"Recertify {acc['sap_user']}"
+    ticket = await _snow_generic(org_id, ttype, action, steps, by, prefix=prefix,
+                                 person_ref=pr, person_name=pn, email=em, reason=reason, work_note=body.reason)
+    await _audit(org_id, by, f"sap.account.{body.action}", f"{account_ref} · {ticket['number']}")
+    return {"ok": True, "ticket": {"number": ticket["number"], "type": ticket["type"],
+                                   "state": ticket["state"], "systems": ticket["systems_touched"]}}
 
 
 @sap_router.get("/jml")
