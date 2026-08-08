@@ -17,15 +17,18 @@ and always notifies + waits for admin approval before applying dependency
 upgrades. It can be paused/resumed at any time.
 """
 import os
+import re
+import sys
 import time
 import uuid
 import json
+import asyncio
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from bson import ObjectId
 
@@ -484,6 +487,9 @@ async def _run_autonomous(org_id, trigger="schedule"):
                 org_id, "control_drift", f"Approval needed before {label}: {f['title']}",
                 f"{rationale} Review & approve in Security Scanner before it is applied.",
                 ref="self-scan", dedupe_key=f"scan-approval:{f['id']}")
+            await _post_chat_alert(
+                org_id, f"⚠ Approval needed before {label}: {f['title']}",
+                f"{rationale}\n\nFix: {remediation}\nOpen Obserra → Security Scanner to approve or decline.")
 
     summary = {"ts": _now(), "trigger": trigger, "score": scan["score"], "endpoint": scan["endpoint"],
                "applied": applied, "queued": queued, "total_fails": len(fails)}
@@ -617,28 +623,257 @@ class ApprovalBody(BaseModel):
 
 
 @self_scan_router.post("/upgrade/approve")
-async def approve_upgrade(body: ApprovalBody, admin: dict = Depends(require_roles("admin"))):
+async def approve_upgrade(body: ApprovalBody, background: BackgroundTasks, admin: dict = Depends(require_roles("admin"))):
     ap = await db.scan_approvals.find_one({"org_id": admin["org_id"], "id": body.approval_id})
     if not ap:
         raise HTTPException(404, "Approval not found")
     if ap["status"] != "pending":
         raise HTTPException(400, "This item has already been decided")
     status = "approved" if body.approve else "rejected"
+    job_id = None
     if body.approve:
         scan = await db.self_scans.find_one({"org_id": admin["org_id"]}, sort=[("ts", -1)])
         f = next((x for x in (scan or {}).get("findings", []) if x["id"] == ap["finding_id"]), None) if scan else None
         if f:
             await _apply_remediation(admin["org_id"], scan, f, done=True)
+        # Real patch apply: for dependency upgrades, run the pip upgrade + re-pin + re-scan
+        # in a background maintenance job that provably confirms the CVE cleared.
+        if ap.get("kind") == "dependency" and ap.get("package"):
+            job_id = str(uuid.uuid4())
+            await db.maintenance_jobs.insert_one({
+                "id": job_id, "org_id": admin["org_id"], "package": ap["package"],
+                "from_version": ap.get("current_version"), "to_version": ap.get("fixed_version"),
+                "finding_id": ap["finding_id"], "title": ap["title"], "status": "queued",
+                "created_at": _now(), "by": admin["email"]})
+            background.add_task(_run_upgrade_job, admin["org_id"], job_id,
+                                ap["package"], ap.get("fixed_version"), ap["finding_id"])
     await db.scan_approvals.update_one(
         {"_id": ap["_id"]},
-        {"$set": {"status": status, "decided_at": _now(), "decided_by": admin["email"]}})
+        {"$set": {"status": status, "decided_at": _now(), "decided_by": admin["email"], "job_id": job_id}})
     await notifications.create(
         admin["org_id"], "security",
         f"Upgrade {'applied' if body.approve else 'declined'}: {ap['title']}",
         (ap.get("remediation") or "Applied after approval; compliance updated.") if body.approve
         else "Marked as accepted risk / deferred — no change applied.",
         ref="self-scan")
-    return {"ok": True, "status": status}
+    return {"ok": True, "status": status, "job_id": job_id}
+
+
+# ---------------------------------------------------------------------------
+# Chat alerts (Teams / Slack), scan-history trend, real patch-apply jobs,
+# and Intune device drilldown / one-click remediation checklist.
+# ---------------------------------------------------------------------------
+
+async def _post_chat_alert(org_id, title, text):
+    """Push an alert to the org's Teams and/or Slack webhooks (best-effort)."""
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    alerts = org.get("scan_alerts") or {}
+    teams_url = alerts.get("teams_url") or (org.get("live_teams") or {}).get("webhook_url")
+    slack_url = alerts.get("slack_url")
+    if not (teams_url or slack_url):
+        return
+    async with httpx.AsyncClient(timeout=15) as c:
+        if teams_url:
+            try:
+                await c.post(teams_url, json={"@type": "MessageCard", "@context": "https://schema.org/extensions",
+                                              "summary": title, "themeColor": "b45309", "title": title, "text": text})
+            except Exception as e:
+                logger.warning(f"Teams alert failed: {e}")
+        if slack_url:
+            try:
+                await c.post(slack_url, json={"text": f"*{title}*\n{text}"})
+            except Exception as e:
+                logger.warning(f"Slack alert failed: {e}")
+
+
+class AlertsBody(BaseModel):
+    teams_url: str | None = None
+    slack_url: str | None = None
+
+
+def _mask_url(u):
+    return (u[:30] + "…") if u and len(u) > 30 else u
+
+
+@self_scan_router.get("/alerts")
+async def get_alerts(user: dict = Depends(get_current_user)):
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    a = org.get("scan_alerts") or {}
+    teams = a.get("teams_url") or (org.get("live_teams") or {}).get("webhook_url")
+    return {"teams_url_set": bool(teams), "slack_url_set": bool(a.get("slack_url")),
+            "teams_masked": _mask_url(teams), "slack_masked": _mask_url(a.get("slack_url"))}
+
+
+@self_scan_router.put("/alerts")
+async def set_alerts(body: AlertsBody, admin: dict = Depends(require_roles("admin"))):
+    upd = {}
+    if body.teams_url is not None:
+        upd["scan_alerts.teams_url"] = body.teams_url.strip()
+    if body.slack_url is not None:
+        upd["scan_alerts.slack_url"] = body.slack_url.strip()
+    if upd:
+        await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": upd})
+    return {"ok": True}
+
+
+@self_scan_router.post("/alerts/test")
+async def test_alerts(admin: dict = Depends(require_roles("admin"))):
+    await _post_chat_alert(admin["org_id"], "✅ Obserra alert test",
+                           "This is a test alert from the Obserra Security Scanner. Chat alerts are wired up.")
+    return {"ok": True}
+
+
+@self_scan_router.get("/trend")
+async def scan_trend(user: dict = Depends(get_current_user)):
+    scans = await db.self_scans.find(
+        {"org_id": user["org_id"]}, {"_id": 0, "ts": 1, "score": 1, "summary": 1, "kev_matches": 1}
+    ).sort("ts", 1).to_list(60)
+    points = []
+    for s in scans:
+        summ = s.get("summary") or {}
+        open_f = (summ.get("total_checks", 0) or 0) - (summ.get("passed", 0) or 0)
+        points.append({"ts": s.get("ts"), "score": s.get("score"),
+                       "open_findings": open_f, "kev": len(s.get("kev_matches") or [])})
+    return {"points": points}
+
+
+def _pin_requirement(package, target):
+    p = Path(__file__).parent / "requirements.txt"
+    lines = p.read_text().splitlines()
+    out, changed = [], False
+    for line in lines:
+        m = re.match(r"^\s*([A-Za-z0-9_.\-]+)\s*==", line)
+        if m and m.group(1).lower() == package.lower():
+            out.append(f"{package}=={target}")
+            changed = True
+        else:
+            out.append(line)
+    if changed:
+        p.write_text("\n".join(out) + "\n")
+    return changed
+
+
+async def _run_upgrade_job(org_id, job_id, package, target, finding_id):
+    async def setjob(**k):
+        await db.maintenance_jobs.update_one({"id": job_id}, {"$set": k})
+
+    await setjob(status="running", started_at=_now())
+    if not target:
+        await setjob(status="failed", finished_at=_now(),
+                     log=f"No known fixed version published for {package} — cannot auto-upgrade. Track upstream advisory.")
+        await notifications.create(org_id, "security", f"Upgrade not possible: {package}",
+                                   "No fixed version is published yet for this advisory — monitoring for an upstream patch.",
+                                   ref="self-scan")
+        return
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "pip", "install", f"{package}=={target}",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=170)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await setjob(status="failed", finished_at=_now(), log="pip install timed out after 170s.")
+            return
+        logtxt = (out or b"").decode(errors="replace")[-4000:]
+        if proc.returncode != 0:
+            await setjob(status="failed", finished_at=_now(), log=logtxt)
+            await notifications.create(org_id, "security", f"Upgrade failed: {package} → {target}",
+                                       "pip could not install the target version; no changes were pinned. See maintenance log.",
+                                       ref="self-scan")
+            await _post_chat_alert(org_id, f"❌ Upgrade failed: {package} → {target}",
+                                   "pip install failed; no changes pinned. Review the maintenance log in Obserra.")
+            return
+        _pin_requirement(package, target)
+        scan = await _execute_scan(org_id)
+        still = any(f["id"] == finding_id and f["status"] == "fail" for f in scan["findings"])
+        cleared = not still
+        await setjob(status="success" if cleared else "applied", finished_at=_now(),
+                     log=logtxt, cleared=cleared, new_score=scan["score"], scan_id=scan["id"])
+        msg = (f"Re-scan confirms the advisory is cleared. Security score is now {scan['score']}/100."
+               if cleared else
+               f"Package upgraded and re-pinned; a service restart may be required to fully clear it. Score {scan['score']}/100.")
+        await notifications.create(org_id, "security",
+                                   f"Upgrade {'verified' if cleared else 'applied'}: {package} → {target}",
+                                   msg, ref="self-scan")
+        await _post_chat_alert(org_id,
+                               f"{'✅ Upgrade verified' if cleared else '☑ Upgrade applied'}: {package} → {target}", msg)
+    except Exception as e:
+        await setjob(status="failed", finished_at=_now(), log=f"Job error: {str(e)[:500]}")
+
+
+@self_scan_router.get("/maintenance")
+async def list_maintenance(user: dict = Depends(get_current_user)):
+    return await db.maintenance_jobs.find({"org_id": user["org_id"]}, {"_id": 0}).sort("created_at", -1).to_list(30)
+
+
+@self_scan_router.get("/maintenance/{job_id}")
+async def get_maintenance(job_id: str, user: dict = Depends(get_current_user)):
+    j = await db.maintenance_jobs.find_one({"org_id": user["org_id"], "id": job_id}, {"_id": 0})
+    if not j:
+        raise HTTPException(404, "Job not found")
+    return j
+
+
+_DEVICE_CHECKLIST = [
+    "Force Intune device sync",
+    "Apply compliance policy",
+    "Require disk encryption (BitLocker / FileVault)",
+    "Enforce latest OS update",
+    "Confirm EDR / Defender healthy",
+    "Mark reviewed",
+]
+
+
+class DeviceCheckBody(BaseModel):
+    item: str
+    done: bool
+
+
+@self_scan_router.get("/device/{device_id}/checklist")
+async def device_checklist(device_id: str, user: dict = Depends(get_current_user)):
+    doc = await db.device_remediations.find_one(
+        {"org_id": user["org_id"], "device_id": device_id}, {"_id": 0}) or {}
+    return {"items": _DEVICE_CHECKLIST, "done": doc.get("done", []), "synced_at": doc.get("synced_at")}
+
+
+@self_scan_router.post("/device/{device_id}/checklist")
+async def device_check(device_id: str, body: DeviceCheckBody, admin: dict = Depends(require_roles("admin"))):
+    doc = await db.device_remediations.find_one({"org_id": admin["org_id"], "device_id": device_id}) or {"done": []}
+    done = set(doc.get("done", []))
+    done.add(body.item) if body.done else done.discard(body.item)
+    await db.device_remediations.update_one(
+        {"org_id": admin["org_id"], "device_id": device_id},
+        {"$set": {"org_id": admin["org_id"], "device_id": device_id, "done": sorted(done), "updated_at": _now()}},
+        upsert=True)
+    return {"done": sorted(done)}
+
+
+@self_scan_router.post("/device/{device_id}/sync")
+async def device_sync(device_id: str, admin: dict = Depends(require_roles("admin"))):
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}) or {}
+    m365 = org.get("live_m365")
+    if not (m365 and (m365.get("live") or m365.get("synced_at"))):
+        raise HTTPException(400, "Microsoft 365 (Intune) is not connected.")
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            tok = await c.post(
+                f"https://login.microsoftonline.com/{m365['tenant_id']}/oauth2/v2.0/token",
+                data={"client_id": m365["client_id"], "client_secret": m365["client_secret"],
+                      "grant_type": "client_credentials", "scope": "https://graph.microsoft.com/.default"})
+            access = tok.json().get("access_token")
+            r = await c.post(
+                f"https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/{device_id}/syncDevice",
+                headers={"Authorization": f"Bearer {access}"})
+        ok = r.status_code in (200, 202, 204)
+        await db.device_remediations.update_one(
+            {"org_id": admin["org_id"], "device_id": device_id},
+            {"$set": {"org_id": admin["org_id"], "device_id": device_id, "synced_at": _now()}}, upsert=True)
+        return {"ok": ok, "status": r.status_code}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Sync failed: {str(e)[:120]}")
 
 
 async def _m365_devices(d):
@@ -654,7 +889,7 @@ async def _m365_devices(d):
             access = tok.json()["access_token"]
             r = await c.get(
                 "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices"
-                "?$select=deviceName,managedDeviceName,userDisplayName,model,manufacturer,"
+                "?$select=id,deviceName,managedDeviceName,userDisplayName,model,manufacturer,"
                 "operatingSystem,osVersion,complianceState,lastSyncDateTime&$top=100",
                 headers={"Authorization": f"Bearer {access}"})
             if r.status_code != 200:
@@ -664,7 +899,8 @@ async def _m365_devices(d):
             vals = r.json().get("value", [])
             comp = sum(1 for v in vals if v.get("complianceState") == "compliant")
             noncomp = sum(1 for v in vals if v.get("complianceState") == "noncompliant")
-            items = [{"name": v.get("deviceName") or v.get("managedDeviceName") or "device",
+            items = [{"id": v.get("id"),
+                      "name": v.get("deviceName") or v.get("managedDeviceName") or "device",
                       "owner": v.get("userDisplayName"),
                       "model": " ".join(x for x in [v.get("manufacturer"), v.get("model")] if x) or None,
                       "os": v.get("operatingSystem"), "os_version": v.get("osVersion"),

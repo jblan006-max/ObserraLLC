@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { ShieldCheck, Loader2, AlertTriangle, CheckCircle2, XCircle, Bug, RefreshCw, Bot, Play, Pause, Zap, Clock, ThumbsUp, ThumbsDown, Globe, MonitorSmartphone, Server, Activity } from "lucide-react";
+import { ShieldCheck, Loader2, AlertTriangle, CheckCircle2, XCircle, Bug, RefreshCw, Bot, Play, Pause, Zap, Clock, ThumbsUp, ThumbsDown, Globe, MonitorSmartphone, Server, Activity, TrendingUp, Send, Wrench, X, Smartphone } from "lucide-react";
+import { AreaChart, Area, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 const SEV = {
   critical: { c: "0 84% 60%", label: "Critical" },
@@ -70,19 +71,31 @@ export default function SecurityScanner() {
   const [endpoint, setEndpoint] = useState("");
   const [autoRunning, setAutoRunning] = useState(false);
   const [assets, setAssets] = useState(null);
+  const [trend, setTrend] = useState([]);
+  const [alerts, setAlerts] = useState(null);
+  const [jobs, setJobs] = useState([]);
+  const [teamsUrl, setTeamsUrl] = useState("");
+  const [slackUrl, setSlackUrl] = useState("");
+  const [selDevice, setSelDevice] = useState(null);
 
   const loadScan = () => api.get("/self-scan/latest").then((r) => setScan(r.data && r.data.id ? r.data : null)).catch(() => setScan(null));
   const loadEngine = () => api.get("/self-scan/engine").then((r) => { setEngine(r.data.engine); setPending(r.data.pending || []); setEndpoint(r.data.endpoint || ""); }).catch(() => {});
   const loadAssets = () => api.get("/self-scan/assets").then((r) => setAssets(r.data)).catch(() => {});
-  useEffect(() => { Promise.all([loadScan(), loadEngine(), loadAssets()]).finally(() => setLoading(false)); }, []);
+  const loadTrend = () => api.get("/self-scan/trend").then((r) => setTrend(r.data.points || [])).catch(() => {});
+  const loadAlerts = () => api.get("/self-scan/alerts").then((r) => setAlerts(r.data)).catch(() => {});
+  const loadJobs = () => api.get("/self-scan/maintenance").then((r) => setJobs(r.data || [])).catch(() => {});
+  useEffect(() => { Promise.all([loadScan(), loadEngine(), loadAssets(), loadTrend(), loadAlerts(), loadJobs()]).finally(() => setLoading(false)); }, []);
 
-  // Auto-detect: poll so newly connected sources/devices stream into the monitor live.
+  // Auto-detect + live maintenance progress: poll so new sources/devices and running jobs update on their own.
   useEffect(() => {
-    const id = setInterval(() => { loadAssets(); loadEngine(); }, 20000);
-    const onVis = () => { if (!document.hidden) { loadAssets(); loadEngine(); } };
+    const id = setInterval(() => {
+      loadAssets(); loadEngine();
+      if (jobs.some((j) => ["queued", "running"].includes(j.status))) { loadJobs(); loadTrend(); loadScan(); }
+    }, 15000);
+    const onVis = () => { if (!document.hidden) { loadAssets(); loadEngine(); loadJobs(); } };
     document.addEventListener("visibilitychange", onVis);
     return () => { clearInterval(id); document.removeEventListener("visibilitychange", onVis); };
-  }, []);
+  }, [jobs]);
 
   const run = async () => {
     setRunning(true);
@@ -132,12 +145,42 @@ export default function SecurityScanner() {
 
   const decide = async (approval_id, approve) => {
     try {
-      await api.post("/self-scan/upgrade/approve", { approval_id, approve });
-      await Promise.all([loadScan(), loadEngine()]);
-      toast.success(approve ? "Approved & applied — compliance updated" : "Declined — accepted as risk");
+      const { data } = await api.post("/self-scan/upgrade/approve", { approval_id, approve });
+      await Promise.all([loadScan(), loadEngine(), loadJobs()]);
+      if (approve && data.job_id) toast.success("Approved — running the upgrade & re-scan to confirm the CVE clears…");
+      else toast.success(approve ? "Approved & applied — compliance updated" : "Declined — accepted as risk");
     } catch (e) {
       toast.error("Could not record decision");
     }
+  };
+
+  const saveAlerts = async () => {
+    try {
+      await api.put("/self-scan/alerts", { teams_url: teamsUrl, slack_url: slackUrl });
+      setTeamsUrl(""); setSlackUrl("");
+      await loadAlerts();
+      toast.success("Chat alert webhooks saved");
+    } catch (e) { toast.error("Could not save webhooks"); }
+  };
+  const testAlerts = async () => {
+    try { await api.post("/self-scan/alerts/test"); toast.success("Test alert sent to your Teams/Slack"); }
+    catch (e) { toast.error("Test alert failed — check the webhook URL"); }
+  };
+
+  const toggleDeviceItem = async (item, done) => {
+    try {
+      const { data } = await api.post(`/self-scan/device/${encodeURIComponent(selDevice.id)}/checklist`, { item, done });
+      setSelDevice((d) => ({ ...d, done: data.done }));
+    } catch (e) { toast.error("Could not update checklist"); }
+  };
+  const forceSync = async () => {
+    try { await api.post(`/self-scan/device/${encodeURIComponent(selDevice.id)}/sync`); toast.success("Intune sync requested"); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Sync requires a connected Microsoft 365 (Intune)"); }
+  };
+  const openDevice = async (d) => {
+    setSelDevice({ ...d, done: [], items: [] });
+    try { const { data } = await api.get(`/self-scan/device/${encodeURIComponent(d.id)}/checklist`); setSelDevice({ ...d, done: data.done || [], items: data.items || [] }); }
+    catch (e) { /* still open with defaults */ }
   };
 
   const s = scan?.summary || {};
@@ -214,6 +257,20 @@ export default function SecurityScanner() {
           </div>
         )}
 
+        {/* Chat alerts — Teams / Slack */}
+        <div className="mt-4 border-t border-border pt-4" data-testid="chat-alerts">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs font-head font-bold">Chat alerts</span>
+            <span className="text-[10px] text-muted-foreground">Push "approval needed" alerts to {alerts?.teams_url_set ? "Teams ✓" : "Teams"} · {alerts?.slack_url_set ? "Slack ✓" : "Slack"}</span>
+            {(alerts?.teams_url_set || alerts?.slack_url_set) && <button data-testid="alerts-test" onClick={testAlerts} className="text-[10px] px-2 py-0.5 rounded-md bg-secondary flex items-center gap-1"><Send className="w-3 h-3" /> Send test</button>}
+          </div>
+          <div className="flex flex-wrap gap-2 mt-2">
+            <input data-testid="alerts-teams" value={teamsUrl} onChange={(e) => setTeamsUrl(e.target.value)} placeholder={alerts?.teams_masked || "Teams Incoming Webhook URL"} className="bg-secondary/60 rounded-md px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary w-72 max-w-full" />
+            <input data-testid="alerts-slack" value={slackUrl} onChange={(e) => setSlackUrl(e.target.value)} placeholder={alerts?.slack_masked || "Slack Incoming Webhook URL"} className="bg-secondary/60 rounded-md px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary w-72 max-w-full" />
+            <button data-testid="alerts-save" onClick={saveAlerts} disabled={!teamsUrl && !slackUrl} className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-bold disabled:opacity-50">Save</button>
+          </div>
+        </div>
+
         {pending.length > 0 && (
           <div className="mt-4 border-t border-border pt-4" data-testid="pending-approvals">
             <div className="flex items-center gap-2 mb-3"><AlertTriangle className="w-4 h-4 text-high" /><h3 className="font-head font-bold text-sm">Awaiting your approval before applying ({pending.length})</h3></div>
@@ -240,7 +297,55 @@ export default function SecurityScanner() {
             </div>
           </div>
         )}
+        {jobs.length > 0 && (
+          <div className="mt-4 border-t border-border pt-4" data-testid="maintenance-jobs">
+            <div className="flex items-center gap-2 mb-3"><Wrench className="w-4 h-4 text-primary" /><h3 className="font-head font-bold text-sm">Patch-apply jobs (upgrade → re-pin → re-scan)</h3></div>
+            <div className="space-y-2">
+              {jobs.slice(0, 6).map((j) => {
+                const jc = j.status === "success" ? "142 70% 45%" : j.status === "failed" ? "0 84% 60%" : j.status === "applied" ? "35 90% 55%" : "199 70% 50%";
+                const running = ["queued", "running"].includes(j.status);
+                return (
+                  <div key={j.id} data-testid={`job-${j.package}`} className="p-3 rounded-lg bg-secondary/40 flex items-center justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium truncate">{j.package} <span className="font-mono text-muted-foreground">{j.from_version} → {j.to_version || "patched"}</span></div>
+                      <div className="text-[11px] text-muted-foreground">{j.status === "success" ? "✓ Re-scan confirms CVE cleared" : j.status === "applied" ? "Upgraded — restart may be needed to fully clear" : j.status === "failed" ? "Failed — no changes pinned" : "Running upgrade & re-scan…"}{j.new_score != null ? ` · score ${j.new_score}` : ""}</div>
+                    </div>
+                    <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0" style={{ background: `hsl(${jc} / 0.15)`, color: `hsl(${jc})` }}>{running && <Loader2 className="w-3 h-3 animate-spin" />}{j.status}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Score trajectory — rolling trend for the board */}
+      {trend.length > 1 && (
+        <div className="bg-card fact-border rounded-xl p-6" data-testid="scan-trend">
+          <div className="flex items-center gap-2 mb-3"><TrendingUp className="w-5 h-5 text-ai" /><h2 className="font-head font-bold text-lg">Security score trajectory</h2><span className="text-[11px] text-muted-foreground">{trend.length} scans</span></div>
+          <div style={{ width: "100%", height: 200 }}>
+            <ResponsiveContainer>
+              <AreaChart data={trend} margin={{ top: 6, right: 12, left: -18, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="scoreFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="hsl(142 70% 45%)" stopOpacity={0.5} />
+                    <stop offset="100%" stopColor="hsl(142 70% 45%)" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <XAxis dataKey="ts" tickFormatter={(t) => new Date(t).toLocaleDateString(undefined, { month: "short", day: "numeric" })} tick={{ fontSize: 10, fill: "hsl(215 15% 55%)" }} minTickGap={24} />
+                <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "hsl(215 15% 55%)" }} width={34} />
+                <Tooltip contentStyle={{ background: "hsl(222 47% 8%)", border: "1px solid hsl(215 20% 25%)", borderRadius: 8, fontSize: 12 }} labelFormatter={(t) => new Date(t).toLocaleString()} />
+                <Area type="monotone" dataKey="score" stroke="hsl(142 70% 45%)" strokeWidth={2} fill="url(#scoreFill)" name="Security score" />
+                <Line type="monotone" dataKey="open_findings" stroke="hsl(0 84% 60%)" strokeWidth={1.5} dot={false} name="Open findings" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="flex items-center gap-4 text-[11px] text-muted-foreground mt-1">
+            <span className="flex items-center gap-1"><span className="inline-block w-3 h-1.5 rounded-sm" style={{ background: "hsl(142 70% 45%)" }} /> Security score</span>
+            <span className="flex items-center gap-1"><span className="inline-block w-3 h-1.5 rounded-sm" style={{ background: "hsl(0 84% 60%)" }} /> Open findings</span>
+          </div>
+        </div>
+      )}
 
       {/* Connected devices & health */}
       <div className="bg-card fact-border rounded-xl p-6" data-testid="connected-assets">
@@ -318,9 +423,10 @@ export default function SecurityScanner() {
               <div className="space-y-1 max-h-56 overflow-auto">
                 {assets.devices.items.map((d, i) => {
                   const c = d.compliance === "compliant" ? "142 70% 45%" : d.compliance === "noncompliant" ? "0 84% 60%" : "35 90% 55%";
+                  const canDrill = d.compliance !== "compliant" && d.id;
                   return (
-                    <div key={i} className="flex items-center justify-between gap-2 text-xs py-1 border-b border-border/50">
-                      <span className="truncate"><span className="font-medium">{d.name || "device"}</span>{d.owner ? <span className="text-muted-foreground"> · {d.owner}</span> : null}<span className="text-muted-foreground"> · {[d.os, d.os_version, d.model].filter(Boolean).join(" ")}</span></span>
+                    <div key={i} data-testid={`device-${i}`} onClick={() => canDrill && openDevice(d)} className={`flex items-center justify-between gap-2 text-xs py-1 border-b border-border/50 ${canDrill ? "cursor-pointer hover:bg-secondary/40 rounded px-1" : ""}`}>
+                      <span className="truncate flex items-center gap-1">{canDrill && <Wrench className="w-3 h-3 text-high shrink-0" />}<span className="font-medium">{d.name || "device"}</span>{d.owner ? <span className="text-muted-foreground"> · {d.owner}</span> : null}<span className="text-muted-foreground"> · {[d.os, d.os_version, d.model].filter(Boolean).join(" ")}</span></span>
                       <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full shrink-0" style={{ background: `hsl(${c} / 0.15)`, color: `hsl(${c})` }}>{d.compliance || "unknown"}</span>
                     </div>
                   );
@@ -332,6 +438,35 @@ export default function SecurityScanner() {
           )}
         </div>
       </div>
+
+      {/* Device remediation drilldown modal */}
+      {selDevice && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" data-testid="device-modal" onClick={() => setSelDevice(null)}>
+          <div className="bg-card fact-border rounded-xl p-6 w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-head font-bold text-lg flex items-center gap-2"><Smartphone className="w-5 h-5 text-high" /> {selDevice.name}</h3>
+                <div className="text-[11px] text-muted-foreground mt-0.5">{[selDevice.owner, selDevice.os, selDevice.os_version, selDevice.model].filter(Boolean).join(" · ")}</div>
+                <span className="inline-block mt-1 text-[9px] font-mono uppercase px-2 py-0.5 rounded-full bg-crit/15 text-crit">{selDevice.compliance || "unknown"}</span>
+              </div>
+              <button data-testid="device-modal-close" onClick={() => setSelDevice(null)} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+            </div>
+            <div className="text-xs font-head font-bold mt-4 mb-2">One-click remediation checklist</div>
+            <div className="space-y-1.5">
+              {(selDevice.items || []).map((item) => (
+                <label key={item} data-testid={`device-check-${item.replace(/[^a-zA-Z]/g, "-")}`} className="flex items-center gap-2 text-xs cursor-pointer p-1.5 rounded hover:bg-secondary/40">
+                  <input type="checkbox" checked={(selDevice.done || []).includes(item)} onChange={(e) => toggleDeviceItem(item, e.target.checked)} />
+                  <span className={(selDevice.done || []).includes(item) ? "line-through text-muted-foreground" : ""}>{item}</span>
+                </label>
+              ))}
+            </div>
+            <div className="flex items-center gap-2 mt-4">
+              <button data-testid="device-force-sync" onClick={forceSync} className="px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-bold flex items-center gap-1"><RefreshCw className="w-3.5 h-3.5" /> Force Intune sync</button>
+              <span className="text-[10px] text-muted-foreground">Progress saved automatically</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
