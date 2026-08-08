@@ -1,112 +1,97 @@
 {
+  "theme": "dark",
   "typography": {
-    "fonts": {
-      "heading": "font-head (display font, use tracking-tight for crispness)",
-      "mono": "font-mono (use for data points, metrics, logs, technical IDs)",
-      "body": "sans (system default or configured sans for general readability)"
-    },
-    "hierarchy": {
-      "page_title": "text-2xl sm:text-3xl font-head tracking-tight text-white",
-      "section_title": "text-lg sm:text-xl font-head tracking-tight text-white/90 border-b border-white/10 pb-2 mb-4",
-      "card_title": "text-base font-head tracking-tight text-white/80",
-      "metric_value": "text-3xl sm:text-4xl font-mono text-white tracking-tight",
-      "metric_label": "text-xs font-mono uppercase tracking-widest text-white/50",
-      "table_header": "text-xs font-mono uppercase tracking-wider text-white/60",
-      "source_badge": "text-[10px] font-mono uppercase tracking-wider"
-    }
+    "font_head": "font-head (Display, tight tracking, used for large metrics and dashboard titles)",
+    "font_mono": "font-mono (Data, numbers, tables, uppercase labels, FAIR quantifications)",
+    "font_sans": "font-sans (Body text, tooltips)",
+    "rules": "Headings: text-white tracking-tight font-light or font-black (avoid generic bold). Avoid pure white for body, use text-slate-300. Numbers: Always use font-mono for metrics, tracking-tighter for large numbers. Labels: Uppercase, text-xs, tracking-[0.2em], text-slate-400."
   },
   "colors": {
-    "theme": "Dark Theme (Executive/Premium)",
-    "tokens": {
-      "background": "bg-slate-950 or bg-[#0A0A0C] (deepest structural dark)",
-      "surface_1": "bg-slate-900 or bg-white/5",
-      "surface_2": "bg-slate-800 or bg-white/10",
-      "border": "border-white/10",
-      "ai_cyan": "var(--ai-cyan) - use for AI specific features, glowing accents",
-      "primary_blue": "var(--primary-blue) - use for active states, main brand color",
-      "low_risk": "var(--low-green) - success, low risk, positive trend",
-      "med_risk": "var(--med-amber) - warning, medium risk, attention",
-      "high_risk": "var(--high-orange) - danger, high risk, action required",
-      "crit_risk": "var(--crit-red) - critical, immediate action, breach"
+    "background": "bg-[#0A0E17] (Deepest slate, not pure black. Board-grade luxury feel)",
+    "surface": "bg-[#111622] with 1px border border-white/5",
+    "domain_identities": {
+      "Executive Overview": {
+        "accent": "var(--primary-blue)",
+        "surface_tint": "bg-blue-950/10",
+        "border_glow": "border-blue-500/20",
+        "chart_palette": ["#3b82f6", "#60a5fa", "#93c5fd", "#1d4ed8", "#1e3a8a"]
+      },
+      "Compliance Posture": {
+        "accent": "var(--low-green)",
+        "surface_tint": "bg-emerald-950/10",
+        "border_glow": "border-emerald-500/20",
+        "chart_palette": ["#10b981", "#34d399", "#6ee7b7", "#047857", "#064e3b"]
+      },
+      "Cyber Risk Register (Financials)": {
+        "accent": "var(--ai-cyan)",
+        "surface_tint": "bg-cyan-950/10",
+        "border_glow": "border-cyan-500/20",
+        "chart_palette": ["#06b6d4", "#22d3ee", "#67e8f9", "#0e7490", "#164e63"]
+      },
+      "AI Governance": {
+        "accent": "rose-500 (Avoid #7351B7)",
+        "surface_tint": "bg-rose-950/10",
+        "border_glow": "border-rose-500/20",
+        "chart_palette": ["#f43f5e", "#fb7185", "#fda4af", "#be123c", "#881337"]
+      },
+      "Asset Intelligence": {
+        "accent": "var(--med-amber)",
+        "surface_tint": "bg-amber-950/10",
+        "border_glow": "border-amber-500/20",
+        "chart_palette": ["#f59e0b", "#fbbf24", "#fcd34d", "#b45309", "#78350f"]
+      }
     },
-    "usage": "Use color sparingly. 90% of the UI should be dark shades of gray/blue (slate) to allow the status colors (green, amber, orange, red) to pop. Use AI Cyan for 'continuous AI control' glowing accents."
+    "status_colors": {
+      "critical": "text-[var(--crit-red)] bg-[var(--crit-red)]/10 border border-[var(--crit-red)]/20",
+      "high": "text-[var(--high-orange)] bg-[var(--high-orange)]/10 border border-[var(--high-orange)]/20",
+      "medium": "text-[var(--med-amber)] bg-[var(--med-amber)]/10 border border-[var(--med-amber)]/20",
+      "low": "text-[var(--low-green)] bg-[var(--low-green)]/10 border border-[var(--low-green)]/20"
+    }
   },
-  "visual_enhancers": {
-    "depth_layering": "Use crisp 1px borders (border-white/10) rather than heavy shadows to define cards in the dark theme. Use inner shadows/glows for active elements.",
-    "glass_grain": "For overlays, sticky headers, or floating menus: backdrop-blur-xl bg-slate-950/80 border-b border-white/10. NEVER use purely transparent backgrounds. Add an SVG noise texture overlay at 2-3% opacity across the main app background to reduce digital flatness and add a 'board-grade' tactile feel.",
-    "glow": "Use subtle drop shadows on status metrics. Example: drop-shadow-[0_0_8px_var(--ai-cyan)]."
+  "visual enhancers": {
+    "cards": "Remove generic flat slate cards. Use: bg-slate-900/50 backdrop-blur-xl border border-white/5 shadow-2xl. On hover: border-white/15 bg-slate-900/80.",
+    "glows": "For active or critical metrics, use subtle radial gradients. Example: absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-[domain-color]/10 via-transparent to-transparent opacity-50 pointer-events-none.",
+    "charts": "Wrap Recharts in <ChartBox> with deep background and a glowing subtle top border matching the domain accent. Use Recharts <Area> with fillOpacity={0.1} and a gradient definition.",
+    "lines": "Use sharp 1px borders to separate grid items instead of padding gaps to increase density (border-r border-b border-white/5)."
+  },
+  "component name": {
+    "tables": "Dense. Header text-xs uppercase tracking-widest text-slate-500 border-b border-white/10. Rows hover state: hover:bg-white/5 transition-colors. Status badges inside cells.",
+    "metrics": "Large value text-5xl font-head tracking-tighter. Label text-xs font-mono uppercase text-slate-400. Trend indicator text-sm flex items-center gap-1.",
+    "empty_states": "For 'Connect integration' or missing live data, use a dashed border border-dashed border-white/20, a muted icon text-slate-600, and a small primary CTA button."
   },
   "grids": {
-    "page_shell": {
-      "container": "w-full max-w-none px-4 sm:px-6 lg:px-8 py-6 (No max-width, fills the screen)",
-      "grid_system": "grid grid-cols-1 md:grid-cols-6 xl:grid-cols-12 gap-4 lg:gap-6",
-      "rhythm": "Group related cards with clear section headers. Maintain strict symmetry in the 12-col grid (e.g., 4 cards of col-span-3, 3 cards of col-span-4, or 2 cards of col-span-6)."
-    }
+    "system": "12-col grid for everything. gap-4 or gap-6 for tight enterprise density.",
+    "symmetric_cards": "Standardize card heights using h-full and flex-col. Use col-span-3, col-span-4, col-span-6 symmetrically to prevent jagged bottoms."
   },
   "layouts": {
-    "dashboard_grid": "Full-width masonry or strict CSS grid. Avoid dead space by ensuring child elements stretch. Add `align-items: stretch` to grid rows.",
-    "card_spans": {
-      "kpi_row": "col-span-1 md:col-span-2 xl:col-span-3 (4 items per row on desktop)",
-      "chart_half": "col-span-1 md:col-span-6 xl:col-span-6",
-      "chart_full": "col-span-1 md:col-span-6 xl:col-span-12",
-      "side_panel": "col-span-1 md:col-span-2 xl:col-span-4"
-    }
-  },
-  "components": {
-    "card_anatomy": {
-      "wrapper": "flex flex-col bg-slate-900/50 border border-white/10 rounded-xl overflow-hidden hover:border-white/20 transition-colors duration-200 h-full backdrop-blur-sm",
-      "header": "flex items-center justify-between px-5 py-4 border-b border-white/5",
-      "header_title": "text-sm font-head font-medium tracking-tight text-white/90 flex items-center gap-2",
-      "header_badge": "px-2 py-0.5 rounded-full text-[10px] font-mono font-medium flex items-center gap-1.5",
-      "header_badge_live": "bg-green-500/10 text-green-400 border border-green-500/20 (with a pulsing 4px dot: w-1 h-1 rounded-full bg-green-400 animate-pulse)",
-      "body": "flex-1 p-5 flex flex-col justify-center",
-      "footer": "px-5 py-3 bg-slate-950/30 border-t border-white/5 text-[10px] font-mono text-white/40 flex items-center justify-between"
-    },
-    "kpi_stat_card": {
-      "layout": "Use the standard card anatomy. The body should contain the `metric_value` and a trend indicator.",
-      "trend_up": "text-red-400 (for risk) or text-green-400 (for performance) flex items-center gap-1 text-xs font-mono",
-      "trend_down": "text-green-400 (for risk reduction) flex items-center gap-1 text-xs font-mono"
-    },
-    "chart_card": {
-      "wrapper": "Use the standard card anatomy.",
-      "chart_box": "w-full h-[300px] sm:h-[400px] relative overflow-hidden",
-      "recharts_rule": "CRITICAL: DO NOT USE Recharts ResponsiveContainer. It crashes React 19. Use a fixed-height/fixed-width div wrapper or standard SVG charting techniques, or pass explicit pixel dimensions to Recharts elements. Ensure charts fit neatly within the ChartBox wrapper without overflowing."
-    },
-    "empty_state": {
-      "wrapper": "flex flex-col items-center justify-center h-full min-h-[200px] w-full p-8 text-center border border-dashed border-white/10 rounded-xl bg-slate-900/20",
-      "icon": "w-10 h-10 text-white/20 mb-3",
-      "title": "text-sm font-head text-white/60 mb-1",
-      "description": "text-xs font-mono text-white/40 max-w-xs",
-      "action": "mt-4 text-xs font-mono text-[var(--ai-cyan)] hover:brightness-110 transition-colors"
-    }
+    "density": "Screen-filling. No dead space. Dashboards must stretch horizontally to fill the viewport, utilizing every pixel. F-pattern priority.",
+    "compliance_matrix": "Must be a dense, scrollable table. max-h-[70vh] overflow-y-auto overflow-x-auto relative. Freeze the first column (Framework/Control) and header row using sticky top-0 z-10 bg-[#0A0E17] and sticky left-0 z-20 bg-[#0A0E17]. Use tight padding px-3 py-2 text-sm."
   },
   "motion": {
-    "hover_states": "Cards should have subtle border brightens (`hover:border-white/20`). Buttons get `active:scale-95`. DO NOT use `transition-all`. Use `transition-colors`, `transition-transform`, or `transition-opacity` with `duration-200`.",
-    "live_data": "Use a subtle pulsing dot (`animate-pulse`) next to 'LIVE' badges to indicate real-time data streams."
+    "hover_states": "Every interactive element must have transition-colors duration-200. Interactive Cards should have hover:-translate-y-1 hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)].",
+    "table_rows": "hover:bg-white/5 transition-colors."
   },
   "accessibility": {
-    "contrast": "Ensure all text against dark backgrounds passes APCA/WCAG contrast ratios. Muted text should not fall below text-white/40.",
-    "test_ids": "CRITICAL: All interactive and key informational elements MUST include a `data-testid` attribute (kebab-case, role-based). Example: `data-testid=\"kpi-residual-risk\"` or `data-testid=\"nav-executive-dashboard\"`."
+    "contrast": "Text over backgrounds must exceed WCAG AA. Do not use pure black bg, and do not use dark grey text on dark backgrounds. Use text-slate-300 for readable body, text-white for emphasis.",
+    "focus": "All focusable elements must have focus:ring-2 focus:ring-blue-500 focus:outline-none."
   },
-  "instructions_to_main_agent": {
-    "general": [
-      "Avoid 'AI slop' gradients. Stick to a highly structured, data-dense, symmetric grid.",
-      "Remove dead space by allowing the grid to fill the entire screen width (remove max-w-7xl, use w-full max-w-none).",
-      "Scale padding for mobile (px-4) to desktop (lg:px-8).",
-      "Never use a completely transparent background for headers, modals, or dropdowns. Always use a solid dark background or a heavily blurred background with high opacity (e.g., bg-slate-950/90 backdrop-blur-md).",
-      "Use JavaScript (.js) or JSX (.jsx) for files. Do not use TypeScript (.tsx).",
-      "Ensure all charts use the fixed-height ChartBox approach avoiding Recharts ResponsiveContainer.",
-      "Integrate the HSL CSS variables directly into Tailwind classes via inline styles or tailwind config (e.g., `text-[var(--crit-red)]` or `bg-[var(--ai-cyan)]`)."
-    ]
+  "media": {
+    "icons": "Use lucide-react with thin stroke widths (strokeWidth={1.5}) to match the board-grade premium aesthetic."
   },
-  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
-    "You tend to converge toward generic, 'on distribution' outputs. Make this look like a premium, board-grade, executive command center.",
-    "Create depth through layered design elements with z-index hierarchy and subtle 1px borders.",
-    "Use glass-morphism effects with backdrop filters for floating elements, but NEVER fully transparent.",
-    "You MUST NOT apply universal transition (e.g., `transition: all`).",
-    "You MUST NOT center align the app container. Text alignment should be left-aligned for data readability.",
-    "Never use AI assistant Emoji characters (🤖🧠💭). Use clean SVG icons (lucide-react or phosphor-icons).",
-    "Include a `data-testid` on all interactive elements.",
-    "Do not use generic centered layouts or simplistic gradients."
-  ]
+  "3d libraries and steps": {
+    "charts": "No 3D needed for standard dashboard charts, use Recharts natively, but style them beautifully. DO NOT use ResponsiveContainer, allow ChartBox to manage height.",
+    "data_viz_recharts": "Areas: Use <defs> to create linear gradients for <Area> charts. Grids: Use <CartesianGrid strokeDasharray='3 3' stroke='rgba(255,255,255,0.05)' vertical={false} />. Tooltips: bg-[#0A0E17]/90 backdrop-blur-md border border-white/10 p-3 rounded-lg shadow-xl text-sm font-mono. For FAIR Monte-Carlo bands, use multi-layered Area charts with decreasing opacity. For LEC (Loss Exceedance Curves), use smooth LineCharts."
+  },
+  "image urls": {
+    "logos": [],
+    "backgrounds": []
+  },
+  "instructions_to_main_agent": [
+    "Do NOT break existing testids.",
+    "Do NOT remove existing features, logic, or data mappings. Enhance visually only.",
+    "Apply domain-specific color tinting (bg, border, charts) based on the current page to eliminate the monotone feel (e.g., Executive is Blue, Compliance is Green, Financials is Cyan, AI Governance is Rose, Asset Intel is Amber).",
+    "Implement the Compliance Posture matrix using a dense HTML table with sticky headers/first-column to allow viewing all frameworks without page dead-space.",
+    "Add 'connect integration' empty states elegantly where live data is required but missing, using dashed borders and low-opacity icons."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": "You tend to converge toward generic outputs. Break the monotone slate by injecting the domain-specific subtle background tints (`bg-{color}-950/10`) and border glows. Do not use centered alignments for metrics; align left for readability. Use modern pill-shaped or sharp interactions. Every interactive element needs hover states. Add `data-testid` to everything. DO NOT use transparent backgrounds on dropdowns or overlays. Make sure to use Recharts properly with <ChartBox> and avoid ResponsiveContainer. Apply these guidelines for .js files in the React stack."
 }
