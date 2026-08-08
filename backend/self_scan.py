@@ -29,32 +29,6 @@ KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulner
 OSV_BATCH = "https://api.osv.dev/v1/querybatch"
 OSV_VULN = "https://api.osv.dev/v1/vulns/"
 
-# MITRE ATT&CK technique mapping per finding id (real techniques for each weakness class).
-_MITRE = {
-    "sec-headers": [
-        {"id": "T1189", "name": "Drive-by Compromise"},
-        {"id": "T1059.007", "name": "JavaScript (XSS via missing CSP)"},
-    ],
-    "cors": [
-        {"id": "T1190", "name": "Exploit Public-Facing Application"},
-        {"id": "T1539", "name": "Steal Web Session Cookie"},
-    ],
-    "dep": [  # matched by prefix for dep-<pkg> findings
-        {"id": "T1190", "name": "Exploit Public-Facing Application"},
-        {"id": "T1195.001", "name": "Compromise Software Dependencies and Development Tools"},
-    ],
-    "deps": [
-        {"id": "T1195.001", "name": "Compromise Software Dependencies and Development Tools"},
-    ],
-    "auth-policy": [
-        {"id": "T1110.001", "name": "Password Guessing"},
-    ],
-    "auth-bruteforce": [
-        {"id": "T1110", "name": "Brute Force"},
-        {"id": "T1110.004", "name": "Credential Stuffing"},
-    ],
-}
-
 _REQUIRED_HEADERS = {
     "strict-transport-security": "HTTP Strict Transport Security (HSTS)",
     "x-content-type-options": "X-Content-Type-Options: nosniff",
