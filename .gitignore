@@ -125,3 +125,9 @@ frontend/node_modules/.cache/default-development/2.pack
 !backend/.env.example
 !frontend/.env.example
 
+.env
+.env.*
+*.env
+credentials.json
+*.key
+.credentials
