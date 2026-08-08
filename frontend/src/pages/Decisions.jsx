@@ -67,7 +67,7 @@ export default function Decisions() {
         <StatCard testid="dec-kpi-conf" label="Avg confidence" value={`${Math.round((t.avg_confidence ?? 0) * 100)}%`} accent={ACCENT} sub="model certainty" />
       </div>
 
-      <AIInsight dashboard="Recommendations & Decisions" accent={ACCENT} />
+      <AIInsight dashboard="Recommendations & Decisions" accent={ACCENT} auto />
 
       {/* Analytics cards — always present */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

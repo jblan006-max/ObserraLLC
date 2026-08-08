@@ -55,7 +55,7 @@ export default function AssetIntelligence() {
         <StatCard testid="asset-kpi-cves" label="Open CVEs" value={s.open_cves ?? 0} accent="15 80% 55%" sub="dependency findings" />
       </div>
 
-      <AIInsight dashboard="Asset Intelligence" accent={ACCENT} />
+      <AIInsight dashboard="Asset Intelligence" accent={ACCENT} auto />
 
       {/* Secondary card grid — always present */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

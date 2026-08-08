@@ -69,14 +69,34 @@ export function AIAdvisor() {
   const sendRef = useRef(null);
   const hintKey = `obserra-advisor-hint-${user?.id || user?.email || "anon"}`;
   const [showHint, setShowHint] = useState(false);
+  const [bubbleOn, setBubbleOn] = useState(true);
+  const [nudgeIdx, setNudgeIdx] = useState(0);
+  const [topRisk, setTopRisk] = useState(null);
 
   useEffect(() => {
     if (typeof window !== "undefined" && !localStorage.getItem(hintKey)) setShowHint(true);
   }, [hintKey]);
 
+  useEffect(() => {
+    api.get("/overview").then((r) => setTopRisk((r.data?.top_risks || [])[0] || null)).catch(() => {});
+    try { if (sessionStorage.getItem("advisor-bubble-off")) setBubbleOn(false); } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (open) return;
+    const t = setInterval(() => setNudgeIdx((i) => (i + 1) % 4), 7000);
+    return () => clearInterval(t);
+  }, [open]);
+
   const dismissHint = () => {
     setShowHint(false);
     try { localStorage.setItem(hintKey, "1"); } catch {}
+  };
+
+  const hideBubble = () => {
+    setBubbleOn(false);
+    dismissHint();
+    try { sessionStorage.setItem("advisor-bubble-off", "1"); } catch {}
   };
 
   const openFromHint = () => {
@@ -99,9 +119,6 @@ export function AIAdvisor() {
   }, [open]);
 
   useEffect(() => {
-    if (typeof window !== "undefined" && window.innerWidth >= 640 && !sessionStorage.getItem("advisor-opened")) {
-      setOpen(true); sessionStorage.setItem("advisor-opened", "1");
-    }
     const h = (e) => { setOpen(true); if (e.detail) sendRef.current?.(e.detail); };
     window.addEventListener("open-advisor", h);
     return () => window.removeEventListener("open-advisor", h);
@@ -225,31 +242,36 @@ export function AIAdvisor() {
     ? ["Summarize our top enterprise risks for the board", "What is driving the AI Governance score?"]
     : ["Which risks need remediation this week?", "Detail the shadow AI exposure and fix it"];
 
+  const nudges = [
+    "Need a hand? Ask me anything about your risk posture.",
+    "I can summarize your top board risks in one tap.",
+    topRisk ? `Heads up — ${topRisk.ref} “${topRisk.title}” is your highest residual risk. Want me to break it down?` : "I can execute remediations via your integrations.",
+    "Want to know what's driving your AI Governance score?",
+  ];
+
   return (
     <>
-      {showHint && !open && (
-        <div data-testid="advisor-hint" className="fixed bottom-[92px] right-4 sm:right-6 z-40 w-[min(15rem,calc(100vw-2rem))] rise">
-          <div className="relative rounded-xl bg-popover border border-ai/30 shadow-xl p-3.5 text-xs leading-relaxed text-foreground">
-            <button data-testid="advisor-hint-dismiss" onClick={dismissHint}
-              className="absolute top-2 right-2 p-0.5 rounded hover:bg-secondary text-muted-foreground"><X className="w-3.5 h-3.5" /></button>
-            <div className="font-head font-bold text-ai mb-1 pr-4">Meet your Obserrian Advisor</div>
-            Ask board-level questions — financial exposure, top risks, and the decisions that need your sign-off.
-            <div className="absolute -bottom-1.5 right-8 w-3 h-3 rotate-45 bg-popover border-r border-b border-ai/30" />
-          </div>
+      {!open && (
+        <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-2.5">
+          {bubbleOn && (
+            <div data-testid="advisor-hint" onClick={openFromHint}
+              className="relative w-[min(15rem,calc(100vw-2rem))] rounded-2xl bg-popover border border-ai/30 shadow-xl p-3.5 text-xs leading-relaxed text-foreground cursor-pointer rise">
+              <button data-testid="advisor-hint-dismiss" onClick={(e) => { e.stopPropagation(); hideBubble(); }}
+                className="absolute top-1.5 right-1.5 p-0.5 rounded hover:bg-secondary text-muted-foreground"><X className="w-3.5 h-3.5" /></button>
+              <div className="flex items-center gap-1.5 font-head font-bold text-ai mb-1 pr-4">{MARK("w-4 h-4")} Obserrian Advisor</div>
+              <div className="text-foreground/90">{nudges[nudgeIdx % nudges.length]}</div>
+              <div className="absolute -bottom-1.5 right-7 w-3 h-3 rotate-45 bg-popover border-r border-b border-ai/30" />
+            </div>
+          )}
+          <button data-testid="advisor-toggle" onClick={openFromHint} title="Obserrian Advisor"
+            style={{ backgroundColor: "#0f1e3d" }}
+            className="relative flex items-center justify-center w-14 h-14 rounded-full shadow-xl ring-1 ring-ai/30 hover:-translate-y-0.5 transition-transform duration-200">
+            <span className="absolute inset-0 rounded-full ring-2 ring-ai/50 animate-ping pointer-events-none" />
+            <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-ai animate-pulse ring-2 ring-popover" />
+            {MARK("w-8 h-8")}
+          </button>
         </div>
       )}
-      {!open && (
-        <a data-testid="advisor-connect-ai" href="/app/connectors"
-          className="fixed bottom-[104px] right-6 z-40 flex items-center gap-1.5 px-3 py-2 rounded-full bg-ai text-background font-head font-bold text-[11px] shadow-lg ring-1 ring-ai/40 hover:-translate-y-0.5 transition-transform duration-200">
-          <Zap className="w-3.5 h-3.5" /> Connect AI
-        </a>
-      )}
-      <button data-testid="advisor-toggle" onClick={openFromHint}
-        style={{ backgroundColor: "#0f1e3d" }}
-        className="fixed bottom-6 right-6 z-40 flex flex-col items-center gap-1 px-4 py-3 rounded-2xl font-head font-bold text-xs shadow-lg ring-1 ring-white/10 hover:-translate-y-0.5 transition-transform duration-200">
-        {showHint && <span className="absolute inset-0 rounded-2xl ring-2 ring-ai/60 animate-ping pointer-events-none" />}
-        {MARK("w-8 h-8")} <span className="text-white">Advisor</span>
-      </button>
 
       {open && (
         <div data-testid="advisor-panel" className="fixed inset-y-0 right-0 z-50 w-full sm:w-[440px] bg-popover border-l border-ai/30 flex flex-col rise">

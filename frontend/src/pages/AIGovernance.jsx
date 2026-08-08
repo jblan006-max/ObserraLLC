@@ -89,7 +89,7 @@ export default function AIGovernance() {
         <StatCard testid="aig-kpi-shadow" label="Shadow AI" value={an?.systems?.shadow ?? shadow.length} accent="0 84% 60%" sub="unsanctioned" />
       </div>
 
-      <AIInsight dashboard="AI Governance" accent={ACCENT} />
+      <AIInsight dashboard="AI Governance" accent={ACCENT} auto />
 
       {/* Usage trend + model breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

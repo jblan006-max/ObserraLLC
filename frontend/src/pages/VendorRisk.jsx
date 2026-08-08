@@ -99,7 +99,7 @@ export default function VendorRisk() {
         <StatCard testid="vnd-kpi-renewals" label="Renewals ≤7mo" value={renewals.length} accent="35 90% 55%" sub="contracts due" />
       </div>
 
-      <AIInsight dashboard="Third-Party Risk" accent={ACCENT} />
+      <AIInsight dashboard="Third-Party Risk" accent={ACCENT} auto />
 
       {/* Distribution cards — always present */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

@@ -1,17 +1,20 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { Sparkles, Loader2, Zap } from "lucide-react";
 
 const KIND = { fact: "142 70% 45%", estimate: "35 90% 55%", prediction: "266 85% 66%" };
 
-// AI-native analysis card. Drops onto any dashboard and asks the Obserrian Advisor to
-// read that dashboard's LIVE data and return grounded findings + next actions.
-export function AIInsight({ dashboard, accent = "190 90% 50%" }) {
+// AI-native analyst summary. Drops onto any dashboard and asks the Obserrian Advisor to
+// read that dashboard's LIVE data and return grounded findings + next actions. When
+// `auto` is set it summarizes on mount so every page opens with a live AI briefing.
+export function AIInsight({ dashboard, accent = "190 90% 50%", auto = false, slug }) {
   const { mode } = useAuth();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
+  const ranRef = useRef(false);
+  const tid = slug || dashboard.replace(/[^a-zA-Z0-9]/g, "-");
 
   const run = async () => {
     setLoading(true); setErr("");
@@ -24,35 +27,40 @@ export function AIInsight({ dashboard, accent = "190 90% 50%" }) {
     setLoading(false);
   };
 
+  useEffect(() => {
+    if (auto && !ranRef.current) { ranRef.current = true; run(); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auto]);
+
   return (
-    <div data-testid={`ai-insight-${dashboard.replace(/[^a-zA-Z0-9]/g, "-")}`}
+    <div data-testid={`ai-insight-${tid}`}
       className="rounded-xl border p-5 bg-card backdrop-blur-sm"
-      style={{ borderColor: `hsl(${accent} / 0.3)`, boxShadow: `inset 0 0 44px hsl(${accent} / 0.05)` }}>
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg shrink-0" style={{ background: `hsl(${accent} / 0.15)` }}>
-            <Sparkles className="w-4 h-4" style={{ color: `hsl(${accent})` }} strokeWidth={1.5} />
-          </span>
-          <div className="min-w-0">
-            <div className="font-head font-bold text-sm">AI Insight — {dashboard}</div>
-            <div className="text-[10px] font-mono text-muted-foreground truncate">
-              {data ? `${data.model} · grounded in live data · ${new Date(data.generated_at).toLocaleTimeString()}` : "Obserrian analysis of this dashboard's live signals"}
-            </div>
+      style={{ borderColor: `hsl(${accent} / 0.35)`, boxShadow: `inset 0 0 48px hsl(${accent} / 0.06)` }}>
+      <div className="flex items-start gap-2.5">
+        <span className="inline-flex items-center justify-center w-8 h-8 rounded-lg shrink-0" style={{ background: `hsl(${accent} / 0.15)` }}>
+          <Sparkles className="w-4 h-4" style={{ color: `hsl(${accent})` }} strokeWidth={1.5} />
+        </span>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="font-head font-bold text-sm">AI Analyst — {dashboard}</div>
+            <button data-testid={`ai-insight-run-${tid}`} onClick={run} disabled={loading}
+              className="flex items-center gap-1.5 text-[11px] font-head font-bold px-3 py-1 rounded-full disabled:opacity-50 transition-transform active:scale-95 shrink-0"
+              style={{ background: `hsl(${accent})`, color: "#050810" }}>
+              {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
+              {data ? "Refresh" : "Analyze"}
+            </button>
+          </div>
+          <div className="text-[10px] font-mono text-muted-foreground truncate">
+            {data ? `${data.model} · grounded in live data · ${new Date(data.generated_at).toLocaleTimeString()}` : "Live summary of this dashboard's signals"}
           </div>
         </div>
-        <button data-testid={`ai-insight-run-${dashboard.replace(/[^a-zA-Z0-9]/g, "-")}`} onClick={run} disabled={loading}
-          className="flex items-center gap-1.5 text-xs font-head font-bold px-3.5 py-1.5 rounded-full disabled:opacity-50 transition-transform active:scale-95 shrink-0"
-          style={{ background: `hsl(${accent})`, color: "#050810" }}>
-          {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Zap className="w-3.5 h-3.5" />}
-          {data ? "Refresh" : "Analyze"}
-        </button>
       </div>
 
       {err && <div className="mt-3 text-xs text-crit" data-testid="ai-insight-error">{err}</div>}
       {!data && !loading && !err && (
         <p className="mt-3 text-xs text-muted-foreground">Tap <span style={{ color: `hsl(${accent})` }}>Analyze</span> — the advisor reads this dashboard's live data and returns board-grade context, findings, and next actions.</p>
       )}
-      {loading && <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading live signals & reasoning…</div>}
+      {loading && <div className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Reading live signals &amp; summarizing…</div>}
 
       {data && (
         <div className="mt-4 space-y-3">

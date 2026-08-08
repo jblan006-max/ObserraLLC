@@ -383,7 +383,8 @@ async def risk_register(user: dict = Depends(get_current_user)):
         deficiencies.append({"control_id": c.get("control_id"), "name": c.get("name"),
                              "effectiveness": eff, "deficiency": 100 - eff,
                              "owner": c.get("owner"), "category": c.get("category"),
-                             "status": c.get("status")})
+                             "framework": c.get("framework"), "maturity": c.get("maturity"),
+                             "baseline": c.get("baseline")})
 
     # security initiatives from recommendations
     prog = {"Pending": 15, "Decided": 55, "Applied": 90, "Closed": 100}
@@ -408,6 +409,25 @@ async def risk_register(user: dict = Depends(get_current_user)):
                            "high": round(e * 1.38), "appetite": appetite})
         real = False
 
+    sev = (scan.get("summary") or {})
+    findings_list = [{"id": f.get("id"), "title": f.get("title"), "severity": f.get("severity"),
+                      "status": f.get("status"), "category": f.get("category"),
+                      "cve_ids": f.get("cve_ids") or [], "kev": f.get("kev", False),
+                      "remediation": f.get("remediation"), "control_refs": f.get("control_refs") or []}
+                     for f in (scan.get("findings") or [])]
+    findings = {"by_severity": {s: sev.get(s, 0) for s in ["critical", "high", "medium", "low", "info"]},
+                "list": findings_list, "passed": sev.get("passed", 0), "total": sev.get("total_checks", 0),
+                "deps_scanned": sev.get("dependencies_scanned", 0), "vuln_deps": sev.get("vulnerable_dependencies", 0)}
+    ti_doc = await db.threat_intel.find_one({"_id": "feeds"}) or {}
+    _labels = {"kev": "CISA KEV", "attack": "MITRE ATT&CK", "osv": "OSV / CVE", "cwe": "MITRE CWE"}
+    threat_intel = [{"key": k, "label": _labels.get(k, k), "count": v.get("count"),
+                     "version": v.get("version"), "status": v.get("status"),
+                     "updated_at": v.get("updated_at")} for k, v in (ti_doc.get("feeds") or {}).items()]
+    cat_map = {}
+    for c in controls:
+        cat_map.setdefault(c.get("category") or "General", []).append(c.get("effectiveness", 0))
+    controls_by_category = sorted([{"name": k, "value": round(sum(v) / len(v)), "count": len(v)}
+                                   for k, v in cat_map.items()], key=lambda x: x["value"])
     return {
         "kpis": {"total": len(risks), "open": sum(1 for r in risks if r.get("status") != "Remediated"),
                  "critical": sum(1 for r in risks if r.get("residual", 0) >= 16),
@@ -417,7 +437,9 @@ async def risk_register(user: dict = Depends(get_current_user)):
         "loss": {"histogram": hist, "markers": markers},
         "trending": {"points": points, "appetite": appetite, "real": real},
         "top_risks": top_risks, "control_deficiencies": deficiencies, "initiatives": initiatives,
-        "vuln": {"open_cves": (scan.get("summary") or {}).get("vulnerable_dependencies") or 0,
+        "findings": findings, "threat_intel": threat_intel, "controls_by_category": controls_by_category,
+        "mitre_techniques": scan.get("mitre_techniques") or [], "cwe_list": scan.get("cwe_ids") or [],
+        "vuln": {"open_cves": sev.get("vulnerable_dependencies") or 0,
                  "kev": len(scan.get("kev_matches") or []),
                  "mitre": len(scan.get("mitre_techniques") or []),
                  "cwe": len(scan.get("cwe_ids") or []), "score": scan.get("score")},

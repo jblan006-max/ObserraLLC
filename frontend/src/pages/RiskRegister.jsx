@@ -5,12 +5,13 @@ import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { EvidenceLineageModal } from "@/components/EvidenceLineageModal";
 import { EvidenceModal } from "@/components/EvidenceModal";
+import { AssetDetailModal } from "@/components/AssetDetailModal";
 import { SourceBadge, FreshnessBadge, ConfidenceBadge, DataTypeBadge, ScorePill } from "@/components/badges";
 import { AIInsight } from "@/components/AIInsight";
-import { StatCard, CardShell, EmptyState, Spinner } from "@/components/dash";
+import { StatCard, CardShell, EmptyState, BarList, Spinner } from "@/components/dash";
 import { ChartBox } from "@/components/ChartBox";
 import { ComposedChart, Area, Line, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
-import { Search, Info, DollarSign, X, Grid3x3, TrendingUp, TrendingDown, Minus, AlertTriangle, ShieldOff, Flag, Boxes } from "lucide-react";
+import { Search, Info, DollarSign, X, Grid3x3, TrendingUp, TrendingDown, Minus, AlertTriangle, ShieldOff, Flag, Boxes, Loader2, Wrench, ShieldX, Radio, Bug } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const ACCENT = "243 75% 63%"; // Risk Register → indigo
@@ -60,14 +61,17 @@ function QuantMatrix({ matrix, onPick }) {
 }
 
 export default function RiskRegister() {
-  const { mode } = useAuth();
+  const { mode, user } = useAuth();
   const isExec = mode === "executive";
+  const isAdmin = user?.role === "admin";
   const [risks, setRisks] = useState(null);
   const [rr, setRr] = useState(null);
   const [assets, setAssets] = useState([]);
   const [lineage, setLineage] = useState(null);
   const [evidence, setEvidence] = useState(null);
   const [selected, setSelected] = useState(null);
+  const [remedy, setRemedy] = useState("");
+  const [assetModal, setAssetModal] = useState(null);
   const [q, setQ] = useUrlState("q", "");
   const [cat, setCat] = useUrlState("cat", "all");
 
@@ -79,6 +83,18 @@ export default function RiskRegister() {
   }, []);
 
   const updateStatus = async (ref, status) => { await api.patch(`/risks/${ref}`, { status }); toast.success(`${ref} → ${status}`); load(); };
+  const autoRemediate = async () => {
+    setRemedy("fix");
+    try { const { data } = await api.post("/self-scan/autofix"); toast.success(data.message || "AI Autofix launched — scanning, verifying & queuing upgrades"); }
+    catch (e) { toast.error(e.response?.data?.detail || "Could not launch autofix"); }
+    setRemedy("");
+  };
+  const blockContain = async () => {
+    setRemedy("block");
+    try { const { data } = await api.post("/self-scan/containment/scan"); toast.success(`Containment evaluated — ${data.active} active response(s)`); }
+    catch (e) { toast.error(e.response?.data?.detail || "Could not run containment"); }
+    setRemedy("");
+  };
 
   if (!risks) return <Spinner />;
   const categories = ["all", ...Array.from(new Set(risks.map((r) => r.category)))];
@@ -111,7 +127,7 @@ export default function RiskRegister() {
         <StatCard testid="rr-kpi-controls" label="Avg control eff." value={`${k.avg_control_eff ?? 0}%`} accent="142 70% 45%" sub={`${k.controls ?? 0} controls`} />
       </div>
 
-      <AIInsight dashboard="Cyber Risk Register" accent={ACCENT} />
+      <AIInsight dashboard="Cyber Risk Register" accent={ACCENT} auto />
 
       {/* Portfolio reporting row 1: heatmap + top risks + rating breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -201,7 +217,7 @@ export default function RiskRegister() {
             <div className="space-y-2.5">
               {rr.control_deficiencies.slice(0, 6).map((c) => (
                 <div key={c.control_id} data-testid={`rr-deficiency-${c.control_id}`}>
-                  <div className="flex items-center justify-between text-xs mb-1"><span className="truncate pr-2"><span className="font-mono text-muted-foreground">{c.control_id}</span> {c.name}</span><span className="font-mono text-crit shrink-0">{c.deficiency}%</span></div>
+                  <div className="flex items-center justify-between text-xs mb-1"><span className="truncate pr-2"><span className="font-mono text-muted-foreground">{c.control_id}</span> {c.name} {c.framework && <span className="text-[9px] font-mono text-primary/80">· {c.framework}</span>}</span><span className="font-mono text-crit shrink-0">{c.deficiency}%</span></div>
                   <div className="h-2 rounded-full bg-secondary/60 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${c.deficiency}%`, background: `hsl(${c.deficiency >= 45 ? "0 84% 60%" : c.deficiency >= 25 ? "35 90% 55%" : "142 70% 45%"})` }} /></div>
                 </div>
               ))}
@@ -226,18 +242,81 @@ export default function RiskRegister() {
           {!topAssets.length ? <EmptyState text="Connect a source or run a scan to inventory assets." /> : (
             <div className="space-y-2">
               {topAssets.map((a) => (
-                <div key={a.ref} data-testid={`rr-asset-${a.ref}`} className="flex items-center justify-between gap-2 text-xs bg-secondary/30 rounded-md px-3 py-2">
-                  <div className="min-w-0"><div className="font-medium truncate">{a.name}</div><div className="text-[10px] text-muted-foreground">{a.owner}</div></div>
+                <button key={a.ref} data-testid={`rr-asset-${a.ref}`} onClick={() => setAssetModal(a.ref)}
+                  className="w-full flex items-center justify-between gap-2 text-xs bg-secondary/30 hover:bg-secondary/60 rounded-md px-3 py-2 text-left transition-colors">
+                  <div className="min-w-0"><div className="font-medium truncate">{a.name}</div><div className="text-[10px] text-muted-foreground truncate">{a.owner} · tap for metadata, CVEs &amp; fixes</div></div>
                   <div className="flex items-center gap-2 shrink-0">
                     <span className="font-mono text-[9px] px-1.5 py-0.5 rounded-sm" style={{ background: `hsl(${critColor[a.criticality]} / 0.15)`, color: `hsl(${critColor[a.criticality]})` }}>{a.criticality}</span>
                     <span className="font-mono">{a.exposure}</span>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           )}
         </CardShell>
       </div>
+
+      {/* Portfolio reporting row 4: control effectiveness + threat intel + findings */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <CardShell testid="rr-controls-cat" title="Control effectiveness by domain" icon={ShieldOff} accent={ACCENT}>
+          <BarList items={(rr?.controls_by_category || []).map((c) => ({ name: `${c.name} (${c.count})`, value: c.value, color: c.value >= 80 ? "142 70% 45%" : c.value >= 60 ? "35 90% 55%" : "0 84% 60%" }))} accent={ACCENT} empty="Control library loads here." />
+        </CardShell>
+        <CardShell testid="rr-threat-intel" title="Live threat intelligence feeds" icon={Radio} accent={ACCENT}>
+          {!(rr?.threat_intel || []).length ? <EmptyState text="Threat feeds sync on each scan." /> : (
+            <div className="space-y-2">
+              {rr.threat_intel.map((f) => (
+                <div key={f.key} data-testid={`rr-feed-${f.key}`} className="flex items-center justify-between gap-2 text-xs bg-secondary/30 rounded-md px-3 py-2">
+                  <div className="min-w-0"><div className="font-medium truncate">{f.label}</div><div className="text-[10px] font-mono text-muted-foreground">v{f.version || "—"}{f.count != null ? ` · ${Number(f.count).toLocaleString()} entries` : ""}</div></div>
+                  <span className={`font-mono text-[9px] px-1.5 py-0.5 rounded-full shrink-0 ${String(f.status || "").startsWith("live") ? "bg-low/15 text-low" : "bg-secondary/60 text-muted-foreground"}`}>{f.status}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardShell>
+        <CardShell testid="rr-findings-sev" title="Live scan findings" icon={Bug} accent={ACCENT}
+          right={<span className="text-[10px] font-mono text-muted-foreground">{rr?.findings?.passed ?? 0}/{rr?.findings?.total ?? 0} passed</span>}>
+          <div className="grid grid-cols-2 gap-2">
+            {[["critical", "Critical", "0 84% 60%"], ["high", "High", "15 80% 55%"], ["medium", "Medium", "35 90% 55%"], ["low", "Low", "142 70% 45%"]].map(([kk, lbl, col]) => (
+              <div key={kk} className="rounded-lg p-3 border" style={{ borderColor: `hsl(${col} / 0.35)`, background: `hsl(${col} / 0.06)` }}>
+                <div className="text-[10px] font-mono uppercase" style={{ color: `hsl(${col})` }}>{lbl}</div>
+                <div className="font-head font-black text-2xl">{rr?.findings?.by_severity?.[kk] ?? 0}</div>
+              </div>
+            ))}
+          </div>
+          <div className="text-[11px] text-muted-foreground mt-3">{rr?.findings?.deps_scanned ?? 0} deps scanned · <span className="text-crit">{rr?.findings?.vuln_deps ?? 0} vulnerable</span></div>
+        </CardShell>
+      </div>
+
+      {/* Live vulnerabilities & auto-remediation */}
+      <CardShell testid="rr-vulns" title="Live vulnerabilities & findings" icon={Bug} accent={ACCENT}
+        right={isAdmin && (
+          <div className="flex items-center gap-1.5">
+            <button data-testid="rr-autofix" disabled={!!remedy} onClick={autoRemediate} className="flex items-center gap-1 text-[11px] font-head font-bold px-2.5 py-1.5 rounded-full disabled:opacity-50" style={{ background: `hsl(${ACCENT})`, color: "#050810" }}>{remedy === "fix" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wrench className="w-3 h-3" />} Auto-remediate</button>
+            <button data-testid="rr-contain" disabled={!!remedy} onClick={blockContain} className="flex items-center gap-1 text-[11px] font-head font-bold px-2.5 py-1.5 rounded-full border border-crit/40 text-crit disabled:opacity-50">{remedy === "block" ? <Loader2 className="w-3 h-3 animate-spin" /> : <ShieldX className="w-3 h-3" />} Block / contain</button>
+          </div>
+        )}>
+        {!(rr?.findings?.list || []).length ? <EmptyState icon={Bug} text="No scan findings yet — run a live self-scan on Security Scanner." /> : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm min-w-[720px]">
+              <thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border"><tr><th className="text-left px-3 py-2">Finding</th><th className="text-left px-3 py-2">Severity</th><th className="text-left px-3 py-2">CVE / KEV</th><th className="text-left px-3 py-2">Maps to</th><th className="text-left px-3 py-2">Remediation</th></tr></thead>
+              <tbody>
+                {rr.findings.list.map((f) => {
+                  const sc = f.severity === "critical" ? "0 84% 60%" : f.severity === "high" ? "15 80% 55%" : f.severity === "medium" ? "35 90% 55%" : f.severity === "low" ? "142 70% 45%" : "199 20% 60%";
+                  return (
+                    <tr key={f.id} data-testid={`rr-finding-${f.id}`} className="border-b border-border/60">
+                      <td className="px-3 py-2"><div className="font-medium">{f.title}</div><div className="text-[10px] text-muted-foreground">{f.category}</div></td>
+                      <td className="px-3 py-2"><span className="px-2 py-0.5 rounded-sm text-[10px] font-mono font-bold uppercase" style={{ background: `hsl(${sc} / 0.15)`, color: `hsl(${sc})` }}>{f.status === "pass" ? "pass" : f.severity}</span></td>
+                      <td className="px-3 py-2 font-mono text-[11px]">{(f.cve_ids || []).join(", ") || "—"} {f.kev && <span className="ml-1 text-crit">KEV</span>}</td>
+                      <td className="px-3 py-2 text-[11px] text-muted-foreground">{(f.control_refs || []).slice(0, 2).join(", ") || "—"}</td>
+                      <td className="px-3 py-2 text-[11px] text-muted-foreground max-w-xs truncate">{f.remediation}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </CardShell>
 
       {/* Detailed register */}
       <div className="flex flex-wrap gap-3 sticky top-16 z-20 -mx-4 px-4 sm:mx-0 sm:px-0 py-2 bg-background/90 backdrop-blur">
@@ -311,35 +390,47 @@ export default function RiskRegister() {
       </div>
       </div>
 
-      {selected && (
-        <aside data-testid="risk-detail-pane" className="hidden md:block md:w-72 lg:w-80 shrink-0 md:sticky md:top-28 bg-card fact-border rounded-xl p-4 space-y-3">
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0"><div className="font-mono text-[11px] text-ai">{selected.ref}</div><div className="font-head font-bold text-sm">{selected.title}</div></div>
-            <button data-testid="risk-detail-close" onClick={() => setSelected(null)} className="shrink-0 text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
-          </div>
-          <p className="text-xs text-high">{selected.business_impact}</p>
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div className="bg-secondary/40 rounded-md p-2 space-y-1"><div className="text-[10px] text-muted-foreground">Inherent</div><ScorePill value={selected.inherent} /></div>
-            <div className="bg-secondary/40 rounded-md p-2 space-y-1"><div className="text-[10px] text-muted-foreground">Residual</div><ScorePill value={selected.residual} /></div>
-          </div>
-          <div className="text-xs space-y-1">
-            <div className="flex justify-between gap-2"><span className="text-muted-foreground">Category</span><span className="text-right">{selected.category}</span></div>
-            <div className="flex justify-between gap-2"><span className="text-muted-foreground">Owner</span><span className="text-right">{selected.owner}</span></div>
-            <div className="flex justify-between gap-2"><span className="text-muted-foreground">$ Exposure</span><span className="font-mono text-high">{rowExposure(selected)}k</span></div>
-            <div className="flex justify-between gap-2"><span className="text-muted-foreground">Status</span><span className="text-right">{selected.status}</span></div>
-          </div>
-          <div className="text-[11px] font-mono text-muted-foreground bg-secondary/30 rounded-md p-2">KRI: {selected.kri}</div>
-          <div className="flex flex-col gap-1.5"><SourceBadge source={selected.source} /><div className="flex flex-wrap items-center gap-2"><FreshnessBadge freshness={selected.freshness} /><DataTypeBadge type={selected.data_type} /><ConfidenceBadge value={selected.confidence} /></div></div>
-          <div className="flex gap-2 pt-1">
-            <button data-testid="risk-detail-lineage" onClick={() => setLineage(selected.ref)} className="flex-1 text-xs px-3 py-2 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 transition-colors">Full lineage</button>
-            <button data-testid="risk-detail-evidence" onClick={() => setEvidence(selected.ref)} className="flex-1 text-xs px-3 py-2 rounded-md bg-secondary/60 hover:bg-secondary transition-colors">Evidence</button>
-          </div>
-        </aside>
-      )}
+      <aside data-testid="risk-detail-pane" className="hidden md:block md:w-72 lg:w-80 shrink-0 md:sticky md:top-28 bg-card fact-border rounded-xl p-4 space-y-3">
+        {!selected ? (
+          <EmptyState icon={Grid3x3} text="Select a risk from the register or heatmap to inspect residual, KRIs, evidence lineage and live remediation." />
+        ) : (
+          <>
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0"><div className="font-mono text-[11px] text-ai">{selected.ref}</div><div className="font-head font-bold text-sm">{selected.title}</div></div>
+              <button data-testid="risk-detail-close" onClick={() => setSelected(null)} className="shrink-0 text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
+            </div>
+            <p className="text-xs text-high">{selected.business_impact}</p>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div className="bg-secondary/40 rounded-md p-2 space-y-1"><div className="text-[10px] text-muted-foreground">Inherent</div><ScorePill value={selected.inherent} /></div>
+              <div className="bg-secondary/40 rounded-md p-2 space-y-1"><div className="text-[10px] text-muted-foreground">Residual</div><ScorePill value={selected.residual} /></div>
+            </div>
+            <div className="text-xs space-y-1">
+              <div className="flex justify-between gap-2"><span className="text-muted-foreground">Category</span><span className="text-right">{selected.category}</span></div>
+              <div className="flex justify-between gap-2"><span className="text-muted-foreground">Owner</span><span className="text-right">{selected.owner}</span></div>
+              <div className="flex justify-between gap-2"><span className="text-muted-foreground">$ Exposure</span><span className="font-mono text-high">{rowExposure(selected)}k</span></div>
+              <div className="flex justify-between gap-2"><span className="text-muted-foreground">Status</span><span className="text-right">{selected.status}</span></div>
+            </div>
+            <div className="text-[11px] font-mono text-muted-foreground bg-secondary/30 rounded-md p-2">KRI: {selected.kri}</div>
+            <div className="flex flex-col gap-1.5"><SourceBadge source={selected.source} /><div className="flex flex-wrap items-center gap-2"><FreshnessBadge freshness={selected.freshness} /><DataTypeBadge type={selected.data_type} /><ConfidenceBadge value={selected.confidence} /></div></div>
+            <div className="flex gap-2 pt-1">
+              <button data-testid="risk-detail-lineage" onClick={() => setLineage(selected.ref)} className="flex-1 text-xs px-3 py-2 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 transition-colors">Full lineage</button>
+              <button data-testid="risk-detail-evidence" onClick={() => setEvidence(selected.ref)} className="flex-1 text-xs px-3 py-2 rounded-md bg-secondary/60 hover:bg-secondary transition-colors">Evidence</button>
+            </div>
+            {isAdmin && (
+              <div className="pt-2 border-t border-border/60 space-y-1.5">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Live remediation</div>
+                <button data-testid="risk-detail-autofix" disabled={!!remedy} onClick={autoRemediate} className="w-full flex items-center justify-center gap-1.5 text-xs font-head font-bold px-3 py-2 rounded-md disabled:opacity-50" style={{ background: `hsl(${ACCENT})`, color: "#050810" }}>{remedy === "fix" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />} Auto-remediate</button>
+                <button data-testid="risk-detail-contain" disabled={!!remedy} onClick={blockContain} className="w-full flex items-center justify-center gap-1.5 text-xs font-head font-bold px-3 py-2 rounded-md border border-crit/40 text-crit hover:bg-crit/10 transition-colors disabled:opacity-50">{remedy === "block" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldX className="w-3.5 h-3.5" />} Block / contain</button>
+              </div>
+            )}
+          </>
+        )}
+      </aside>
       </div>
 
       <EvidenceLineageModal riskRef={lineage} onClose={() => setLineage(null)} />
       <EvidenceModal kind="risk" refId={evidence} onClose={() => setEvidence(null)} />
+      <AssetDetailModal assetRef={assetModal} findings={rr?.findings?.list || []} accent={ACCENT} onClose={() => setAssetModal(null)} />
     </div>
   );
 }

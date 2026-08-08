@@ -1,0 +1,36 @@
+{
+  "summary": "Frontend-only verification (1600x1000) of iteration_41 features on the live_only sparse admin org (jblan2026@gmail.com). All acceptance criteria from the review request PASSED. (1) Login + Skip onboarding OK. (2) Advisor corner: advisor-toggle + advisor-hint present, advisor-panel is NOT auto-open on load, no 'Connect AI' floating button, no large 'Advisor' pill; clicking advisor-toggle opens advisor-panel; advisor-hint-dismiss hides the bubble (verified by follow-up screenshot). (3) AI Analyst auto-summary auto-loads on ALL 5 pages (/app/assets, /app/ai-governance, /app/vendors, /app/decisions, /app/risks) with 6 bullet items each (`<li>` under card), rendered by anthropic/claude-opus-4-8 within ~10s of navigation without any button click. The ai-insight-run-<slug> Refresh button sits inside the card header on the LEFT side (x offset < 60% of card width) NEXT TO the 'AI Analyst — <name>' title, not far-right. (4) Risk Register (/app/risks): 6 KPI tiles (rr-kpi-total/open/critical/exposure/worst/controls), rr-heatmap, rr-top-risks, rr-rating, rr-loss (Monte-Carlo P10/P50/P90 dashed markers visible), rr-trending vs appetite, rr-deficiencies WITH framework labels 'NIST SP 800-53' / 'SOC 2' rendered per row, rr-controls-cat, rr-threat-intel with rr-feed-kev (CISA KEV v2026.08.07 · 1,662 entries · live), rr-feed-attack (MITRE ATT&CK v19.2 · 5 entries · live), rr-feed-osv (live-per-scan), rr-feed-cwe (MITRE CWE v4.16 · 5 entries · live), rr-findings-sev (4 severity tiles), rr-vulns with 5 rr-finding-<id> rows, rr-initiatives, rr-top-assets. NO runtime error overlay, NO large blank/dead space. (5) Action buttons: rr-autofix → POST /api/self-scan/autofix returned 200; rr-contain → POST /api/self-scan/containment/scan returned 200. (6) Persistent risk-detail-pane at desktop width shows 'Select a risk...' placeholder before selection; upon selecting risk-row-LR-001 the pane populates with full residual/KRIs/evidence + risk-detail-autofix + risk-detail-contain buttons (verified). (7) Clicking rr-asset-AST-ENDPOINT opened asset-detail-modal with Network Metadata (Host / IP addresses / DNS / Server / TLS / Cert expiry / Security score 88/100), Vulnerability Data (Open CVEs 1, KEV 0, MITRE 7, CWE 9), Open Ports (80 HTTP, 443 HTTPS/TLS), Security Headers list, and asset-modal-recs with 8 concrete 'Enable missing security header ...' + patch/upgrade recommendations. asset-modal-close closes it.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_testids": {
+    "advisor": ["advisor-toggle", "advisor-hint", "advisor-hint-dismiss", "advisor-panel (opens on toggle)", "advisor-close"],
+    "ai_insight_cards": ["ai-insight-Asset-Intelligence", "ai-insight-AI-Governance", "ai-insight-Third-Party-Risk", "ai-insight-Recommendations---Decisions", "ai-insight-Cyber-Risk-Register"],
+    "ai_insight_run_buttons_all_left_of_card": true,
+    "auto_bullets_count_per_page": 6,
+    "risk_register_scaffold": ["risk-register-page","rr-kpi-total","rr-kpi-open","rr-kpi-critical","rr-kpi-exposure","rr-kpi-worst","rr-kpi-controls","rr-heatmap","rr-top-risks","rr-rating","rr-loss","rr-trending","rr-deficiencies (framework labels present)","rr-controls-cat","rr-threat-intel","rr-feed-kev","rr-feed-attack","rr-feed-osv","rr-feed-cwe","rr-findings-sev","rr-vulns","rr-initiatives","rr-top-assets","rr-autofix","rr-contain","risk-detail-pane","risk-detail-autofix (after selection)","risk-detail-contain (after selection)"],
+    "action_endpoints_hit": {"rr-autofix": "POST /api/self-scan/autofix 200", "rr-contain": "POST /api/self-scan/containment/scan 200"},
+    "asset_modal": ["asset-detail-modal","asset-modal-recs","asset-modal-close","rr-asset-AST-ENDPOINT"],
+    "vuln_rows": ["rr-finding-sec-headers","rr-finding-cors","rr-finding-dep-ecdsa","rr-finding-auth-policy","rr-finding-auth-bruteforce"]
+  },
+  "notes_for_main_agent_not_bugs": [
+    "Playwright's simulated mouse click on the <tr data-testid=risk-row-LR-001> (offscreen scroll target ~y=2870) did NOT dispatch the React onClick in one attempt, but el.click() via JS did (pane populated correctly with LR-001 metadata). Real users are unaffected; this is a Playwright/scroll quirk, not a bug — the state flow, DOM structure, and onClick handler are correctly wired.",
+    "Similarly, the auth-submit button behaves slightly differently under scripted force-click; pressing Enter on the password field reliably submits. This is not a user-facing bug — the button DOES have type=submit inside a <form onSubmit>. Automation should prefer Enter or non-force click after scroll."
+  ],
+  "critical_code_review_comments": [
+    "AI Insight testid slugs are derived from the human-readable dashboard title (e.g. `ai-insight-Recommendations---Decisions` with triple hyphen, `ai-insight-Third-Party-Risk`). Consider accepting an explicit `slug` prop that normalizes to URL-safe form (assets/ai-governance/vendors/decisions/risks) for stable QA automation across renames.",
+    "RiskRegister.jsx is now ~437 lines with all rendering + handlers inline; consider extracting the vulnerabilities table, threat feeds card, and detail-pane into their own components for maintainability (currently within the 700-line soft limit but growing)."
+  ],
+  "test_report_links": ["/app/test_reports/iteration_41.json"],
+  "action_items": [],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% — all iteration_41 acceptance criteria verified live"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin) — verified via /api/auth/login 200",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Login form submits reliably via Enter key on password (use `await pwd.press('Enter')` and await response for /api/auth/login). Onboarding tour has a Skip button (role=button name=Skip) that appears at /app after fresh login. All AI Insight card testids use dashboard-title-derived slugs, NOT URL slugs: `ai-insight-Asset-Intelligence`, `ai-insight-AI-Governance`, `ai-insight-Third-Party-Risk`, `ai-insight-Recommendations---Decisions`, `ai-insight-Cyber-Risk-Register` (and matching `ai-insight-run-<slug>` for buttons). AI Insight auto-loads on mount — wait up to ~15s for 6 <li> bullets. Advisor corner requires clicking advisor-toggle to open advisor-panel; panel does NOT auto-open. rr-autofix / rr-contain / risk-detail-autofix / risk-detail-contain wired correctly to /api/self-scan/{autofix,containment/scan}. For Playwright, `scroll_into_view_if_needed()` before clicks on rows lower on the page is required; if a table row click doesn't trigger React state (rare), use `el.click()` via page.evaluate as a fallback (verified working)."
+}
