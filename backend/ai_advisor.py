@@ -603,6 +603,10 @@ async def fair_air_start(body: FairAirBody, background_tasks: BackgroundTasks, u
 
 @advisor_router.get("/fair-air/{job_id}")
 async def fair_air_status(job_id: str, user: dict = Depends(get_current_user)):
+    if job_id == "latest":
+        job = await db.fair_air_jobs.find_one({"org_id": user["org_id"], "status": "done"},
+                                              {"_id": 0}, sort=[("created_at", -1)])
+        return job or {"status": "none"}
     job = await db.fair_air_jobs.find_one({"job_id": job_id, "org_id": user["org_id"]}, {"_id": 0})
     if not job:
         raise HTTPException(status_code=404, detail="Analysis job not found")
@@ -689,6 +693,21 @@ async def fair_air_vector_status(job_id: str, user: dict = Depends(get_current_u
     if not job:
         raise HTTPException(status_code=404, detail="Vector analysis not found")
     return job
+
+
+async def _run_weekly_fair_air_refresh():
+    """Weekly auto-refresh: re-run the FAIR-AIR analysis for every org so the board
+    dashboard + board pack always reflect the latest posture (piggybacks the weekly cron)."""
+    import uuid
+    org_ids = await db.organizations.distinct("_id")
+    for oid in org_ids:
+        try:
+            res = await generate_fair_air_analysis(str(oid))
+            await db.fair_air_jobs.insert_one({"job_id": uuid.uuid4().hex, "org_id": str(oid),
+                                               "by": "scheduler@obserra", "status": "done",
+                                               "created_at": datetime.now(timezone.utc).isoformat(), **res})
+        except Exception:
+            continue
 
 
 async def _autonomy_scorecard(org_id: str) -> str:

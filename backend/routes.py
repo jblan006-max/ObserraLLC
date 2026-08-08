@@ -1114,8 +1114,49 @@ async def _nist_ai_rmf_coverage(org_id: str):
         if sig == "fairair":
             return clamp(85 + (15 if fa else 0))
         return clamp(overall_eff)
-    out = [{"c": c["c"], "type": c["type"], "fn": c["fn"], "vec": c["vec"], "fw": c["fw"], "cov": sig_cov(c["sig"])}
-           for c in _NIST_AI_CONTROLS]
+    def sig_detail(sig):
+        if sig == "policy":
+            return (f"Calibration sign-off {'locked' if signed else 'not locked'}; autonomy engine {'on' if engine_on else 'off'}; {shadow} shadow-AI system(s).",
+                    "Lock the CRO calibration sign-off, enable the autonomy engine, and eliminate shadow-AI usage.")
+        if sig == "catalog_sso":
+            return (f"Identity & Access effectiveness {ce('Identity & Access')}%; {conn_ratio}% of connectors connected.",
+                    "Connect the remaining identity/SSO sources and route every AI tool through SSO.")
+        if sig == "inventory":
+            return (f"{ai_total} AI system(s) inventoried; {shadow} shadow (unsanctioned).",
+                    "Register every AI system and bring shadow AI under the inventory.")
+        if sig == "dlp":
+            return (f"Data Protection control effectiveness {ce('Data Protection')}%.",
+                    "Deploy DLP that blocks sensitive data to public LLMs; raise Data Protection effectiveness.")
+        if sig in ("ai_gov", "ai_gov_low"):
+            return (f"AI Governance control effectiveness {ce('AI Governance')}%.",
+                    "Mature AI-governance controls: provenance, bias testing, output validation, monitoring, human review.")
+        if sig == "scan":
+            return (f"Latest self-scan score {scan_score}/100.",
+                    "Raise the security-scan posture and add prompt-injection / input-filtering tests.")
+        if sig == "scan_kev":
+            return (f"Self-scan score {scan_score}/100; {kev} known-exploited (KEV) match(es).",
+                    "Remediate KEV-listed vulnerabilities and sustain continuous scanning.")
+        if sig == "vendor":
+            return (f"Third-Party control effectiveness {ce('Third Party')}%; {vhigh}/{vtotal} vendors high-risk.",
+                    "Complete security assessments for high-risk LLM vendors.")
+        if sig == "data_prot":
+            return (f"Data Protection control effectiveness {ce('Data Protection')}%.",
+                    "Enforce data-minimization on third-party LLM calls.")
+        if sig == "identity":
+            return (f"Identity & Access control effectiveness {ce('Identity & Access')}%.",
+                    "Roll out phishing-resistant MFA to all users with sensitive-data access.")
+        if sig == "resilience":
+            return (f"Resilience control effectiveness {ce('Resilience')}%.",
+                    "Formalise and test the AI incident-response runbook.")
+        if sig == "fairair":
+            return (f"FAIR-AIR quantification {'active (job present)' if fa else 'not yet run'}.",
+                    "Run and CRO-sign the FAIR-AIR board analysis on a regular cadence.")
+        return (f"Blended control effectiveness {overall_eff}%.", "Improve the underlying controls.")
+    out = []
+    for c in _NIST_AI_CONTROLS:
+        basis, raise_it = sig_detail(c["sig"])
+        out.append({"c": c["c"], "type": c["type"], "fn": c["fn"], "vec": c["vec"], "fw": c["fw"],
+                    "cov": sig_cov(c["sig"]), "basis": basis, "raise": raise_it})
     overall = round(sum(x["cov"] for x in out) / len(out)) if out else 0
     met = len([x for x in out if x["cov"] >= 80])
     frameworks = sorted({f for x in out for f in x["fw"]})

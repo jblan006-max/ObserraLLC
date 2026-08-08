@@ -233,6 +233,8 @@ async def weekly_drift_digest(request: Request, background_tasks: BackgroundTask
     background_tasks.add_task(_run_teams_digest)
     background_tasks.add_task(_run_momentum_digest)
     background_tasks.add_task(_run_connector_digest)
+    from ai_advisor import _run_weekly_fair_air_refresh
+    background_tasks.add_task(_run_weekly_fair_air_refresh)
     return {"status": "accepted"}
 
 

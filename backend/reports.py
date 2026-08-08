@@ -706,7 +706,7 @@ async def board_pack_pdf(user: dict = Depends(get_current_user)):
     """One-click board pack: latest board report (with methodology appendix + benchmark
     references) + exposure trend + per-risk bands + calibration sign-off audit trail, in a single PDF."""
     from ai_advisor import generate_board_report, generate_fair_air_analysis
-    from routes import _nist_ai_rmf_coverage
+    from routes import _nist_ai_rmf_coverage, _fair_data
     latest = await db.reports.find_one({"org_id": user["org_id"]}, sort=[("generated_at", -1)])
     report_text = (latest or {}).get("report")
     if not report_text:
@@ -723,11 +723,38 @@ async def board_pack_pdf(user: dict = Depends(get_current_user)):
             fair_air = (await generate_fair_air_analysis(user["org_id"])).get("scenarios")
         except Exception:
             fair_air = None
+    from datetime import datetime as _dt, timezone as _tz
+    try:
+        fd = await _fair_data(user["org_id"])
+        residual_ale = ((fd or {}).get("kpis") or {}).get("dollars_at_risk")
+    except Exception:
+        residual_ale = None
+    ai_expected = None
+    if fair_air:
+        try:
+            ai_expected = round(sum((float(s.get("probability_pct") or 0) / 100) * float(s.get("loss_usd") or 0) for s in fair_air))
+        except Exception:
+            ai_expected = None
+    nsum = (nist_cov or {}).get("summary") or {}
+    try:
+        await db.board_pack_history.insert_one({
+            "org_id": user["org_id"], "generated_at": _dt.now(_tz.utc).isoformat(), "by": user["email"],
+            "residual_ale": residual_ale, "ai_expected_loss": ai_expected,
+            "nist_overall": nsum.get("overall"), "nist_met": nsum.get("met"), "nist_total": nsum.get("total"),
+            "scenarios": len(fair_air or [])})
+    except Exception:
+        pass
     buf = await build_board_report_pdf(user["org_id"], report_text,
                                        title="Board Pack — Cyber Risk & Financials",
                                        fair_air=fair_air, nist_coverage=nist_cov)
     return StreamingResponse(buf, media_type="application/pdf",
                              headers={"Content-Disposition": 'attachment; filename="obserra-board-pack.pdf"'})
+
+
+@reports_router.get("/api/reports/board-pack/history")
+async def board_pack_history(user: dict = Depends(get_current_user)):
+    rows = await db.board_pack_history.find({"org_id": user["org_id"]}, {"_id": 0}).sort("generated_at", -1).to_list(24)
+    return {"history": rows}
 
 
 @reports_router.post("/api/reports/email")

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { ShieldAlert, Loader2, Layers, PlayCircle, Gauge, ShieldCheck, TrendingDown, Calculator, BarChart3, Building2, RefreshCw, Sparkles, FileText, Clock, Target, Activity, BookOpen, Cpu, Crosshair } from "lucide-react";
+import { ShieldAlert, Loader2, Layers, PlayCircle, Gauge, ShieldCheck, TrendingDown, Calculator, BarChart3, Building2, RefreshCw, Sparkles, FileText, Clock, Target, Activity, BookOpen, Cpu, Crosshair, ChevronDown } from "lucide-react";
 import { Line, XAxis, YAxis, Tooltip, ComposedChart, Area, ReferenceDot } from "recharts";
 import { ChartBox } from "@/components/ChartBox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -124,12 +124,12 @@ function FactorNode({ label, abbr, value, desc, accent = "215 15% 55%", children
 }
 
 const GPT_MODELS = [
-  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol · max compute" },
-  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra · high" },
-  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna · high" },
-  { id: "gpt-5.5", label: "GPT-5.5 · high" },
-  { id: "gpt-5.4", label: "GPT-5.4 · balanced (default)" },
-  { id: "gpt-5.4-mini", label: "GPT-5.4 Mini · fast" },
+  { id: "gpt-5.6-sol", label: "GPT-5.6 Sol", speed: "Slowest", cost: "$$$$", note: "max reasoning depth" },
+  { id: "gpt-5.6-terra", label: "GPT-5.6 Terra", speed: "Slow", cost: "$$$", note: "high reasoning" },
+  { id: "gpt-5.6-luna", label: "GPT-5.6 Luna", speed: "Slow", cost: "$$$", note: "high reasoning" },
+  { id: "gpt-5.5", label: "GPT-5.5", speed: "Medium", cost: "$$", note: "strong reasoning" },
+  { id: "gpt-5.4", label: "GPT-5.4", speed: "Fast", cost: "$$", note: "balanced (default)" },
+  { id: "gpt-5.4-mini", label: "GPT-5.4 Mini", speed: "Fastest", cost: "$", note: "quick & economical" },
 ];
 
 const FAIR_AIR_ILLUSTRATIVE = [
@@ -150,9 +150,11 @@ function FairDashboard({ overview }) {
   const [vec, setVec] = useState(null);
   const [vecBusy, setVecBusy] = useState(false);
   const [vecData, setVecData] = useState(null);
+  const [openCtrl, setOpenCtrl] = useState(null);
   useEffect(() => {
     api.get("/financial/fair").then((r) => setD(r.data)).catch(() => {});
     api.get("/financial/nist-coverage").then((r) => setNist(r.data)).catch(() => {});
+    api.get("/advisor/fair-air/latest").then((r) => { if (r.data && (r.data.scenarios || []).length) { setAiScenarios(r.data.scenarios); setAiModel(r.data.model || "AI"); } }).catch(() => {});
   }, []);
   if (!d) return null;
   const analyzeAI = async () => {
@@ -304,16 +306,21 @@ function FairDashboard({ overview }) {
             <div className="ml-auto flex items-center gap-1.5">
               <Cpu className="w-3.5 h-3.5 text-muted-foreground" />
               <select data-testid="fair-air-model-select" value={aiModelSel} onChange={(e) => setAiModelSel(e.target.value)} disabled={aiBusy} className="text-xs bg-secondary border border-border rounded-md px-2 py-1 text-foreground disabled:opacity-60" title="Higher versions use more inference compute → more accurate reasoning (International AI Safety Report 2026)">
-                {GPT_MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                {GPT_MODELS.map((m) => <option key={m.id} value={m.id}>{m.label} · {m.cost} · {m.speed}</option>)}
               </select>
               <button data-testid="fair-air-analyze-btn" onClick={analyzeAI} disabled={aiBusy} className="text-xs px-2.5 py-1 rounded-md bg-ai text-white flex items-center gap-1 disabled:opacity-60">
                 {aiBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} {aiBusy ? "Analyzing…" : "Analyze with AI"}
               </button>
             </div>
           </div>
-          <div className="text-[9px] text-muted-foreground mb-1.5" data-testid="fair-air-compute-note">More inference compute (higher model version) = more accurate reasoning &amp; deeper cross-dashboard synthesis. <span className="text-foreground/70">Source: International AI Safety Report 2026 (Fig. 1.6).</span></div>
+          {(() => { const mm = GPT_MODELS.find((x) => x.id === aiModelSel) || GPT_MODELS[4]; return (
+          <div className="text-[9px] text-muted-foreground mb-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5" data-testid="fair-air-compute-note">
+            <span className="inline-flex items-center gap-1"><Cpu className="w-3 h-3" /> {mm.label}: <span className="text-foreground/80">{mm.speed}</span> · <span className="text-foreground/80">cost {mm.cost}</span> · {mm.note}</span>
+            <span>More inference compute (higher version) = more accurate reasoning &amp; deeper synthesis. <span className="text-foreground/70">Source: International AI Safety Report 2026 (Fig. 1.6).</span></span>
+          </div>
+          ); })()}
           {aiScenarios && (
-            <div className="text-[10px] text-ai mb-1.5 flex items-center gap-1 flex-wrap" data-testid="fair-air-ai-badge"><Sparkles className="w-3 h-3 shrink-0" /> AI-generated by {aiModel} (advanced reasoning) · grounded in your risk, AI-system &amp; benchmark data · expected annual AI loss ≈ {fmt(aiScenarios.reduce((s, x) => s + (Number(x.probability_pct) || 0) / 100 * (Number(x.loss_usd) || 0), 0))}</div>
+            <div className="text-[10px] text-ai mb-1.5 flex items-center gap-1 flex-wrap" data-testid="fair-air-ai-badge"><Sparkles className="w-3 h-3 shrink-0" /> AI-generated by {aiModel} (advanced reasoning) · grounded in your risk, AI-system &amp; benchmark data · expected annual AI loss ≈ {fmt(aiScenarios.reduce((s, x) => s + (Number(x.probability_pct) || 0) / 100 * (Number(x.loss_usd) || 0), 0))} · auto-refreshed weekly</div>
           )}
           <div className="space-y-2">
             {(aiScenarios || FAIR_AIR_ILLUSTRATIVE).map((s, i) => (
@@ -390,12 +397,13 @@ function FairDashboard({ overview }) {
             </div>
             <div className="max-h-72 overflow-y-auto pr-1 space-y-1.5" data-testid="fair-controls-list">
               {CONTROLS.map((r, i) => (
-                <div key={i} data-testid={`fair-control-${i}`} className="rounded-md border border-border/60 bg-background/40 px-2.5 py-1.5">
+                <div key={i} data-testid={`fair-control-${i}`} onClick={() => setOpenCtrl(openCtrl === i ? null : i)} className="rounded-md border border-border/60 bg-background/40 px-2.5 py-1.5 cursor-pointer hover:border-ai/40 transition-colors" title="Click for coverage drivers">
                   <div className="flex items-center gap-2">
                     <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm shrink-0 w-24 text-center" style={{ background: `hsl(${fnColor(r.fn)} / 0.15)`, color: `hsl(${fnColor(r.fn)})` }}>{r.fn}</span>
                     <span className="text-[11px] flex-1 min-w-0 truncate" title={r.c}>{r.c}</span>
                     <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm bg-secondary text-muted-foreground shrink-0 hidden sm:inline">{r.type}</span>
                     <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm shrink-0 text-center" style={{ background: `hsl(${covColor(r.cov)} / 0.15)`, color: `hsl(${covColor(r.cov)})` }}>{r.cov}% · {covLabel(r.cov)}</span>
+                    <ChevronDown className={`w-3 h-3 text-muted-foreground shrink-0 transition-transform ${openCtrl === i ? "rotate-180" : ""}`} />
                   </div>
                   <div className="flex items-center gap-1.5 mt-1 flex-wrap">
                     <span className="text-[9px] text-muted-foreground">Treats: <span className="text-foreground/80">{r.vec}</span></span>
@@ -403,6 +411,12 @@ function FairDashboard({ overview }) {
                     <span className="text-[9px] text-muted-foreground">Compliance:</span>
                     {r.fw.map((f) => <span key={f} className="text-[8px] font-mono px-1 py-0.5 rounded-sm bg-ai/10 text-ai">{f}</span>)}
                   </div>
+                  {openCtrl === i && (
+                    <div className="mt-1.5 pt-1.5 border-t border-border/40 text-[10px] text-muted-foreground space-y-1" data-testid={`fair-control-detail-${i}`}>
+                      <div><span className="font-semibold text-foreground/80">What drives this score:</span> {r.basis || "Sampled baseline — connect live control & scan data for a computed score."}</div>
+                      <div><span className="font-semibold text-ai/90">To raise it:</span> {r.raise || "Improve the mapped controls & evidence for this NIST function."}</div>
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -552,9 +566,10 @@ function FinancialBasis({ isAdmin }) {
   const [trend, setTrend] = useState(null);
   const [hist, setHist] = useState([]);
   const [packing, setPacking] = useState(false);
+  const [packHistory, setPackHistory] = useState([]);
   const load = () => Promise.all([api.get("/financial/basis"), api.get("/financial/config"), api.get("/financial/benchmark-trend").catch(() => ({ data: { points: [] } })), api.get("/financial/signoff-history").catch(() => ({ data: { history: [] } }))])
     .then(([b, c, t, h]) => { setBasis(b.data); setCfg(c.data); setTrend(t.data); setHist(h.data.history || []); }).catch(() => {});
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); api.get("/reports/board-pack/history").then((r) => setPackHistory(r.data.history || [])).catch(() => {}); }, []);
   if (!basis || !cfg) return null;
   const fmt = (n) => n == null ? "—" : `$${(n / 1e6).toFixed(n < 1e6 ? 3 : 2)}M`;
   const bench = basis.benchmark;
@@ -577,6 +592,7 @@ function FinancialBasis({ isAdmin }) {
       const a = document.createElement("a"); a.href = url; a.download = "obserra-board-pack.pdf"; a.click();
       URL.revokeObjectURL(url);
       toast.success("Board pack downloaded");
+      api.get("/reports/board-pack/history").then((r) => setPackHistory(r.data.history || [])).catch(() => {});
     } catch (e) { toast.error("Could not build board pack"); }
     setPacking(false);
   };
@@ -584,6 +600,21 @@ function FinancialBasis({ isAdmin }) {
   return (
     <div className="bg-card fact-border rounded-xl p-5 space-y-5" data-testid="financial-basis">
       <div className="flex flex-wrap items-center gap-2"><Calculator className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Financial basis &amp; benchmark</h2><span className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-secondary text-muted-foreground">defensible math</span>{basis.signoff?.locked && <span data-testid="fin-approved" className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-low/15 text-low border border-low/30">✓ Approved by {basis.signoff.name} · {String(basis.signoff.at).slice(0, 10)}{basis.signoff.stale ? " (config changed since)" : ""}</span>}<button data-testid="board-pack-btn" onClick={boardPack} disabled={packing} className="ml-auto text-xs px-2.5 py-1 rounded-md bg-ai text-white flex items-center gap-1 disabled:opacity-60">{packing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />} Board pack PDF</button></div>
+      {packHistory.length > 0 && (
+        <div className="rounded-lg border border-border p-3" data-testid="board-pack-history">
+          <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2 flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> Board-pack history — AI-risk exposure over time</div>
+          <div className="space-y-1">
+            {packHistory.slice(0, 8).map((h, i) => (
+              <div key={i} data-testid={`board-pack-hist-${i}`} className="flex items-center gap-2 text-[11px] border-b border-border/40 last:border-0 py-1">
+                <span className="font-mono text-muted-foreground w-24 shrink-0">{String(h.generated_at).slice(0, 10)}</span>
+                <span className="flex-1 truncate">Residual ALE <span className="font-mono text-foreground">{h.residual_ale != null ? fmt(h.residual_ale) : "—"}</span> · AI exp. loss <span className="font-mono text-foreground">{h.ai_expected_loss != null ? fmt(h.ai_expected_loss) : "—"}</span></span>
+                <span className="font-mono shrink-0" style={{ color: h.nist_overall >= 80 ? "hsl(142 70% 45%)" : h.nist_overall >= 40 ? "hsl(35 90% 55%)" : "hsl(0 84% 60%)" }}>NIST {h.nist_overall != null ? h.nist_overall + "%" : "—"}</span>
+              </div>
+            ))}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">Each row is a generated board pack — compare residual exposure, AI-risk loss &amp; NIST AI RMF coverage quarter over quarter.</div>
+        </div>
+      )}
 
       <div className="grid sm:grid-cols-3 gap-3" data-testid="fin-benchmark">
         <div className="rounded-lg bg-secondary/40 p-3">
