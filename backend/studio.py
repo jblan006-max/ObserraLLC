@@ -59,16 +59,30 @@ async def report_email(body: ReportExportBody, admin: dict = Depends(require_rol
     return {"status": "sent", "to": recipients}
 
 
-async def _ai_narrative(org_id: str, title: str, blocks: list[dict]) -> str:
+_NARRATIVE_SPEC = {
+    "board": ("You are the board chair's chief risk officer preparing a Board Risk & AI Governance pack.", 180,
+              "Write a board-grade narrative: overall posture, the 2-3 most material exposures in $ terms, AI governance standing, third-party risk, and one decisive recommended action for the board."),
+    "cfo": ("You are the CFO's cyber-risk financial analyst.", 170,
+            "Frame everything in financial terms — annualized loss expectancy ($ALE), remediation ROI and budget implications. State whether exposure is trending up or down and name the single highest-ROI investment."),
+    "soc": ("You are the SOC lead writing an operational remediation plan.", 170,
+            "Frame as prioritized remediation: which fixes retire the most risk fastest, the control gaps to close, and the AI-agent guardrails to enforce, with clear next steps."),
+    "story": ("You are the Chief Risk Officer narrating the full enterprise risk story to leadership.", 230,
+              "Tell the END-TO-END story of what the enterprise looks like right now: security posture, the top financial exposures, AI governance maturity, third-party/vendor risk, control effectiveness, the trajectory (improving or worsening), and close with the single most important strategic recommendation."),
+}
+
+
+async def _ai_narrative(org_id: str, title: str, blocks: list[dict], report_type: str = "") -> str:
+    persona, max_words, instruction = _NARRATIVE_SPEC.get(report_type, (
+        "You are a chief risk officer writing a concise executive narrative for a custom risk & AI governance report.",
+        130, "Write a single-paragraph executive narrative summarizing the posture, the most important risk signals, and one clear recommended action."))
     context = "\n".join(f"{b['heading']}:\n" + "\n".join(f"  - {ln}" for ln in b["lines"]) for b in blocks)
     chat = LlmChat(
         api_key=os.environ["EMERGENT_LLM_KEY"],
         session_id=f"studio-report-{org_id}",
-        system_message="You are a chief risk officer writing a concise executive narrative for a custom risk & AI governance report. Ground every statement strictly in the provided report data. Cite refs in square brackets when present. Do not invent facts.",
+        system_message=persona + " Ground every statement strictly in the provided report data. Cite refs in square brackets when present. Do not invent facts.",
     ).with_model("anthropic", "claude-opus-4-8")
-    prompt = (f"REPORT TITLE: {title}\n\nREPORT DATA:\n{context}\n\n"
-              "Write a single-paragraph executive narrative (<130 words) summarizing the posture, "
-              "the most important risk signals, and one clear recommended action. Plain prose, no headings.")
+    prompt = (f"REPORT TITLE: {title}\n\nREPORT DATA:\n{context}\n\n{instruction} "
+              f"Keep it under {max_words} words. Plain prose, no headings, no bullet lists.")
     collected = []
     try:
         async for ev in chat.stream_message(UserMessage(text=prompt)):
@@ -143,12 +157,34 @@ async def report_sections(user: dict = Depends(get_current_user)):
     return REPORT_SECTIONS
 
 
+REPORT_TYPES = [
+    {"id": "story", "label": "Full Enterprise Story", "title": "Full Enterprise Risk Story",
+     "sections": ["exec_summary", "top_risks", "ai_governance", "vendor_risk", "controls"],
+     "description": "The complete end-to-end narrative of your risk & AI posture."},
+    {"id": "board", "label": "Board Pack", "title": "Board Risk & AI Governance Pack",
+     "sections": ["exec_summary", "top_risks", "ai_governance", "vendor_risk", "controls"],
+     "description": "Board-grade posture, material exposures & a decisive recommendation."},
+    {"id": "cfo", "label": "CFO Brief", "title": "CFO Cyber-Risk Financial Brief",
+     "sections": ["exec_summary", "top_risks", "vendor_risk", "controls"],
+     "description": "Financial framing — $ALE, ROI & budget implications."},
+    {"id": "soc", "label": "SOC Plan", "title": "SOC Operational Remediation Plan",
+     "sections": ["top_risks", "controls", "ai_governance"],
+     "description": "Prioritized remediation, control gaps & AI guardrails."},
+]
+
+
+@studio_router.get("/report/types")
+async def report_types(user: dict = Depends(get_current_user)):
+    return REPORT_TYPES
+
+
 class ReportBody(BaseModel):
     title: str = "Custom Report"
     sections: list[str]
+    report_type: str = ""
 
 
-async def _compose_report(org_id: str, title: str, sections: list[str]):
+async def _compose_report(org_id: str, title: str, sections: list[str], report_type: str = ""):
     m = await _metrics(org_id)
     risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(500)
     vendors = await db.vendors.find({"org_id": org_id}, {"_id": 0}).to_list(500)
@@ -165,14 +201,14 @@ async def _compose_report(org_id: str, title: str, sections: list[str]):
         "controls": ("Control Posture", [f"Average control effectiveness: {m['control_effectiveness']}%", f"Open remediations: {m['open_remediations']}"]),
     }
     blocks = [{"heading": builders[s][0], "lines": builders[s][1]} for s in sections if s in builders]
-    narrative = await _ai_narrative(org_id, title, blocks) if blocks else ""
+    narrative = await _ai_narrative(org_id, title, blocks, report_type) if blocks else ""
     return {"title": title, "generated_at": datetime.now(timezone.utc).isoformat(),
-            "ai_narrative": narrative, "model": "claude-opus-4-8", "blocks": blocks}
+            "ai_narrative": narrative, "model": "claude-opus-4-8", "report_type": report_type, "blocks": blocks}
 
 
 @studio_router.post("/report/compose")
 async def compose_report(body: ReportBody, user: dict = Depends(get_current_user)):
-    return await _compose_report(user["org_id"], body.title, body.sections)
+    return await _compose_report(user["org_id"], body.title, body.sections, body.report_type)
 
 
 class ScheduleBody(BaseModel):

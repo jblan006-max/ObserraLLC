@@ -25,10 +25,10 @@ function autoDetail({ label, value, sub, accent }) {
 }
 
 export function StatCard({ label, value, sub, accent = "199 89% 48%", testid, detail }) {
-  const { openDeepDive } = useDeepDive();
+  const { openDeepDive, warm } = useDeepDive();
   const item = detail || autoDetail({ label, value, sub, accent });
   return (
-    <button type="button" data-testid={testid} onClick={() => openDeepDive({ accent, ...item })}
+    <button type="button" data-testid={testid} onClick={() => openDeepDive({ accent, ...item })} onMouseEnter={() => warm({ accent, ...item })}
       className="group text-left w-full bg-card fact-border rounded-xl p-4 flex flex-col justify-between min-h-[96px] cursor-pointer hover:-translate-y-0.5 transition-transform duration-200"
       style={{ borderTop: `2px solid hsl(${accent} / 0.65)` }}>
       <div className="flex items-center justify-between gap-2">
@@ -44,7 +44,7 @@ export function StatCard({ label, value, sub, accent = "199 89% 48%", testid, de
 }
 
 export function CardShell({ title, icon: Icon, accent = "199 89% 48%", right, children, testid, className = "", detail }) {
-  const { openDeepDive } = useDeepDive();
+  const { openDeepDive, warm } = useDeepDive();
   const clickable = !!detail;
   return (
     <div data-testid={testid} className={`bg-card fact-border rounded-xl p-5 h-full flex flex-col ${className}`}
@@ -52,7 +52,7 @@ export function CardShell({ title, icon: Icon, accent = "199 89% 48%", right, ch
       <div className="flex items-center justify-between gap-2 mb-4">
         {clickable ? (
           <button type="button" data-testid={testid ? `${testid}-deepdive` : undefined}
-            onClick={() => openDeepDive({ accent, ...detail })}
+            onClick={() => openDeepDive({ accent, ...detail })} onMouseEnter={() => warm({ accent, ...detail })}
             className="group flex items-center gap-2 min-w-0 text-left cursor-pointer hover:opacity-90 transition-opacity">
             {Icon && <Icon className="w-4 h-4 shrink-0" style={{ color: `hsl(${accent})` }} strokeWidth={1.5} />}
             <h2 className="font-head font-bold text-base truncate">{title}</h2>
@@ -74,10 +74,11 @@ export function CardShell({ title, icon: Icon, accent = "199 89% 48%", right, ch
 // Clickable wrapper for bespoke (non-primitive) cards on legacy dashboards — makes any
 // card open the universal deep-dive while preserving its existing markup/styling.
 export function ClickCard({ detail, className = "", children, testid, style }) {
-  const { openDeepDive } = useDeepDive();
+  const { openDeepDive, warm } = useDeepDive();
   return (
     <div data-testid={testid} role="button" tabIndex={0}
       onClick={() => detail && openDeepDive(detail)}
+      onMouseEnter={() => detail && warm(detail)}
       onKeyDown={(e) => { if (detail && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openDeepDive(detail); } }}
       className={`group cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 ${className}`}
       style={style}>

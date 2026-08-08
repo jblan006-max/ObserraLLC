@@ -72,6 +72,8 @@ function ReportBuilder() {
   const isAdmin = user?.role === "admin";
   const [sections, setSections] = useState(null);
   const [picked, setPicked] = useState([]);
+  const [types, setTypes] = useState([]);
+  const [type, setType] = useState("");
   const [title, setTitle] = useState("Custom Report");
   const [report, setReport] = useState(null);
   const [busy, setBusy] = useState(false);
@@ -79,13 +81,19 @@ function ReportBuilder() {
   const [schedule, setSchedule] = useState(null);
   const [savingSched, setSavingSched] = useState(false);
 
-  useEffect(() => { api.get("/studio/report/sections").then((r) => { setSections(r.data); setPicked(r.data.map((s) => s.id)); }); }, []);
+  useEffect(() => {
+    api.get("/studio/report/sections").then((r) => { setSections(r.data); setPicked(r.data.map((s) => s.id)); });
+    api.get("/studio/report/types").then((r) => setTypes(r.data)).catch(() => {});
+  }, []);
   useEffect(() => { if (isAdmin) api.get("/studio/schedule").then((r) => setSchedule(r.data)).catch(() => {}); }, [isAdmin]);
   const toggle = (id) => setPicked((s) => s.includes(id) ? s.filter((x) => x !== id) : [...s, id]);
-  const compose = async () => {
-    if (picked.length === 0) { toast.error("Pick at least one section"); return; }
+  const compose = async (opts = {}) => {
+    const rtype = opts.type ?? type;
+    const rtitle = opts.title ?? title;
+    const rsections = opts.sections ?? picked;
+    if (rsections.length === 0) { toast.error("Pick at least one section"); return; }
     setBusy(true);
-    try { const { data } = await api.post("/studio/report/compose", { title, sections: picked }); setReport(data); toast.success("Report composed"); }
+    try { const { data } = await api.post("/studio/report/compose", { title: rtitle, sections: rsections, report_type: rtype }); setReport(data); toast.success("Report composed"); }
     catch { toast.error("Compose failed"); }
     setBusy(false);
   };
@@ -120,6 +128,21 @@ function ReportBuilder() {
   return (
     <div className="grid lg:grid-cols-[340px_1fr] gap-6">
       <div className="bg-card fact-border rounded-xl p-4 space-y-4 h-fit">
+        {types.length > 0 && (
+          <div className="space-y-1.5" data-testid="report-types">
+            <div className="text-xs text-muted-foreground">Report type — one click composes the full story</div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {types.map((t) => (
+                <button key={t.id} data-testid={`report-type-${t.id}`} disabled={busy} title={t.description}
+                  onClick={() => { setType(t.id); setTitle(t.title); setPicked(t.sections); compose({ type: t.id, title: t.title, sections: t.sections }); }}
+                  className={`text-left px-2.5 py-2 rounded-md border text-xs transition-colors disabled:opacity-50 ${type === t.id ? "bg-primary/15 border-primary/40 text-foreground" : "bg-secondary/40 border-border text-muted-foreground hover:text-foreground"}`}>
+                  <div className="font-head font-bold">{t.label}</div>
+                  <div className="text-[10px] opacity-70 leading-tight mt-0.5">{t.description}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <label className="block"><span className="text-xs text-muted-foreground mb-1.5 block">Report title</span>
           <input data-testid="report-title" value={title} onChange={(e) => setTitle(e.target.value)} className="w-full bg-secondary/60 rounded-md px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" /></label>
         <div className="space-y-2">
@@ -165,7 +188,7 @@ function ReportBuilder() {
             <div className="flex items-start justify-between gap-3 flex-wrap">
               <div>
                 <h2 className="font-head font-black text-2xl">{report.title}</h2>
-                <div className="text-[10px] font-mono text-muted-foreground uppercase mt-1">Generated {new Date(report.generated_at).toLocaleString()} · {report.model}</div>
+                <div className="text-[10px] font-mono text-muted-foreground uppercase mt-1">Generated {new Date(report.generated_at).toLocaleString()} · {report.model}{report.report_type ? ` · ${report.report_type} report` : ""}</div>
               </div>
               <div className="flex items-center gap-2">
                 <button data-testid="report-export-pdf" disabled={!!exporting} onClick={exportPdf} className="inline-flex items-center gap-1.5 text-xs px-3 py-2 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 disabled:opacity-50">{exporting === "pdf" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Export PDF</button>

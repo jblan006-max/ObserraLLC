@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { Wallet, Loader2, Download, Search, Brain, Gauge, X } from "lucide-react";
 import { AIInsight } from "@/components/AIInsight";
 import { AIExplain } from "@/components/AIExplain";
+import { useDeepDive } from "@/context/DeepDiveContext";
 
 const SG_ACCENT = "266 85% 66%";
 
@@ -16,6 +17,7 @@ export default function SpendGovernance() {
   const [results, setResults] = useState(null);
   const [open, setOpen] = useState(null);
   const [detail, setDetail] = useState(null);
+  const { openDeepDive } = useDeepDive();
 
   const load = () => api.get("/advisor/usage").then((r) => setS(r.data));
   useEffect(() => { load(); api.get("/advisor/prompts/insights").then((r) => setThemes(r.data)).catch(() => {}); }, []);
@@ -39,6 +41,30 @@ export default function SpendGovernance() {
   const barColor = s.budget_status === "over" ? "bg-crit" : s.budget_status === "warning" ? "bg-med" : "bg-ai";
   const trendMax = Math.max(...(s.trend || []).map((t) => t.cost_usd), 0.0001);
 
+  const budgetDetail = {
+    accent: SG_ACCENT, refLabel: "AI SPEND", title: "AI advisor budget & burn",
+    rating: s.forecast_over ? "High" : s.budget_status === "warning" ? "Medium" : "Low",
+    facets: [
+      { label: "Spent this month", value: `$${s.month_cost_usd?.toFixed(2)}` },
+      { label: "Monthly cap", value: s.budget_usd > 0 ? `$${s.budget_usd.toFixed(2)} · ${s.budget_pct}%` : "no cap set" },
+      { label: "Projected month-end", value: s.budget_usd > 0 ? `$${s.forecast_usd?.toFixed(2)} · ${s.forecast_pct}%` : "—" },
+      { label: "Auto-pause", value: s.auto_pause ? "On @ cap" : "Off" },
+    ],
+    recommendedActions: [
+      s.forecast_over ? "Forecast exceeds the cap — enable auto-pause and lower the alert threshold to 75% to prevent overspend." : "Burn is within cap — keep auto-pause on as a guardrail.",
+      "Review the highest-spend teammates and prompt themes below to trim redundant advisor calls.",
+    ],
+    explainTitle: "AI advisor spend & budget", explainKind: "ai spend budget cost governance forecast",
+    explainContext: { month_cost_usd: s.month_cost_usd, budget_usd: s.budget_usd, budget_pct: s.budget_pct, forecast_usd: s.forecast_usd, forecast_over: s.forecast_over, paused: s.paused, by_user: s.by_user, trend: s.trend },
+  };
+  const teammateDetail = {
+    accent: SG_ACCENT, refLabel: "AI SPEND", title: "Spend by teammate — cost drivers",
+    facets: (s.by_user || []).slice(0, 4).map((u) => ({ label: u.user, value: `$${u.cost_usd.toFixed(4)} · ${u.queries}q` })),
+    recommendedActions: ["Coach the top-spend teammates on tighter prompts and reuse of saved briefs; set a per-user soft cap if any one user drives >40% of spend."],
+    explainTitle: "AI advisor spend by teammate", explainKind: "ai spend per-user cost drivers governance",
+    explainContext: { by_user: s.by_user, month_cost_usd: s.month_cost_usd, budget_usd: s.budget_usd, trend: s.trend },
+  };
+
   return (
     <div className="rise space-y-6" data-testid="spend-gov-page">
       <div>
@@ -51,7 +77,7 @@ export default function SpendGovernance() {
       <div className="grid lg:grid-cols-3 gap-4">
         <button type="button" data-testid="sg-month-card" onClick={() => setDetail({ title: "AI advisor spend — this month", kind: "spend-summary", context: { month_cost_usd: s.month_cost_usd, total_tokens: s.total_tokens, queries: s.queries, budget_usd: s.budget_usd, budget_pct: s.budget_pct, forecast_usd: s.forecast_usd, forecast_over: s.forecast_over, top_users: s.by_user } })} className="text-left bg-card fact-border rounded-xl p-5 hover:bg-secondary/30 transition-colors"><div className="text-[10px] font-mono uppercase text-muted-foreground flex items-center gap-1.5"><Gauge className="w-3.5 h-3.5" /> This month</div><div className="font-head font-black text-3xl mt-1">${s.month_cost_usd?.toFixed(2)}</div><div className="text-xs text-muted-foreground mt-1">{s.total_tokens?.toLocaleString()} tokens · {s.queries} queries all-time · <span className="text-ai">click for AI insight</span></div></button>
         <div className="bg-card fact-border rounded-xl p-5 lg:col-span-2">
-          <div className="flex items-center justify-between text-xs font-mono mb-1"><span className="uppercase tracking-wider text-muted-foreground">Monthly budget</span><span className={statusColor}>{s.budget_usd > 0 ? `$${s.month_cost_usd?.toFixed(2)} / $${s.budget_usd?.toFixed(2)} · ${s.budget_pct}%` : "no cap set"}</span></div>
+          <div className="flex items-center justify-between text-xs font-mono mb-1"><button type="button" data-testid="sg-budget-deepdive" onClick={() => openDeepDive(budgetDetail)} className="group inline-flex items-center gap-1 uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors">Monthly budget <span className="text-ai opacity-0 group-hover:opacity-100 transition-opacity">↗</span></button><span className={statusColor}>{s.budget_usd > 0 ? `$${s.month_cost_usd?.toFixed(2)} / $${s.budget_usd?.toFixed(2)} · ${s.budget_pct}%` : "no cap set"}</span></div>
           {s.budget_usd > 0 && <div className="h-2 rounded-full bg-secondary overflow-hidden mb-2"><div className={`h-full ${barColor}`} style={{ width: `${Math.min(s.budget_pct, 100)}%` }} /></div>}
           {s.budget_usd > 0 && <div data-testid="sg-forecast" className={`text-[11px] font-mono mb-2 ${s.forecast_over ? "text-crit" : "text-muted-foreground"}`}>Projected month-end: ${s.forecast_usd?.toFixed(2)} ({s.forecast_pct}%){s.forecast_over ? " — on track to exceed cap" : ""}</div>}
           {s.paused && <div data-testid="sg-paused" className="text-[11px] text-crit font-bold mb-2">Advisor auto-paused — cap reached.</div>}
@@ -67,7 +93,7 @@ export default function SpendGovernance() {
 
       <div className="grid lg:grid-cols-2 gap-4">
         <div className="bg-card fact-border rounded-xl p-5">
-          <div className="flex items-center justify-between mb-2"><div className="text-xs font-mono uppercase text-muted-foreground">Spend by teammate (this month)</div><div className="flex gap-2"><button data-testid="sg-csv-month" onClick={() => exportCsv("month")} className="text-[11px] inline-flex items-center gap-1 px-2 py-1 rounded-md bg-secondary/60 border border-border"><Download className="w-3 h-3" /> Month</button><button data-testid="sg-csv-all" onClick={() => exportCsv("all")} className="text-[11px] inline-flex items-center gap-1 px-2 py-1 rounded-md bg-secondary/60 border border-border"><Download className="w-3 h-3" /> All</button></div></div>
+          <div className="flex items-center justify-between mb-2"><button type="button" data-testid="sg-teammate-deepdive" onClick={() => openDeepDive(teammateDetail)} className="group inline-flex items-center gap-1 text-xs font-mono uppercase text-muted-foreground hover:text-foreground transition-colors">Spend by teammate (this month) <span className="text-ai opacity-0 group-hover:opacity-100 transition-opacity">↗</span></button><div className="flex gap-2"><button data-testid="sg-csv-month" onClick={() => exportCsv("month")} className="text-[11px] inline-flex items-center gap-1 px-2 py-1 rounded-md bg-secondary/60 border border-border"><Download className="w-3 h-3" /> Month</button><button data-testid="sg-csv-all" onClick={() => exportCsv("all")} className="text-[11px] inline-flex items-center gap-1 px-2 py-1 rounded-md bg-secondary/60 border border-border"><Download className="w-3 h-3" /> All</button></div></div>
           <div className="space-y-1">
             {(s.by_user || []).length === 0 ? <div className="text-xs text-muted-foreground">No spend yet this month.</div> : s.by_user.map((u) => (
               <button type="button" key={u.user} data-testid={`sg-user-${u.user}`} onClick={() => setDetail({ title: `Advisor spend — ${u.user}`, kind: "spend-user", context: { user: u.user, cost_usd: u.cost_usd, queries: u.queries, org_month_cost: s.month_cost_usd, org_budget: s.budget_usd } })} className="w-full flex items-center justify-between text-xs font-mono border-b border-border/50 py-1 hover:bg-secondary/40 rounded px-1 -mx-1 transition-colors"><span className="truncate max-w-[60%] text-muted-foreground">{u.user}</span><span className="text-ai">${u.cost_usd.toFixed(4)} · {u.queries}q</span></button>

@@ -369,6 +369,54 @@ def _num(ctx, *keys):
     return None
 
 
+def _deep_num(obj, keys, depth=4):
+    """Grounded search for a real $ figure in nested live context — never fabricates."""
+    if depth < 0 or obj is None:
+        return None
+    if isinstance(obj, dict):
+        for k in keys:
+            v = obj.get(k)
+            if isinstance(v, (int, float)) and v:
+                return float(v)
+        for v in obj.values():
+            r = _deep_num(v, keys, depth - 1)
+            if r:
+                return r
+    elif isinstance(obj, (list, tuple)):
+        for v in list(obj)[:25]:
+            r = _deep_num(v, keys, depth - 1)
+            if r:
+                return r
+    return None
+
+
+def _impact_estimate(item_ctx, eng):
+    """Board-defensible '$ at stake' + 'reduction if fixed' for a clicked card. Uses the item's own
+    live $ where present (scope=item); otherwise falls back to the REAL portfolio residual ALE /
+    modelled reducible ALE from the correlation engine (scope=portfolio) — no invented numbers."""
+    item_stake = _deep_num(item_ctx, ["residual_ale", "ale", "ale_at_stake", "loss_magnitude",
+                                      "cost_usd", "month_cost_usd", "inherent_ale", "exposure_usd"])
+    item_red = _deep_num(item_ctx, ["ale_reduced", "ale_reducible", "reduction_usd"])
+    port_stake = _deep_num(eng, ["residual_ale"])
+    port_red = _deep_num(eng, ["ale_reducible"])
+    if item_stake:
+        at_stake, scope = item_stake, "item"
+    elif port_stake:
+        at_stake, scope = port_stake, "portfolio"
+    else:
+        at_stake, scope = None, None
+    if item_red:
+        red, rscope = item_red, "item"
+    elif item_stake:
+        red, rscope = round(item_stake * 0.35), "modelled"
+    elif port_red:
+        red, rscope = port_red, "portfolio"
+    else:
+        red, rscope = None, None
+    return {"at_stake": round(at_stake) if at_stake else None, "at_stake_scope": scope,
+            "reduction_if_fixed": round(red) if red else None, "reduction_scope": rscope}
+
+
 def _explain_fallback(title, kind, ctx, provider, model, now):
     """Deterministic, grounded fallback for a clicked item when the LLM is slow/unavailable —
     never a blank spinner. Pulls any live numbers present in the supplied context."""
@@ -508,12 +556,13 @@ async def advisor_explain(body: ExplainReq, user: dict = Depends(require_active_
     chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"],
                    session_id=f"explain-{org_id}", system_message=system).with_model(provider, model)
     merged_ctx = {**(body.context or {}), "unified_risk_correlation": await _engine_summary_safe(org_id)}
+    impact = _impact_estimate(body.context or {}, merged_ctx.get("unified_risk_correlation") or {})
     prompt = (f"ITEM: {body.title}\nKIND: {body.kind}\nCONTEXT (JSON):\n"
               f"{json.dumps(merged_ctx, default=str)[:6000]}\n\nProduce the JSON now.")
     try:
         raw = await _collect_stream(chat, prompt, timeout=14)
     except Exception:
-        return _explain_fallback(body.title, body.kind, merged_ctx, provider, model, now)
+        return {**_explain_fallback(body.title, body.kind, merged_ctx, provider, model, now), **impact}
     mm = _re.search(r"\{.*\}", raw, _re.S)
     try:
         data = json.loads(mm.group(0)) if mm else {}
@@ -525,6 +574,7 @@ async def advisor_explain(body: ExplainReq, user: dict = Depends(require_active_
     data.setdefault("recommendation", "")
     data.setdefault("steps", [])
     data.setdefault("severity", "info")
+    data.update(impact)
     data["model"] = f"{provider}/{model}"
     data["generated_at"] = now.isoformat()
     _EXPLAIN_CACHE[key] = {"ts": now, "data": data}

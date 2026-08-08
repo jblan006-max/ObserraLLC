@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useCallback } from "react";
 import { RiskDetailModal } from "@/components/RiskDetailModal";
+import { prefetchExplain } from "@/components/AIExplain";
 
 // Global deep-dive modal — ONE RiskDetailModal mounted app-wide. Any card anywhere
 // calls openDeepDive(item) to open the standardized deep-dive (live rating/score, AI
@@ -14,6 +15,12 @@ export function DeepDiveProvider({ children }) {
 
   const openDeepDive = useCallback((it) => { setResult(null); setBusy(false); setItem(it || null); }, []);
   const close = useCallback(() => { setItem(null); setBusy(false); setResult(null); }, []);
+
+  // Warm the AI brief on hover so the deep-dive shows its insight + $ impact instantly on click.
+  const warm = useCallback((it) => {
+    if (!it) return;
+    prefetchExplain(it.explainTitle || it.title, it.explainKind || "deep-dive", it.explainContext || {});
+  }, []);
 
   const handleAction = useCallback(async (kind) => {
     if (!item?.onAction) return;
@@ -31,7 +38,7 @@ export function DeepDiveProvider({ children }) {
   }, [item]);
 
   return (
-    <DeepDiveContext.Provider value={{ openDeepDive, close }}>
+    <DeepDiveContext.Provider value={{ openDeepDive, close, warm }}>
       {children}
       <RiskDetailModal
         item={item}
@@ -45,4 +52,4 @@ export function DeepDiveProvider({ children }) {
   );
 }
 
-export const useDeepDive = () => useContext(DeepDiveContext) || { openDeepDive: () => {}, close: () => {} };
+export const useDeepDive = () => useContext(DeepDiveContext) || { openDeepDive: () => {}, close: () => {}, warm: () => {} };

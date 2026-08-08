@@ -89,7 +89,7 @@ export const OnboardingTour = () => {
     : null;
 
   return (
-    <div data-testid="onboarding-tour" className="fixed inset-0 z-[9997]">
+    <div data-testid="onboarding-tour" className="fixed inset-0 z-[9997] pointer-events-none">
       {hole ? (
         <>
           <div className="fixed" style={{ ...hole, borderRadius: 9999, boxShadow: "0 0 0 9999px rgba(2,6,15,0.84)", pointerEvents: "none" }} />

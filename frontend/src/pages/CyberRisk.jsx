@@ -154,12 +154,13 @@ export default function CyberRisk() {
 }
 
 function Kpi({ label, value, sub, accent }) {
-  const { openDeepDive } = useDeepDive();
+  const { openDeepDive, warm } = useDeepDive();
+  const detail = { accent: accent || FAIR_ACCENT, refLabel: "FAIR KPI", title: label,
+    facets: [{ label, value: String(value) }, ...(sub ? [{ label: "Basis", value: sub }] : [])],
+    recommendedActions: ["Trace this figure to its top loss drivers below — the highest-$ FAIR factor (loss magnitude / threat frequency / control weakness) is where remediation cuts exposure most."],
+    explainTitle: label, explainKind: "fair financial kpi ale monte-carlo roi exposure", explainContext: { kpi: { label, value, sub } } };
   return (
-    <button type="button" onClick={() => openDeepDive({ accent: accent || FAIR_ACCENT, refLabel: "FAIR KPI", title: label,
-      facets: [{ label, value: String(value) }, ...(sub ? [{ label: "Basis", value: sub }] : [])],
-      recommendedActions: ["Trace this figure to its top loss drivers below — the highest-$ FAIR factor (loss magnitude / threat frequency / control weakness) is where remediation cuts exposure most."],
-      explainTitle: label, explainKind: "fair financial kpi ale monte-carlo roi exposure", explainContext: { kpi: { label, value, sub } } })}
+    <button type="button" onClick={() => openDeepDive(detail)} onMouseEnter={() => warm(detail)}
       className="text-left w-full rounded-lg bg-secondary/40 p-3 cursor-pointer hover:bg-secondary/60 transition-colors" style={accent ? { borderLeft: `3px solid hsl(${accent})` } : {}}>
       <div className="text-[10px] font-mono uppercase text-muted-foreground">{label}</div>
       <div className="font-head font-black text-2xl">{value}</div>

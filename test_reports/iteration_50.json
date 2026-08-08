@@ -1,0 +1,29 @@
+{
+  "summary": "Frontend-only verification of the 5 follow-ups from iteration_49 (tour non-blocking, $-at-stake banner on every deep-dive, AI hover-warm, spend deep-dives, studio report types). All 5 items PASS end-to-end against the live preview URL with admin creds (jblan2026@gmail.com). Only pre-existing minor React hydration warning about <span> inside <option> in CyberRisk.jsx observed in console; no functional regressions.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "CyberRisk (fair-air-model select)", "issues": ["React hydration warning: <span> cannot be a child of <option>. GPT_MODELS labels rendered via dynamic <span> inside <option>. Pre-existing, not caused by this iteration. Should be fixed by rendering plain text label."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "(Nice-to-have) Consider rendering ai-impact-reduction on portfolio-fallback KPIs too — currently on Overview residual/health & Control total & FAIR KPI only the at-stake chip shows (portfolio-scope); reduction chip is absent. Spec says 'usually', so acceptable, but symmetry would be nicer.",
+    "(Minor cleanup) Fix option/span hydration warning in CyberRisk.jsx GPT_MODELS <option> rendering."
+  ],
+  "critical_code_review_comments": [
+    "OnboardingTour outer overlay is correctly pointer-events-none (z-9997) so KPI cards underneath remain clickable — good. The centered dialog re-enables pointer-events (needed for Skip/Next). Any element visually behind the dialog card is still un-clickable by the user; that's a UI design trade-off, not a bug.",
+    "SpendGovernance sg-budget-deepdive and sg-teammate-deepdive correctly open the universal deep-dive-modal (different context/title) while sg-month-card still opens the page's own sg-detail-modal — no test-id collision issues observed.",
+    "Studio report presets (story/board/cfo/soc) both set the title and auto-invoke compose; verified narrative + blocks + header type-tag update on preset switch."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not-tested", "frontend": "100%"},
+  "test_credentials": "Admin jblan2026@gmail.com / Obserra2026! (live_only org)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Verified live: (1) onboarding-tour outer div has pointer-events:none, cards clickable through it; (2) ai-impact banner + ai-impact-atstake chip renders on exec-kpi-residual, exec-kpi-health, control-kpi-total, and first FAIR KPI in fair-kpis (all show portfolio fallback '$10.22M at stake · portfolio' since live_only org sparse); (3) hover-warm makes ai-impact appear immediately after click; (4) sg-budget-deepdive → 'AI advisor budget & burn' with spent/cap/projected/auto-pause facets; sg-teammate-deepdive → 'Spend by teammate — cost drivers'; sg-month-card still opens sg-detail-modal (regression intact); (5) Studio report-types row shows 4 presets; report-type-story auto-composes narrative (1559 chars) + 5 blocks + 'story report' header; report-type-cfo recomposes to 'CFO Cyber-Risk Financial Brief' with 'cfo report' header. report-compose, section-*, report-export-pdf remain functional. Console: only pre-existing <span>/<option> hydration warning in CyberRisk.",
+  "rca of the issue": "N/A — all requested items pass."
+}
