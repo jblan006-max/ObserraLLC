@@ -2217,10 +2217,23 @@ async def run_sap_governance_digest():
 
 @sap_router.post("/governance-digest/send")
 async def governance_digest_send(user: dict = Depends(get_current_user)):
-    """On-demand SAP Access Governance Digest email (admins/execs, falling back to the caller)."""
+    """On-demand SAP Access Governance Digest email (admins/execs, falling back to the caller).
+    Per-org 60s backoff so on-demand sends don't collide with the folded cron's background dispatch
+    (which would otherwise trip the managed-Resend rate limit)."""
     org_id = user["org_id"]
     await _ensure(org_id)
     from kernel import notifications
+    now = _now()
+    state = await db.sap_digest_state.find_one({"org_id": org_id}, {"_id": 0, "last_at": 1})
+    if state and state.get("last_at"):
+        try:
+            delta = (now - datetime.fromisoformat(state["last_at"])).total_seconds()
+        except Exception:
+            delta = 999
+        if delta < 60:
+            return {"ok": True, "throttled": True, "sent": 0, "delivered": 0, "recipients": [],
+                    "message": f"Digest was just sent {int(delta)}s ago — please try again in a minute.",
+                    "data": await _governance_digest_data(org_id)}
     data = await _governance_digest_data(org_id)
     html = _governance_digest_html(data)
     recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
@@ -2230,6 +2243,8 @@ async def governance_digest_send(user: dict = Depends(get_current_user)):
     for e in emails:
         if await notifications.send_email(e, "SAP Access Governance Digest — Obserra UAC", html):
             sent += 1
+    await db.sap_digest_state.update_one({"org_id": org_id},
+                                         {"$set": {"org_id": org_id, "last_at": now.isoformat()}}, upsert=True)
     await _audit(org_id, user["email"], "sap.governance.digest", f"digest emailed to {len(emails)} recipient(s), {sent} sent")
-    return {"ok": True, "recipients": emails, "sent": sent, "data": data}
+    return {"ok": True, "throttled": False, "sent": sent, "delivered": sent, "recipients": emails, "data": data}
 

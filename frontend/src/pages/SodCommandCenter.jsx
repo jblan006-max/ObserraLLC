@@ -76,7 +76,11 @@ export default function SodCommandCenter() {
   };
   const sendDigest = async () => {
     setDigestBusy(true);
-    try { const { data: res } = await api.post("/sap/governance-digest/send"); toast.success(`SAP Governance Digest emailed to ${res.sent} recipient(s)`, { description: (res.recipients || []).join(", ") }); }
+    try {
+      const { data: res } = await api.post("/sap/governance-digest/send");
+      if (res.throttled) toast.info(res.message || "Digest was just sent — try again shortly");
+      else toast.success(`SAP Governance Digest emailed to ${res.sent} recipient(s)`, { description: (res.recipients || []).join(", ") });
+    }
     catch (e) { toast.error(e?.response?.data?.detail || "Could not send digest"); }
     setDigestBusy(false);
   };
