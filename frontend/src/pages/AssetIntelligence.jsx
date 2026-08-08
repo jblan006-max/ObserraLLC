@@ -28,10 +28,24 @@ export default function AssetIntelligence() {
   const [sel, setSel] = useState(null);
   const [deviceBusy, setDeviceBusy] = useState("");
 
+  const loadConn = () => api.get("/self-scan/assets").then((r) => setConn(r.data)).catch(() => setConn(null));
+
   useEffect(() => {
     api.get("/dash/assets").then((r) => setD(r.data)).catch(() => setD({ assets: [], summary: {} }));
-    api.get("/self-scan/assets").then((r) => setConn(r.data)).catch(() => setConn(null));
+    loadConn();
   }, []);
+
+  const deviceAction = async (id, action) => {
+    setDeviceBusy(id + action);
+    try {
+      await api.post(`/self-scan/device/${encodeURIComponent(id)}/${action}`);
+      toast.success(action === "sync" ? "Device sync requested" : "Compliance policy pushed");
+      await loadConn();
+    } catch {
+      toast.error(action === "sync" ? "Sync failed" : "Auto-remediate failed");
+    }
+    setDeviceBusy("");
+  };
 
   if (!d) return <Spinner />;
   const s = d.summary || {};
