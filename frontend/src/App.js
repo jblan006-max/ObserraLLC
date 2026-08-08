@@ -22,6 +22,7 @@ import AIAgents from "@/pages/AIAgents";
 import Enterprise from "@/pages/Enterprise";
 import AvailableConnectors from "@/pages/AvailableConnectors";
 import CompliancePosture from "@/pages/CompliancePosture";
+import SecurityScanner from "@/pages/SecurityScanner";
 import MobileSnapshot from "@/pages/MobileSnapshot";
 import VendorRisk from "@/pages/VendorRisk";
 import CyberRisk from "@/pages/CyberRisk";
@@ -84,6 +85,7 @@ function App() {
               <Route path="enterprise" element={<Enterprise />} />
               <Route path="connectors" element={<AvailableConnectors />} />
               <Route path="compliance" element={<CompliancePosture />} />
+              <Route path="security" element={<SecurityScanner />} />
               <Route path="snapshot" element={<MobileSnapshot />} />
               <Route path="marketplace" element={<Marketplace />} />
               <Route path="billing" element={<Billing />} />

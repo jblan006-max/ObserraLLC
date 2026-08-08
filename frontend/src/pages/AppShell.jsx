@@ -42,6 +42,7 @@ const NAV_SECTIONS = [
     { to: "/app/risks", label: "Risk Register", icon: ListChecks },
     { to: "/app/controls", label: "Control Monitoring", icon: ShieldCheck },
     { to: "/app/cyber-risk", label: "Cyber Risk", icon: ShieldAlert },
+    { to: "/app/security", label: "Security Scanner", icon: ShieldAlert },
   ]},
   { section: "Third-Party Risk", ent: "third_party_risk", cat: true, color: "high", items: [
     { to: "/app/vendors", label: "Third-Party Risk", icon: Building },

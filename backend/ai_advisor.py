@@ -111,7 +111,7 @@ async def _check_budget(org_id: str):
             html = ("<div style=\"font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto\">"
                     "<h2 style=\"color:#0f1e3d\">AI Advisor auto-paused</h2>"
                     f"<p>Advisor spend of <b>${spent}</b> has reached the <b>${budget}</b> monthly cap, "
-                    "so the Obserra Advisor is paused for the rest of this month.</p>"
+                    "so the Obserrian Advisor is paused for the rest of this month.</p>"
                     "<p>Raise or turn off the cap in the Advisor panel to resume immediately.</p>"
                     "<p style=\"font-size:11px;color:#9ca3af\">Obserra — Executive Protection &amp; Intelligence LLC</p></div>")
             for r in recips:

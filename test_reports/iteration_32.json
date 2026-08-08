@@ -1,0 +1,62 @@
+{
+  "summary": "Iteration 32 tested the live self vulnerability scanner + scan→compliance auto-update + advisor rename + FastAPI/Starlette upgrade regressions. Backend: 13/13 pytest passed. POST /api/self-scan/run returns score=76, complete summary keys, findings[] with cve_ids/kev/control_refs/remediation, kev_matches, remediated[]; sec-headers and cors both PASS as required. GET /latest and /history work. POST /api/self-scan/remediate toggles finding remediation status and returns updated remediated[]; unknown finding_id returns 404. /api/controls/crosswalk shows six frameworks with meeting_pct 96.7–98.9% and 'met by default (unverified)' phrasing on Crosswalk tab. /api/controls/framework/NIST 800-53 returns 4 controls with source='self-scan' (AC-7, RA-5, SC-18, SI-2). Regressions: /api/auth/me, /api/enterprise/live, /api/team, and /api/advisor/chat all healthy after FastAPI 0.115.6 / Starlette 0.41.3 upgrade; CORS preflight succeeds (handled at ingress). Frontend: /app/security loads with data-testid security-scanner-page; header placeholder = 'Ask the Obserrian Advisor…'; no 'Obserra Advisor' string remains; run-scan-btn runs a live scan and paints scan-score=76, sev-critical/high/medium/low/info chips, findings-remediate & findings-passing sections with CVE badges + 'Fix:' remediation + control_refs. Compliance → Control Crosswalk tab shows crosswalk-run-scan button, six framework tiles with correct pct, criticality strip 100/100/100/100, 'met by default (unverified)' text, and the self-test button triggers a scan and updates evidence.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "SecurityScanner.jsx",
+        "issue": "Runtime crash 'ReferenceError: toggleRemediate is not defined' when clicking any remediate-<id> checkbox. Line 107 calls toggleRemediate(f.id, e.target.checked) but no such function exists in the component. The 'Mark remediation complete' feature is completely broken in the UI even though the backend /api/self-scan/remediate endpoint works correctly.",
+        "selector": "[data-testid^=\"remediate-\"] input[type=checkbox]",
+        "priority": "CRITICAL"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Compliance framework browser — 'via self-scan' evidence tag",
+        "issue": "Backend /api/controls/framework/{fw} correctly returns source='self-scan' on 4 NIST controls (AC-7, RA-5, SC-18, SI-2), but CompliancePosture.jsx framework-browser rows (lines 182-194) never render the fw-src-<id> tag or the 'via self-scan' label. The review-request contract explicitly asks for this tag.",
+        "affected_selectors": ["[data-testid^=\"fw-src-\"]"]
+      }
+    ],
+    "design_issues": [
+      {
+        "screen": "Compliance → Crosswalk framework <select>",
+        "issues": [
+          "Same React hydration warning as iter31: '<span> cannot be a child of <option>'. Root cause is an Emergent dev-time wrapper injecting <span x-excluded=true style=display:contents> inside <option>, but the browser still warns. Purely cosmetic in production, but noisy in dev console."
+        ]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter32_self_scanner.py",
+    "/app/test_reports/pytest/iter32.xml",
+    "/app/test_reports/iter32_scanner.png",
+    "/app/test_reports/iter32_compliance.png",
+    "/app/test_reports/iter32_crosswalk.png",
+    "/app/test_reports/iter32_err.png"
+  ],
+  "action_items": [
+    "CRITICAL — Define toggleRemediate in SecurityScanner.jsx. Suggested impl: const toggleRemediate = async (fid, done) => { try { await api.post('/self-scan/remediate', { finding_id: fid, done }); const { data } = await api.get('/self-scan/latest'); setScan(data); toast.success(done ? 'Marked remediated — compliance updated' : 'Reopened finding — compliance updated'); } catch { toast.error('Remediation update failed'); } };",
+    "Add 'via self-scan' tag rendering in CompliancePosture.jsx framework browser (around line 193): when c.source === 'self-scan' render <span data-testid={`fw-src-${c.id}`}>via self-scan</span>. The field is already in the API response.",
+    "Optional cleanup: remove the <span> wrapper the dev tooling injects into <option> to silence the hydration warning (iter31 carryover)."
+  ],
+  "critical_code_review_comments": [
+    "SecurityScanner.jsx references toggleRemediate but the function was never added — obvious missing implementation, not a subtle bug.",
+    "self_scan.py cleanly separates checks; _check_dependencies degrades gracefully when OSV/KEV are unreachable (returns a passing 'unavailable' finding). Good.",
+    "Two dependency findings (ecdsa 0.19.2 CVE-2024-23342, starlette 0.41.3) are EXPECTED per the review note — no upstream fixes; leaving as HIGH is honest.",
+    "Frontend Compliance page fetches /controls/compliance and /controls/crosswalk on mount but does not refetch after the Crosswalk 'Run self-test' button finishes, so the framework browser aligned counts won't visibly change until the user changes the framework selector or reloads.",
+    "self_scan.py writes db.self_scans without a TTL/index cleanup — history endpoint caps at 20 but the collection will grow unbounded. Minor."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter32_self_scanner.py"
+  ],
+  "success_rate": {
+    "backend": "100% (13/13)",
+    "frontend": "70% — scan flow works, but remediation checkbox crashes and fw-src tags missing"
+  },
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None. Ran self-scan twice on owner org (writes to db.self_scans + db.scan_evidence).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend for iter32 fully green. Two frontend gaps to close: (1) SecurityScanner.jsx missing toggleRemediate function — clicking the remediate checkbox throws ReferenceError; (2) CompliancePosture.jsx framework browser does not render fw-src-<id>/'via self-scan' tag even though the backend already sets source='self-scan' on 4 NIST controls (AC-7, RA-5, SC-18, SI-2). Advisor rename verified end-to-end. FastAPI/Starlette upgrade did not regress any tested endpoints. Preview-env ingress rewrites CORS preflight to '*' (not the app's fault) — the app itself has an explicit allowlist in backend/.env.",
+  "rca of the issue": "1) toggleRemediate: functional handler was omitted when the checkbox JSX was added to SecurityScanner.jsx (line 107). Reproduce: log in as admin → /app/security → Run live scan → click any 'Mark remediation complete' checkbox → red overlay 'ReferenceError: toggleRemediate is not defined'. Fix in action_items. 2) fw-src tag: backend routes.py._framework_alignment already sets source='self-scan' on evidence-aligned controls, verified via /api/controls/framework/NIST%20800-53 (4 hits). CompliancePosture.jsx framework-browser render block (lines 182-194) simply does not consume c.source. Fix in action_items."
+}

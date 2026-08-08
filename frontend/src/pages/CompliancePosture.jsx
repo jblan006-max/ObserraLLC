@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { api } from "@/lib/api";
+import { toast } from "sonner";
 import { ShieldCheck, Loader2, AlertTriangle, ArrowRight, CheckCircle2, XCircle, Grid3x3 } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
@@ -70,7 +71,7 @@ function Posture({ d }) {
   );
 }
 
-function Crosswalk({ x }) {
+function Crosswalk({ x, reload }) {
   const [q, setQ] = useState("");
   const [fw, setFw] = useState("all");
   const cols = fw === "all" ? x.frameworks : [fw];
@@ -83,11 +84,20 @@ function Crosswalk({ x }) {
   });
   const [detail, setDetail] = useState(null);
   const [dLoading, setDLoading] = useState(false);
+  const [nonce, setNonce] = useState(0);
+  const [running, setRunning] = useState(false);
   useEffect(() => {
     if (fw === "all") { setDetail(null); return; }
     setDLoading(true);
     api.get(`/controls/framework/${encodeURIComponent(fw)}`).then((r) => setDetail(r.data)).catch(() => setDetail(null)).finally(() => setDLoading(false));
-  }, [fw]);
+  }, [fw, nonce]);
+  const runTest = async () => {
+    setRunning(true);
+    toast.info("Running live self-scan (headers, CORS, OSV CVEs, CISA KEV)…");
+    try { const { data } = await api.post("/self-scan/run"); toast.success(`Self-test done — score ${data.score}/100 · compliance updated`); reload && reload(); setNonce((n) => n + 1); }
+    catch { toast.error("Self-test failed"); }
+    setRunning(false);
+  };
   const detailControls = (detail?.controls || []).filter((c) => {
     if (!ql) return true;
     return `${c.id} ${c.group} ${(c.mapped_to || []).map((m) => m.control_id + " " + m.name).join(" ")}`.toLowerCase().includes(ql);
@@ -110,7 +120,7 @@ function Crosswalk({ x }) {
               <div className="text-[10px] text-muted-foreground leading-tight mt-0.5">{s.full_name}</div>
               <div className="font-head font-black text-2xl tracking-tight mt-2" style={{ color: `hsl(${col(s.meeting_pct)})` }}>{s.meeting_pct}%</div>
               <div className="text-[11px] text-muted-foreground">{s.meeting.toLocaleString()}/{s.total.toLocaleString()} controls met</div>
-              <div className="text-[10px] text-muted-foreground/70 mt-0.5">{s.aligned} evidence-aligned · {s.met.toLocaleString()} met by default · {s.gap} gap{s.gap === 1 ? "" : "s"}</div>
+              <div className="text-[10px] text-muted-foreground/70 mt-0.5">{s.aligned} evidence-aligned · {s.met.toLocaleString()} met by default (unverified) · {s.gap} gap{s.gap === 1 ? "" : "s"}</div>
               <span className={`inline-block mt-2 text-[9px] font-mono px-2 py-0.5 rounded-full ${ok ? "bg-low/15 text-low" : "bg-high/15 text-high"}`}>{s.status}</span>
             </button>
           );
@@ -141,6 +151,7 @@ function Crosswalk({ x }) {
         <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
           <div className="flex items-center gap-2"><Grid3x3 className="w-4 h-4 text-primary" /><h2 className="font-head font-bold text-lg">{fw === "all" ? "Control crosswalk — Obserra controls mapped" : `Every ${fw} control — alignment`}</h2></div>
           <div className="flex items-center gap-2">
+            <button data-testid="crosswalk-run-scan" onClick={runTest} disabled={running} className="px-3 py-2 rounded-md bg-crit/15 text-crit text-xs font-head font-bold disabled:opacity-50">{running ? "Testing…" : "Run self-test"}</button>
             <select data-testid="crosswalk-framework-select" value={fw} onChange={(e) => setFw(e.target.value)} className="bg-secondary/60 rounded-md px-3 py-2 text-xs outline-none focus:ring-1 focus:ring-primary">
               <option value="all">All frameworks (mapping)</option>
               {x.frameworks.map((f) => <option key={f} value={f}>{f} — every control</option>)}
@@ -232,7 +243,7 @@ function Crosswalk({ x }) {
             </table>
           </div>
         )}
-        <p className="text-[11px] text-muted-foreground mt-3">Pick a framework to browse <span className="text-foreground">every control</span> and its alignment (Aligned = a mapped Obserra control is passing · Gap = mapped but failing/stale · Not assessed = no Obserra control mapped yet). "All frameworks" shows Obserra's controls and their exact mapped control IDs.</p>
+        <p className="text-[11px] text-muted-foreground mt-3">Pick a framework to browse <span className="text-foreground">every control</span> and its alignment (<span className="text-low">Aligned</span> = evidence-backed · <span className="text-ai">Met</span> = baseline assumption, unverified · <span className="text-high">Gap</span> = open finding). <span className="text-foreground">Aligned & gap states update automatically from the latest Security Scanner run</span> — run a live self-scan or connect a source for independent evidence.</p>
       </div>
     </div>
   );
@@ -261,7 +272,7 @@ export default function CompliancePosture() {
         </TabsList>
         <TabsContent value="posture" className="mt-5"><Posture d={d} /></TabsContent>
         <TabsContent value="crosswalk" className="mt-5">
-          {x ? <Crosswalk x={x} /> : <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>}
+          {x ? <Crosswalk x={x} reload={() => api.get("/controls/crosswalk").then((r) => setX(r.data))} /> : <div className="flex items-center justify-center h-64"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>}
         </TabsContent>
       </Tabs>
     </div>

@@ -628,11 +628,12 @@ _FRAMEWORK_GAPS = {
 }
 
 
-def _framework_alignment(framework, statuses):
+def _framework_alignment(framework, statuses, scan_ev=None):
     """Every control of a framework with the platform's posture:
-    aligned = a mapped Obserra control is passing (evidence-backed);
-    met = met by default (baseline cyber posture, no explicit mapping);
-    gap = a curated open gap (or mapped but not passing)."""
+    aligned = evidence-backed (a mapped Obserra control passing, or a passing self-scan check);
+    met = met by default (baseline cyber posture, no explicit evidence yet);
+    gap = a curated/self-scan gap, or a mapped-but-failing control.
+    scan_ev (latest self-scan evidence) auto-adjusts alignment from real test results."""
     from compliance_catalog import CATALOGS
     idx = {}
     for c in statuses:
@@ -640,16 +641,21 @@ def _framework_alignment(framework, statuses):
             idx.setdefault(ref, []).append(
                 {"control_id": c["control_id"], "name": c["name"], "compliant": c["status"] == "Passing"})
     gaps = set(_FRAMEWORK_GAPS.get(framework, []))
+    scan_gaps = set((scan_ev or {}).get("gaps", {}).get(framework, []))
+    scan_aligned = set((scan_ev or {}).get("aligned", {}).get(framework, []))
     controls, aligned, met, gap = [], 0, 0, 0
     for item in CATALOGS.get(framework, []):
         cid, maps = item["id"], idx.get(item["id"], [])
-        if cid in gaps or (maps and not any(m["compliant"] for m in maps)):
+        if cid in gaps or cid in scan_gaps or (maps and not any(m["compliant"] for m in maps)):
             status, gap = "gap", gap + 1
-        elif maps:
+            source = "self-scan" if (cid in scan_gaps and cid not in gaps) else ("control" if maps else "policy")
+        elif maps or cid in scan_aligned:
             status, aligned = "aligned", aligned + 1
+            source = "control" if maps else "self-scan"
         else:
             status, met = "met", met + 1
-        controls.append({"id": cid, "group": item["group"], "status": status, "mapped_to": maps})
+            source = "default"
+        controls.append({"id": cid, "group": item["group"], "status": status, "mapped_to": maps, "source": source})
     total = len(controls)
     meeting = aligned + met
     return {"controls": controls, "total": total, "aligned": aligned, "met": met, "gap": gap,
@@ -751,9 +757,10 @@ async def controls_crosswalk(user: dict = Depends(get_current_user)):
             "compliant": c["status"] == "Passing",
             "mappings": {k: fw.get(k, []) for k in FRAMEWORK_ORDER},
         })
+    scan_ev = await db.scan_evidence.find_one({"org_id": org_id}, {"_id": 0})
     summary = []
     for k in FRAMEWORK_ORDER:
-        a = _framework_alignment(k, statuses)
+        a = _framework_alignment(k, statuses, scan_ev)
         summary.append({
             "framework": k, "full_name": FRAMEWORK_FULL[k],
             "total": a["total"], "aligned": a["aligned"], "met": a["met"], "gap": a["gap"],
@@ -786,7 +793,8 @@ async def controls_framework(framework: str, user: dict = Depends(get_current_us
     await _ensure_controls(org_id)
     existing = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
     statuses = [_control_status(c) for c in existing]
-    a = _framework_alignment(framework, statuses)
+    scan_ev = await db.scan_evidence.find_one({"org_id": org_id}, {"_id": 0})
+    a = _framework_alignment(framework, statuses, scan_ev)
     return {"framework": framework, "full_name": FRAMEWORK_FULL.get(framework, framework),
             "total": a["total"], "aligned": a["aligned"], "met": a["met"], "gap": a["gap"],
             "not_assessed": 0, "meeting": a["meeting"], "meeting_pct": a["meeting_pct"],
