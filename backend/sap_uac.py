@@ -1687,11 +1687,12 @@ def _sap_insight_fallback(ctx):
 
 
 @sap_router.get("/insight")
-async def sap_insight(user: dict = Depends(get_current_user)):
-    """Obserra-standard AI analyst summary of the live SAP access posture."""
+async def sap_insight(focus: str = "", user: dict = Depends(get_current_user)):
+    """Obserra-standard AI analyst summary of the live SAP access posture (optionally focused per dashboard)."""
     org_id = user["org_id"]
     await _ensure(org_id)
     ctx = await overview_context(org_id)
+    focus = (focus or "").strip()[:80]
     try:
         import asyncio, re
         from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
@@ -1701,9 +1702,10 @@ async def sap_insight(user: dict = Depends(get_current_user)):
             "[{\"text\": str, \"kind\": one of \"fact\"|\"estimate\"|\"risk\"}], \"actions\": [str]}. "
             "3-5 insights, 2-4 actions. Ground every statement in the data (cite SoD rule names, person names, figures). "
             "Never invent data. Return ONLY the JSON object.")
-        chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"sap-insight-{org_id}",
+        chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"sap-insight-{org_id}-{focus or 'all'}",
                        system_message=system).with_model("openai", "gpt-5.4")
-        prompt = f"LIVE SAP ACCESS CONTEXT (JSON):\n{json.dumps(ctx, default=str)[:9000]}"
+        focus_line = f"\n\nEMPHASIZE this dashboard focus in the briefing: {focus}." if focus else ""
+        prompt = f"LIVE SAP ACCESS CONTEXT (JSON):\n{json.dumps(ctx, default=str)[:9000]}{focus_line}"
         collected = []
 
         async def _run():

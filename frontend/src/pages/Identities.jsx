@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
+import { SapInsight } from "@/components/SapInsight";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Search, Users, ShieldAlert, KeyRound, ShieldCheck } from "lucide-react";
@@ -44,6 +45,8 @@ export default function Identities() {
         <h1 className="font-head font-black text-3xl lg:text-4xl tracking-tight" data-testid="identities-title">Identities</h1>
         <p className="text-sm text-muted-foreground mt-1">Canonical identities correlated across ADP / IZ8 / AD / Entra / SAP with live access-risk scoring.</p>
       </div>
+
+      <SapInsight dashboard="Identities" focus="highest-risk identities and their access-risk drivers" accent="190 90% 50%" auto slug="identities" />
 
       <div className="bg-card fact-border rounded-xl">
         <div className="flex flex-wrap items-center gap-2 p-3 border-b border-border">

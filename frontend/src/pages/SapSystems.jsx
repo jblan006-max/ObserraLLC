@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
+import { SapInsight } from "@/components/SapInsight";
 import { Plug, Server, Clock, CheckCircle2, AlertTriangle } from "lucide-react";
 
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
@@ -19,6 +20,8 @@ export default function SapSystems() {
         <h1 className="font-head font-black text-3xl lg:text-4xl tracking-tight" data-testid="systems-title">Connector Health</h1>
         <p className="text-sm text-muted-foreground mt-1">SAP landscape, source connectors and data freshness. Live API connection is enabled by supplying per-connector credentials; the current access model was ingested as a discovered snapshot with provenance.</p>
       </div>
+
+      <SapInsight dashboard="Connector Health" focus="connector coverage, credential readiness and data freshness" accent="190 90% 50%" auto slug="sap-systems" />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="SAP systems" value={d.systems.length} accent="210 92% 62%" icon={Server} testid="sys-count" />

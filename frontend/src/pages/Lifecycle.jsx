@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
+import { SapInsight } from "@/components/SapInsight";
 import { useDeepDive } from "@/context/DeepDiveContext";
 import { UserPlus, UserX, GitBranch } from "lucide-react";
 
@@ -34,6 +35,8 @@ export default function Lifecycle() {
         <h1 className="font-head font-black text-3xl lg:text-4xl tracking-tight" data-testid="lifecycle-title">Joiner / Mover / Leaver</h1>
         <p className="text-sm text-muted-foreground mt-1">Workforce lifecycle correlated with SAP access — recent joiners, transfers and terminated workers still holding access.</p>
       </div>
+
+      <SapInsight dashboard="Joiner / Mover / Leaver" focus="leaver residual access and joiner provisioning gaps" accent="142 70% 45%" auto slug="lifecycle" />
       <div className="grid grid-cols-3 gap-4">
         <StatCard label="Joiners (21d)" value={d.counts.joiners} accent="142 70% 45%" icon={UserPlus} testid="jml-joiners" />
         <StatCard label="Movers" value={d.counts.movers} accent="260 85% 66%" icon={GitBranch} testid="jml-movers" />

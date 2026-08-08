@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
+import { SapInsight } from "@/components/SapInsight";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -49,6 +50,8 @@ export default function AccessRequests() {
         </div>
         <Button data-testid="ar-new" onClick={() => setCreating(true)} className="gap-1.5"><Plus className="w-4 h-4" /> New Request</Button>
       </div>
+
+      <SapInsight dashboard="Access Requests" focus="pending access-request risk and SoD-blocking approvals" accent="199 89% 48%" auto slug="access-requests" />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Pending" value={d.counts.pending} accent="35 90% 55%" icon={ListChecks} testid="ar-pending" />

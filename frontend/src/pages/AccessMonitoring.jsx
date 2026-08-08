@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
+import { SapInsight } from "@/components/SapInsight";
 import { MoonStar, Ghost, Cpu } from "lucide-react";
 
 const fmtDate = (s) => (s ? new Date(s).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—");
@@ -48,6 +49,8 @@ export default function AccessMonitoring() {
         <h1 className="font-head font-black text-3xl lg:text-4xl tracking-tight" data-testid="monitoring-title">Access Monitoring</h1>
         <p className="text-sm text-muted-foreground mt-1">Continuous detection of dormant, orphan and ownerless service/technical accounts.</p>
       </div>
+
+      <SapInsight dashboard="Access Monitoring" focus="dormant, orphan and ownerless service/technical accounts" accent="168 76% 46%" auto slug="access-monitoring" />
       <div className="grid grid-cols-3 gap-4">
         <StatCard label="Dormant accounts" value={d.counts.dormant} sub="Unused >90 days" accent="168 76% 46%" icon={MoonStar} testid="mon-dormant" />
         <StatCard label="Orphan accounts" value={d.counts.orphan} sub="No active owner" accent="38 92% 55%" icon={Ghost} testid="mon-orphan" />

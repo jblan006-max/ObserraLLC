@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
+import { SapInsight } from "@/components/SapInsight";
 import { useDeepDive } from "@/context/DeepDiveContext";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
@@ -89,6 +90,8 @@ export default function SodCommandCenter() {
         <h1 className="font-head font-black text-3xl lg:text-4xl tracking-tight" data-testid="sod-title">SoD Command Center</h1>
         <p className="text-sm text-muted-foreground mt-1">Live Segregation-of-Duties detection across users and roles, mitigating controls, and pre-assignment risk simulation.</p>
       </div>
+
+      <SapInsight dashboard="SoD Command Center" focus="segregation-of-duties toxic combinations and mitigation" accent="0 84% 60%" auto slug="sod-command" />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Critical conflicts" value={data.summary.Critical} accent="0 84% 60%" icon={ShieldAlert} testid="sod-critical" />

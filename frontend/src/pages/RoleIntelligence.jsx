@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
+import { SapInsight } from "@/components/SapInsight";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Search, Layers, ShieldAlert, KeyRound } from "lucide-react";
 
@@ -25,6 +26,8 @@ export default function RoleIntelligence() {
         <h1 className="font-head font-black text-3xl lg:text-4xl tracking-tight" data-testid="roles-title">Role Intelligence</h1>
         <p className="text-sm text-muted-foreground mt-1">SAP role catalog with composition, assignment usage, privilege severity and single-role toxic combinations.</p>
       </div>
+
+      <SapInsight dashboard="Role Intelligence" focus="toxic composite roles and over-privileged role design" accent="35 90% 55%" auto slug="role-intelligence" />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Roles in catalog" value={d.total} accent="280 80% 66%" icon={Layers} testid="role-total" />
         <StatCard label="Privileged roles" value={privileged} accent="0 84% 60%" icon={KeyRound} testid="role-priv" />

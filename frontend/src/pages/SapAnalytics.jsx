@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
+import { SapInsight } from "@/components/SapInsight";
 import {
   PieChart, Pie, Cell, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
 } from "recharts";
@@ -51,6 +52,8 @@ export default function SapAnalytics() {
         <h1 className="font-head font-black text-3xl lg:text-4xl tracking-tight" data-testid="analytics-title">SAP Analytics & Metrics</h1>
         <p className="text-sm text-muted-foreground mt-1">Live access, license, risk and governance metrics across the SAP landscape.</p>
       </div>
+
+      <SapInsight dashboard="SAP Analytics" focus="access, license and risk analytics" accent="199 89% 48%" auto slug="sap-analytics" />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="SAP identities" value={k.identities} sub={`${k.accounts} accounts`} accent="190 90% 50%" icon={Users} testid="an-identities" />
