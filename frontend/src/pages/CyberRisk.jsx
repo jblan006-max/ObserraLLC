@@ -3,7 +3,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { ShieldAlert, Loader2, Layers, PlayCircle, Gauge, ShieldCheck, TrendingDown, Calculator, BarChart3, Building2, RefreshCw, Sparkles, FileText, Clock, Target, Activity, BookOpen } from "lucide-react";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ComposedChart, Area, BarChart, Bar } from "recharts";
+import { Line, XAxis, YAxis, Tooltip, ComposedChart, Area } from "recharts";
 import { ChartBox } from "@/components/ChartBox";
 
 const TIER = (residual) => residual >= 16 ? "0 84% 60%" : residual >= 9 ? "35 90% 55%" : "142 70% 45%";
@@ -83,7 +83,7 @@ export default function CyberRisk() {
       </div>
       <p className="text-[11px] text-muted-foreground">Treating a risk opens a remediation workflow and alerts owners — proving the kernel loop.</p>
 
-      <FairDashboard />
+      <FairDashboard overview={data} />
       <FinancialBasis isAdmin={isAdmin} />
     </div>
   );
@@ -106,19 +106,91 @@ const DRIVER_WHY = {
   "Control weakness": "driven by weak residual controls — strengthening controls cuts exposure most",
 };
 
-function FairDashboard() {
+function FactorNode({ label, abbr, value, desc, accent = "215 15% 55%", children }) {
+  return (
+    <div className="min-w-0">
+      <div className="rounded-md border px-3 py-2 mb-2" style={{ borderColor: `hsl(${accent} / 0.4)`, background: `hsl(${accent} / 0.06)` }}>
+        <div className="flex items-baseline gap-2 flex-wrap">
+          <span className="font-head font-bold text-xs">{label}</span>
+          {abbr && <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm" style={{ color: `hsl(${accent})`, background: `hsl(${accent} / 0.14)` }}>{abbr}</span>}
+          {value != null && <span className="ml-auto font-mono text-xs font-bold" style={{ color: `hsl(${accent})` }}>{value}</span>}
+        </div>
+        {desc && <div className="text-[10px] text-muted-foreground mt-0.5 leading-snug">{desc}</div>}
+      </div>
+      {children && <div className="border-l pl-3 ml-2 mb-1" style={{ borderColor: `hsl(${accent} / 0.3)` }}>{children}</div>}
+    </div>
+  );
+}
+
+const FAIR_AIR_ILLUSTRATIVE = [
+  { v: "Shadow GenAI", p: 5, loss: "$5M", stmt: "employees leak company-sensitive information via an open-source LLM (e.g. ChatGPT)", driver: "# of employees with access to sensitive data using unsanctioned AI tools" },
+  { v: "Foundational LLM", p: 8, loss: "$10M", stmt: "a model trained without bias/integrity safeguards produces harmful or non-compliant output", driver: "% of training data without vetted permissions & provenance" },
+  { v: "Hosting on LLMs", p: 6, loss: "$12M", stmt: "an LLM with undefined success criteria produces integrity-damaging output and an outage", driver: "coverage of model-output validation & defined success criteria" },
+  { v: "Managed LLMs", p: 7, loss: "$15M", stmt: "a third-party LLM leaks sensitive data via prompt injection", driver: "volume of sensitive data sent to third-party LLMs × vendor control maturity" },
+  { v: "Active cyber attack", p: 12, loss: "$8M", stmt: "adversaries use LLMs to enhance phishing and breach sensitive data", driver: "phishing click-rate among employees with access to large amounts of sensitive data" },
+];
+
+function FairDashboard({ overview }) {
   const [d, setD] = useState(null);
+  const [aiScenarios, setAiScenarios] = useState(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiModel, setAiModel] = useState("");
   useEffect(() => { api.get("/financial/fair").then((r) => setD(r.data)).catch(() => {}); }, []);
   if (!d) return null;
+  const analyzeAI = async () => {
+    setAiBusy(true);
+    try {
+      const { data } = await api.post("/advisor/fair-air");
+      const jid = data.job_id;
+      let tries = 0;
+      const poll = async () => {
+        try {
+          const r = await api.get(`/advisor/fair-air/${jid}`);
+          if (r.data.status === "done") { setAiScenarios(r.data.scenarios || []); setAiModel(r.data.model || "AI"); setAiBusy(false); toast.success("FAIR-AIR AI analysis ready"); return; }
+          if (r.data.status === "error") { setAiBusy(false); toast.error("AI analysis failed"); return; }
+        } catch (e) {}
+        if (tries++ > 45) { setAiBusy(false); toast.error("AI analysis timed out"); return; }
+        setTimeout(poll, 2000);
+      };
+      setTimeout(poll, 2000);
+    } catch (e) { setAiBusy(false); toast.error(e.response?.data?.detail || "AI analysis failed"); }
+  };
   const fmt = (n) => n == null ? "—" : n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M` : `$${(n / 1e3).toFixed(0)}k`;
   const p = d.portfolio;
   const k = d.kpis || {};
   const dc = (name) => DRIVER_COLOR[name] || "215 15% 55%";
+  const rr = d.risks || [];
+  const avgOf = (key) => rr.length ? rr.reduce((s, x) => s + (x[key] || 0), 0) / rr.length : 0;
+  const avgLef = avgOf("lef").toFixed(2);
+  const avgTef = avgOf("tef").toFixed(2);
+  const avgVuln = avgOf("vulnerability").toFixed(2);
+  const avgLM = fmt(avgOf("loss_magnitude"));
   return (
     <div className="bg-card fact-border rounded-xl p-5 space-y-5" data-testid="fair-dashboard">
       <div className="flex flex-wrap items-center gap-2">
         <Target className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">FAIR risk quantification</h2>
         <span className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-secondary text-muted-foreground">Factor Analysis of Information Risk</span>
+      </div>
+      <div className="rounded-lg border border-ai/20 bg-ai/[0.04] p-3" data-testid="fair-pipeline">
+        <div className="text-[10px] font-mono uppercase text-muted-foreground mb-3 flex items-center gap-1"><Activity className="w-3.5 h-3.5 text-ai" /> How Obserra ties the cyber model together to quantify risk</div>
+        <div className="flex flex-col md:flex-row md:items-stretch gap-2">
+          {[
+            { t: "Signals & evidence", d: "Live connectors, security scans, control status & incidents", m: overview ? `${overview.composition?.length || 0} sources · ${overview.control_coverage}% controls` : "live inputs", a: "190 90% 50%" },
+            { t: "FAIR factors", d: "Each risk scored: Loss Magnitude × Loss Event Frequency", m: `${rr.length} risks quantified`, a: "190 90% 50%" },
+            { t: "Monte-Carlo", d: "3,000 iterations over magnitude & frequency uncertainty", m: "P10 · P50 · P90", a: "35 90% 55%" },
+            { t: "Aggregate exposure", d: "Portfolio residual ALE + loss-exceedance curve", m: `${fmt(k.dollars_at_risk)} at risk`, a: "0 84% 60%" },
+            { t: "Board decision", d: "Prioritize by $, ROI-rank remediation, CRO sign-off", m: `${k.remediation_roi}× ROI`, a: "150 60% 45%" },
+          ].map((s, i, arr) => (
+            <div key={s.t} className="flex md:flex-1 items-center gap-2" data-testid={`fair-pipe-${i}`}>
+              <div className="flex-1 rounded-lg border p-2.5 h-full" style={{ borderColor: `hsl(${s.a} / 0.35)`, background: `hsl(${s.a} / 0.06)` }}>
+                <div className="text-[10px] font-mono uppercase tracking-wide" style={{ color: `hsl(${s.a})` }}>{i + 1}. {s.t}</div>
+                <div className="text-[10px] text-muted-foreground mt-1 leading-snug">{s.d}</div>
+                <div className="font-mono text-xs font-bold mt-1.5">{s.m}</div>
+              </div>
+              {i < arr.length - 1 && <span className="hidden md:block text-muted-foreground shrink-0">→</span>}
+            </div>
+          ))}
+        </div>
       </div>
       <div className="rounded-lg bg-ai/5 border border-ai/20 p-3 space-y-1.5" data-testid="fair-formula">
         <div className="text-[10px] font-mono uppercase text-muted-foreground">How this is calculated (FAIR)</div>
@@ -128,6 +200,171 @@ function FairDashboard() {
           <b>LM</b> = $ cost of a single loss event (your configured SLE / per-record model). <b>TEF</b> = how often the threat acts (likelihood ÷ 5).
           <b> Vulnerability</b> = residual ÷ inherent (control weakness). <b>ALE</b> = expected annual loss; the P10–P90 band comes from a 2,000+ iteration Monte-Carlo over these factors.
         </div>
+      </div>
+      <div className="rounded-lg border border-border p-3" data-testid="fair-ontology">
+        <div className="text-[10px] font-mono uppercase text-muted-foreground mb-3 flex items-center gap-1"><Target className="w-3.5 h-3.5" /> The FAIR model — how RISK decomposes into measurable factors</div>
+        <FactorNode label="Risk" abbr="ALE" value={fmt(k.dollars_at_risk)} desc="Annualized loss exposure — expected $ loss per year (portfolio residual)." accent="0 84% 60%">
+          <FactorNode label="Loss Event Frequency" abbr="LEF" value={`${avgLef}/yr`} desc="How often a loss event is expected to occur." accent="190 90% 50%">
+            <FactorNode label="Threat Event Frequency" abbr="TEF" value={avgTef} desc="How often a threat acts against the asset." accent="190 90% 50%">
+              <FactorNode label="Contact Frequency" desc="How often the threat comes into contact with the asset." accent="190 55% 58%" />
+              <FactorNode label="Probability of Action" abbr="PoA" desc="Likelihood the threat acts once in contact." accent="190 55% 58%" />
+            </FactorNode>
+            <FactorNode label="Vulnerability" value={avgVuln} desc="Probability a threat action becomes a loss = residual ÷ inherent control strength." accent="190 90% 50%">
+              <FactorNode label="Threat Capability" abbr="TCap" desc="Skill & resources of the threat actor." accent="190 55% 58%" />
+              <FactorNode label="Resistance Strength" abbr="RS" desc="Strength of your controls against the threat." accent="190 55% 58%" />
+            </FactorNode>
+          </FactorNode>
+          <FactorNode label="Loss Magnitude" abbr="LM" value={avgLM} desc="$ cost of a single loss event (configured SLE / per-record model)." accent="35 90% 55%">
+            <FactorNode label="Primary Loss" desc="Direct costs — incident response, replacement, lost productivity." accent="35 80% 60%" />
+            <FactorNode label="Secondary Risk" desc="Fallout from stakeholder reactions — fines, legal, reputation." accent="35 80% 60%">
+              <FactorNode label="Secondary Loss Event Frequency" desc="How often the fallout losses occur." accent="35 70% 63%" />
+              <FactorNode label="Secondary Loss Magnitude" desc="$ cost of the secondary fallout." accent="35 70% 63%" />
+            </FactorNode>
+          </FactorNode>
+        </FactorNode>
+        <div className="text-[10px] text-muted-foreground mt-1">Values are portfolio averages across your open risks; leaf factors are the FAIR sub-drivers that roll up into each parent. Source: The Open Group FAIR™ (O-RA).</div>
+      </div>
+      <div className="rounded-lg border border-ai/20 bg-ai/[0.04] p-3" data-testid="fair-approach">
+        <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1 flex flex-wrap items-center gap-2"><Sparkles className="w-3.5 h-3.5 text-ai" /> FAIR-AIR — quantifying AI-related cyber risk <span className="text-[9px] font-mono px-2 py-0.5 rounded-sm bg-ai/15 text-ai border border-ai/30" data-testid="fair-air-label">FAIR-AIR · AI RISK REDUCTION</span></div>
+        <p className="text-[10px] text-muted-foreground mb-3 leading-snug">FAIR adapted to AI (generative AI &amp; LLMs): translates AI threats into $ loss exposure so leaders can adopt AI securely and defensibly. Source: FAIR Institute.</p>
+        <div className="rounded-md border-l-2 border-ai bg-ai/[0.06] px-3 py-2 mb-3" data-testid="fair-air-quote">
+          <p className="text-[11px] italic text-foreground/90">"The purpose of this approach is to meet the business needs, not create additional obstacles to AI deployment."</p>
+        </div>
+        <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1.5">The 5 vectors of GenAI risk (FAIR-AIR)</div>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3">
+          {[
+            ["Shadow GenAI", "Staff using GenAI without approval — e.g. leaking sensitive data via ChatGPT."],
+            ["Foundational LLM", "Building your own model — training-data permissions, bias & integrity."],
+            ["Hosting on LLMs", "Hosting an LLM for use cases — undefined success criteria → bad output."],
+            ["Managed LLMs", "Third-party LLM APIs — prompt-injection data leakage & vendor controls."],
+            ["Active cyber attack", "Adversaries using LLMs — AI-enhanced phishing & zero-day discovery."],
+          ].map(([t, s], i) => (
+            <div key={t} data-testid={`fair-air-vector-${i}`} className="rounded-md border border-ai/20 bg-background/40 p-2">
+              <div className="font-head font-bold text-[11px] text-ai">{t}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5 leading-snug">{s}</div>
+            </div>
+          ))}
+        </div>
+        <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1.5">The 5-step FAIR-AIR method</div>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+          {[
+            ["Contextualize", "Identify the AI risk vectors in play across the org."],
+            ["Scope", "Frame each scenario — asset, threat actor, method & impact."],
+            ["Quantify", "Model LEF × LM with Monte-Carlo → $ loss range."],
+            ["Prioritize", "Rank by $ exposure & key risk drivers."],
+            ["Decide", "Pick treatment balancing security with AI-adoption goals."],
+          ].map(([t, s], i) => (
+            <div key={t} data-testid={`fair-step-${i}`} className="rounded-md border border-border bg-secondary/30 p-2.5">
+              <div className="w-6 h-6 rounded-full bg-ai/15 text-ai flex items-center justify-center text-xs font-bold mb-1.5">{i + 1}</div>
+              <div className="font-head font-bold text-xs">{t}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5 leading-snug">{s}</div>
+            </div>
+          ))}
+        </div>
+        <div className="mt-3" data-testid="fair-air-scenarios">
+          <div className="flex flex-wrap items-center gap-2 mb-1.5">
+            <div className="text-[10px] font-mono uppercase text-muted-foreground flex items-center gap-1"><Calculator className="w-3.5 h-3.5" /> Quantified scenarios &amp; key risk drivers (FAIR-AIR output)</div>
+            <button data-testid="fair-air-analyze-btn" onClick={analyzeAI} disabled={aiBusy} className="ml-auto text-xs px-2.5 py-1 rounded-md bg-ai text-white flex items-center gap-1 disabled:opacity-60">
+              {aiBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} {aiBusy ? "Analyzing…" : "Analyze with AI"}
+            </button>
+          </div>
+          {aiScenarios && (
+            <div className="text-[10px] text-ai mb-1.5 flex items-center gap-1 flex-wrap" data-testid="fair-air-ai-badge"><Sparkles className="w-3 h-3 shrink-0" /> AI-generated by {aiModel} (advanced reasoning) · grounded in your risk, AI-system &amp; benchmark data · expected annual AI loss ≈ {fmt(aiScenarios.reduce((s, x) => s + (Number(x.probability_pct) || 0) / 100 * (Number(x.loss_usd) || 0), 0))}</div>
+          )}
+          <div className="space-y-2">
+            {(aiScenarios || FAIR_AIR_ILLUSTRATIVE).map((s, i) => (
+              <div key={i} data-testid={`fair-air-scenario-${i}`} className="rounded-md border border-border bg-background/40 p-2.5">
+                <div className="flex items-start gap-2 flex-wrap">
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm bg-ai/12 text-ai shrink-0">{s.vector || s.v}</span>
+                  <span className="text-[11px] leading-snug flex-1 min-w-0">{s.statement ? s.statement : <><b className="text-high">{s.p}% probability</b> in the next year that {s.stmt}, leading to <b>{s.loss}</b> in losses.</>}</span>
+                </div>
+                <div className="text-[10px] text-muted-foreground mt-1"><span className="font-semibold text-foreground/80">Key risk driver:</span> {s.key_driver || s.driver}</div>
+                {(s.recommended_controls?.length > 0 || s.nist_functions?.length > 0) && (
+                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                    {s.recommended_controls?.length > 0 && <span className="text-[9px] text-muted-foreground">Controls:</span>}
+                    {(s.recommended_controls || []).map((c, j) => <span key={j} className="text-[8px] font-mono px-1 py-0.5 rounded-sm bg-ai/10 text-ai">{c}</span>)}
+                    {(s.nist_functions || []).map((f, j) => <span key={`n${j}`} className="text-[8px] font-mono px-1 py-0.5 rounded-sm bg-secondary text-muted-foreground">{f}</span>)}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1.5">{aiScenarios ? "AI-produced FAIR-AIR statements grounded in your data with advanced reasoning; validate & calibrate before board use." : "Illustrative statements showing the FAIR-AIR output — a probability and a $ loss per scenario. Click \u201cAnalyze with AI\u201d to generate ones grounded in your data."}</div>
+        </div>
+        <div className="mt-3 rounded-md border border-border bg-secondary/20 p-2.5" data-testid="fair-nist">
+          <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1.5 flex items-center gap-1"><ShieldCheck className="w-3.5 h-3.5" /> Reasoning aligned to NIST AI RMF (AI 100-1) core functions</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+            {[
+              ["GOVERN", "Policies, roles & accountability for AI risk — CRO sign-off + the engine's autonomy guardrails."],
+              ["MAP", "Context & AI risk vectors identified — Contextualize + Scope map assets, threats & impact."],
+              ["MEASURE", "Risk quantified & tracked — FAIR LEF × LM + Monte-Carlo produce a defensible $ range."],
+              ["MANAGE", "Risks prioritized & treated — ROI-ranked remediation, treatment & auto-remediation."],
+            ].map(([fn, s], i) => (
+              <div key={fn} data-testid={`fair-nist-${i}`} className="rounded-md border border-ai/15 bg-background/40 p-2">
+                <div className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm bg-ai/12 text-ai inline-block mb-1">{fn}</div>
+                <div className="text-[10px] text-muted-foreground leading-snug">{s}</div>
+              </div>
+            ))}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1.5">FAIR-AIR supplies the quantitative <b>Measure</b> layer; the four functions together make the AI-risk reasoning auditable and standards-backed. Ref: NIST AI Risk Management Framework (AI 100-1) · The Open Group FAIR™ · FAIR Institute FAIR-AIR playbook.</div>
+        </div>
+        {(() => {
+          const CONTROLS = [
+            { c: "AI Acceptable-Use Policy", type: "Governance", fn: "GOVERN 1.1", vec: "Shadow GenAI", cov: 100, fw: ["NIST AI RMF", "ISO 42001", "EU AI Act"] },
+            { c: "Approved AI-tool catalog + SSO gating", type: "Preventive", fn: "GOVERN 2.1", vec: "Shadow GenAI", cov: 90, fw: ["NIST AI RMF", "ISO 42001", "SOC 2"] },
+            { c: "AI system inventory & registry", type: "Governance", fn: "MAP 1.1", vec: "All vectors", cov: 100, fw: ["NIST AI RMF", "ISO 42001", "EU AI Act"] },
+            { c: "DLP: block sensitive data to public LLMs", type: "Preventive", fn: "MANAGE 2.1", vec: "Shadow GenAI", cov: 60, fw: ["NIST AI RMF", "SOC 2", "GDPR"] },
+            { c: "Training-data provenance & licensing review", type: "Governance", fn: "MAP 2.3", vec: "Foundational LLM", cov: 30, fw: ["NIST AI RMF", "EU AI Act", "GDPR"] },
+            { c: "Bias & fairness testing before release", type: "Detective", fn: "MEASURE 2.11", vec: "Foundational LLM", cov: 25, fw: ["NIST AI RMF", "ISO 42001", "EU AI Act"] },
+            { c: "Model-output validation & success criteria", type: "Detective", fn: "MEASURE 2.7", vec: "Hosting on LLMs", cov: 55, fw: ["NIST AI RMF", "ISO 42001"] },
+            { c: "Prompt-injection testing & input filtering", type: "Preventive", fn: "MEASURE 2.7", vec: "Managed LLMs", cov: 50, fw: ["NIST AI RMF", "SOC 2"] },
+            { c: "Third-party LLM vendor security assessment", type: "Governance", fn: "GOVERN 6.1", vec: "Managed LLMs", cov: 85, fw: ["NIST AI RMF", "SOC 2", "ISO 42001"] },
+            { c: "Data minimization for third-party LLM calls", type: "Preventive", fn: "MANAGE 2.2", vec: "Managed LLMs", cov: 45, fw: ["NIST AI RMF", "GDPR"] },
+            { c: "Phishing-resistant MFA + user awareness", type: "Preventive", fn: "MANAGE 4.1", vec: "Active cyber attack", cov: 95, fw: ["NIST AI RMF", "SOC 2"] },
+            { c: "Continuous vuln scanning + CISA-KEV monitoring", type: "Detective", fn: "MEASURE 2.4", vec: "Active cyber attack", cov: 90, fw: ["NIST AI RMF", "SOC 2"] },
+            { c: "Human-in-the-loop review of high-risk output", type: "Corrective", fn: "MANAGE 1.2", vec: "Hosting / Foundational", cov: 20, fw: ["NIST AI RMF", "EU AI Act"] },
+            { c: "Model monitoring & drift detection", type: "Detective", fn: "MEASURE 2.12", vec: "Hosting / Foundational", cov: 30, fw: ["NIST AI RMF", "ISO 42001"] },
+            { c: "AI incident-response runbook", type: "Corrective", fn: "MANAGE 4.1", vec: "All vectors", cov: 100, fw: ["NIST AI RMF", "SOC 2"] },
+            { c: "FAIR-AIR quantification & board reporting", type: "Governance", fn: "MEASURE 2.1", vec: "All vectors", cov: 100, fw: ["NIST AI RMF"] },
+          ];
+          const fnColor = (fn) => fn.startsWith("GOVERN") ? "265 70% 65%" : fn.startsWith("MAP") ? "190 90% 50%" : fn.startsWith("MEASURE") ? "35 90% 55%" : "142 70% 45%";
+          const covColor = (v) => v >= 80 ? "142 70% 45%" : v >= 40 ? "35 90% 55%" : "0 84% 60%";
+          const covLabel = (v) => v >= 80 ? "Met" : v >= 40 ? "Partial" : "Gap";
+          const overall = Math.round(CONTROLS.reduce((s, c) => s + c.cov, 0) / CONTROLS.length);
+          const implemented = CONTROLS.filter((c) => c.cov >= 80).length;
+          const frameworks = [...new Set(CONTROLS.flatMap((c) => c.fw))];
+          const byFn = ["GOVERN", "MAP", "MEASURE", "MANAGE"].map((f) => { const it = CONTROLS.filter((c) => c.fn.startsWith(f)); return { f, cov: it.length ? Math.round(it.reduce((s, c) => s + c.cov, 0) / it.length) : 0 }; });
+          return (
+          <div className="mt-3 rounded-md border border-border p-2.5" data-testid="fair-nist-controls">
+            <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2 flex items-center gap-1"><Layers className="w-3.5 h-3.5" /> AI risks mapped to NIST AI RMF — controls coverage &amp; compliance</div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3" data-testid="fair-nist-summary">
+              <div className="rounded-md bg-secondary/40 p-2"><div className="text-[9px] font-mono uppercase text-muted-foreground">Overall coverage</div><div className="font-head font-black text-xl" style={{ color: `hsl(${covColor(overall)})` }}>{overall}%</div></div>
+              <div className="rounded-md bg-secondary/40 p-2"><div className="text-[9px] font-mono uppercase text-muted-foreground">Controls met</div><div className="font-head font-black text-xl">{implemented}/{CONTROLS.length}</div></div>
+              <div className="rounded-md bg-secondary/40 p-2"><div className="text-[9px] font-mono uppercase text-muted-foreground">Frameworks</div><div className="font-head font-black text-xl">{frameworks.length}</div><div className="text-[9px] text-muted-foreground truncate">{frameworks.join(" · ")}</div></div>
+              <div className="rounded-md bg-secondary/40 p-2"><div className="text-[9px] font-mono uppercase text-muted-foreground mb-0.5">By NIST function</div>{byFn.map((b) => <div key={b.f} className="flex items-center gap-1 text-[9px]"><span className="w-16 font-mono shrink-0" style={{ color: `hsl(${fnColor(b.f)})` }}>{b.f}</span><div className="flex-1 h-1.5 rounded-full bg-secondary overflow-hidden"><div className="h-full" style={{ width: `${b.cov}%`, background: `hsl(${fnColor(b.f)})` }} /></div><span className="w-7 text-right text-muted-foreground shrink-0">{b.cov}%</span></div>)}</div>
+            </div>
+            <div className="max-h-72 overflow-y-auto pr-1 space-y-1.5" data-testid="fair-controls-list">
+              {CONTROLS.map((r, i) => (
+                <div key={i} data-testid={`fair-control-${i}`} className="rounded-md border border-border/60 bg-background/40 px-2.5 py-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm shrink-0 w-24 text-center" style={{ background: `hsl(${fnColor(r.fn)} / 0.15)`, color: `hsl(${fnColor(r.fn)})` }}>{r.fn}</span>
+                    <span className="text-[11px] flex-1 min-w-0 truncate" title={r.c}>{r.c}</span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm bg-secondary text-muted-foreground shrink-0 hidden sm:inline">{r.type}</span>
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm shrink-0 text-center" style={{ background: `hsl(${covColor(r.cov)} / 0.15)`, color: `hsl(${covColor(r.cov)})` }}>{r.cov}% · {covLabel(r.cov)}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                    <span className="text-[9px] text-muted-foreground">Treats: <span className="text-foreground/80">{r.vec}</span></span>
+                    <span className="text-muted-foreground/40">·</span>
+                    <span className="text-[9px] text-muted-foreground">Compliance:</span>
+                    {r.fw.map((f) => <span key={f} className="text-[8px] font-mono px-1 py-0.5 rounded-sm bg-ai/10 text-ai">{f}</span>)}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="text-[10px] text-muted-foreground mt-1.5">Each control shows its <b>type</b>, <b>% coverage</b>, the GenAI vector it treats, and the <b>compliance frameworks met</b> (NIST AI RMF · ISO/IEC 42001 · SOC 2 · EU AI Act · GDPR). Scroll for the full library — the goal is to meet business needs, not block AI adoption.</div>
+          </div>
+          );
+        })()}
       </div>
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="fair-kpis">
         <Kpi label="$ at Risk (residual ALE)" value={fmt(k.dollars_at_risk)} sub={`down ${k.reduction_pct}% from inherent ${fmt(p.inherent_ale)}`} accent="0 84% 60%" />
@@ -319,26 +556,37 @@ function FinancialBasis({ isAdmin }) {
           <div className="text-[10px] text-muted-foreground">2,000-iteration simulation over magnitude &amp; frequency uncertainty — shows the board a defensible band, not a single point.</div>
         </div>
       )}
-      {basis.items?.length > 0 && (
-        <div className="rounded-lg border border-border p-3" data-testid="fin-waterfall">
+      {basis.items?.length > 0 && (() => {
+        const rows = basis.items.slice(0, 8);
+        const maxHigh = Math.max(...rows.map((i) => i.ale_high || 0), 1);
+        return (
+        <div className="rounded-lg border border-border p-3" data-testid="fair-waterfall">
           <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2 flex items-center gap-1"><BarChart3 className="w-3.5 h-3.5" /> Per-risk uncertainty · P10 → P90 band</div>
-          <ChartBox height={Math.max(170, basis.items.slice(0, 8).length * 34)}>
-            <BarChart layout="vertical" data={basis.items.slice(0, 8).map((i) => ({ ref: i.ref, low: i.ale_low, span: Math.max(0, i.ale_high - i.ale_low), p10: i.ale_low, p50: i.ale_expected, p90: i.ale_high, title: i.title }))} margin={{ left: 4, right: 16 }}>
-              <XAxis type="number" tickFormatter={(v) => `$${(v / 1e6).toFixed(1)}M`} tick={{ fontSize: 10 }} stroke="hsl(215 15% 55%)" />
-              <YAxis type="category" dataKey="ref" tick={{ fontSize: 10 }} stroke="hsl(215 15% 55%)" width={64} />
-              <Tooltip cursor={{ fill: "hsl(222 18% 18% / 0.4)" }} content={({ active, payload }) => (active && payload?.length) ? (
-                <div className="rounded-md p-2 text-[11px]" style={{ background: "hsl(222 18% 12%)", border: "1px solid hsl(222 12% 22%)" }}>
-                  <div className="font-bold text-ai">{payload[0].payload.ref}</div>
-                  <div className="max-w-[220px] text-muted-foreground">{payload[0].payload.title}</div>
-                  <div>P10 {fmt(payload[0].payload.p10)} · P50 {fmt(payload[0].payload.p50)} · P90 {fmt(payload[0].payload.p90)}</div>
-                </div>) : null} />
-              <Bar dataKey="low" stackId="a" fill="transparent" />
-              <Bar dataKey="span" stackId="a" fill="hsl(190 90% 50%)" radius={[3, 3, 3, 3]} />
-            </BarChart>
-          </ChartBox>
+          <div className="space-y-2">
+            {rows.map((i) => {
+              const left = ((i.ale_low || 0) / maxHigh) * 100;
+              const width = Math.max(1.5, (((i.ale_high || 0) - (i.ale_low || 0)) / maxHigh) * 100);
+              const mid = ((i.ale_expected || 0) / maxHigh) * 100;
+              return (
+                <div key={i.ref} data-testid={`fair-band-${i.ref}`} className="flex items-center gap-2">
+                  <div className="w-14 shrink-0 font-mono text-[10px] text-ai text-right truncate" title={i.title}>{i.ref}</div>
+                  <div className="relative flex-1 h-4 rounded-full bg-secondary/50" title={`${i.title} · P10 ${fmt(i.ale_low)} · P50 ${fmt(i.ale_expected)} · P90 ${fmt(i.ale_high)}`}>
+                    <div className="absolute top-0 h-full rounded-full" style={{ left: `${left}%`, width: `${width}%`, background: "hsl(190 90% 50% / 0.55)", border: "1px solid hsl(190 90% 50%)" }} />
+                    <div className="absolute top-[-2px] h-[calc(100%+4px)] w-0.5 bg-white/90" style={{ left: `${mid}%` }} />
+                  </div>
+                  <div className="w-24 shrink-0 text-right font-mono text-[10px] text-muted-foreground">{fmt(i.ale_low)}–{fmt(i.ale_high)}</div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-3 mt-2 text-[10px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1"><span className="w-3 h-2 rounded-sm inline-block" style={{ background: "hsl(190 90% 50% / 0.55)", border: "1px solid hsl(190 90% 50%)" }} /> P10–P90 range</span>
+            <span className="inline-flex items-center gap-1"><span className="w-0.5 h-3 inline-block bg-white/90" /> P50 expected</span>
+          </div>
           <div className="text-[10px] text-muted-foreground mt-1">Bar spans the Monte-Carlo P10–P90 range per risk — longer bars = more uncertainty. Source: modelled SLE × ARO with residual-control scaling (FAIR).</div>
         </div>
-      )}
+        );
+      })()}
       <div className="text-[11px] text-muted-foreground flex items-start gap-2"><BarChart3 className="w-3.5 h-3.5 mt-0.5 shrink-0" /> <span>DBIR medians for context — ransomware {fmt(bench.dbir_ransomware_median)}, BEC {fmt(bench.dbir_bec_median)} ({bench.dbir_source}). Benchmark source: {bench.source} · updated {bench.updated}{bench.checked_at ? ` · last checked ${new Date(bench.checked_at).toLocaleDateString()}` : ""}.</span></div>
 
       <div className="rounded-lg border border-border overflow-x-auto" data-testid="fin-math-table">

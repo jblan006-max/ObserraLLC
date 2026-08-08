@@ -441,6 +441,137 @@ async def board_report_status(job_id: str, user: dict = Depends(get_current_user
     return job
 
 
+async def _all_dashboards_context(org_id: str) -> dict:
+    """Synthesis context pulling from EVERY dashboard so FAIR-AIR reasoning is holistic:
+    financial/FAIR + security scanner + compliance crosswalk + autonomous remediation +
+    threat containment + connectors + threat intel."""
+    from datetime import timedelta
+    fin = await _board_financial_context(org_id)
+    scan = await db.self_scans.find_one({"org_id": org_id}, {"_id": 0}, sort=[("ts", -1)]) or {}
+    ev = await db.scan_evidence.find_one({"org_id": org_id}, {"_id": 0}) or {}
+    since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    jobs = await db.maintenance_jobs.find({"org_id": org_id, "created_at": {"$gte": since}}, {"_id": 0, "status": 1}).to_list(1000)
+    job_counts = {}
+    for j in jobs:
+        job_counts[j.get("status", "?")] = job_counts.get(j.get("status", "?"), 0) + 1
+    contain = await db.containment_events.find({"org_id": org_id}, {"_id": 0, "status": 1, "kind": 1}).to_list(500)
+    activity = await db.autonomy_activity.count_documents({"org_id": org_id, "ts": {"$gte": since}})
+    ent_conns = await db.enterprise_connectors.find({"org_id": org_id}, {"_id": 0, "connected": 1}).to_list(200)
+    conns = await db.connectors.find({"org_id": org_id}, {"_id": 0, "status": 1}).to_list(200)
+    intel = await db.threat_intel.find_one({"org_id": org_id}, {"_id": 0}) or await db.threat_intel.find_one({}, {"_id": 0}) or {}
+    kev_set = intel.get("kev_set") if isinstance(intel.get("kev_set"), dict) else {}
+    connected = len([c for c in ent_conns if c.get("connected")]) + len([c for c in conns if str(c.get("status", "")).lower() in ("connected", "active", "live")])
+    return {
+        **fin,
+        "security_scanner": {
+            "score": scan.get("score"), "severity": scan.get("summary"),
+            "kev_matches": len(scan.get("kev_matches") or []),
+            "vulnerable_dependencies": (scan.get("summary") or {}).get("vulnerable_dependencies"),
+            "mitre_techniques": len(scan.get("mitre_techniques") or []),
+            "cwe_ids": len(scan.get("cwe_ids") or []),
+            "endpoint": scan.get("endpoint"), "scanned_at": scan.get("ts"),
+        },
+        "compliance_crosswalk": {
+            "gaps_by_framework": {k: len(v) for k, v in (ev.get("gaps") or {}).items()},
+            "aligned_by_framework": {k: len(v) for k, v in (ev.get("aligned") or {}).items()},
+        },
+        "autonomous_remediation": {"jobs_30d_by_status": job_counts, "activity_events_30d": activity},
+        "threat_containment": {
+            "total": len(contain),
+            "auto_contained": len([c for c in contain if c.get("status") == "auto-contained"]),
+            "open_review": len([c for c in contain if str(c.get("status", "")).lower() in ("review", "pending", "open")]),
+        },
+        "connectors": {"connected_sources": connected, "catalog_size": len(ent_conns) + len(conns)},
+        "threat_intel": {"kev_count": kev_set.get("count"), "kev_version": kev_set.get("version"),
+                         "updated": intel.get("updated") or intel.get("checked_at")},
+    }
+
+
+async def generate_fair_air_analysis(org_id: str):
+    """LLM-produced FAIR-AIR quantified scenario statements per GenAI risk vector, grounded in org data."""
+    import re as _re
+    try:
+        fin_context = json.dumps(await _all_dashboards_context(org_id), default=str)
+    except Exception:
+        fin_context = "{}"
+    chat = LlmChat(
+        api_key=os.environ["EMERGENT_LLM_KEY"],
+        session_id=f"fair-air-{org_id}",
+        system_message=(
+            "You are a FAIR-AIR analyst (FAIR Institute methodology) quantifying an organisation's AI-related "
+            "cyber risk in financial terms. Ground every number in the provided context (FAIR figures, IBM AI-breach "
+            "and shadow-AI benchmarks, DBIR medians, and the org's AI-system / shadow-AI / incident posture). "
+            "Never invent data beyond reasoned FAIR estimates. The purpose is to enable secure AI adoption, not block it.\n\n"
+            "ADVANCED REASONING MODE — before answering, internally reason in structured steps for EACH vector: "
+            "(1) identify the threat actor, asset and loss event; (2) estimate Loss Event Frequency from the provided "
+            "frequency/benchmark signals; (3) estimate Loss Magnitude from the FAIR Loss-Magnitude and IBM/DBIR figures; "
+            "(4) reason about second-order effects, control weaknesses and the dominant risk driver; (5) derive a defensible "
+            "probability % and $ loss. Do ALL reasoning internally and output ONLY the final JSON array — no working, no prose."
+        ),
+    ).with_model("anthropic", "claude-opus-4-8")
+    prompt = (
+        f"CONTEXT (JSON — SYNTHESIZED FROM ALL DASHBOARDS: FAIR quantification, benchmarks, AI-system posture, "
+        f"security-scanner findings/KEV, compliance crosswalk, autonomous-remediation activity, threat containment, "
+        f"connectors & threat intel):\n{fin_context}\n\n"
+        "Synthesize ACROSS every dashboard above — correlate FAIR exposure with live scan findings, compliance gaps, "
+        "shadow-AI/AI-system posture, containment events and connector coverage — then produce a FAIR-AIR analysis for "
+        "EACH of the 5 GenAI risk vectors: "
+        "\"Shadow GenAI\", \"Foundational LLM\", \"Hosting on LLMs\", \"Managed LLMs\", \"Active cyber attack\".\n"
+        "For each, write a quantified scenario statement in EXACTLY this format:\n"
+        "\"There is a X% probability in the next year that <who> will <event>, which will lead to $Y in losses.\"\n"
+        "- probability_pct: integer 1-40, defensible vs the provided frequency/benchmark data.\n"
+        "- loss_usd: integer $ loss, grounded in the FAIR Loss-Magnitude / benchmark figures.\n"
+        "- key_driver: the single most important risk driver to target (e.g. phishing click-rate among staff with sensitive-data access).\n"
+        "- nist_functions: subset of [\"GOVERN\",\"MAP\",\"MEASURE\",\"MANAGE\"].\n"
+        "- recommended_controls: 2-3 items, each \"<control name> (<NIST AI RMF ref>)\".\n\n"
+        "Return ONLY a JSON array (no markdown, no prose) of objects with keys: "
+        "vector, probability_pct, loss_usd, statement, key_driver, nist_functions, recommended_controls."
+    )
+    collected = []
+    async for ev in chat.stream_message(UserMessage(text=prompt)):
+        if isinstance(ev, TextDelta):
+            collected.append(ev.content)
+        elif isinstance(ev, StreamDone):
+            break
+    raw = "".join(collected).strip()
+    m = _re.search(r"\[.*\]", raw, _re.DOTALL)
+    scenarios = []
+    if m:
+        try:
+            scenarios = json.loads(m.group(0))
+        except Exception:
+            scenarios = []
+    now = datetime.now(timezone.utc).isoformat()
+    return {"scenarios": scenarios, "model": "claude-opus-4-8", "generated_at": now}
+
+
+async def _run_fair_air_job(job_id: str, org_id: str):
+    try:
+        res = await generate_fair_air_analysis(org_id)
+        await db.fair_air_jobs.update_one({"job_id": job_id}, {"$set": {"status": "done", **res}})
+    except Exception as e:
+        await db.fair_air_jobs.update_one({"job_id": job_id}, {"$set": {"status": "error", "error": str(e)}})
+
+
+@advisor_router.post("/fair-air")
+async def fair_air_start(background_tasks: BackgroundTasks, user: dict = Depends(require_active_subscription)):
+    import uuid
+    job_id = uuid.uuid4().hex
+    now = datetime.now(timezone.utc).isoformat()
+    await db.fair_air_jobs.insert_one({"job_id": job_id, "org_id": user["org_id"],
+                                       "by": user["email"], "status": "running", "created_at": now})
+    background_tasks.add_task(_run_fair_air_job, job_id, user["org_id"])
+    return {"job_id": job_id, "status": "running"}
+
+
+@advisor_router.get("/fair-air/{job_id}")
+async def fair_air_status(job_id: str, user: dict = Depends(get_current_user)):
+    job = await db.fair_air_jobs.find_one({"job_id": job_id, "org_id": user["org_id"]}, {"_id": 0})
+    if not job:
+        raise HTTPException(status_code=404, detail="Analysis job not found")
+    return job
+
+
 async def _autonomy_scorecard(org_id: str) -> str:
     from datetime import timedelta
     since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
