@@ -3,29 +3,21 @@ import { api } from "@/lib/api";
 import { SourceBadge, FreshnessBadge } from "@/components/badges";
 import { AIInsight } from "@/components/AIInsight";
 import { StatCard, CardShell, EmptyState, Spinner } from "@/components/dash";
+import { RiskDetailModal } from "@/components/RiskDetailModal";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { AutoActions } from "@/components/AutoActions";
-import { Boxes, Server, ShieldCheck, Network, Laptop, Radio, Lock, X, Cpu, Loader2, RefreshCw, Wrench } from "lucide-react";
+import { Boxes, Server, ShieldCheck, Network, Laptop, Radio, Lock, X, Loader2, RefreshCw, Wrench } from "lucide-react";
 
 const ACCENT = "35 92% 55%"; // Asset Intelligence → amber
 const critColor = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 90% 55%", Low: "142 70% 45%" };
-
-function Kv({ k, v, mono }) {
-  return (
-    <div className="flex items-start justify-between gap-3 text-xs py-1 border-b border-border/40 last:border-0">
-      <span className="text-muted-foreground shrink-0">{k}</span>
-      <span className={`text-right break-all ${mono ? "font-mono" : ""}`}>{v ?? "—"}</span>
-    </div>
-  );
-}
 
 export default function AssetIntelligence() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const [d, setD] = useState(null);
   const [conn, setConn] = useState(null);
-  const [sel, setSel] = useState(null);
+  const [deep, setDeep] = useState(null);
   const [deviceBusy, setDeviceBusy] = useState("");
 
   const loadConn = () => api.get("/self-scan/assets").then((r) => setConn(r.data)).catch(() => setConn(null));
@@ -47,6 +39,34 @@ export default function AssetIntelligence() {
     setDeviceBusy("");
   };
 
+  // Universal Deep-Dive — every asset row opens the same AI-native detail (risk score,
+  // compliance alignment, grounded AI recommendation + fixes) as the rest of the platform.
+  const openAsset = (a) => {
+    const det = a.detail || {};
+    const recs = [];
+    if ((det.cves || 0) > 0) recs.push(`Patch ${det.cves} open CVE(s)${det.kev_matches ? ` incl. ${det.kev_matches} CISA-KEV (actively exploited)` : ""} on this asset, then re-run the live scan.`);
+    const missing = det.security_headers?.missing || [];
+    if (missing.length) recs.push(`Add the missing security headers: ${missing.join(", ")}.`);
+    if (a.exposure >= 45) recs.push("Reduce internet exposure — restrict inbound access and close unused open ports.");
+    if (!recs.length) recs.push("Maintain current hardening; keep dependencies pinned and re-scan on change.");
+    setDeep({
+      refLabel: a.ref, title: a.name, rating: a.criticality,
+      score: det.security_score != null ? det.security_score : a.exposure,
+      complianceRefs: ["NIST RA-5", "NIST SI-2", "ISO A.8.8", "CIS 7.4"],
+      recommendedActions: recs,
+      facets: [
+        { icon: Server, label: "Type", value: a.type },
+        { icon: Network, label: "IP / Host", value: (det.ips || [])[0] || det.host || "not resolved" },
+        { icon: Lock, label: "TLS", value: det.tls?.ok ? `${det.tls.protocol} · ${det.tls.issuer}` : "not verified" },
+        { icon: ShieldCheck, label: "Security score", value: det.security_score != null ? `${det.security_score}/100` : "—" },
+        { icon: Boxes, label: "Open CVEs / KEV", value: `${det.cves ?? 0} CVE · ${det.kev_matches ?? 0} KEV` },
+        { icon: Radio, label: "Exposure", value: `${a.exposure}/100${a.exposure >= 45 ? " · internet-facing" : ""}` },
+      ],
+      explainTitle: a.name, explainKind: "asset network exposure compliance cve remediation",
+      explainContext: { asset: { ref: a.ref, name: a.name, type: a.type, criticality: a.criticality, exposure: a.exposure, detail: det } },
+    });
+  };
+
   if (!d) return <Spinner />;
   const s = d.summary || {};
   const assets = d.assets || [];
@@ -62,7 +82,7 @@ export default function AssetIntelligence() {
         <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2" style={{ color: `hsl(${ACCENT})` }}>
           <Boxes className="w-7 h-7" strokeWidth={1.5} /> Asset Intelligence
         </h1>
-        <p className="text-sm text-muted-foreground mt-1">Live asset inventory enriched with network metadata — IPs, DNS, TLS, open ports, security headers &amp; exposure — from your endpoint scan and connected sources.</p>
+        <p className="text-sm text-muted-foreground mt-1">Live asset inventory enriched with network metadata — IPs, DNS, TLS, open ports, security headers &amp; exposure. Click any asset for an AI deep-dive with risk score, compliance alignment &amp; fixes.</p>
       </div>
 
       {/* KPI row — always present */}
@@ -147,88 +167,50 @@ export default function AssetIntelligence() {
         )}
       </CardShell>
 
-      {/* Inventory table + detail pane */}
-      <div className="md:flex md:gap-5 md:items-start">
-        <div className="min-w-0 flex-1">
-          {assets.length === 0 ? (
-            <CardShell testid="asset-inventory" title="Asset inventory" icon={Server} accent={ACCENT}>
-              <EmptyState icon={Server} text="No assets yet — run a live scan or connect a source to populate your inventory." />
-            </CardShell>
-          ) : (
-            <div className="bg-card fact-border rounded-xl overflow-x-auto" data-testid="asset-inventory">
-              <table className="w-full text-sm min-w-[860px]">
-                <thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border">
-                  <tr>
-                    <th className="text-left px-4 py-3">Ref / Asset</th><th className="text-left px-4 py-3">Type</th>
-                    <th className="text-left px-4 py-3">Crit</th><th className="text-left px-4 py-3">Exposure</th>
-                    <th className="text-left px-4 py-3">IP / Host</th><th className="text-left px-4 py-3">Ports</th>
-                    <th className="text-left px-4 py-3">Source</th>
+      {/* Inventory table — every row opens the universal AI deep-dive */}
+      {assets.length === 0 ? (
+        <CardShell testid="asset-inventory" title="Asset inventory" icon={Server} accent={ACCENT}>
+          <EmptyState icon={Server} text="No assets yet — run a live scan or connect a source to populate your inventory." />
+        </CardShell>
+      ) : (
+        <div className="bg-card fact-border rounded-xl overflow-x-auto" data-testid="asset-inventory">
+          <table className="w-full text-sm min-w-[860px]">
+            <thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border">
+              <tr>
+                <th className="text-left px-4 py-3">Ref / Asset</th><th className="text-left px-4 py-3">Type</th>
+                <th className="text-left px-4 py-3">Crit</th><th className="text-left px-4 py-3">Exposure</th>
+                <th className="text-left px-4 py-3">IP / Host</th><th className="text-left px-4 py-3">Ports</th>
+                <th className="text-left px-4 py-3">Source</th><th className="text-right px-4 py-3">Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {assets.map((a) => {
+                const open = (a.detail?.open_ports || []).filter((p) => p.open);
+                return (
+                  <tr key={a.ref} data-testid={`asset-${a.ref}`} onClick={() => openAsset(a)}
+                    className="border-b border-border/60 hover:bg-secondary/40 transition-colors cursor-pointer">
+                    <td className="px-4 py-3"><div className="font-mono text-xs" style={{ color: `hsl(${ACCENT})` }}>{a.ref}</div><div className="font-medium">{a.name}</div></td>
+                    <td className="px-4 py-3 text-xs text-muted-foreground">{a.type}</td>
+                    <td className="px-4 py-3"><span className="px-2 py-0.5 rounded-sm text-[10px] font-mono font-bold" style={{ background: `hsl(${critColor[a.criticality]} / 0.15)`, color: `hsl(${critColor[a.criticality]})` }}>{a.criticality}</span></td>
+                    <td className="px-4 py-3 w-32">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1 h-2 rounded-full bg-secondary overflow-hidden"><div className="h-full" style={{ width: `${a.exposure}%`, background: a.exposure >= 70 ? "hsl(0 84% 60%)" : a.exposure >= 45 ? "hsl(35 90% 55%)" : "hsl(142 70% 45%)" }} /></div>
+                        <span className="font-mono text-xs w-6">{a.exposure}</span>
+                      </div>
+                    </td>
+                    <td className="px-4 py-3 font-mono text-[11px]">{(a.detail?.ips || [])[0] || <span className="text-muted-foreground/60">not resolved</span>}</td>
+                    <td className="px-4 py-3">{open.length ? <span className="font-mono text-[11px]">{open.map((p) => p.port).join(", ")}</span> : <span className="text-muted-foreground/60 text-xs">—</span>}</td>
+                    <td className="px-4 py-3"><div className="flex flex-col gap-1"><SourceBadge source={a.source} /><FreshnessBadge freshness={a.freshness} /></div></td>
+                    <td className="px-4 py-3 text-right"><span className="text-[10px] font-mono" style={{ color: `hsl(${ACCENT})` }}>Deep-dive →</span></td>
                   </tr>
-                </thead>
-                <tbody>
-                  {assets.map((a) => {
-                    const open = (a.detail?.open_ports || []).filter((p) => p.open);
-                    return (
-                      <tr key={a.ref} data-testid={`asset-${a.ref}`} onClick={() => setSel(a)}
-                        className={`border-b border-border/60 hover:bg-secondary/40 transition-colors cursor-pointer ${sel?.ref === a.ref ? "bg-secondary/50" : ""}`}>
-                        <td className="px-4 py-3"><div className="font-mono text-xs" style={{ color: `hsl(${ACCENT})` }}>{a.ref}</div><div className="font-medium">{a.name}</div></td>
-                        <td className="px-4 py-3 text-xs text-muted-foreground">{a.type}</td>
-                        <td className="px-4 py-3"><span className="px-2 py-0.5 rounded-sm text-[10px] font-mono font-bold" style={{ background: `hsl(${critColor[a.criticality]} / 0.15)`, color: `hsl(${critColor[a.criticality]})` }}>{a.criticality}</span></td>
-                        <td className="px-4 py-3 w-32">
-                          <div className="flex items-center gap-2">
-                            <div className="flex-1 h-2 rounded-full bg-secondary overflow-hidden"><div className="h-full" style={{ width: `${a.exposure}%`, background: a.exposure >= 70 ? "hsl(0 84% 60%)" : a.exposure >= 45 ? "hsl(35 90% 55%)" : "hsl(142 70% 45%)" }} /></div>
-                            <span className="font-mono text-xs w-6">{a.exposure}</span>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 font-mono text-[11px]">{(a.detail?.ips || [])[0] || <span className="text-muted-foreground/60">not resolved</span>}</td>
-                        <td className="px-4 py-3">{open.length ? <span className="font-mono text-[11px]">{open.map((p) => p.port).join(", ")}</span> : <span className="text-muted-foreground/60 text-xs">—</span>}</td>
-                        <td className="px-4 py-3"><div className="flex flex-col gap-1"><SourceBadge source={a.source} /><FreshnessBadge freshness={a.freshness} /></div></td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
+                );
+              })}
+            </tbody>
+          </table>
         </div>
+      )}
 
-        {sel && (
-          <aside data-testid="asset-detail-pane" className="hidden md:block md:w-80 shrink-0 md:sticky md:top-28 bg-card fact-border rounded-xl p-4 space-y-3" style={{ borderTop: `2px solid hsl(${ACCENT})` }}>
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0"><div className="font-mono text-[11px]" style={{ color: `hsl(${ACCENT})` }}>{sel.ref}</div><div className="font-head font-bold text-sm truncate">{sel.name}</div></div>
-              <button data-testid="asset-detail-close" onClick={() => setSel(null)} className="shrink-0 text-muted-foreground hover:text-foreground"><X className="w-4 h-4" /></button>
-            </div>
-            <div className="space-y-0.5">
-              <Kv k="Host" v={sel.detail?.host} mono />
-              <Kv k="IP addresses" v={(sel.detail?.ips || []).join(", ") || "not resolved"} mono />
-              <Kv k="Server" v={sel.detail?.server} />
-              <Kv k="TLS" v={sel.detail?.tls?.ok ? `${sel.detail.tls.protocol} · ${sel.detail.tls.issuer}` : "not verified"} />
-              <Kv k="Cert expires" v={sel.detail?.tls?.not_after} mono />
-              <Kv k="Security score" v={sel.detail?.security_score != null ? `${sel.detail.security_score}/100` : null} mono />
-              <Kv k="Open CVEs" v={sel.detail?.cves} mono />
-              <Kv k="KEV matches" v={sel.detail?.kev_matches} mono />
-              <Kv k="MITRE techniques" v={sel.detail?.mitre_techniques} mono />
-              <Kv k="CWE weaknesses" v={sel.detail?.cwe_ids} mono />
-            </div>
-            <div>
-              <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1"><Network className="w-3 h-3" /> Open ports</div>
-              <div className="flex flex-wrap gap-1.5">
-                {(sel.detail?.open_ports || []).length === 0 ? <span className="text-xs text-muted-foreground">No port data.</span> :
-                  sel.detail.open_ports.map((p) => (
-                    <span key={p.port} className={`text-[10px] font-mono px-2 py-0.5 rounded-sm border ${p.open ? "bg-low/10 text-low border-low/20" : "bg-secondary/40 text-muted-foreground border-border"}`}>{p.port} {p.service}{p.open ? "" : " ·closed"}</span>
-                  ))}
-              </div>
-            </div>
-            <div>
-              <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5 flex items-center gap-1"><Cpu className="w-3 h-3" /> Technologies</div>
-              <div className="flex flex-wrap gap-1.5">
-                {(sel.detail?.technologies || []).length === 0 ? <span className="text-xs text-muted-foreground">—</span> :
-                  sel.detail.technologies.map((t, i) => <span key={i} className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-secondary/40">{t}</span>)}
-              </div>
-            </div>
-          </aside>
-        )}
-      </div>
+      <RiskDetailModal item={deep} accent={ACCENT} onClose={() => setDeep(null)} />
     </div>
   );
 }

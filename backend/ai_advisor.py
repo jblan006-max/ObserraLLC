@@ -11,6 +11,7 @@ from db import db
 from auth import get_current_user, require_active_subscription, require_roles
 from bson import ObjectId
 from kernel import notifications
+import asyncio
 from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
 
 advisor_router = APIRouter(prefix="/api/advisor")
@@ -22,6 +23,11 @@ MODEL_ROUTES = {
     "operational": ("anthropic", "claude-opus-4-8"),
     "ingestion": ("gemini", "gemini-3.1-pro-preview"),
 }
+
+# Fast model for latency-sensitive INLINE cards (dashboard insight + click deep-dive) so
+# dashboards stay snappy. Heavy board-grade synthesis (reports, FAIR-AIR) keeps the frontier
+# model above.
+CARD_MODEL = ("anthropic", "claude-sonnet-5")
 
 # User-selectable advisor models ("Connect to model"). These identifiers are already
 # verified against emergentintegrations elsewhere in this file (FAIR-AIR + board reports).
@@ -338,6 +344,75 @@ async def set_advisor_model(body: ModelPref, user: dict = Depends(get_current_us
     return {"default": mid, "connected": bool(mid)}
 
 
+_LLM_TIMEOUT = 15
+
+
+async def _collect_stream(chat, prompt, timeout=_LLM_TIMEOUT):
+    """Stream an LLM response with a HARD timeout so a slow/stalled model can never hang the UI."""
+    collected = []
+
+    async def _run():
+        async for ev in chat.stream_message(UserMessage(text=prompt)):
+            if isinstance(ev, TextDelta):
+                collected.append(ev.content)
+            elif isinstance(ev, StreamDone):
+                break
+    await asyncio.wait_for(_run(), timeout=timeout)
+    return "".join(collected).strip()
+
+
+def _num(ctx, *keys):
+    for k in keys:
+        v = ctx.get(k) if isinstance(ctx, dict) else None
+        if isinstance(v, (int, float)) and v:
+            return v
+    return None
+
+
+def _explain_fallback(title, kind, ctx, provider, model, now):
+    """Deterministic, grounded fallback for a clicked item when the LLM is slow/unavailable —
+    never a blank spinner. Pulls any live numbers present in the supplied context."""
+    ctx = ctx or {}
+    inner = {}
+    for v in ctx.values():
+        if isinstance(v, dict):
+            inner = {**inner, **v}
+    ale = _num(ctx, "residual_ale", "ale") or _num(inner, "residual_ale", "ale_at_stake", "loss_magnitude")
+    score = _num(ctx, "score", "exploitability_score") or _num(inner, "score")
+    comp = _num(ctx, "compliance_pct") or _num(inner, "compliance_pct")
+    bits = []
+    if ale:
+        bits.append(f"~${ale:,.0f} annualized loss exposure")
+    if score:
+        bits.append(f"exploitability {int(score)}/100")
+    if comp is not None:
+        bits.append(f"{int(comp)}% control coverage in this area")
+    detail = "; ".join(bits) if bits else "correlated from your live risk model"
+    return {
+        "summary": f"{title} — {detail}. Drawn live from your correlated model (assets ↔ vulnerabilities ↔ controls).",
+        "recommendation": ("Prioritise the highest-$ open remediation and close the weakest control area to cut this exposure."
+                           if ale else "Review the underlying finding and align it to its mapped controls to reduce residual risk."),
+        "steps": ["Open the linked finding / asset for the full evidence trail",
+                  "Apply the recommended fix in a canary first, then re-run the live scan to confirm",
+                  "Confirm the mapped controls flip to aligned in the compliance crosswalk"],
+        "severity": "risk" if (score and score >= 55) or (ale and ale >= 1_000_000) else "watch",
+        "model": "deterministic-fallback", "generated_at": now.isoformat(),
+    }
+
+
+def _insight_fallback(dashboard, ctx, provider, model, now):
+    """Deterministic dashboard insight when the LLM is slow/unavailable."""
+    return {
+        "headline": f"{dashboard}: live signals summarized from your correlated risk model.",
+        "insights": [
+            {"text": "Figures below are computed live from connected scans, findings and controls.", "kind": "fact"},
+            {"text": "Open the highest-$ items for a full AI deep-dive with grounded recommendations.", "kind": "estimate"},
+        ],
+        "actions": ["Click any row / card to open its deep-dive", "Run a live scan to refresh the newest posture"],
+        "model": "deterministic-fallback", "generated_at": now.isoformat(),
+    }
+
+
 class InsightReq(BaseModel):
     dashboard: str
     mode: str = "executive"
@@ -360,10 +435,7 @@ async def advisor_insight(body: InsightReq, user: dict = Depends(require_active_
     if await _is_paused(org_id):
         raise HTTPException(status_code=429, detail="Advisor paused: monthly spend cap reached.")
     ctx = await _dashboard_context(org_id, body.dashboard)
-    provider, model = MODEL_ROUTES["executive"]
-    chosen = (await db.organizations.find_one({"_id": ObjectId(org_id)}, {"advisor_model": 1}) or {}).get("advisor_model")
-    if chosen and chosen in _MODEL_PROVIDER:
-        provider, model = _MODEL_PROVIDER[chosen], chosen
+    provider, model = CARD_MODEL
     system = (
         "You are the Obserra EIOS Advisor generating a CONCISE, board-grade AI insight card for the "
         f"'{body.dashboard}' dashboard in {body.mode} mode. Ground every point in the provided live context; "
@@ -377,16 +449,10 @@ async def advisor_insight(body: InsightReq, user: dict = Depends(require_active_
                    session_id=f"insight-{org_id}-{body.dashboard}", system_message=system).with_model(provider, model)
     prompt = (f"DASHBOARD: {body.dashboard}\nLIVE CONTEXT (JSON):\n{json.dumps(ctx, default=str)[:12000]}\n\n"
               "Produce the insight JSON now.")
-    collected = []
     try:
-        async for ev in chat.stream_message(UserMessage(text=prompt)):
-            if isinstance(ev, TextDelta):
-                collected.append(ev.content)
-            elif isinstance(ev, StreamDone):
-                break
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Advisor unavailable: {e}")
-    raw = "".join(collected).strip()
+        raw = await _collect_stream(chat, prompt, timeout=18)
+    except Exception:
+        return _insight_fallback(body.dashboard, ctx, provider, model, now)
     mm = _re.search(r"\{.*\}", raw, _re.S)
     try:
         data = json.loads(mm.group(0)) if mm else {}
@@ -430,10 +496,7 @@ async def advisor_explain(body: ExplainReq, user: dict = Depends(require_active_
         return cached["data"]
     if await _is_paused(org_id):
         raise HTTPException(status_code=429, detail="Advisor paused: monthly spend cap reached.")
-    provider, model = MODEL_ROUTES["executive"]
-    chosen = (await db.organizations.find_one({"_id": ObjectId(org_id)}, {"advisor_model": 1}) or {}).get("advisor_model")
-    if chosen and chosen in _MODEL_PROVIDER:
-        provider, model = _MODEL_PROVIDER[chosen], chosen
+    provider, model = CARD_MODEL
     system = (
         "You are the Obserra EIOS Advisor. A user clicked a single item; explain what it is and why it "
         "matters, then give ONE crisp, actionable recommendation. Ground every statement strictly in the "
@@ -447,16 +510,10 @@ async def advisor_explain(body: ExplainReq, user: dict = Depends(require_active_
     merged_ctx = {**(body.context or {}), "unified_risk_correlation": await _engine_summary_safe(org_id)}
     prompt = (f"ITEM: {body.title}\nKIND: {body.kind}\nCONTEXT (JSON):\n"
               f"{json.dumps(merged_ctx, default=str)[:6000]}\n\nProduce the JSON now.")
-    collected = []
     try:
-        async for ev in chat.stream_message(UserMessage(text=prompt)):
-            if isinstance(ev, TextDelta):
-                collected.append(ev.content)
-            elif isinstance(ev, StreamDone):
-                break
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Advisor unavailable: {e}")
-    raw = "".join(collected).strip()
+        raw = await _collect_stream(chat, prompt, timeout=14)
+    except Exception:
+        return _explain_fallback(body.title, body.kind, merged_ctx, provider, model, now)
     mm = _re.search(r"\{.*\}", raw, _re.S)
     try:
         data = json.loads(mm.group(0)) if mm else {}

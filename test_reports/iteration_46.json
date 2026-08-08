@@ -1,0 +1,48 @@
+{
+  "summary": "Iter46 — Performance no-hang fix + Asset Deep-Dive (compliance chips) + regressions all verified. Backend 9/9 pytest PASS in 1.60s. Frontend acceptance verified against https://cyber-dashboard-48.preview.emergentagent.com with jblan2026@gmail.com. Deep-dive modal opens INSTANTLY (asset ~132ms, spend ~88ms) with deterministic content; AIExplain resolves in 5–12s and never spins forever. Remediations page loads in 1.19s (correlate 6s TTL cache confirmed). No-Mock dep-ecdsa honest failure, verify-connectors (stripe 200 / clerk NOT CONFIGURED), 12+ ledger rows, exec-briefing all working. Restored dep-ecdsa to Open.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verified_backend": [
+    "POST /api/auth/login 200 (cookie-based)",
+    "GET /api/risk-engine/{strategic,tactical,exposure,compliance} — 4 lenses total <25s with 6s TTL correlate cache (empirically ~4–6s warm)",
+    "GET /api/risk-engine/economics — tprm.total_premium=0, spend.blended_roi≈26.9",
+    "GET /api/risk-engine/strategic — includes economics.{tprm,spend}",
+    "POST /api/risk-engine/task/dep-ecdsa/action {remediate} — ok=false, verified=false, status=Open, provider=osv.dev, message 'no fixed release for CVE-2024-23342', ledger_id present",
+    "POST /api/risk-engine/verify-connectors — stripe.ok=true, clerk.configured=false",
+    "GET /api/risk-engine/ledger — >=1 entries",
+    "POST /api/risk-engine/task/dep-ecdsa/status {Open} — restore OK"
+  ],
+  "verified_frontend": [
+    "/app/assets — all KPIs (asset-kpi-total/exposed/tls/exposure/kev/cves) + asset-criticality/headers/sources/devices present",
+    "asset-AST-ENDPOINT row click → deep-dive-modal opened in 132ms",
+    "deep-dive-scores shows 'Medium RISK · Score 88/100'; deep-dive-compliance shows 'NIST RA-5, NIST SI-2, ISO A.8.8, CIS 7.4' chips",
+    "Modal contains: Type, Security score, CVE, Exposure, Recommended actions, AI INSIGHT, 'No open remediation task is linked' note — all deterministic content visible instantly",
+    "AIExplain panel resolved in ~5s with anthropic/claude-sonnet-5 grounded response",
+    "/app/spend-governance — sg-month-card click opens sg-detail-modal in 88ms; AI resolves in ~12s (no infinite spinner)",
+    "/app/remediations — page ready in 1.19s; rem-kpi-ale=$9.6M (unchanged after execute-fix)",
+    "rem-queue-dep-ecdsa click → deep-dive-modal → action-execute-fix → HONEST action-result-message: 'OSV.dev reports NO fixed release for CVE-2024-23342 in ecdsa 0.19.2...'",
+    "rem-verify-run → rem-verify-stripe (HTTP 200 green) + rem-verify-clerk (NOT CONFIGURED red)",
+    "rem-ledger — 12 ledger-row-* entries with Raw evidence toggles",
+    "/app — exec-briefing, exec-tprm, exec-spend all rendered"
+  ],
+  "critical_code_review_comments": [
+    "OnboardingTour overlay (data-testid=onboarding-tour, z-9997) intercepts clicks on first login for a user. Tests must remove it or click Skip. This is an existing UX quirk but could hurt automated E2E flows and first-time users clicking through it. Consider auto-dismissing after user interaction elsewhere or lowering z-index once dismissed via localStorage flag.",
+    "risk_engine.py at 704 lines — still worth splitting connector dispatch (carried over from iter45).",
+    "Frontend AssetIntelligence.jsx now correctly reuses RiskDetailModal — clean unification of deep-dive pattern across Assets/Remediations/Spend.",
+    "Frontend api.js 30000ms axios backstop is good; AIExplain _collect_stream 18s/14s timeout works — insight resolved live in ~5s during test, no fallback observed (fallback path exists as safety net).",
+    "SpendGovernance.jsx does NOT expose sg-row-* testids as the request implied — actual clickable rows are sg-month-card, sg-user-<user>, sg-audit-<i>, sg-theme-<term>. All open sg-detail-modal correctly. Just a review-request wording mismatch, not a bug."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iter46_perf_asset.py",
+    "/app/test_reports/pytest/iter46.xml"
+  ],
+  "action_items": [],
+  "updated_files": ["/app/backend/tests/test_iter46_perf_asset.py (NEW)"],
+  "success_rate": {"backend": "100% (9/9 pytest)", "frontend": "100% — all acceptance criteria verified"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin, live_only org). Cookie-based auth (token cookie).",
+  "seed_data_creation": "None. dep-ecdsa restored to Open in pytest fixture teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "OnboardingTour modal (data-testid=onboarding-tour, z-9997) blocks Playwright clicks after login — always either click text=Skip or evaluate `document.querySelector('[data-testid=onboarding-tour]')?.remove()` before interacting. SpendGovernance rows use sg-month-card / sg-user-<u> / sg-audit-<i> testids (not sg-row-*). AssetIntelligence rows use asset-<REF> and open RiskDetailModal (data-testid=deep-dive-modal) with deep-dive-scores + deep-dive-compliance chips. Deep-dive modals render deterministic content INSTANTLY; AIExplain panel takes 5–12s live. Correlate cache TTL is 6s — repeated GETs of lenses within 6s are near-instant. Always restore dep-ecdsa: POST /api/risk-engine/task/dep-ecdsa/status {status:'Open'}.",
+  "rca of the issue": "N/A — no bugs. Performance fix (correlate 6s TTL + AIExplain 18s/14s asyncio.wait_for with deterministic fallback + axios 30s backstop + CARD_MODEL=claude-sonnet-5) is working end-to-end. Deep-dive modals no longer hang: deterministic chips/facets/recommended actions render immediately, AI panel resolves within seconds."
+}

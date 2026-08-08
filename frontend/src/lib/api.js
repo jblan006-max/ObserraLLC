@@ -3,7 +3,7 @@ import axios from "axios";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
-export const api = axios.create({ baseURL: API, withCredentials: true });
+export const api = axios.create({ baseURL: API, withCredentials: true, timeout: 30000 });
 
 api.interceptors.response.use(
   (r) => r,

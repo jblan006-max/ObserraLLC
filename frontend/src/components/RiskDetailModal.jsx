@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { X, Loader2, Wrench, ShieldX, Users, CheckCircle2, XCircle, Clock, Terminal } from "lucide-react";
+import { X, Loader2, Wrench, ShieldX, Users, CheckCircle2, XCircle, Clock, Terminal, ShieldCheck } from "lucide-react";
 import { AIExplain } from "@/components/AIExplain";
 
 const RATE = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 90% 55%", Low: "142 70% 45%" };
@@ -73,6 +73,20 @@ export function RiskDetailModal({ item, accent = "255 85% 66%", busy, result, on
           {item.ale != null && <span className="text-xs font-mono font-bold px-3 py-1 rounded-full" style={{ background: "hsl(15 80% 55% / 0.15)", color: "hsl(15 80% 55%)" }}>ALE {money(item.ale)}</span>}
           {item.exceedsAppetite && <span className="text-xs font-mono px-3 py-1 rounded-full bg-crit/15 text-crit">⚠ Exceeds appetite</span>}
         </div>
+
+        {/* Compliance alignment — always shown so every deep-dive maps risk → controls */}
+        {(item.compliancePct != null || item.complianceRefs?.length > 0) && (
+          <div data-testid="deep-dive-compliance" className="rounded-lg bg-secondary/40 p-3">
+            <div className="flex items-center gap-1.5 text-[9px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5">
+              <ShieldCheck className="w-3 h-3" /> Compliance alignment{item.compliancePct != null && <span className="text-foreground/70"> · {item.compliancePct}% area coverage</span>}
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {(item.complianceRefs || []).length === 0
+                ? <span className="text-[11px] text-muted-foreground">Mapped controls populate as findings correlate.</span>
+                : item.complianceRefs.map((c) => <span key={c} className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm bg-secondary/70">{c}</span>)}
+            </div>
+          </div>
+        )}
 
         {/* Who / What / When / Where / Why */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" data-testid="deep-dive-facets">

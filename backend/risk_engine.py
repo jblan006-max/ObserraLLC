@@ -10,6 +10,7 @@ and Risk Scores, then pipes that correlated data into four functional lenses:
 Everything is computed LIVE (no seeds/placeholders). The Risk Rating incorporates the compliance
 coverage % of the item's area (e.g. an area only 37% compliant escalates the rating)."""
 import asyncio
+import time
 import uuid
 from datetime import datetime, timezone
 
@@ -19,6 +20,9 @@ from auth import get_current_user, require_roles
 from db import db
 
 risk_engine_router = APIRouter(prefix="/api/risk-engine")
+
+_CORR_CACHE = {}
+_CORR_TTL = 6
 
 SEV_ORDER = ["info", "low", "medium", "high", "critical"]
 SEV_WEIGHT = {"critical": 100, "high": 70, "medium": 40, "low": 15, "info": 5}
@@ -109,8 +113,12 @@ def unified_rating(residual, compliance_pct, kev=False, worst_sev=None):
     return rating, score
 
 
-async def correlate(org_id: str) -> dict:
+async def correlate(org_id: str, use_cache: bool = False) -> dict:
     """Join assets ↔ live findings/CVEs ↔ risks ↔ controls into one correlated model."""
+    if use_cache:
+        hit = _CORR_CACHE.get(org_id)
+        if hit and (time.time() - hit[0]) < _CORR_TTL:
+            return hit[1]
     from routes import (_get_fin_cfg, _fin, _asset_crit_index, _rating_label,
                         _control_status, _ensure_controls, _benchmark)
 
@@ -424,7 +432,7 @@ async def correlate(org_id: str) -> dict:
     }
     economics = {"tprm": tprm, "spend": spend}
 
-    return {
+    result = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "endpoint": scan.get("endpoint"), "scan_score": scan.get("score"), "benchmark": benchmark,
         "economics": economics,
@@ -443,12 +451,14 @@ async def correlate(org_id: str) -> dict:
         "appetite": {"total": appetite, "per_risk_threshold": per_risk_threshold}, "drift": drift,
         "findings_summary": {s: summary.get(s, 0) for s in ["critical", "high", "medium", "low", "info"]},
     }
+    _CORR_CACHE[org_id] = (time.time(), result)
+    return result
 
 
 async def engine_summary(org_id: str) -> dict:
     """Compact correlation summary injected into every AI 'Analyze' path so the reasoning is
     consistent across dashboards (same unified model everywhere)."""
-    c = await correlate(org_id)
+    c = await correlate(org_id, use_cache=True)
     return {
         "portfolio": c["portfolio"],
         "compliance": c["compliance"],
@@ -471,12 +481,12 @@ async def engine_summary(org_id: str) -> dict:
 
 @risk_engine_router.get("")
 async def engine_all(user: dict = Depends(get_current_user)):
-    return await correlate(user["org_id"])
+    return await correlate(user["org_id"], use_cache=True)
 
 
 @risk_engine_router.get("/strategic")
 async def engine_strategic(user: dict = Depends(get_current_user)):
-    c = await correlate(user["org_id"])
+    c = await correlate(user["org_id"], use_cache=True)
     top = c["risks"][:10]
     p = c["portfolio"]
     b = c["benchmark"]
@@ -495,13 +505,13 @@ async def engine_strategic(user: dict = Depends(get_current_user)):
 async def engine_economics(user: dict = Depends(get_current_user)):
     """Enterprise economics lens — TPRM vendor risk premium + security-spend optimization
     (every modelled remediation dollar tied to ALE reduction)."""
-    c = await correlate(user["org_id"])
+    c = await correlate(user["org_id"], use_cache=True)
     return {"economics": c["economics"], "portfolio": c["portfolio"], "generated_at": c["generated_at"]}
 
 
 @risk_engine_router.get("/tactical")
 async def engine_tactical(user: dict = Depends(get_current_user)):
-    c = await correlate(user["org_id"])
+    c = await correlate(user["org_id"], use_cache=True)
     return {"tasks": c["tasks"], "pipeline": c["pipeline"], "coverage": c["coverage"],
             "areas": c["areas"], "appetite": c["appetite"], "open_findings": c["portfolio"]["open_findings"],
             "findings_summary": c["findings_summary"], "generated_at": c["generated_at"]}
@@ -509,7 +519,7 @@ async def engine_tactical(user: dict = Depends(get_current_user)):
 
 @risk_engine_router.get("/exposure")
 async def engine_exposure(user: dict = Depends(get_current_user)):
-    c = await correlate(user["org_id"])
+    c = await correlate(user["org_id"], use_cache=True)
     return {"assets": c["assets"], "risks": c["risks"], "portfolio": c["portfolio"],
             "exposure_map": c["exposure_map"], "appetite": c["appetite"],
             "endpoint": c["endpoint"], "generated_at": c["generated_at"]}
@@ -517,7 +527,7 @@ async def engine_exposure(user: dict = Depends(get_current_user)):
 
 @risk_engine_router.get("/compliance")
 async def engine_compliance(user: dict = Depends(get_current_user)):
-    c = await correlate(user["org_id"])
+    c = await correlate(user["org_id"], use_cache=True)
     items = [{"ref": r["ref"], "title": r["title"], "area": r["category"],
               "rating": r["rating"], "score": r["score"], "probability": r["probability"],
               "impact": r["impact"], "residual_ale": r["residual_ale"],
