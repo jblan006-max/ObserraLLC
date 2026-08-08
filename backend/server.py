@@ -6,6 +6,7 @@ import os
 import logging
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 
 from db import db, client
 from auth import auth_router, seed_admin
@@ -71,6 +72,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Compress large JSON/text responses (e.g. the 67KB connector catalog, correlation payloads) so
+# they transfer + parse faster in the browser. Browsers set Accept-Encoding automatically.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 # Signed session cookie for OAuth state/nonce (Apple form_post + OIDC via Authlib).

@@ -22,7 +22,7 @@ from db import db
 risk_engine_router = APIRouter(prefix="/api/risk-engine")
 
 _CORR_CACHE = {}
-_CORR_TTL = 6
+_CORR_TTL = 30
 
 SEV_ORDER = ["info", "low", "medium", "high", "critical"]
 SEV_WEIGHT = {"critical": 100, "high": 70, "medium": 40, "low": 15, "info": 5}
