@@ -47,7 +47,7 @@ export function AIInsight({ dashboard, accent = "190 90% 50%", auto = false, slu
               className="flex items-center gap-1.5 text-[11px] font-head font-bold px-3 py-1 rounded-full disabled:opacity-50 transition-transform active:scale-95 shrink-0"
               style={{ background: `hsl(${accent})`, color: "#050810" }}>
               {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />}
-              {data ? "Refresh" : "Analyze"}
+              Analyze
             </button>
           </div>
           <div className="text-[10px] font-mono text-muted-foreground truncate">

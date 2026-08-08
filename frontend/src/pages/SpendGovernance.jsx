@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Wallet, Loader2, Download, Search, Brain, Gauge } from "lucide-react";
+import { AIInsight } from "@/components/AIInsight";
+
+const SG_ACCENT = "266 85% 66%";
 
 export default function SpendGovernance() {
   const [s, setS] = useState(null);
@@ -40,6 +43,8 @@ export default function SpendGovernance() {
         <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><Wallet className="w-7 h-7 text-primary" /> AI Spend & Governance</h1>
         <p className="text-sm text-muted-foreground mt-1">Advisor budgets, cost controls, per-teammate spend and prompt audit — powered by Claude Opus 4.8 usage.</p>
       </div>
+
+      <AIInsight dashboard="AI Spend & Governance" accent={SG_ACCENT} auto slug="spend-governance" />
 
       <div className="grid lg:grid-cols-3 gap-4">
         <div className="bg-card fact-border rounded-xl p-5"><div className="text-[10px] font-mono uppercase text-muted-foreground flex items-center gap-1.5"><Gauge className="w-3.5 h-3.5" /> This month</div><div className="font-head font-black text-3xl mt-1">${s.month_cost_usd?.toFixed(2)}</div><div className="text-xs text-muted-foreground mt-1">{s.total_tokens?.toLocaleString()} tokens · {s.queries} queries all-time</div></div>

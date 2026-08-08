@@ -2,12 +2,40 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { ShieldAlert, Loader2, Layers, PlayCircle, Gauge, ShieldCheck, TrendingDown, Calculator, BarChart3, Building2, RefreshCw, Sparkles, FileText, Clock, Target, Activity, BookOpen, Cpu, Crosshair, ChevronDown } from "lucide-react";
+import { ShieldAlert, Loader2, Layers, PlayCircle, Gauge, ShieldCheck, TrendingDown, Calculator, BarChart3, Building2, RefreshCw, Sparkles, FileText, Clock, Target, Activity, BookOpen, Cpu, Crosshair, ChevronDown, X, ChevronRight } from "lucide-react";
 import { Line, XAxis, YAxis, Tooltip, ComposedChart, Area, ReferenceDot } from "recharts";
 import { ChartBox } from "@/components/ChartBox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AIInsight } from "@/components/AIInsight";
+import { AIFix } from "@/components/AIFix";
 
+const FAIR_ACCENT = "350 80% 58%";
 const TIER = (residual) => residual >= 16 ? "0 84% 60%" : residual >= 9 ? "35 90% 55%" : "142 70% 45%";
+
+function RiskModal({ risk, onClose }) {
+  if (!risk) return null;
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div data-testid="cyber-risk-modal" onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-xl max-h-[86vh] overflow-y-auto bg-card border rounded-2xl p-6 space-y-4 rise"
+        style={{ borderColor: `hsl(${FAIR_ACCENT} / 0.4)`, boxShadow: `inset 0 1px 0 hsl(${FAIR_ACCENT} / 0.3)` }}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="font-mono text-[11px]" style={{ color: `hsl(${FAIR_ACCENT})` }}>{risk.ref}</div>
+            <div className="font-head font-black text-xl tracking-tight break-words">{risk.title}</div>
+            <div className="text-xs text-muted-foreground">{risk.owner || "unassigned"} · {risk.status}</div>
+          </div>
+          <button data-testid="cyber-risk-modal-close" onClick={onClose} className="shrink-0 text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[11px] font-mono font-bold px-2.5 py-1 rounded-full" style={{ background: `hsl(${TIER(risk.residual)} / 0.15)`, color: `hsl(${TIER(risk.residual)})` }}>Residual {risk.residual}/25</span>
+          {risk.inherent != null && <span className="text-[10px] font-mono px-2 py-1 rounded-full bg-secondary/60 text-muted-foreground">Inherent {risk.inherent}/25</span>}
+        </div>
+        <AIFix entity="risk" refId={risk.ref} accent={FAIR_ACCENT} />
+      </div>
+    </div>
+  );
+}
 
 function Stat({ label, value, unit, icon: Icon, accent }) {
   return (
@@ -26,6 +54,7 @@ export default function CyberRisk() {
   const isExec = mode === "executive";
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState("");
+  const [selRisk, setSelRisk] = useState(null);
 
   const load = () => api.get("/cyber/overview").then((r) => setData(r.data));
   useEffect(() => { load(); }, []);
@@ -52,6 +81,8 @@ export default function CyberRisk() {
         </div>
       </div>
 
+      <AIInsight dashboard="Risk (FAIR)" accent={FAIR_ACCENT} auto slug="cyber-risk-fair" />
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Stat label="Posture score" value={data.posture_score} unit="" icon={Gauge} accent="142 70% 45%" />
         <Stat label="Risk mitigation" value={data.mitigation_pct} unit="%" icon={TrendingDown} />
@@ -69,23 +100,27 @@ export default function CyberRisk() {
             {data.risks.length === 0 ? (
               <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">No cyber risks recorded.</td></tr>
             ) : data.risks.map((r) => (
-              <tr key={r.ref} data-testid={`cyber-risk-${r.ref}`} className="border-b border-border/60 hover:bg-secondary/40 transition-colors">
+              <tr key={r.ref} data-testid={`cyber-risk-${r.ref}`} onClick={() => setSelRisk(r)} className="border-b border-border/60 hover:bg-secondary/40 transition-colors cursor-pointer">
                 <td className="px-4 py-3"><div className="font-mono text-xs text-ai">{r.ref}</div><div className="font-medium">{r.title}</div></td>
                 <td className="px-4 py-3 text-muted-foreground">{r.owner || "—"}</td>
                 <td className="px-4 py-3">{r.status}</td>
                 <td className="px-4 py-3"><span className="px-2 py-0.5 rounded-sm text-[10px] font-mono font-bold" style={{ background: `hsl(${TIER(r.residual)} / 0.15)`, color: `hsl(${TIER(r.residual)})` }}>{r.residual}/25</span></td>
                 <td className="px-4 py-3 text-right">
-                  {isAdmin && !isExec ? <button data-testid={`treat-${r.ref}`} disabled={!!busy} onClick={() => treat(r.ref)} className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 disabled:opacity-50">{busy === r.ref ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />} Treat</button> : <span className="text-[11px] text-muted-foreground">—</span>}
+                  <div className="inline-flex items-center gap-2">
+                    {isAdmin && !isExec && <button data-testid={`treat-${r.ref}`} disabled={!!busy} onClick={(e) => { e.stopPropagation(); treat(r.ref); }} className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 disabled:opacity-50">{busy === r.ref ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />} Treat</button>}
+                    <span className="text-[10px] font-mono text-ai flex items-center gap-0.5 whitespace-nowrap">AI fix <ChevronRight className="w-3.5 h-3.5" /></span>
+                  </div>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      <p className="text-[11px] text-muted-foreground">Treating a risk opens a remediation workflow and alerts owners — proving the kernel loop.</p>
+      <p className="text-[11px] text-muted-foreground">Click any risk for its AI risk rating, the reasoning behind it, and the recommended fix. Treating a risk opens a remediation workflow and alerts owners — proving the kernel loop.</p>
 
       <FairDashboard overview={data} />
       <FinancialBasis isAdmin={isAdmin} />
+      <RiskModal risk={selRisk} onClose={() => setSelRisk(null)} />
     </div>
   );
 }

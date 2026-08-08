@@ -3,6 +3,9 @@ import ReactFlow, { Background, Controls } from "reactflow";
 import "reactflow/dist/style.css";
 import { api } from "@/lib/api";
 import { Network, Loader2, Sparkle, Send } from "lucide-react";
+import { AIInsight } from "@/components/AIInsight";
+
+const KG_ACCENT = "225 70% 60%";
 
 const TYPE = {
   ai: { color: "190 90% 50%", x: 3 }, data: { color: "280 70% 60%", x: 5 },
@@ -81,6 +84,8 @@ export default function KnowledgeGraph() {
         <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><Network className="w-7 h-7 text-primary" /> Enterprise Knowledge Graph</h1>
         <p className="text-sm text-muted-foreground mt-1">Business units ↔ AI ↔ data ↔ vendors ↔ risks ↔ regulations. Ask a question to trace real dependency paths.</p>
       </div>
+
+      <AIInsight dashboard="Enterprise Knowledge Graph" accent={KG_ACCENT} auto slug="knowledge-graph" />
 
       <div className="flex flex-wrap gap-2">
         {PRESETS.map((p) => (

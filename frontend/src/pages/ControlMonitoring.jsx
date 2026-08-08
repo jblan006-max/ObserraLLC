@@ -3,7 +3,11 @@ import { api } from "@/lib/api";
 import { useUrlState } from "@/hooks/useUrlState";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
+import { AIInsight } from "@/components/AIInsight";
+import { AIFix } from "@/components/AIFix";
 import { ShieldCheck, Loader2, AlertTriangle, Clock, FileDown, TrendingDown, Search, X, Plus } from "lucide-react";
+
+const CM_ACCENT = "160 84% 39%";
 
 const statusHsl = { Passing: "142 70% 45%", Drifting: "35 90% 55%", Failing: "0 84% 60%", "Evidence Stale": "15 80% 55%" };
 const KIND_COLOR = { remediation: "#3b82f6", evidence: "#22c55e", note: "#94a3b8" };
@@ -94,6 +98,8 @@ export default function ControlMonitoring() {
         <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><ShieldCheck className="w-7 h-7 text-primary" /> Continuous Control Monitoring</h1>
         <p className="text-sm text-muted-foreground mt-1">Control effectiveness, maturity, evidence freshness & drift — auto-flagged the moment proof goes stale.</p>
       </div>
+
+      <AIInsight dashboard="Control Monitoring" accent={CM_ACCENT} auto slug="control-monitoring" />
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3" data-testid="control-kpis">
         {[
@@ -239,6 +245,7 @@ export default function ControlMonitoring() {
             <div className="flex justify-between gap-2"><span className="text-muted-foreground">Owner</span><span className="text-right">{selected.owner}</span></div>
             <div className="flex justify-between gap-2"><span className="text-muted-foreground">Evidence</span><span className={selected.stale ? "text-crit" : ""}>{selected.stale ? `expired ${-selected.days_to_expiry}d` : `${selected.days_to_expiry}d left`}</span></div>
           </div>
+          <AIFix entity="control" refId={selected.control_id} accent={CM_ACCENT} />
           <button data-testid="control-detail-pack" disabled={busy === selected.control_id} onClick={() => pack(selected.control_id)} className="w-full text-xs px-3 py-2 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">{busy === selected.control_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />} Evidence pack</button>
           <div className="pt-2 border-t border-border/60 space-y-2" data-testid="control-history">
             <div className="flex items-center justify-between gap-2">

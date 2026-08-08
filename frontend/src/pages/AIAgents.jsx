@@ -4,6 +4,9 @@ import { useUrlState } from "@/hooks/useUrlState";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { Bot, Loader2, X, ShieldCheck, ShieldAlert, Zap, Layers, PlayCircle, CheckCircle2, XCircle, Search } from "lucide-react";
+import { AIInsight } from "@/components/AIInsight";
+
+const AG_ACCENT = "330 81% 60%";
 
 const RISK_COLOR = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 90% 55%", Low: "190 90% 50%" };
 const STATUS_COLOR = { sanctioned: "142 70% 45%", restricted: "35 90% 55%", shadow: "0 84% 60%", killed: "215 20% 50%" };
@@ -36,6 +39,8 @@ export default function AIAgents() {
           {data.composition.map((c) => <span key={c} className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-ai/10 text-ai border border-ai/20">{c}</span>)}
         </div>
       </div>
+
+      <AIInsight dashboard="AI Agent Governance" accent={AG_ACCENT} auto slug="ai-agents" />
 
       <div className="flex flex-wrap gap-2" data-testid="agent-filters">
         <div className="relative flex-1 min-w-[180px]">

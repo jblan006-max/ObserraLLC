@@ -317,7 +317,7 @@ async def advisor_insight(body: InsightReq, user: dict = Depends(require_active_
         return cached["data"]
     if await _is_paused(org_id):
         raise HTTPException(status_code=429, detail="Advisor paused: monthly spend cap reached.")
-    ctx = await _all_dashboards_context(org_id)
+    ctx = await _dashboard_context(org_id, body.dashboard)
     provider, model = MODEL_ROUTES["executive"]
     chosen = (await db.organizations.find_one({"_id": ObjectId(org_id)}, {"advisor_model": 1}) or {}).get("advisor_model")
     if chosen and chosen in _MODEL_PROVIDER:
@@ -385,7 +385,7 @@ async def _fix_grounding(org_id, entity, ref):
     implicated = sorted({c for f in findings for c in (f.get("control_refs") or [])})
     gap = sorted([c for c in controls if c.get("effectiveness", 100) < (c.get("baseline") or 80)],
                  key=lambda c: c.get("effectiveness", 0))[:3]
-    obj, exposure, title = None, 0, ref
+    obj, exposure, title, control_meta = None, 0, ref, None
     if entity == "risk":
         obj = await db.risks.find_one({"org_id": org_id, "ref": ref}, {"_id": 0})
         exposure = (obj or {}).get("residual", 0) * 5
@@ -398,12 +398,28 @@ async def _fix_grounding(org_id, entity, ref):
         obj = await db.vendors.find_one({"org_id": org_id, "ref": ref}, {"_id": 0})
         exposure = (obj or {}).get("risk_score", 0)
         title = (obj or {}).get("name", ref)
+    elif entity == "control":
+        from control_library import CONTROL_FRAMEWORKS as _CFW
+        obj = await db.controls.find_one({"org_id": org_id, "control_id": ref}, {"_id": 0})
+        eff = (obj or {}).get("effectiveness", 100)
+        baseline = (obj or {}).get("baseline", 80)
+        exposure = max(0, 100 - eff)
+        title = (obj or {}).get("name", ref)
+        stale = False
+        try:
+            stale = datetime.fromisoformat(obj["evidence_expires"]) < datetime.now(timezone.utc)
+        except Exception:
+            stale = False
+        fw_refs = sum((v for v in (_CFW.get(ref) or {}).values()), [])
+        control_meta = {"name": title, "category": (obj or {}).get("category", "—"),
+                        "eff": eff, "baseline": baseline, "stale": stale,
+                        "framework_refs": fw_refs[:10], "framework_count": len({k for k in (_CFW.get(ref) or {})})}
     return {"summary": summary, "kev": kev, "cves": cves, "high_findings": high,
             "open_findings": [{"title": f.get("title"), "severity": f.get("severity"),
                                "remediation": f.get("remediation"), "cve_ids": f.get("cve_ids"),
                                "control_refs": f.get("control_refs")} for f in open_findings[:6]],
             "implicated_controls": implicated, "gap_controls": gap, "entity_obj": obj,
-            "exposure": exposure, "title": title}
+            "exposure": exposure, "title": title, "control_meta": control_meta}
 
 
 def _rating(g, entity):
@@ -417,6 +433,14 @@ def _rating(g, entity):
     score += min(20, (exposure or 0) / 5)
     if entity == "risk" and g["entity_obj"]:
         score = max(score, round((g["entity_obj"].get("residual", 0) / 25) * 100 * 0.92))
+    if entity == "control" and g.get("control_meta"):
+        cm = g["control_meta"]
+        if cm["eff"] < 55:
+            score = max(score, 74)
+        elif cm["stale"] or cm["eff"] < cm["baseline"] - 5:
+            score = max(score, 50)
+        elif cm["eff"] < 75:
+            score = max(score, 38)
     score = round(min(100, score))
     rating = "Critical" if (kev or score >= 70) else "High" if score >= 45 else "Medium" if score >= 25 else "Low"
     rationale = []
@@ -431,6 +455,15 @@ def _rating(g, entity):
             f"{c.get('control_id')} {c.get('name')} ({c.get('framework')} · {c.get('effectiveness')}%)" for c in g["gap_controls"]) + ".")
     if g["implicated_controls"]:
         rationale.append("Implicated framework controls: " + ", ".join(g["implicated_controls"][:6]) + ".")
+    if entity == "control" and g.get("control_meta"):
+        cm = g["control_meta"]
+        line = (f"Obserra control '{cm['name']}' ({cm['category']}) sits at {cm['eff']}% effectiveness "
+                f"vs a {cm['baseline']}% baseline, mapped to {cm['framework_count']} framework(s)")
+        if cm["stale"]:
+            line += " — attestation evidence has expired"
+        if cm["framework_refs"]:
+            line += ". Mapped refs: " + ", ".join(cm["framework_refs"][:8])
+        rationale.insert(0, line + ".")
     if not rationale:
         rationale.append("No active exploit signals, CVEs or control gaps detected for this entity.")
     return rating, score, rationale
@@ -768,6 +801,146 @@ async def _all_dashboards_context(org_id: str) -> dict:
                          "updated": intel.get("updated") or intel.get("checked_at")},
         "external_evidence": AI_SAFETY_EVIDENCE,
     }
+
+
+async def _dashboard_context(org_id: str, dashboard: str) -> dict:
+    """Dashboard-scoped LIVE context so each AI Analyst summary auto-resolves and is grounded
+    in THAT dashboard's own data (keyed off the dashboard name)."""
+    d = (dashboard or "").lower()
+    try:
+        if "compliance" in d:
+            from routes import _control_status, _framework_alignment, FRAMEWORK_ORDER, _ensure_controls
+            await _ensure_controls(org_id)
+            existing = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+            statuses = [_control_status(c) for c in existing]
+            scan_ev = await db.scan_evidence.find_one({"org_id": org_id}, {"_id": 0})
+            frameworks = []
+            for k in FRAMEWORK_ORDER:
+                a = _framework_alignment(k, statuses, scan_ev)
+                frameworks.append({"framework": k, "total": a["total"], "aligned": a["aligned"],
+                                   "met": a["met"], "gap": a["gap"], "meeting_pct": a["meeting_pct"]})
+            gaps = [{"control_id": c["control_id"], "name": c["name"], "status": c["status"],
+                     "effectiveness": c["effectiveness"], "frameworks": list((c.get("frameworks") or {}).keys())}
+                    for c in statuses if c["status"] != "Passing"]
+            return {"dashboard": dashboard, "frameworks": frameworks, "open_control_gaps": gaps,
+                    "total_controls": len(statuses), "passing": sum(1 for c in statuses if c["status"] == "Passing")}
+        if "situation" in d:
+            risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(300)
+            incidents = await db.ai_incidents.find({"org_id": org_id}, {"_id": 0}).to_list(100)
+            audit = await db.audit_logs.find({"org_id": org_id}, {"_id": 0}).sort("ts", -1).to_list(15)
+            crit = sorted([r for r in risks if r.get("residual", 0) >= 16], key=lambda x: -x.get("residual", 0))
+            return {"dashboard": dashboard,
+                    "critical_exposures": [{"ref": r["ref"], "title": r["title"], "residual": r["residual"],
+                                            "owner": r.get("owner"), "business_impact": r.get("business_impact"),
+                                            "status": r.get("status")} for r in crit[:10]],
+                    "open_incidents": [{"ref": i.get("ref"), "title": i.get("title"), "severity": i.get("severity"),
+                                        "status": i.get("status"), "system": i.get("system")} for i in incidents if i.get("status") != "Resolved"][:10],
+                    "recent_activity": [{"action": a.get("action"), "detail": a.get("detail")} for a in audit],
+                    "counts": {"risks": len(risks), "critical": len(crit),
+                               "incidents_open": sum(1 for i in incidents if i.get("status") != "Resolved")}}
+        if "control monitoring" in d or ("control" in d and "monitor" in d):
+            from routes import _control_status, _ensure_controls
+            await _ensure_controls(org_id)
+            existing = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+            statuses = [_control_status(c) for c in existing]
+            by_status = {}
+            for c in statuses:
+                by_status[c["status"]] = by_status.get(c["status"], 0) + 1
+            weak = sorted([c for c in statuses if c["effectiveness"] < c.get("baseline", 80)], key=lambda c: c["effectiveness"])[:8]
+            return {"dashboard": dashboard, "total": len(statuses), "by_status": by_status,
+                    "avg_effectiveness": round(sum(c["effectiveness"] for c in statuses) / len(statuses)) if statuses else 0,
+                    "needs_attention": [{"control_id": c["control_id"], "name": c["name"], "status": c["status"],
+                                         "effectiveness": c["effectiveness"], "framework": c.get("framework"),
+                                         "stale": c.get("stale"), "days_to_expiry": c.get("days_to_expiry")} for c in weak]}
+        if "agent" in d:
+            agents = await db.ai_agents.find({"org_id": org_id}, {"_id": 0}).to_list(200)
+            risk_dist = {}
+            for a in agents:
+                risk_dist[a.get("risk_class", "Medium")] = risk_dist.get(a.get("risk_class", "Medium"), 0) + 1
+            guard = {g: sum(1 for a in agents if (a.get("guardrails") or {}).get(g)) for g in
+                     ["input_filtering", "output_filtering", "tool_allowlist", "human_in_loop"]}
+            return {"dashboard": dashboard, "total": len(agents), "risk_distribution": risk_dist,
+                    "guardrail_coverage": guard,
+                    "agents": [{"ref": a.get("ref"), "name": a.get("name"), "risk_class": a.get("risk_class"),
+                                "status": a.get("status"), "tool_violations": a.get("tool_violations"),
+                                "redteam_score": (a.get("last_redteam") or {}).get("score")} for a in agents[:20]]}
+        if "spend" in d:
+            logs = await db.advisor_logs.find({"org_id": org_id, "usage": {"$exists": True}},
+                                              {"_id": 0, "usage": 1, "user": 1, "ts": 1}).to_list(3000)
+            mk = _month_key()
+            month_cost = round(sum(l["usage"]["cost_usd"] for l in logs if l.get("ts", "").startswith(mk)), 4)
+            by_user = {}
+            for l in logs:
+                if l.get("ts", "").startswith(mk):
+                    by_user[l["user"]] = round(by_user.get(l["user"], 0) + l["usage"]["cost_usd"], 4)
+            budget = await _org_budget(org_id)
+            return {"dashboard": dashboard, "total_queries": len(logs),
+                    "total_cost_usd": round(sum(l["usage"]["cost_usd"] for l in logs), 4),
+                    "month_cost_usd": month_cost, "budget_usd": budget,
+                    "budget_pct": round(month_cost / budget * 100) if budget else 0,
+                    "top_spenders": sorted(({"user": k, "cost_usd": v} for k, v in by_user.items()), key=lambda x: -x["cost_usd"])[:6]}
+        if "knowledge graph" in d:
+            ai_systems = await db.ai_systems.count_documents({"org_id": org_id})
+            vendors = await db.vendors.count_documents({"org_id": org_id})
+            risks = await db.risks.find({"org_id": org_id}, {"_id": 0, "ref": 1, "title": 1, "residual": 1}).to_list(300)
+            crit = sorted([r for r in risks if r.get("residual", 0) >= 16], key=lambda x: -x.get("residual", 0))
+            return {"dashboard": dashboard, "ai_systems": ai_systems, "vendors": vendors, "risks": len(risks),
+                    "critical_risks": [{"ref": r["ref"], "title": r["title"], "residual": r["residual"]} for r in crit[:8]]}
+        if "asset" in d:
+            assets = await db.assets.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+            scan = await db.self_scans.find_one({"org_id": org_id}, sort=[("ts", -1)]) or {}
+            return {"dashboard": dashboard, "total_assets": len(assets),
+                    "by_criticality": {t: sum(1 for a in assets if a.get("criticality") == t) for t in ["Critical", "High", "Medium", "Low"]},
+                    "shadow_ai": sum(1 for a in assets if a.get("type") == "Shadow AI" or a.get("status") == "Unsanctioned"),
+                    "scan_score": scan.get("score"), "kev": len(scan.get("kev_matches") or []),
+                    "open_cves": (scan.get("summary") or {}).get("vulnerable_dependencies")}
+        if "vendor" in d or "third" in d:
+            vendors = await db.vendors.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+            return {"dashboard": dashboard, "total": len(vendors),
+                    "high_risk": sum(1 for v in vendors if v.get("risk_tier") in ("High", "Critical")),
+                    "avg_attestation": round(sum(v.get("attestation", 0) for v in vendors) / len(vendors)) if vendors else 0,
+                    "total_incidents": sum(v.get("incidents", 0) for v in vendors)}
+        if "decision" in d:
+            recs = await db.recommendations.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+            decisions = await db.decisions.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+            sc = {}
+            for r in recs:
+                sc[r.get("status", "Pending")] = sc.get(r.get("status", "Pending"), 0) + 1
+            return {"dashboard": dashboard, "recommendations": len(recs), "rec_status": sc, "decisions": len(decisions)}
+        if "ai governance" in d or "governance" in d:
+            systems = await db.ai_systems.find({"org_id": org_id}, {"_id": 0}).to_list(200)
+            agents = await db.ai_agents.count_documents({"org_id": org_id})
+            incidents = await db.ai_incidents.find({"org_id": org_id}, {"_id": 0}).to_list(200)
+            return {"dashboard": dashboard, "ai_systems": len(systems),
+                    "shadow_ai": sum(1 for s in systems if s.get("status") == "shadow"),
+                    "sanctioned": sum(1 for s in systems if s.get("status") == "sanctioned"),
+                    "agents": agents, "incidents_open": sum(1 for i in incidents if i.get("status") != "Resolved")}
+        if "register" in d:
+            risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+            tiers = {"critical_ge16": 0, "high_8_15": 0, "moderate_lt8": 0}
+            status = {}
+            for r in risks:
+                res = r.get("residual", 0)
+                if res >= 16:
+                    tiers["critical_ge16"] += 1
+                elif res >= 8:
+                    tiers["high_8_15"] += 1
+                else:
+                    tiers["moderate_lt8"] += 1
+                status[r.get("status", "Open")] = status.get(r.get("status", "Open"), 0) + 1
+            top = sorted(risks, key=lambda x: -x.get("residual", 0))[:8]
+            return {"dashboard": dashboard, "total_risks": len(risks), "residual_tiers": tiers,
+                    "status_breakdown": status,
+                    "avg_residual": round(sum(r.get("residual", 0) for r in risks) / len(risks), 1) if risks else 0,
+                    "top_risks": [{"ref": r["ref"], "title": r["title"], "residual": r.get("residual"),
+                                   "inherent": r.get("inherent"), "owner": r.get("owner"),
+                                   "status": r.get("status"), "category": r.get("category"),
+                                   "business_impact": r.get("business_impact")} for r in top]}
+        if "fair" in d or "cyber" in d or "risk" in d:
+            return await _board_financial_context(org_id)
+    except Exception:
+        pass
+    return await _all_dashboards_context(org_id)
 
 
 async def generate_fair_air_analysis(org_id: str, model: str = None):
