@@ -1,33 +1,70 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { Building2, Loader2, Plug, KeyRound, Users, ShieldCheck, Trash2, Plus, RefreshCw, Palette, Cloud } from "lucide-react";
+import { Building2, Loader2, KeyRound, Users, ShieldCheck, Trash2, Plus, Palette, Cloud } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
-const TABS = [["sso", "SSO / SAML", KeyRound], ["scim", "SCIM", Users], ["abac", "ABAC", ShieldCheck], ["branding", "Branding", Palette]];
-
 export default function Enterprise() {
-  const [tab, setTab] = useState("sso");
+  const [cfg, setCfg] = useState(null);
+  const [live, setLive] = useState(null);
+  const [abac, setAbac] = useState([]);
+  const [brand, setBrand] = useState(null);
+  useEffect(() => {
+    api.get("/enterprise/config").then((r) => setCfg(r.data)).catch(() => setCfg({}));
+    api.get("/enterprise/live").then((r) => setLive(r.data)).catch(() => setLive({}));
+    api.get("/enterprise/abac").then((r) => setAbac(r.data)).catch(() => setAbac([]));
+    api.get("/branding").then((r) => setBrand(r.data)).catch(() => setBrand(null));
+  }, []);
+
+  const m365 = live?.m365 || {};
+  const sso = cfg?.sso || {};
+  const scim = cfg?.scim || {};
+  const abacOn = cfg?.abac?.enforce;
+  const statuses = [
+    { key: "m365", label: "Microsoft 365", Icon: Cloud, ok: !!m365.live, warn: m365.configured, text: m365.live ? `LIVE · ${m365.user_count ?? "?"} users` : m365.configured ? "Configured" : "Not connected" },
+    { key: "sso", label: "SSO / SAML", Icon: KeyRound, ok: !!(sso.enabled && sso.entity_id), warn: !!sso.entity_id, text: sso.enabled ? "Enabled" : sso.entity_id ? "Configured" : "Not set" },
+    { key: "scim", label: "SCIM provisioning", Icon: Users, ok: !!scim.enabled, text: scim.enabled ? `On · ${scim.last_provisioned ?? 0} users` : "Off" },
+    { key: "abac", label: "ABAC policy", Icon: ShieldCheck, ok: !!abacOn, warn: abac.length > 0, text: abacOn ? `Enforcing · ${abac.length} rules` : abac.length ? `Monitor · ${abac.length} rules` : "None" },
+    { key: "brand", label: "White-label", Icon: Palette, ok: !!(brand && brand.display_name), text: brand?.display_name ? "Branded" : "Default" },
+  ];
+  const ready = statuses.filter((s) => s.ok).length;
+
   return (
-    <div className="rise space-y-6">
-      <div>
-        <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><Building2 className="w-7 h-7 text-primary" /> Enterprise Access</h1>
-        <p className="text-sm text-muted-foreground mt-1">Enterprise identity, provisioning, ABAC &amp; white-label branding. <span className="text-med font-mono text-xs">Live connectors now live in the Available Connectors page.</span></p>
+    <div className="rise space-y-6" data-testid="enterprise-page">
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><Building2 className="w-7 h-7 text-primary" /> Enterprise Access</h1>
+          <p className="text-sm text-muted-foreground mt-1">Everything needed to run Obserra at enterprise grade — identity source, SSO, SCIM, attribute policy &amp; white-label — on one live dashboard.</p>
+        </div>
+        <div className="text-right">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Enterprise readiness</div>
+          <div data-testid="enterprise-readiness" className="font-head font-black text-3xl tracking-tight" style={{ color: `hsl(${ready >= 4 ? "142 70% 45%" : ready >= 2 ? "35 90% 55%" : "0 84% 60%"})` }}>{ready}/5</div>
+        </div>
       </div>
-      <div className="flex gap-1 border-b border-border overflow-x-auto whitespace-nowrap -mx-1 px-1">
-        {TABS.map(([id, label, Icon]) => (
-          <button key={id} data-testid={`etab-${id}`} onClick={() => setTab(id)}
-            className={`shrink-0 flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 -mb-px transition-colors ${tab === id ? "border-primary text-foreground" : "border-transparent text-muted-foreground hover:text-foreground"}`}>
-            <Icon className="w-4 h-4" /> {label}
-          </button>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4" data-testid="enterprise-status">
+        {statuses.map((s) => (
+          <div key={s.key} data-testid={`estat-${s.key}`} className="bg-card fact-border rounded-xl p-4">
+            <div className="flex items-center justify-between mb-2"><s.Icon className="w-4 h-4 text-muted-foreground" /><span className={`w-2 h-2 rounded-full ${s.ok ? "bg-low" : s.warn ? "bg-med" : "bg-muted-foreground/40"}`} style={s.ok ? { boxShadow: "0 0 6px hsl(142 70% 45%)" } : {}} /></div>
+            <div className="font-head font-bold text-sm">{s.label}</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">{s.text}</div>
+          </div>
         ))}
       </div>
-      {tab === "sso" && <SSO />}
-      {tab === "scim" && <SCIM />}
-      {tab === "abac" && <ABAC />}
-      {tab === "branding" && <Branding />}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
+        <div className="space-y-2"><SectionH>Identity source · Microsoft 365</SectionH><LiveM365 /></div>
+        <div className="space-y-2"><SectionH>Single sign-on (SAML)</SectionH><SSO /></div>
+        <div className="space-y-2"><SectionH>SCIM provisioning</SectionH><SCIM /></div>
+        <div className="space-y-2"><SectionH>White-label branding</SectionH><Branding /></div>
+        <div className="lg:col-span-2 space-y-2"><SectionH>Attribute-based access (ABAC)</SectionH><ABAC /></div>
+      </div>
     </div>
   );
+}
+
+function SectionH({ children }) {
+  return <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-muted-foreground pt-1">{children}</div>;
 }
 
 function LiveM365() {
@@ -47,15 +84,15 @@ function LiveM365() {
     } catch { toast.error("Save failed"); }
     setBusy(false);
   };
-  const clear = async () => { await api.delete("/enterprise/live/m365"); load(); toast.success("M365 disconnected — reverted to mocked"); };
-  if (!s) return null;
+  const clear = async () => { await api.delete("/enterprise/live/m365"); load(); toast.success("M365 disconnected"); };
+  if (!s) return <Spinner />;
   return (
-    <div data-testid="live-m365" className="bg-card fact-border rounded-xl p-5 space-y-3">
+    <div data-testid="live-m365" className="bg-card fact-border rounded-xl p-5 space-y-3 h-full">
       <div className="flex items-center justify-between">
         <div className="font-head font-bold text-sm flex items-center gap-2"><Cloud className="w-4 h-4 text-ai" /> Live Microsoft 365 — auto-connect</div>
         {s.configured
           ? <span data-testid="m365-status" className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${s.live ? "bg-low/15 text-low" : "bg-med/15 text-med"}`}>{s.live ? "LIVE" : "NOT LIVE"}</span>
-          : <span data-testid="m365-status" className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-secondary/60 text-muted-foreground">MOCKED</span>}
+          : <span data-testid="m365-status" className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-secondary/60 text-muted-foreground">NOT CONNECTED</span>}
       </div>
       {s.configured ? (
         <div className="text-xs space-y-1">
@@ -68,93 +105,13 @@ function LiveM365() {
         </div>
       ) : (
         <div className="space-y-2">
-          <p className="text-[11px] text-muted-foreground">Enter your Azure app (client-credentials). When valid, the connector auto-goes LIVE and pulls a real user count from Microsoft Graph. Left blank, it stays mocked.</p>
+          <p className="text-[11px] text-muted-foreground">Enter your Azure app (client-credentials). When valid, the connector auto-goes LIVE and pulls a real user count + managed devices from Microsoft Graph.</p>
           <Field label="Tenant ID" testid="m365-tenant" value={f.tenant_id} onChange={(e) => setF({ ...f, tenant_id: e.target.value })} />
           <Field label="Client ID" testid="m365-client" value={f.client_id} onChange={(e) => setF({ ...f, client_id: e.target.value })} />
           <Field label="Client Secret" testid="m365-secret" value={f.client_secret} onChange={(e) => setF({ ...f, client_secret: e.target.value })} />
           <button data-testid="m365-verify" disabled={busy} onClick={save} className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">{busy ? "Verifying…" : "Verify & go live"}</button>
         </div>
       )}
-    </div>
-  );
-}
-
-function LiveSSO() {
-  const [s, setS] = useState(null);
-  const [f, setF] = useState({ metadata_url: "", entity_id: "" });
-  const [busy, setBusy] = useState(false);
-  const load = () => api.get("/enterprise/live").then((r) => setS(r.data.sso));
-  useEffect(() => { load(); }, []);
-  const save = async () => {
-    if (!f.metadata_url) { toast.error("Metadata URL required"); return; }
-    setBusy(true);
-    try {
-      const { data } = await api.put("/enterprise/live/sso", f); setS(data);
-      if (data.valid) toast.success("SSO metadata validated — Configured / ready");
-      else toast.error(`Invalid: ${data.status}`);
-    } catch { toast.error("Save failed"); }
-    setBusy(false);
-  };
-  const clear = async () => { await api.delete("/enterprise/live/sso"); setF({ metadata_url: "", entity_id: "" }); load(); toast.success("SSO cleared"); };
-  if (!s) return null;
-  return (
-    <div data-testid="live-sso" className="bg-card fact-border rounded-xl p-6 max-w-xl space-y-3">
-      <div className="flex items-center justify-between">
-        <div className="font-head font-bold text-sm flex items-center gap-2"><KeyRound className="w-4 h-4 text-ai" /> Live SSO (SAML) — auto-connect</div>
-        {s.configured
-          ? <span data-testid="sso-live-status" className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${s.valid ? "bg-low/15 text-low" : "bg-med/15 text-med"}`}>{s.valid ? "CONFIGURED / READY" : "INVALID"}</span>
-          : <span data-testid="sso-live-status" className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-secondary/60 text-muted-foreground">NOT SET</span>}
-      </div>
-      <p className="text-[11px] text-muted-foreground">Paste your IdP metadata URL. We validate it live and mark SSO ready. App login stays on Google/JWT until full SAML sign-in is enabled as its own phase.</p>
-      <Field label="IdP Metadata URL" testid="sso-metadata" value={f.metadata_url} onChange={(e) => setF({ ...f, metadata_url: e.target.value })} />
-      {s.configured && <div className="text-xs font-mono text-muted-foreground">Entity: {s.entity_id || "—"} · {s.status}</div>}
-      <div className="flex gap-2">
-        <button data-testid="sso-validate" disabled={busy} onClick={save} className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">{busy ? "Validating…" : "Validate & mark ready"}</button>
-        {s.configured && <button data-testid="sso-clear" onClick={clear} className="text-xs px-3 py-1.5 rounded-md text-muted-foreground hover:text-crit">Clear</button>}
-      </div>
-    </div>
-  );
-}
-
-function Connectors() {
-  const [list, setList] = useState(null);
-  const [busy, setBusy] = useState("");
-  const load = () => api.get("/enterprise/connectors").then((r) => setList(r.data));
-  useEffect(() => { load(); }, []);
-  const act = async (cid, action) => {
-    setBusy(`${cid}:${action}`);
-    try { await api.post(`/enterprise/connectors/${cid}/${action}`); toast.success(`${cid} ${action}`); load(); }
-    catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
-    setBusy("");
-  };
-  if (!list) return <Spinner />;
-  return (
-    <div className="space-y-6">
-      <LiveM365 />
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
-      {list.map((c) => (
-        <div key={c.cid} data-testid={`connector-${c.cid}`} className="bg-card fact-border rounded-xl p-4">
-          <div className="flex items-center justify-between mb-1">
-            <div className="font-head font-bold text-sm">{c.name}</div>
-            <span className={`w-2 h-2 rounded-full ${c.status === "connected" ? "bg-low" : "bg-muted-foreground/40"}`} style={c.status === "connected" ? { boxShadow: "0 0 6px hsl(142 70% 45%)" } : {}} />
-          </div>
-          <div className="text-[10px] font-mono uppercase text-muted-foreground">{c.category}</div>
-          {c.status === "connected" ? (
-            <>
-              <div className="text-xs text-muted-foreground mt-2">{c.records_ingested.toLocaleString()} records</div>
-              <div className="flex gap-2 mt-3">
-                <button data-testid={`sync-${c.cid}`} disabled={!!busy} onClick={() => act(c.cid, "sync")} className="flex-1 flex items-center justify-center gap-1 text-xs py-1.5 rounded-md bg-ai/10 border border-ai/30 text-ai"><RefreshCw className="w-3 h-3" /> Sync</button>
-                <button data-testid={`disconnect-${c.cid}`} disabled={!!busy} onClick={() => act(c.cid, "disconnect")} className="text-xs py-1.5 px-2 rounded-md text-muted-foreground hover:text-crit">Disconnect</button>
-              </div>
-            </>
-          ) : (
-            <button data-testid={`connect-${c.cid}`} disabled={!!busy} onClick={() => act(c.cid, "connect")} className="w-full mt-3 text-xs py-1.5 rounded-md bg-primary text-primary-foreground font-bold disabled:opacity-50">
-              {busy === `${c.cid}:connect` ? "…" : "Connect"}
-            </button>
-          )}
-        </div>
-      ))}
-      </div>
     </div>
   );
 }
@@ -171,14 +128,13 @@ function SSO() {
   };
   if (!cfg) return <Spinner />;
   return (
-    <div data-testid="sso-form" className="bg-card fact-border rounded-xl p-6 max-w-xl space-y-4">
+    <div data-testid="sso-form" className="bg-card fact-border rounded-xl p-5 space-y-4 h-full">
       <label className="flex items-center gap-2 text-sm cursor-pointer">
         <input data-testid="sso-enabled" type="checkbox" checked={cfg.enabled} onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })} /> Enable SAML 2.0 single sign-on
       </label>
       <Field label="Identity Provider Entity ID" testid="sso-entity" value={cfg.entity_id} onChange={(e) => setCfg({ ...cfg, entity_id: e.target.value })} />
       <Field label="IdP SSO URL" testid="sso-url" value={cfg.sso_url} onChange={(e) => setCfg({ ...cfg, sso_url: e.target.value })} />
       <button data-testid="sso-save" disabled={busy} onClick={save} className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50">Save SSO</button>
-      <p className="text-[11px] text-muted-foreground">Live IdP metadata validation now lives in <span className="text-ai">Available Connectors → SSO / SAML</span>.</p>
     </div>
   );
 }
@@ -189,7 +145,7 @@ function SCIM() {
   const toggle = async () => { const { data } = await api.post("/enterprise/scim/toggle"); setScim(data); toast.success(`SCIM ${data.enabled ? "enabled" : "disabled"}`); };
   if (!scim) return <Spinner />;
   return (
-    <div data-testid="scim-panel" className="bg-card fact-border rounded-xl p-6 max-w-xl space-y-4">
+    <div data-testid="scim-panel" className="bg-card fact-border rounded-xl p-5 space-y-4 h-full">
       <div className="flex items-center justify-between">
         <div><div className="font-head font-bold text-sm">SCIM 2.0 Provisioning</div><div className="text-xs text-muted-foreground">Auto-provision & deprovision users from your IdP.</div></div>
         <button data-testid="scim-toggle" onClick={toggle} className={`text-xs px-3 py-2 rounded-md font-bold ${scim.enabled ? "bg-low/15 text-low" : "bg-primary text-primary-foreground"}`}>{scim.enabled ? "Enabled" : "Enable"}</button>
@@ -265,7 +221,7 @@ function Branding() {
   };
   if (!b) return <Spinner />;
   return (
-    <div data-testid="branding-panel" className="bg-card fact-border rounded-xl p-6 max-w-xl space-y-4">
+    <div data-testid="branding-panel" className="bg-card fact-border rounded-xl p-5 space-y-4 h-full">
       <div className="text-xs text-muted-foreground">White-label the tenant experience — display name, accent color and logo.</div>
       <Field label="Display name" testid="brand-name" value={b.display_name} onChange={(e) => setB({ ...b, display_name: e.target.value })} />
       <Field label="Logo URL" testid="brand-logo" value={b.logo_url} onChange={(e) => setB({ ...b, logo_url: e.target.value })} />
