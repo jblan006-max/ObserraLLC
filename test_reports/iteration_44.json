@@ -1,0 +1,48 @@
+{
+  "summary": "Iter44 — Unified Risk Correlation Engine (backend risk_engine.py + Remediations command center + Deep-Dive + Executive Briefing). Backend: 8/8 pytest PASS (~24s incl. LLM). Verified strategic (portfolio+benchmark+drift+appetite+top_risks+board_summary mentioning industry median 1.62×), tactical (dep-ecdsa task with fix_script='pip install --upgrade ecdsa && pip-audit', fix_path, exploitability, remediation_roi, blast_radius, sla_days), exposure (assets+exposure_map+appetite), compliance (items with area/rating/score/probability/impact/compliance_pct), task status transitions Open→In Progress→Remediated dropping residual_ale $9.6M→$2.88M (risk_reduced>0) then reset to Open restoring ~$9.6M, task action remediate (fix_script + connector note + ALE 9.6M→2.88M) + isolate→In Progress, advisor/insight for both 'Remediation Command Center' and 'Executive Briefing' (200 + non-empty summary/actions). Frontend @1600×1000 with jblan2026@gmail.com: exec-briefing on /app Home shows KPI tiles (Aggregate ALE, P90, Peer, drift, Compliance) + AI insight. /app/remediations rendered: all 6 KPI tiles (rem-kpi-ale=$9.6M, p90=$18.2M, tasks=1, coverage=0%, compliance=85%, bench=1.62×), rem-benchmark-banner with strategic recommendation, 4 lens cards, rem-exposure-map with 1 exp-map row (dep-ecdsa), rem-action-center with 1 rem-queue row + rem-status dropdown. Deep-dive modal opens on row click showing Who/What/When/Where/Why facets, deep-dive-scores strip, AI brief, deep-dive-script, and all 4 action buttons (execute-fix/isolate/assign-soc/accept-risk). Execute Fix fired toast 'Fix executed — ALE now $2.9M (↓ $6.7M risk reduced)', closed modal, and KPI rem-kpi-ale DECREASED from $9.6M → $2.9M (real-time recalc verified). Status dropdown → In Progress fired toast 'In Progress — ALE $9.6M'. CyberRisk page shows cyber-ale-LR-001 ($2.88M initially / $9.6M after reset) + cyber-rating-LR-001 pill. RiskRegister shows rr-rating-LR-001='Critical' + $ live figures. CRITICAL: dep-ecdsa reset to Open via API at end — verified portfolio_after.residual_ale=9,600,000.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_endpoints": [
+    "GET /api/risk-engine/strategic — portfolio+benchmark+drift+appetite+top_risks+board_summary(with 'median')",
+    "GET /api/risk-engine/tactical — tasks[dep-ecdsa] with fix_script='pip install --upgrade ecdsa && pip-audit', fix_path[], exploitability{score/label/basis}, remediation_roi{ale_reduced,roi,cost,target_residual}, blast_radius, sla_days=14",
+    "GET /api/risk-engine/exposure — assets[AST-ENDPOINT] with vulns/effective_criticality/exploitability/blast_radius/internet_facing; exposure_map row with cve_ids/asset_name/exploitability/blast_radius/residual_ale; appetite present",
+    "GET /api/risk-engine/compliance — items with area/rating/score/probability/impact/compliance_pct",
+    "POST /api/risk-engine/task/dep-ecdsa/status Open→In Progress→Remediated→Open — residual_ale drops 9.6M→2.88M and restores; portfolio_before/after + risk_reduced present",
+    "POST /api/risk-engine/task/dep-ecdsa/action {remediate} → status=Remediated + fix_script + connector.note + risk_reduced=6.72M (9.6M→2.88M); {isolate} → status=In Progress",
+    "POST /api/advisor/insight {Remediation Command Center} & {Executive Briefing} — 200 + non-empty"
+  ],
+  "verified_testids_frontend": [
+    "exec-briefing (Home/Overview) — KPI tiles: Aggregate ALE, P90, Peer, drift, Compliance + AI insight",
+    "remediations-page + rem-kpi-{ale,p90,tasks,coverage,compliance,bench}",
+    "rem-benchmark-banner (contains strategic recommendation text)",
+    "lens-{strategic,tactical,exposure,compliance}",
+    "rem-exposure-map + exp-map-dep-ecdsa",
+    "rem-action-center + rem-queue-dep-ecdsa + rem-status-dep-ecdsa (Radix button dropdown)",
+    "deep-dive-modal on row click; deep-dive-scores + deep-dive-script + action-{execute-fix,isolate,assign-soc,accept-risk}",
+    "Execute Fix: toast fires, modal closes, rem-kpi-ale drops $9.6M→$2.9M (real-time)",
+    "Status change In Progress: toast 'In Progress — ALE $9.6M' fires and page reloads",
+    "cyber-ale-LR-001 + cyber-rating-LR-001 on /app/cyber-risk",
+    "rr-rating-LR-001 + live $ figure on /app/risks"
+  ],
+  "critical_code_review_comments": [
+    "risk_engine.py at 525 lines is dense but within threshold; consider extracting _exploitability/_blast_radius/_roi/_fix_path into a helpers module for clarity.",
+    "correlate() runs on EVERY /api/risk-engine/{lens} call — Remediations page loads 4 lenses back-to-back = 4 full correlations per page load. Consider a short-lived per-org memoization (5–10s TTL) since all lenses derive from the same correlate() result.",
+    "set_task_status calls correlate() twice (before + after) and task_action calls it twice as well — that's 4 heavy correlations for a single one-click action. Could pass 'before' result from first call and only recompute after the update.",
+    "board_summary uses raw ratio like '1.62×' via benchmark.strategic_recommendation but the required assertion 'mentions industry-median position' is satisfied only via the word 'industry median' which is present — good. Keep the phrase stable for tests.",
+    "rem-status dropdown is a Radix custom button (not a native <select>), so Playwright .select_option() does not work — QA must click + click option. This is documented for the next agent."
+  ],
+  "test_report_links": ["/app/backend/tests/test_iter44_risk_engine.py", "/app/test_reports/pytest/iter44.xml"],
+  "action_items": [],
+  "updated_files": ["/app/backend/tests/test_iter44_risk_engine.py (NEW)"],
+  "success_rate": {"backend": "100% (8/8 pytest)", "frontend": "100% — all acceptance criteria verified"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin, live_only org)",
+  "seed_data_creation": "None (live_only). dep-ecdsa task status was reset to Open at end (verified residual_ale=$9,600,000 restored).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Login form at /login (or root). Skip onboarding via role=button name=Skip. /app/remediations is the new command center page. rem-status-<id> is a Radix Select button, not <select> — use click + option-text click (or page.evaluate JS). Deep-dive modal is opened by clicking a rem-queue-<id> row (whole row is clickable). action-execute-fix triggers POST /api/risk-engine/task/<id>/action {remediate} and returns fix_script + connector.note + risk_reduced. IMPORTANT: any test that mutates dep-ecdsa MUST end with POST /api/risk-engine/task/dep-ecdsa/status {status:'Open'} to restore the live dataset (residual_ale ~$9.6M). Advisor endpoints take 5–15s (cached server-side); use 30s timeout.",
+  "rca of the issue": "N/A — no bugs found. Note: session pytest fixture must reset dep-ecdsa to Open at setup (not just teardown) because a prior test run may leave it remediated, which would make the tactical queue empty."
+}

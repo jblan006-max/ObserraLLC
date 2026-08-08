@@ -29,6 +29,7 @@ from push import push_router
 from deploy import deploy_router
 from self_scan import self_scan_router
 from dashboards import dash_router
+from risk_engine import risk_engine_router
 from starlette.middleware.sessions import SessionMiddleware
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -57,6 +58,7 @@ app.include_router(push_router)
 app.include_router(deploy_router)
 app.include_router(self_scan_router)
 app.include_router(dash_router)
+app.include_router(risk_engine_router)
 
 _cors = os.environ.get("CORS_ORIGINS", "*").strip()
 _cors_kwargs = {"allow_origin_regex": ".*"} if _cors == "*" else {"allow_origins": [o.strip() for o in _cors.split(",") if o.strip()]}

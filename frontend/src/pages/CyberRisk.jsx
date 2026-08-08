@@ -12,6 +12,8 @@ import { AIExplain } from "@/components/AIExplain";
 
 const FAIR_ACCENT = "350 80% 58%";
 const TIER = (residual) => residual >= 16 ? "0 84% 60%" : residual >= 9 ? "35 90% 55%" : "142 70% 45%";
+const RATECOL = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 90% 55%", Low: "142 70% 45%" };
+const fmtAle = (v) => v == null ? "—" : v >= 1e6 ? `$${(v / 1e6).toFixed(2)}M` : `$${Math.round(v / 1e3)}k`;
 
 function RiskModal({ risk, onClose }) {
   if (!risk) return null;
@@ -62,9 +64,11 @@ export default function CyberRisk() {
   const [busy, setBusy] = useState("");
   const [selRisk, setSelRisk] = useState(null);
   const [metric, setMetric] = useState(null);
+  const [strat, setStrat] = useState(null);
 
   const load = () => api.get("/cyber/overview").then((r) => setData(r.data));
   useEffect(() => { load(); }, []);
+  useEffect(() => { api.get("/risk-engine/strategic").then((r) => setStrat(r.data)).catch(() => {}); }, []);
 
   const treat = async (ref) => {
     setBusy(ref);
@@ -74,6 +78,9 @@ export default function CyberRisk() {
   };
 
   if (!data) return <div className="flex items-center justify-center h-96" data-testid="cyber-loading"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
+
+  const aleMap = {};
+  (strat?.top_risks || []).forEach((r) => { aleMap[r.ref] = r; });
 
   return (
     <div className="rise space-y-6" data-testid="cyber-page">
@@ -101,17 +108,19 @@ export default function CyberRisk() {
         <div className="px-4 py-3 border-b border-border text-xs font-mono uppercase tracking-wider text-muted-foreground">Top residual cyber risks</div>
         <table className="w-full text-sm min-w-[720px]">
           <thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border">
-            <tr><th className="text-left px-4 py-3">Risk</th><th className="text-left px-4 py-3">Owner</th><th className="text-left px-4 py-3">Status</th><th className="text-left px-4 py-3">Residual</th><th className="text-right px-4 py-3">Action</th></tr>
+            <tr><th className="text-left px-4 py-3">Risk</th><th className="text-left px-4 py-3">Owner</th><th className="text-left px-4 py-3">Status</th><th className="text-left px-4 py-3">Residual</th><th className="text-left px-4 py-3">Live ALE</th><th className="text-left px-4 py-3">Rating</th><th className="text-right px-4 py-3">Action</th></tr>
           </thead>
           <tbody>
             {data.risks.length === 0 ? (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">No cyber risks recorded.</td></tr>
+              <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">No cyber risks recorded.</td></tr>
             ) : data.risks.map((r) => (
               <tr key={r.ref} data-testid={`cyber-risk-${r.ref}`} onClick={() => setSelRisk(r)} className="border-b border-border/60 hover:bg-secondary/40 transition-colors cursor-pointer">
                 <td className="px-4 py-3"><div className="font-mono text-xs text-ai">{r.ref}</div><div className="font-medium">{r.title}</div></td>
                 <td className="px-4 py-3 text-muted-foreground">{r.owner || "—"}</td>
                 <td className="px-4 py-3">{r.status}</td>
                 <td className="px-4 py-3"><span className="px-2 py-0.5 rounded-sm text-[10px] font-mono font-bold" style={{ background: `hsl(${TIER(r.residual)} / 0.15)`, color: `hsl(${TIER(r.residual)})` }}>{r.residual}/25</span></td>
+                <td className="px-4 py-3 font-mono text-xs" data-testid={`cyber-ale-${r.ref}`}>{aleMap[r.ref] ? fmtAle(aleMap[r.ref].residual_ale) : "—"}</td>
+                <td className="px-4 py-3">{aleMap[r.ref] ? <span data-testid={`cyber-rating-${r.ref}`} className="px-2 py-0.5 rounded-sm text-[10px] font-mono font-bold" style={{ background: `hsl(${RATECOL[aleMap[r.ref].rating]} / 0.15)`, color: `hsl(${RATECOL[aleMap[r.ref].rating]})` }}>{aleMap[r.ref].rating}{aleMap[r.ref].exceeds_appetite ? " ⚠" : ""}</span> : <span className="text-muted-foreground text-xs">—</span>}</td>
                 <td className="px-4 py-3 text-right">
                   <div className="inline-flex items-center gap-2">
                     {isAdmin && !isExec && <button data-testid={`treat-${r.ref}`} disabled={!!busy} onClick={(e) => { e.stopPropagation(); treat(r.ref); }} className="inline-flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 disabled:opacity-50">{busy === r.ref ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />} Treat</button>}

@@ -22,6 +22,7 @@ const ROUTE_ACCENT = [
   ["/app/controls", "168 76% 46%"],
   ["/app/security", "24 90% 55%"],
   ["/app/decisions", "260 85% 66%"],
+  ["/app/remediations", "255 85% 66%"],
   ["/app/assets", "38 92% 55%"],
   ["/app/ai-governance", "330 82% 60%"],
   ["/app/agents", "280 80% 66%"],
@@ -69,12 +70,13 @@ const NAV_SECTIONS = [
     { to: "/app/cyber-risk", label: "Risk (FAIR)", icon: ShieldAlert },
     { to: "/app/risks", label: "Risk Register", icon: ListChecks },
     { to: "/app/compliance", label: "Compliance Posture", icon: ShieldCheck, ent: "reporting_board" },
+    { to: "/app/remediations", label: "Remediations", icon: Wrench },
   ]},
   { section: "Cyber", ent: "cyber_risk", cat: true, color: "crit", items: [
     { to: "/app/situation-room", label: "Situation Room", icon: Radar },
     { to: "/app/controls", label: "Control Monitoring", icon: ShieldCheck },
     { to: "/app/security", label: "Security Scanner", icon: ShieldAlert },
-    { to: "/app/decisions", label: "Remediations", icon: GitBranch },
+    { to: "/app/decisions", label: "Recommendations", icon: GitBranch },
     { to: "/app/assets", label: "Asset Intelligence", icon: Boxes, ent: "asset_intelligence" },
   ]},
   { section: "AI Governance", ent: "ai_governance", cat: true, color: "ai", items: [

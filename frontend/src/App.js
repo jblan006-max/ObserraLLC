@@ -34,6 +34,7 @@ const Overview = lazyWithRetry(() => import("@/pages/Overview"));
 const RiskRegister = lazyWithRetry(() => import("@/pages/RiskRegister"));
 const AIGovernance = lazyWithRetry(() => import("@/pages/AIGovernance"));
 const Decisions = lazyWithRetry(() => import("@/pages/Decisions"));
+const Remediations = lazyWithRetry(() => import("@/pages/Remediations"));
 const AuditLog = lazyWithRetry(() => import("@/pages/AuditLog"));
 const Billing = lazyWithRetry(() => import("@/pages/Billing"));
 const Marketplace = lazyWithRetry(() => import("@/pages/Marketplace"));
@@ -103,6 +104,7 @@ function AppRoutes() {
           <Route path="knowledge-graph" element={<KnowledgeGraph />} />
           <Route path="controls" element={<ControlMonitoring />} />
           <Route path="decisions" element={<Decisions />} />
+          <Route path="remediations" element={<Remediations />} />
           <Route path="reporting" element={<Reporting />} />
           <Route path="audit" element={<AuditLog />} />
           <Route path="kernel" element={<KernelStatus />} />

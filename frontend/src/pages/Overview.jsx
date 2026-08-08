@@ -10,6 +10,7 @@ import { SyncTicker } from "@/components/SyncTicker";
 import { BoardReportModal } from "@/components/BoardReportModal";
 import { EvidenceLineageModal } from "@/components/EvidenceLineageModal";
 import { CountUp } from "@/components/CountUp";
+import { ExecBriefing } from "@/components/ExecBriefing";
 import { ChartBox } from "@/components/ChartBox";
 import { ConfidenceBadge, DataTypeBadge, FreshnessBadge } from "@/components/badges";
 import {
@@ -110,6 +111,7 @@ function ExecutiveOverview({ health, m, basis, cyber, trend, momentum, activity,
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-12 gap-5" data-testid="executive-overview">
+      <ExecBriefing />
       <SectionLabel icon={Activity}>Strategic synthesis · live</SectionLabel>
       {heroKpis.map((k, i) => (
         <motion.div key={k.label} custom={i} variants={fade} initial="hidden" animate="show" className="col-span-6 md:col-span-2 lg:col-span-3"><MetricCard {...k} /></motion.div>

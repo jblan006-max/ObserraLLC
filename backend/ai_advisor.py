@@ -191,6 +191,47 @@ class AdvisorQuery(BaseModel):
     model: str | None = None
 
 
+async def _engine_summary_safe(org_id: str) -> dict:
+    """Compact unified correlation summary (assets↔vulns↔risks↔controls + ALE + benchmark) merged
+    into every AI path so all 'Analyze' outputs reason from the SAME correlated model."""
+    try:
+        from risk_engine import engine_summary
+        return await engine_summary(org_id)
+    except Exception:
+        return {}
+
+
+def _persona_directive(area: str) -> str:
+    """Multi-persona reasoning — the advisor differentiates its output by the Area it's analysing."""
+    a = (area or "").lower()
+    base = (" GROUNDING: base every statement on the unified_risk_correlation context (correlated "
+            "assets↔vulnerabilities, live CVE/KEV evidence, ALE, benchmark, drift). Report BUSINESS IMPACT, "
+            "not status — cite $ALE, the industry-benchmark position and the Monte-Carlo P90 where available, "
+            "and explain blast-radius cross-correlation (how a failure in one area cascades into others). Do NOT "
+            "emit generic placeholder text; if a value is unknown, say so. ALWAYS finish with exactly 3 Priority "
+            "Actions ranked by Risk-Reduction ROI (ALE reduced per $ spent).")
+    if any(k in a for k in ("command center", "board", "executive", "overview")):
+        return (" PERSONA — UNIFIED COMMAND: correlate all lenses in one briefing — Strategic ($ ALE + "
+                "industry-benchmark position), Tactical (remediation ROI, priority, SLA) and Exposure "
+                "(asset↔vulnerability correlation, evidence & exploitability)." + base)
+    if any(k in a for k in ("tactical", "remediation", "decision", "recommend")):
+        return (" PERSONA — TACTICAL (SOC lead): frame output as remediation ROI, PRIORITY ranking and SLA "
+                "deadlines — which fixes retire the most $ risk fastest, ordered by priority score & SLA." + base)
+    if any(k in a for k in ("exposure", "register", "asset")):
+        return (" PERSONA — EXPOSURE (threat analyst): frame output as asset↔vulnerability CORRELATION, "
+                "EVIDENCE (CVE/KEV, scan findings) and EXPLOITABILITY — which specific assets carry which "
+                "specific bugs and why they are exploitable." + base)
+    if "compliance" in a:
+        return (" PERSONA — COMPLIANCE (GRC lead): frame output as framework alignment, control rating and "
+                "probability × impact score per area, citing the compliance % that drives each rating." + base)
+    if any(k in a for k in ("strategic", "fair", "cyber", "risk", "financial", "benchmark")):
+        return (" PERSONA — STRATEGIC (CRO/CFO): frame output in FINANCIAL terms — Annualized Loss Expectancy "
+                "($ALE) and industry-benchmark position. Explicitly state whether modelled per-incident risk is "
+                "ABOVE or BELOW the sector median (benchmark.position/ratio); if an outlier, give a Strategic "
+                "Recommendation on how to reach the peer-group baseline." + base)
+    return base
+
+
 async def _build_context(org_id: str) -> str:
     risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(50)
     health = await db.health_index.find_one({"org_id": org_id}, {"_id": 0})
@@ -207,6 +248,7 @@ async def _build_context(org_id: str) -> str:
         "ai_incidents": [{"ref": i["ref"], "title": i["title"], "severity": i["severity"],
                           "status": i["status"]} for i in incidents],
     }
+    ctx["unified_risk_correlation"] = await _engine_summary_safe(org_id)
     return json.dumps(ctx, default=str)
 
 
@@ -330,6 +372,7 @@ async def advisor_insight(body: InsightReq, user: dict = Depends(require_active_
         '{"headline": string (<=90 chars), "insights": [{"text": string, "kind": "fact"|"estimate"|"prediction"}] '
         '(exactly 3-4 items), "actions": [string] (1-2 short imperative next steps)}.'
     )
+    system += _persona_directive(body.dashboard)
     chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"],
                    session_id=f"insight-{org_id}-{body.dashboard}", system_message=system).with_model(provider, model)
     prompt = (f"DASHBOARD: {body.dashboard}\nLIVE CONTEXT (JSON):\n{json.dumps(ctx, default=str)[:12000]}\n\n"
@@ -398,10 +441,12 @@ async def advisor_explain(body: ExplainReq, user: dict = Depends(require_active_
         '{"summary": string (<=220 chars), "recommendation": string (imperative, <=220 chars), '
         '"steps": [string] (1-3 short imperative steps), "severity": "info"|"opportunity"|"watch"|"risk"}.'
     )
+    system += _persona_directive(f"{body.kind} {body.title}")
     chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"],
                    session_id=f"explain-{org_id}", system_message=system).with_model(provider, model)
+    merged_ctx = {**(body.context or {}), "unified_risk_correlation": await _engine_summary_safe(org_id)}
     prompt = (f"ITEM: {body.title}\nKIND: {body.kind}\nCONTEXT (JSON):\n"
-              f"{json.dumps(body.context, default=str)[:4000]}\n\nProduce the JSON now.")
+              f"{json.dumps(merged_ctx, default=str)[:6000]}\n\nProduce the JSON now.")
     collected = []
     try:
         async for ev in chat.stream_message(UserMessage(text=prompt)):
@@ -569,6 +614,7 @@ async def advisor_fix(body: FixReq, user: dict = Depends(require_active_subscrip
                "gap_controls": [{"id": c.get("control_id"), "name": c.get("name"),
                                  "framework": c.get("framework"), "effectiveness": c.get("effectiveness")} for c in g["gap_controls"]],
                "implicated_controls": g["implicated_controls"]}
+        ctx["unified_risk_correlation"] = await _engine_summary_safe(org_id)
         chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"fix-{org_id}-{body.entity}-{body.ref}",
                        system_message=system).with_model(provider, model)
         prompt = f"ENTITY CONTEXT (JSON):\n{json.dumps(ctx, default=str)[:8000]}\n\nProduce the remediation JSON now."
