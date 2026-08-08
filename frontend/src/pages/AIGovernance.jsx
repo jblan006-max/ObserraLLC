@@ -2,12 +2,20 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { ConfidenceBadge, FreshnessBadge, DataTypeBadge } from "@/components/badges";
-import { Loader2, Cpu, AlertOctagon, Ban, Eye, Bot, Sparkles, Cloud, ShieldCheck } from "lucide-react";
+import { ConfidenceBadge } from "@/components/badges";
+import { AIInsight } from "@/components/AIInsight";
+import { StatCard, CardShell, EmptyState, BarList, Spinner } from "@/components/dash";
+import { ChartBox } from "@/components/ChartBox";
+import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip } from "recharts";
+import { Cpu, AlertOctagon, Ban, Eye, Bot, Sparkles, Cloud, ShieldCheck, Activity, Layers, ShieldAlert } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { AISystemModal } from "@/components/AISystemModal";
+import { AIMonitor } from "@/components/AIMonitor";
 
+const ACCENT = "350 89% 60%"; // AI Governance → rose
 const riskClassColor = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 90% 55%", Low: "142 70% 45%" };
+const OWASP_COL = { covered: "142 70% 45%", monitored: "35 90% 55%", gap: "0 84% 60%" };
+const GUARD_LABEL = { input_filtering: "Input filtering", output_filtering: "Output filtering", tool_allowlist: "Tool allow-list", human_in_loop: "Human-in-loop" };
 
 function EvalBar({ label, value }) {
   const c = value >= 80 ? "hsl(142 70% 45%)" : value >= 65 ? "hsl(35 90% 55%)" : "hsl(15 80% 55%)";
@@ -25,12 +33,14 @@ export default function AIGovernance() {
   const [systems, setSystems] = useState(null);
   const [incidents, setIncidents] = useState([]);
   const [live, setLive] = useState(null);
+  const [an, setAn] = useState(null);
   const [selected, setSelected] = useState(null);
 
   const load = () => {
     api.get("/ai-systems").then((r) => setSystems(r.data));
     api.get("/ai-incidents").then((r) => setIncidents(r.data));
     api.get("/enterprise/live").then((r) => setLive(r.data)).catch(() => setLive(null));
+    api.get("/dash/ai-analytics").then((r) => setAn(r.data)).catch(() => setAn(null));
   };
   useEffect(() => { load(); }, []);
 
@@ -40,13 +50,16 @@ export default function AIGovernance() {
     load();
   };
 
-  if (!systems) return <div className="flex items-center justify-center h-96"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
-
+  if (!systems) return <Spinner />;
   const shadow = systems.filter((s) => s.status === "shadow");
+  const t = an?.totals || {};
+  const trend = an?.usage_trend || [];
+  const byModel = (an?.by_model || []).map((m) => ({ name: m.model, value: m.queries }));
+  const riskDist = Object.entries(an?.agents?.risk_dist || {}).map(([name, value]) => ({ name, value, color: riskClassColor[name] }));
+  const guardCov = an?.agents?.guard_cov || {};
+  const agentTotal = an?.agents?.total || 0;
 
-  const copilot = live?.copilot;
-  const openai = live?.openai;
-  const m365 = live?.m365;
+  const copilot = live?.copilot, openai = live?.openai, m365 = live?.m365;
   const anyLicensed = (copilot?.live) || (openai?.live) || (m365?.live);
   const LicTile = ({ icon: Icon, label, on, metric, unit, sub, testid }) => (
     <div data-testid={testid} className={`rounded-lg p-4 border ${on ? "border-ai/30 bg-ai/5" : "border-border bg-secondary/30"}`}>
@@ -60,22 +73,93 @@ export default function AIGovernance() {
   );
 
   return (
-    <div className="rise space-y-5">
+    <div className="rise space-y-5" data-testid="ai-governance-page">
       <div>
-        <h1 className="font-head font-black text-3xl tracking-tight">AI Governance Suite</h1>
-        <p className="text-sm text-muted-foreground mt-1">{isExec ? "AI governance posture — sanctioned vs shadow AI and the governance actions awaiting decision." : "Inventory, NIST AI RMF mapping, model cards, evaluations & incident management. Sanctioned + shadow-AI discovery."}</p>
+        <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2" style={{ color: `hsl(${ACCENT})` }}><Bot className="w-7 h-7" strokeWidth={1.5} /> AI Governance Suite</h1>
+        <p className="text-sm text-muted-foreground mt-1">{isExec ? "AI governance posture — usage analytics, sanctioned vs shadow AI, guardrail coverage & OWASP-LLM exposure." : "Live AI usage analytics, NIST AI RMF mapping, model cards, evaluations, guardrails & incidents."}</p>
       </div>
 
+      {/* Usage analytics KPIs — always present */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <StatCard testid="aig-kpi-queries" label="AI queries" value={(t.queries ?? 0).toLocaleString()} accent={ACCENT} sub="advisor telemetry" />
+        <StatCard testid="aig-kpi-tokens" label="Tokens" value={(t.tokens ?? 0).toLocaleString()} accent={ACCENT} sub="processed" />
+        <StatCard testid="aig-kpi-cost" label="AI spend" value={`$${(t.cost ?? 0).toFixed(2)}`} accent="35 90% 55%" sub="estimated" />
+        <StatCard testid="aig-kpi-models" label="Models" value={t.models ?? 0} accent={ACCENT} sub="in use" />
+        <StatCard testid="aig-kpi-systems" label="AI systems" value={an?.systems?.total ?? systems.length} accent={ACCENT} sub={`${an?.systems?.sanctioned ?? 0} sanctioned`} />
+        <StatCard testid="aig-kpi-shadow" label="Shadow AI" value={an?.systems?.shadow ?? shadow.length} accent="0 84% 60%" sub="unsanctioned" />
+      </div>
+
+      <AIInsight dashboard="AI Governance" accent={ACCENT} />
+
+      {/* Usage trend + model breakdown */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="lg:col-span-2">
+          <CardShell testid="aig-usage-trend" title="AI usage trend (14 days)" icon={Activity} accent={ACCENT}>
+            {trend.length === 0 ? (
+              <EmptyState icon={Activity} text="No AI usage recorded yet. Ask the Advisor a question or run an AI Insight and daily usage will stream in here." />
+            ) : (
+              <ChartBox height={200}>
+                <AreaChart data={trend} margin={{ top: 6, right: 8, left: -18, bottom: 0 }}>
+                  <defs><linearGradient id="aigq" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={`hsl(${ACCENT})`} stopOpacity={0.35} /><stop offset="100%" stopColor={`hsl(${ACCENT})`} stopOpacity={0} /></linearGradient></defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
+                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: "#94a3b8" }} tickFormatter={(v) => String(v).slice(5)} />
+                  <YAxis tick={{ fontSize: 9, fill: "#94a3b8" }} />
+                  <Tooltip contentStyle={{ background: "#0A0E17", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, fontSize: 12 }} />
+                  <Area type="monotone" dataKey="queries" name="Queries" stroke={`hsl(${ACCENT})`} strokeWidth={2.5} fill="url(#aigq)" />
+                </AreaChart>
+              </ChartBox>
+            )}
+          </CardShell>
+        </div>
+        <CardShell testid="aig-by-model" title="Queries by model" icon={Cpu} accent={ACCENT}>
+          <BarList items={byModel} accent={ACCENT} empty="No model usage yet." />
+        </CardShell>
+      </div>
+
+      {/* Agent risk + guardrails + OWASP */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <CardShell testid="aig-risk-dist" title="AI agent risk distribution" icon={ShieldAlert} accent={ACCENT}>
+          <BarList items={riskDist} accent={ACCENT} empty="No AI agents registered yet — register agents to classify risk." />
+        </CardShell>
+        <CardShell testid="aig-guardrails" title="Guardrail coverage" icon={ShieldCheck} accent={ACCENT}>
+          {agentTotal === 0 ? <EmptyState icon={ShieldCheck} text="No agents yet — guardrail coverage appears once AI agents are registered." /> : (
+            <div className="space-y-3">
+              {Object.keys(GUARD_LABEL).map((g) => {
+                const n = guardCov[g] || 0; const pct = Math.round((n / agentTotal) * 100);
+                return (
+                  <div key={g} data-testid={`guard-${g}`}>
+                    <div className="flex justify-between text-xs mb-1"><span>{GUARD_LABEL[g]}</span><span className="font-mono text-muted-foreground">{n}/{agentTotal}</span></div>
+                    <div className="h-2 rounded-full bg-secondary/60 overflow-hidden"><div className="h-full rounded-full" style={{ width: `${pct}%`, background: `hsl(${pct >= 60 ? "142 70% 45%" : pct >= 30 ? "35 90% 55%" : "0 84% 60%"})` }} /></div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardShell>
+        <CardShell testid="aig-owasp" title="OWASP LLM Top 10 coverage" icon={Layers} accent={ACCENT}>
+          <div className="grid grid-cols-1 gap-1.5 max-h-64 overflow-y-auto pr-1">
+            {(an?.owasp_llm || []).map((o) => (
+              <div key={o.code} data-testid={`owasp-${o.code}`} className="flex items-center justify-between gap-2 text-xs bg-secondary/30 rounded-md px-2.5 py-1.5">
+                <span className="truncate"><span className="font-mono text-muted-foreground">{o.code}</span> {o.name}</span>
+                <span className="font-mono text-[9px] uppercase px-1.5 py-0.5 rounded-sm shrink-0" style={{ background: `hsl(${OWASP_COL[o.status]} / 0.15)`, color: `hsl(${OWASP_COL[o.status]})` }}>{o.status}</span>
+              </div>
+            ))}
+            {(!an?.owasp_llm || an.owasp_llm.length === 0) && <EmptyState text="OWASP-LLM mapping loads with your AI inventory." />}
+          </div>
+        </CardShell>
+      </div>
+
+      <AIMonitor guardCov={guardCov} agentTotal={agentTotal} sanctioned={an?.systems?.sanctioned || 0} systems={an?.systems?.total || systems.length} shadow={an?.systems?.shadow ?? shadow.length} accent={ACCENT} />
+
       {live && (
-        <div className="bg-card fact-border rounded-xl p-5" data-testid="ai-licenses-card">
-          <div className="flex items-center gap-2 mb-1"><ShieldCheck className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">AI Licenses &amp; Copilot Governance</h2></div>
-          <p className="text-[11px] text-muted-foreground mb-4">Licensed AI seats and models pulled from your connected tenants. {anyLicensed ? "" : "Connect Microsoft Copilot or ChatGPT to populate this."}</p>
+        <CardShell testid="ai-licenses-card" title="AI Licenses & Copilot Governance" icon={ShieldCheck} accent={ACCENT}>
+          <p className="text-[11px] text-muted-foreground mb-3 -mt-2">Licensed AI seats and models pulled from your connected tenants. {anyLicensed ? "" : "Connect Microsoft Copilot or ChatGPT to populate this."}</p>
           <div className="grid sm:grid-cols-3 gap-3">
             <LicTile icon={Bot} label="Microsoft Copilot" on={!!copilot?.live} metric={copilot?.seats} unit="seats licensed" sub={copilot?.seats != null ? `${copilot.seats} Copilot seats licensed` : "Connected — seats pending sync"} testid="lic-copilot" />
             <LicTile icon={Sparkles} label="ChatGPT (OpenAI)" on={!!openai?.live} metric={openai?.model_count} unit="models available" sub={openai?.model_count != null ? `${openai.model_count} models available to govern` : "Connected — models pending sync"} testid="lic-openai" />
             <LicTile icon={Cloud} label="Microsoft 365" on={!!m365?.live} metric={m365?.user_count} unit="licensed users" sub={m365?.risky_users != null ? `${m365.risky_users} risky user(s) flagged` : "Connected — users pending sync"} testid="lic-m365" />
           </div>
-        </div>
+        </CardShell>
       )}
 
       {shadow.length > 0 && (
@@ -98,35 +182,25 @@ export default function AIGovernance() {
                 className={`rounded-lg p-5 cursor-pointer hover:-translate-y-0.5 transition-transform duration-200 ${s.status === "shadow" ? "ai-border" : "bg-card fact-border"}`}>
                 <div className="flex items-start justify-between mb-3">
                   <div>
-                    <div className="flex items-center gap-2">
-                      <Cpu className="w-4 h-4 text-muted-foreground" />
-                      <span className="font-head font-bold">{s.name}</span>
-                    </div>
+                    <div className="flex items-center gap-2"><Cpu className="w-4 h-4 text-muted-foreground" /><span className="font-head font-bold">{s.name}</span></div>
                     <div className="text-[11px] font-mono text-muted-foreground mt-1">{s.ref} · {s.type} · {s.provider}</div>
                   </div>
                   <span className="px-2 py-0.5 rounded-sm text-[10px] font-mono font-bold" style={{ background: `hsl(${riskClassColor[s.risk_class]} / 0.15)`, color: `hsl(${riskClassColor[s.risk_class]})` }}>{s.risk_class}</span>
                 </div>
-
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground mb-3">
                   <span>Use case: <span className="text-foreground">{s.use_case}</span></span>
                   <span>NIST: <span className="text-foreground">{s.nist_profile}</span></span>
                   <span>Owner: <span className="text-foreground">{s.owner}</span></span>
                 </div>
-
                 {s.status === "shadow" ? (
                   isExec
                     ? <div className="w-full py-2 rounded-md bg-ai/10 border border-ai/30 text-ai font-head font-bold text-sm text-center">Governance decision required</div>
-                    : <button data-testid={`sanction-${s.ref}`} onClick={(e) => { e.stopPropagation(); sanction(s.ref); }}
-                      className="w-full py-2 rounded-md bg-ai text-background font-head font-bold text-sm hover:opacity-90 transition-opacity">
-                      Bring under governance
-                    </button>
+                    : <button data-testid={`sanction-${s.ref}`} onClick={(e) => { e.stopPropagation(); sanction(s.ref); }} className="w-full py-2 rounded-md bg-ai text-background font-head font-bold text-sm hover:opacity-90 transition-opacity">Bring under governance</button>
                 ) : (
                   <>
                     <div className="grid grid-cols-2 gap-3 mb-3">
-                      <EvalBar label="Bias" value={s.eval.bias} />
-                      <EvalBar label="Safety" value={s.eval.safety} />
-                      <EvalBar label="Security" value={s.eval.security} />
-                      <EvalBar label="Explainability" value={s.eval.explainability} />
+                      <EvalBar label="Bias" value={s.eval.bias} /><EvalBar label="Safety" value={s.eval.safety} />
+                      <EvalBar label="Security" value={s.eval.security} /><EvalBar label="Explainability" value={s.eval.explainability} />
                     </div>
                     <div className="flex items-center justify-between pt-3 border-t border-border">
                       <div className="flex items-center gap-3">
@@ -143,6 +217,7 @@ export default function AIGovernance() {
         </TabsContent>
 
         <TabsContent value="incidents" className="mt-4 space-y-3">
+          {incidents.length === 0 && <EmptyState icon={AlertOctagon} text="No AI incidents — governance monitors sanctioned systems continuously." />}
           {incidents.map((i) => (
             <div key={i.ref} data-testid={`incident-${i.ref}`} className="bg-card fact-border rounded-lg p-4 flex items-center gap-4">
               {i.severity === "Critical" ? <Ban className="w-5 h-5 text-crit" /> : <AlertOctagon className="w-5 h-5 text-high" />}

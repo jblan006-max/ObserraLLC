@@ -20,6 +20,11 @@ SEC_HEADERS = [
     "x-content-type-options", "referrer-policy", "permissions-policy",
 ]
 
+# Per-host enrichment cache so the Asset Intelligence dashboard never re-probes the
+# same endpoint on every load (DNS/TLS/port/HTTP probes are expensive).
+_ASSET_CACHE = {}
+_ASSET_TTL = 300
+
 
 def _sync_dns(host):
     try:
@@ -95,16 +100,40 @@ async def _endpoint_metadata(url, scan):
     }
 
 
+def _asset_url(a, scan):
+    return (a.get("url") or (a.get("name") if str(a.get("name", "")).startswith("http") else "")
+            or scan.get("endpoint") or "")
+
+
 @dash_router.get("/assets")
 async def asset_intelligence(user: dict = Depends(get_current_user)):
     org_id = user["org_id"]
     assets = await db.assets.find({"org_id": org_id}, {"_id": 0}).to_list(500)
     scan = await db.self_scans.find_one({"org_id": org_id}, sort=[("ts", -1)]) or {}
+    # Resolve each asset to a host, dedupe, and enrich unique hosts concurrently (cached).
+    host_of, unique = {}, {}
+    for a in assets:
+        url = _asset_url(a, scan)
+        host = urlparse(url if url.startswith("http") else f"https://{url}").hostname if url else None
+        host_of[a.get("ref")] = (host, url)
+        if host and host not in unique:
+            unique[host] = url
+    now = datetime.now(timezone.utc)
+
+    async def _enrich(host, url):
+        c = _ASSET_CACHE.get(host)
+        if c and (now - c["ts"]).total_seconds() < _ASSET_TTL:
+            return host, c["data"]
+        data = await _endpoint_metadata(url, scan)
+        _ASSET_CACHE[host] = {"ts": now, "data": data}
+        return host, data
+
+    results = await asyncio.gather(*[_enrich(h, u) for h, u in unique.items()]) if unique else []
+    detail_by_host = {h: d for h, d in results}
     enriched = []
     for a in assets:
-        url = a.get("url") or (a.get("name") if str(a.get("name", "")).startswith("http") else "") or scan.get("endpoint") or ""
-        detail = await _endpoint_metadata(url, scan) if url else {}
-        enriched.append({**a, "url": url, "detail": detail})
+        host, url = host_of.get(a.get("ref"), (None, ""))
+        enriched.append({**a, "url": url, "detail": detail_by_host.get(host, {}) if host else {}})
     internet_facing = sum(1 for a in enriched if a["detail"].get("ips"))
     tls_ok = sum(1 for a in enriched if (a["detail"].get("tls") or {}).get("ok"))
     total_kev = sum((a["detail"].get("kev_matches") or 0) for a in enriched)
@@ -223,4 +252,173 @@ async def vendor_analytics(user: dict = Depends(get_current_user)):
         "portfolio_risk": round(sum(v.get("risk_score", 0) for v in vendors) / len(vendors)) if vendors else 0,
         "high_risk": sum(1 for v in vendors if v.get("risk_tier") in ("High", "Critical")),
         "renewals_due": renewals[:6],
+    }
+
+
+@dash_router.get("/decisions")
+async def decisions_analytics(user: dict = Depends(get_current_user)):
+    """Live recommendation → decision funnel: what the AI is recommending, what's been
+    decided, coverage of open risks, and the recent decision register — so the Decisions
+    dashboard is always populated from real org state."""
+    org_id = user["org_id"]
+    recs = await db.recommendations.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    decisions = await db.decisions.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    risk_by_ref = {r["ref"]: r for r in risks}
+
+    status_counts, by_category = {}, {}
+    for r in recs:
+        s = r.get("status", "Pending")
+        status_counts[s] = status_counts.get(s, 0) + 1
+        cat = (risk_by_ref.get(r.get("risk_ref")) or {}).get("category") or "Uncategorised"
+        by_category[cat] = by_category.get(cat, 0) + 1
+    confs = [r.get("confidence") for r in recs if r.get("confidence") is not None]
+    avg_conf = round(sum(confs) / len(confs), 2) if confs else 0
+
+    open_risks = [r for r in risks if r.get("status") != "Remediated"]
+    with_rec = {r.get("risk_ref") for r in recs}
+    covered = sum(1 for r in open_risks if r["ref"] in with_rec)
+    coverage_pct = round(covered / len(open_risks) * 100) if open_risks else 0
+
+    dec_status = {}
+    for d in decisions:
+        k = d.get("status", "Approved")
+        dec_status[k] = dec_status.get(k, 0) + 1
+
+    return {
+        "totals": {"recommendations": len(recs), "pending": status_counts.get("Pending", 0),
+                   "decided": status_counts.get("Decided", 0), "applied": status_counts.get("Applied", 0),
+                   "decisions": len(decisions), "avg_confidence": avg_conf},
+        "rec_status": [{"name": k, "value": v} for k, v in status_counts.items()],
+        "by_category": sorted([{"name": k, "value": v} for k, v in by_category.items()],
+                              key=lambda x: -x["value"]),
+        "coverage": {"open_risks": len(open_risks), "covered": covered, "pct": coverage_pct},
+        "decision_status": [{"name": k, "value": v} for k, v in dec_status.items()],
+        "recent_decisions": sorted(decisions, key=lambda d: d.get("decided_at", ""), reverse=True)[:5],
+    }
+
+
+_BAND = {"Low": "142 70% 45%", "Moderate": "48 96% 53%", "High": "28 90% 55%", "Extreme": "0 84% 60%"}
+
+
+def _band(score):
+    return "Extreme" if score >= 14 else "High" if score >= 8 else "Moderate" if score >= 4 else "Low"
+
+
+@dash_router.get("/risk-register")
+async def risk_register(user: dict = Depends(get_current_user)):
+    """Board-grade risk portfolio reporting computed LIVE: quantitative 5x5 matrix, Monte-Carlo
+    loss-exposure distribution, risk-trending-vs-appetite, top risks, control deficiencies,
+    security initiatives — all tied to assets, vulnerabilities, controls and residual risk."""
+    import random
+    from bson import ObjectId
+    from routes import _get_fin_cfg, _fin
+    org_id = user["org_id"]
+    risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    controls = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    recs = await db.recommendations.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    scan = await db.self_scans.find_one({"org_id": org_id}, sort=[("ts", -1)]) or {}
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    cfg = await _get_fin_cfg(org_id)
+
+    fins = [(r, _fin(r, cfg)) for r in risks]
+    # controls grouped by category for linkage
+    ctrl_by_cat = {}
+    for c in controls:
+        ctrl_by_cat.setdefault(c.get("category") or "General", []).append(c)
+
+    residual_total = round(sum(f["residual_ale"] for _, f in fins))
+    avg_ctrl = round(sum(c.get("effectiveness", 0) for c in controls) / len(controls)) if controls else 0
+
+    # 5x5 quantitative matrix
+    matrix = []
+    for imp in range(1, 6):
+        for lik in range(1, 6):
+            cell = [r for r in risks if r.get("impact") == imp and r.get("likelihood") == lik]
+            top = max(cell, key=lambda r: r.get("residual", 0)) if cell else None
+            matrix.append({"impact": imp, "likelihood": lik, "score": imp * lik, "band": _band(imp * lik),
+                           "count": len(cell), "top": top["ref"] if top else None,
+                           "refs": [r["ref"] for r in cell]})
+
+    # Monte-Carlo portfolio loss distribution
+    sims = []
+    for _ in range(4000):
+        s = 0.0
+        for r, f in fins:
+            sle_s = random.triangular(f["sle"] * 0.5, f["sle"] * 2.0, f["sle"])
+            aro_s = min(1.0, max(0.0, random.gauss(f["aro"], 0.15)))
+            s += sle_s * aro_s * (r.get("residual", 10) / max(1, r.get("inherent", 10)))
+        sims.append(s)
+    sims.sort()
+
+    def _q(p):
+        return round(sims[min(len(sims) - 1, int(p * len(sims)))]) if sims else 0
+    hist, ml = [], 0
+    if sims and sims[-1] > sims[0]:
+        nb = 22
+        lo, hi = sims[0], sims[-1]
+        width = (hi - lo) / nb or 1
+        counts = [0] * nb
+        for v in sims:
+            counts[min(nb - 1, int((v - lo) / width))] += 1
+        hist = [{"x": round(lo + width * (i + 0.5)), "count": counts[i]} for i in range(nb)]
+        ml = round(lo + width * (counts.index(max(counts)) + 0.5))
+    markers = {"min": _q(0.0), "p10": _q(0.10), "ml": ml, "p50": _q(0.50), "p90": _q(0.90), "max": _q(1.0)}
+
+    # top risks with control linkage
+    top_risks = []
+    for r, f in sorted(fins, key=lambda x: x[1]["residual_ale"], reverse=True)[:10]:
+        linked = ctrl_by_cat.get(r.get("category"), [])
+        top_risks.append({"ref": r["ref"], "title": r["title"], "category": r.get("category"),
+                          "residual": r.get("residual"), "inherent": r.get("inherent"),
+                          "status": r.get("status"), "trend": r.get("trend", "flat"),
+                          "owner": r.get("owner"), "exposure": f["residual_ale"],
+                          "controls": [c.get("name") for c in linked[:3]],
+                          "control_count": len(linked)})
+
+    # control deficiencies (lowest effectiveness)
+    deficiencies = []
+    for c in sorted(controls, key=lambda c: c.get("effectiveness", 0))[:8]:
+        eff = c.get("effectiveness", 0)
+        deficiencies.append({"control_id": c.get("control_id"), "name": c.get("name"),
+                             "effectiveness": eff, "deficiency": 100 - eff,
+                             "owner": c.get("owner"), "category": c.get("category"),
+                             "status": c.get("status")})
+
+    # security initiatives from recommendations
+    prog = {"Pending": 15, "Decided": 55, "Applied": 90, "Closed": 100}
+    initiatives = [{"ref": r["ref"], "title": r["title"], "status": r.get("status", "Pending"),
+                    "progress": prog.get(r.get("status", "Pending"), 20)} for r in recs][:6]
+
+    # trending vs appetite
+    snaps = await db.exposure_snapshots.find({"org_id": org_id}, {"_id": 0}).sort("month", 1).to_list(24)
+    appetite = org.get("risk_appetite") or round(residual_total * 0.7)
+    points = []
+    if len(snaps) >= 2:
+        for s in snaps[-8:]:
+            exp = s.get("residual_total") or 0
+            points.append({"period": s.get("label") or s.get("month"), "expected": exp,
+                           "low": round(exp * 0.72), "high": round(exp * 1.38), "appetite": appetite})
+        real = True
+    else:
+        exp = residual_total
+        for i, lbl in enumerate(["-4mo", "-3mo", "-2mo", "-1mo", "Now"]):
+            e = round(exp * (1.18 - i * 0.045))
+            points.append({"period": lbl, "expected": e, "low": round(e * 0.72),
+                           "high": round(e * 1.38), "appetite": appetite})
+        real = False
+
+    return {
+        "kpis": {"total": len(risks), "open": sum(1 for r in risks if r.get("status") != "Remediated"),
+                 "critical": sum(1 for r in risks if r.get("residual", 0) >= 16),
+                 "residual_exposure": residual_total, "worst_case_p90": markers["p90"],
+                 "avg_control_eff": avg_ctrl, "controls": len(controls)},
+        "matrix": matrix, "bands": _BAND,
+        "loss": {"histogram": hist, "markers": markers},
+        "trending": {"points": points, "appetite": appetite, "real": real},
+        "top_risks": top_risks, "control_deficiencies": deficiencies, "initiatives": initiatives,
+        "vuln": {"open_cves": (scan.get("summary") or {}).get("vulnerable_dependencies") or 0,
+                 "kev": len(scan.get("kev_matches") or []),
+                 "mitre": len(scan.get("mitre_techniques") or []),
+                 "cwe": len(scan.get("cwe_ids") or []), "score": scan.get("score")},
     }

@@ -3,8 +3,11 @@ import { api } from "@/lib/api";
 import { useUrlState } from "@/hooks/useUrlState";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { Building, Loader2, Layers, ShieldAlert, PlayCircle, Search, X, Plus, FileDown } from "lucide-react";
+import { AIInsight } from "@/components/AIInsight";
+import { StatCard, CardShell, EmptyState, BarList, Spinner } from "@/components/dash";
+import { Building, Loader2, Layers, ShieldAlert, PlayCircle, Search, X, Plus, FileDown, CalendarClock, PieChart, Database } from "lucide-react";
 
+const ACCENT = "172 66% 45%"; // Third-Party Risk → teal
 const TIER = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 90% 55%", Low: "142 70% 45%" };
 const KIND_COLOR = { remediation: "#3b82f6", evidence: "#22c55e", note: "#94a3b8" };
 
@@ -12,6 +15,7 @@ export default function VendorRisk() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const [data, setData] = useState(null);
+  const [an, setAn] = useState(null);
   const [busy, setBusy] = useState("");
   const [q, setQ] = useUrlState("q", "");
   const [tierF, setTierF] = useUrlState("tierF", "all");
@@ -23,7 +27,10 @@ export default function VendorRisk() {
   const [logKind, setLogKind] = useState("all");
   const [logQ, setLogQ] = useState("");
 
-  const load = () => api.get("/vendors").then((r) => setData(r.data));
+  const load = () => {
+    api.get("/vendors").then((r) => setData(r.data));
+    api.get("/dash/vendors").then((r) => setAn(r.data)).catch(() => setAn(null));
+  };
   useEffect(() => { load(); }, []);
 
   useEffect(() => {
@@ -62,25 +69,59 @@ export default function VendorRisk() {
     setBusy("");
   };
 
-  if (!data) return <div className="flex items-center justify-center h-96"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
+  if (!data) return <Spinner />;
   const shownVendors = data.vendors.filter((v) => (tierF === "all" || v.risk_tier === tierF) && `${v.name} ${v.ref}`.toLowerCase().includes(q.toLowerCase()));
   const shownHistory = history.filter((h) => (logKind === "all" || h.kind === logKind) && h.text.toLowerCase().includes(logQ.toLowerCase()));
 
+  const tierItems = ["Critical", "High", "Medium", "Low"].map((t) => ({ name: t, value: an?.by_tier?.[t] || 0, color: TIER[t] }));
+  const catItems = Object.entries(an?.by_category || {}).map(([name, value]) => ({ name, value }));
+  const dataItems = Object.entries(an?.by_data_access || {}).map(([name, value]) => ({ name, value, color: name.includes("PII") || name.includes("Cardholder") ? "0 84% 60%" : ACCENT }));
+  const renewals = an?.renewals_due || [];
+
   return (
-    <div className="rise space-y-6">
+    <div className="rise space-y-5" data-testid="vendor-risk-page">
       <div>
-        <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><Building className="w-7 h-7 text-primary" /> Third-Party Risk</h1>
-        <p className="text-sm text-muted-foreground mt-1">Vendor risk management — the second standalone app composed on the Obserra kernel.</p>
+        <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2" style={{ color: `hsl(${ACCENT})` }}><Building className="w-7 h-7" strokeWidth={1.5} /> Third-Party Risk</h1>
+        <p className="text-sm text-muted-foreground mt-1">Vendor portfolio risk — tiers, data access, attestations, incidents &amp; contract renewals, continuously scored on the Obserra kernel.</p>
         <div data-testid="tpr-composition" className="flex flex-wrap items-center gap-2 mt-3">
           <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1"><Layers className="w-3.5 h-3.5" /> Composed on:</span>
           {data.composition.map((c) => <span key={c} className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-ai/10 text-ai border border-ai/20">{c}</span>)}
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 max-w-md">
-        <div className="bg-card fact-border rounded-xl p-4"><div className="text-[10px] font-mono uppercase text-muted-foreground">Portfolio risk</div><div className="font-head font-black text-3xl">{data.portfolio_risk}</div></div>
-        <div className="bg-card fact-border rounded-xl p-4" style={{ borderLeft: "3px solid hsl(0 84% 60%)" }}><div className="text-[10px] font-mono uppercase text-muted-foreground">High / Critical</div><div className="font-head font-black text-3xl text-crit">{data.high_risk}</div></div>
+      {/* KPI row — always present */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        <StatCard testid="vnd-kpi-total" label="Vendors" value={an?.total ?? data.vendors.length} accent={ACCENT} sub="in portfolio" />
+        <StatCard testid="vnd-kpi-portfolio" label="Portfolio risk" value={an?.portfolio_risk ?? data.portfolio_risk} accent={ACCENT} sub="0–100 avg" />
+        <StatCard testid="vnd-kpi-highrisk" label="High / Critical" value={an?.high_risk ?? data.high_risk} accent="0 84% 60%" sub="need attention" />
+        <StatCard testid="vnd-kpi-attest" label="Avg attestation" value={`${an?.avg_attestation ?? 0}%`} accent="142 70% 45%" sub="security attested" />
+        <StatCard testid="vnd-kpi-incidents" label="Incidents" value={an?.total_incidents ?? 0} accent="15 80% 55%" sub="across vendors" />
+        <StatCard testid="vnd-kpi-renewals" label="Renewals ≤7mo" value={renewals.length} accent="35 90% 55%" sub="contracts due" />
       </div>
+
+      <AIInsight dashboard="Third-Party Risk" accent={ACCENT} />
+
+      {/* Distribution cards — always present */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <CardShell testid="vnd-by-tier" title="Vendors by risk tier" icon={PieChart} accent={ACCENT}><BarList items={tierItems} accent={ACCENT} empty="No vendors yet." /></CardShell>
+        <CardShell testid="vnd-by-category" title="By category" icon={Layers} accent={ACCENT}><BarList items={catItems} accent={ACCENT} empty="No vendors yet." /></CardShell>
+        <CardShell testid="vnd-by-data" title="By data access" icon={Database} accent={ACCENT}><BarList items={dataItems} accent={ACCENT} empty="No vendors yet." /></CardShell>
+      </div>
+
+      <CardShell testid="vnd-renewals" title="Contract renewals due" icon={CalendarClock} accent={ACCENT}>
+        {renewals.length === 0 ? (
+          <EmptyState icon={CalendarClock} text="No contracts renewing in the next ~7 months. Add contract end dates to vendors to track renewals here." />
+        ) : (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+            {renewals.map((r) => (
+              <div key={r.ref} data-testid={`renewal-${r.ref}`} className="bg-secondary/30 rounded-md p-3 flex items-center justify-between">
+                <div className="min-w-0"><div className="font-medium text-sm truncate">{r.name}</div><div className="text-[11px] text-muted-foreground font-mono">{r.contract_end}</div></div>
+                <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full shrink-0 ${r.days < 30 ? "bg-crit/15 text-crit" : r.days < 90 ? "bg-high/15 text-high" : "bg-secondary/60 text-muted-foreground"}`}>{r.days}d</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardShell>
 
       <div className="flex flex-wrap gap-2" data-testid="vendor-filters">
         <div className="relative flex-1 min-w-[180px]">
@@ -152,19 +193,14 @@ export default function VendorRisk() {
               {isAdmin && history.length > 0 && <button data-testid="vendor-log-export" onClick={() => exportLog(selected.ref)} className="text-[10px] flex items-center gap-1 text-ai hover:text-foreground transition-colors"><FileDown className="w-3 h-3" /> Export PDF</button>}
             </div>
             <select data-testid="vendor-note-kind" value={noteKind} onChange={(e) => setNoteKind(e.target.value)} className="w-full bg-secondary/60 rounded-md px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary">
-              <option value="remediation">Remediation action</option>
-              <option value="evidence">Evidence</option>
-              <option value="note">Note</option>
+              <option value="remediation">Remediation action</option><option value="evidence">Evidence</option><option value="note">Note</option>
             </select>
             <textarea data-testid="vendor-note-text" value={noteText} onChange={(e) => setNoteText(e.target.value)} rows={2} placeholder="Log a remediation action or attach evidence…" className="w-full bg-secondary/60 rounded-md px-2 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary resize-none" />
             <button data-testid="vendor-note-add" disabled={noteBusy || !noteText.trim()} onClick={addNote} className="w-full text-xs px-3 py-1.5 rounded-md bg-ai/10 border border-ai/30 text-ai hover:bg-ai/20 transition-colors disabled:opacity-50 flex items-center justify-center gap-1">{noteBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />} Add to log</button>
             {history.length > 0 && (
               <div className="flex gap-1.5" data-testid="vendor-log-filters">
                 <select data-testid="vendor-log-kind" value={logKind} onChange={(e) => setLogKind(e.target.value)} className="bg-secondary/60 rounded-md px-2 py-1 text-[11px] outline-none focus:ring-1 focus:ring-primary">
-                  <option value="all">All kinds</option>
-                  <option value="remediation">Remediation</option>
-                  <option value="evidence">Evidence</option>
-                  <option value="note">Note</option>
+                  <option value="all">All kinds</option><option value="remediation">Remediation</option><option value="evidence">Evidence</option><option value="note">Note</option>
                 </select>
                 <input data-testid="vendor-log-search" value={logQ} onChange={(e) => setLogQ(e.target.value)} placeholder="Search log…" className="flex-1 min-w-0 bg-secondary/60 rounded-md px-2 py-1 text-[11px] outline-none focus:ring-1 focus:ring-primary" />
               </div>
@@ -185,7 +221,6 @@ export default function VendorRisk() {
         </aside>
       )}
       </div>
-      <p className="text-[11px] text-muted-foreground">Assessing a High/Critical vendor opens a remediation workflow and alerts owners — proving the kernel loop.</p>
     </div>
   );
 }

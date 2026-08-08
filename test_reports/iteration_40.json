@@ -1,0 +1,39 @@
+{
+  "summary": "Frontend-only verification of the five preset-scaffold dashboards (Asset Intelligence, AI Governance, Third-Party Risk, Decisions, Risk Register) as an admin (jblan2026@gmail.com) on the live_only sparse-data org. All five pages render fully with their page-level data-testid, exactly 6 KPI tiles each, the AI Insight card, all requested sub-cards (heatmap 25 cells, OWASP LLM01\u2013LLM10 = 10 rows, aig-usage-trend, aig-by-model, ai-monitoring, vnd-renewals, rr-loss/trending/deficiencies/initiatives/top-assets, asset-devices/inventory, etc). None of the pages white-screen; empty states inside cards where the underlying dataset is sparse (0 vendors, 0 agents, 0 recs) are graceful and expected. Distinct accents visible per dashboard (amber / rose / teal / violet / indigo). AI Insight Analyze button on Asset Intelligence returned 200 from POST /api/advisor/insight (anthropic/claude-opus-4-8) and rendered a headline + 4 insight bullets + recommended actions in ~1s. Asset row click opened asset-detail-pane with IP/host/TLS/server metadata correctly.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "RiskRegister risk-detail-pane", "issue": "After clicking [data-testid=risk-row-LR-001] the sidebar aside [data-testid=risk-detail-pane] did not appear in DOM (locator count=0) at 1920px viewport, despite `hidden md:block` visibility class and `selected` state toggling. The detail data does render elsewhere on the page but the specifically-testid'ed pane was not present. Suspected: previously-selected row may have toggled off on second click, or aside stays offscreen. Non-blocking.", "selector": "[data-testid=risk-detail-pane]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "All dashboards", "issues": ["Persistent 'Meet your Obserrian Advisor' floating tooltip in bottom-right overlaps 'Connected sources' / table rows / renewals card on multiple pages \u2014 consider z-index or dismiss-on-scroll."]}
+    ]
+  },
+  "testid_coverage_verified": {
+    "/app/assets": {"asset-intelligence-page": 1, "asset-kpi-*": 6, "asset-devices": 1, "asset-inventory": 1, "asset-detail-pane_on_row_click": 1, "ai-insight-run-Asset-Intelligence": 1},
+    "/app/ai-governance": {"ai-governance-page": 1, "aig-kpi-*": 6, "aig-usage-trend": 1, "aig-by-model": 1, "aig-owasp": 1, "ai-monitoring": 1, "owasp-LLM01..LLM10": 10},
+    "/app/vendors": {"vendor-risk-page": 1, "vnd-kpi-*": 6, "vnd-renewals": 1},
+    "/app/decisions": {"decisions-page": 1, "dec-kpi-*": 6},
+    "/app/risks": {"risk-register-page": 1, "rr-kpi-*": 6, "rr-heatmap": 1, "risk-matrix-cell-*": 25, "rr-top-risks/rating/loss/trending/deficiencies/initiatives/top-assets": "all 1"}
+  },
+  "ai_insight_verified": {"page": "/app/assets", "endpoint": "POST /api/advisor/insight", "status": 200, "model": "anthropic/claude-opus-4-8", "items_rendered": 4, "recommended_actions_rendered": true, "latency_seconds": 1},
+  "test_report_links": [],
+  "action_items": [
+    "Investigate risk-detail-pane rendering after single row click at desktop viewport (may be a toggle/state issue in RiskRegister.jsx around `selected` state).",
+    "Consider auto-dismissing or z-index'ing down the 'Meet your Obserrian Advisor' bottom-right pop-in so it doesn't overlap live cards.",
+    "The data-testid slug format for AI Insight buttons is derived from the human dashboard title (e.g. ai-insight-run-Asset-Intelligence, ai-insight-run-Recommendations---Decisions) not from the URL slug \u2014 request spec called them `ai-insight-run-<dashboard-slug>`. Confirm this naming is intentional; otherwise normalize to url-slug form (assets/ai-governance/vendors/decisions/risks) for stable automation."
+  ],
+  "critical_code_review_comments": [
+    "AIInsight testid derived from display name creates awkward IDs like `ai-insight-run-Recommendations---Decisions` (triple hyphen) and `ai-insight-Third-Party-Risk`; preferable to accept an explicit `slug` prop.",
+    "RiskRegister.jsx conditional sidebar (`{selected && <aside>}`) has no fallback empty state \u2014 first-load users see no pane at all; consider a persistent aside with 'Select a risk to inspect' placeholder for scaffold-always principle." 
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (backend skipped per request)", "frontend": "~95% (5/5 dashboards render, all KPI/scaffold cards present, AI Insight works; 1 minor risk-detail-pane discovery gap)"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin) \u2014 verified via /api/auth/login 200 and via UI login form",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 5 preset dashboards are fully scaffolded and non-blank on the live_only sparse org. Login via [data-testid=auth-submit] using email/password inputs works; onboarding tour has a Skip button (get_by_role button name=Skip). AI Insight buttons use dashboard-name-derived slugs, not URL slugs: Asset-Intelligence, AI-Governance, Third-Party-Risk, Recommendations---Decisions, Cyber-Risk-Register. /api/advisor/insight returns in ~1s. Risk heatmap has 25 cells testid risk-matrix-cell-<imp>-<lik>. Asset inventory row testid is asset-<REF> (e.g. asset-AST-ENDPOINT).",
+  "rca of the issue": "Minor: risk-detail-pane aside not detected after click at 1920px \u2014 likely because RiskRegister sets `selected` via row click toggle and the aside is conditionally rendered. Root: `{selected && <aside>}` conditional; automate detection by verifying `selected` state or use a persistent scaffold aside."
+}
