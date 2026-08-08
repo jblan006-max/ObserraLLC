@@ -88,6 +88,8 @@ export default function SecurityScanner() {
   const [autofixing, setAutofixing] = useState(false);
   const [containment, setContainment] = useState([]);
   const [containmentActive, setContainmentActive] = useState(0);
+  const [playbook, setPlaybook] = useState(null);
+  const [metrics, setMetrics] = useState(null);
 
   const loadScan = () => api.get("/self-scan/latest").then((r) => setScan(r.data && r.data.id ? r.data : null)).catch(() => setScan(null));
   const loadEngine = () => api.get("/self-scan/engine").then((r) => { setEngine(r.data.engine); setPending(r.data.pending || []); setEndpoint(r.data.endpoint || ""); }).catch(() => {});
@@ -97,7 +99,9 @@ export default function SecurityScanner() {
   const loadJobs = () => api.get("/self-scan/maintenance").then((r) => setJobs(r.data || [])).catch(() => {});
   const loadIntel = () => api.get("/self-scan/intel").then((r) => setIntel(r.data)).catch(() => {});
   const loadContainment = () => api.get("/self-scan/containment").then((r) => { setContainment(r.data.events || []); setContainmentActive(r.data.active || 0); }).catch(() => {});
-  useEffect(() => { Promise.all([loadScan(), loadEngine(), loadAssets(), loadTrend(), loadAlerts(), loadJobs(), loadIntel(), loadContainment()]).finally(() => setLoading(false)); }, []);
+  const loadPlaybook = () => api.get("/self-scan/containment/playbook").then((r) => setPlaybook(r.data.playbook)).catch(() => {});
+  const loadMetrics = () => api.get("/self-scan/containment/metrics").then((r) => setMetrics(r.data)).catch(() => {});
+  useEffect(() => { Promise.all([loadScan(), loadEngine(), loadAssets(), loadTrend(), loadAlerts(), loadJobs(), loadIntel(), loadContainment(), loadPlaybook(), loadMetrics()]).finally(() => setLoading(false)); }, []);
 
   // Auto-detect + live maintenance progress: poll so new sources/devices and running jobs update on their own.
   useEffect(() => {
@@ -200,9 +204,19 @@ export default function SecurityScanner() {
     setAutofixing(false);
   };
   const reviewContainment = async (id, action) => {
-    try { await api.post(`/self-scan/containment/${id}/review`, { action }); await loadContainment(); toast.success(action === "rollback" ? "Containment rolled back" : "Acknowledged"); }
+    try { await api.post(`/self-scan/containment/${id}/review`, { action }); await Promise.all([loadContainment(), loadMetrics()]); toast.success(action === "rollback" ? "Dismissed" : action === "contain" ? "Threat contained" : "Acknowledged"); }
     catch (e) { toast.error("Could not update containment"); }
   };
+  const savePlaybook = async () => {
+    try { await api.put("/self-scan/containment/playbook", { playbook }); toast.success("Containment playbook saved"); }
+    catch (e) { toast.error("Could not save playbook"); }
+  };
+  const setPolicy = (kind, sev, val) => setPlaybook((p) => ({ ...p, [kind]: { ...(p[kind] || {}), [sev]: val } }));
+  const promoteJob = async (id) => {
+    try { await api.post(`/self-scan/maintenance/${id}/promote`); await loadJobs(); toast.success("Promoting sandbox-verified upgrade to live…"); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Promote failed"); }
+  };
+  const fmtDur = (s) => (s == null ? "—" : s < 1 ? "instant" : s < 60 ? `${Math.round(s)}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${(s / 3600).toFixed(1)}h`);
 
   const toggleDeviceItem = async (item, done) => {
     try {
@@ -353,15 +367,18 @@ export default function SecurityScanner() {
             <div className="flex items-center gap-2 mb-3"><Wrench className="w-4 h-4 text-primary" /><h3 className="font-head font-bold text-sm">Patch-apply jobs (upgrade → re-pin → re-scan)</h3></div>
             <div className="space-y-2">
               {jobs.slice(0, 6).map((j) => {
-                const jc = j.status === "success" ? "142 70% 45%" : j.status === "failed" ? "0 84% 60%" : j.status === "applied" ? "35 90% 55%" : "199 70% 50%";
-                const running = ["queued", "running"].includes(j.status);
+                const jc = j.status === "success" ? "142 70% 45%" : j.status === "failed" ? "0 84% 60%" : j.status === "applied" ? "35 90% 55%" : j.status === "verified" ? "199 70% 50%" : "48 90% 55%";
+                const running = ["queued", "running", "promoting"].includes(j.status);
                 return (
                   <div key={j.id} data-testid={`job-${j.package}`} className="p-3 rounded-lg bg-secondary/40 flex items-center justify-between gap-3">
                     <div className="min-w-0">
                       <div className="text-sm font-medium truncate">{j.package} <span className="font-mono text-muted-foreground">{j.from_version} → {j.to_version || "patched"}</span></div>
-                      <div className="text-[11px] text-muted-foreground">{j.status === "success" ? "✓ Re-scan confirms CVE cleared" : j.status === "applied" ? "Upgraded — restart may be needed to fully clear" : j.status === "failed" ? "Failed — no changes pinned" : "Running upgrade & re-scan…"}{j.new_score != null ? ` · score ${j.new_score}` : ""}</div>
+                      <div className="text-[11px] text-muted-foreground">{j.status === "success" ? "✓ Re-scan confirms CVE cleared" : j.status === "applied" ? "Upgraded — restart may be needed to fully clear" : j.status === "failed" ? "Rejected — sandbox check failed, live untouched" : j.status === "verified" ? "🧪 Verified in sandbox — promote to apply live" : j.status === "promoting" ? "Promoting to live & re-scanning…" : "Verifying in isolated sandbox…"}{j.new_score != null ? ` · score ${j.new_score}` : ""}</div>
                     </div>
-                    <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full flex items-center gap-1 shrink-0" style={{ background: `hsl(${jc} / 0.15)`, color: `hsl(${jc})` }}>{running && <Loader2 className="w-3 h-3 animate-spin" />}{j.status}</span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {j.status === "verified" && <button data-testid={`promote-${j.package}`} onClick={() => promoteJob(j.id)} className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-bold flex items-center gap-1"><Sparkles className="w-3.5 h-3.5" /> Promote</button>}
+                      <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: `hsl(${jc} / 0.15)`, color: `hsl(${jc})` }}>{running && <Loader2 className="w-3 h-3 animate-spin" />}{j.status}</span>
+                    </div>
                   </div>
                 );
               })}
@@ -399,46 +416,95 @@ export default function SecurityScanner() {
       )}
 
       {/* Real-time threat containment */}
-      {containment.length > 0 && (
+      {playbook && (
         <div className="bg-card fact-border rounded-xl p-6" data-testid="threat-containment">
           <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
             <div>
               <h2 className="font-head font-bold text-lg flex items-center gap-2"><ShieldAlert className="w-5 h-5 text-crit" /> Real-time threat containment</h2>
-              <p className="text-xs text-muted-foreground mt-1 max-w-2xl">Actively-exploited &amp; malicious threats are auto-contained the moment they're detected, then logged here for your review.</p>
+              <p className="text-xs text-muted-foreground mt-1 max-w-2xl">Actively-exploited &amp; malicious threats are contained the moment they're detected — instantly or after your review, per your playbook.</p>
             </div>
-            <span data-testid="containment-active" className="text-[10px] font-mono uppercase px-2.5 py-1 rounded-full font-bold" style={{ background: containmentActive ? "hsl(0 84% 60% / 0.15)" : "hsl(142 70% 45% / 0.15)", color: containmentActive ? "hsl(0 84% 55%)" : "hsl(142 70% 40%)" }}>{containmentActive ? `${containmentActive} awaiting review` : "all reviewed"}</span>
+            <span data-testid="containment-active" className="text-[10px] font-mono uppercase px-2.5 py-1 rounded-full font-bold" style={{ background: containmentActive ? "hsl(0 84% 60% / 0.15)" : "hsl(142 70% 45% / 0.15)", color: containmentActive ? "hsl(0 84% 55%)" : "hsl(142 70% 40%)" }}>{containmentActive ? `${containmentActive} awaiting action` : "all clear"}</span>
           </div>
-          <div className="space-y-2">
-            {containment.slice(0, 12).map((e) => {
-              const col = e.severity === "critical" ? "0 84% 60%" : e.severity === "high" ? "15 80% 55%" : "35 90% 55%";
-              const done = e.status !== "auto-contained";
-              return (
-                <div key={e.id} data-testid={`containment-${e.id}`} className="p-3 rounded-lg bg-secondary/40 flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <Lock className="w-3.5 h-3.5 shrink-0" style={{ color: `hsl(${col})` }} />
-                      <span className="font-medium text-sm">{e.subject}</span>
-                      <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full" style={{ background: `hsl(${col} / 0.15)`, color: `hsl(${col})` }}>{e.severity}</span>
-                      <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full bg-ai/10 text-ai">{e.kind}</span>
-                      {e.real ? <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full bg-low/15 text-low">enforced</span> : <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full bg-secondary text-muted-foreground">advisory</span>}
+
+          {/* Containment timeline metrics */}
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5" data-testid="containment-metrics">
+            {[["Mean time to contain", fmtDur(metrics?.mttc_seconds), "142 70% 45%"], ["Mean time to review", fmtDur(metrics?.mttr_seconds), "199 70% 50%"], ["Contained", metrics?.contained_count ?? 0, "35 90% 55%"], ["Reviewed", metrics?.reviewed_count ?? 0, "262 60% 60%"]].map(([l, v, c]) => (
+              <div key={l} className="rounded-lg p-3 border text-center" style={{ borderColor: `hsl(${c} / 0.3)`, background: `hsl(${c} / 0.05)` }}>
+                <div className="font-head font-black text-xl" style={{ color: `hsl(${c})` }}>{v}</div>
+                <div className="text-[9px] uppercase tracking-wider text-muted-foreground">{l}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Containment playbook editor */}
+          <div className="border-t border-border pt-4 mb-4" data-testid="containment-playbook">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <h3 className="font-head font-bold text-sm">Containment playbook — auto-contain vs. wait for review</h3>
+              <button data-testid="playbook-save" onClick={savePlaybook} className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-bold">Save playbook</button>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="text-xs w-full">
+                <thead><tr className="text-muted-foreground text-left"><th className="py-1 pr-3">Threat type</th>{["critical", "high", "medium", "low"].map((s) => <th key={s} className="py-1 px-2 capitalize">{s}</th>)}</tr></thead>
+                <tbody>
+                  {["dependency", "identity", "device"].map((kind) => (
+                    <tr key={kind} className="border-t border-border/50">
+                      <td className="py-1.5 pr-3 capitalize font-medium">{kind}</td>
+                      {["critical", "high", "medium", "low"].map((sev) => (
+                        <td key={sev} className="py-1.5 px-2">
+                          <select data-testid={`policy-${kind}-${sev}`} value={playbook[kind]?.[sev] || "review"} onChange={(e) => setPolicy(kind, sev, e.target.value)} className="bg-secondary/60 rounded px-2 py-1 text-[11px] outline-none">
+                            <option value="auto">Auto</option>
+                            <option value="review">Review</option>
+                          </select>
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {containment.length === 0 ? (
+            <div className="text-sm text-muted-foreground" data-testid="containment-empty">No active threats — nothing to contain right now. Detected threats will appear here in real time.</div>
+          ) : (
+            <div className="space-y-2">
+              {containment.slice(0, 12).map((e) => {
+                const col = e.severity === "critical" ? "0 84% 60%" : e.severity === "high" ? "15 80% 55%" : "35 90% 55%";
+                const pending = e.status === "pending";
+                const auto = e.status === "auto-contained";
+                return (
+                  <div key={e.id} data-testid={`containment-${e.id}`} className="p-3 rounded-lg bg-secondary/40 flex flex-wrap items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Lock className="w-3.5 h-3.5 shrink-0" style={{ color: `hsl(${col})` }} />
+                        <span className="font-medium text-sm">{e.subject}</span>
+                        <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full" style={{ background: `hsl(${col} / 0.15)`, color: `hsl(${col})` }}>{e.severity}</span>
+                        <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full bg-ai/10 text-ai">{e.kind}</span>
+                        {pending ? <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full bg-high/15 text-high">awaiting approval</span> : e.real ? <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full bg-low/15 text-low">enforced</span> : <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full bg-secondary text-muted-foreground">advisory</span>}
+                      </div>
+                      <div className="text-xs mt-1"><b>{pending ? "Proposed:" : "Contained:"}</b> {e.action}</div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">{e.description} · {rel(e.ts)}</div>
                     </div>
-                    <div className="text-xs mt-1"><b>Contained:</b> {e.action}</div>
-                    <div className="text-[11px] text-muted-foreground mt-0.5">{e.description} · {rel(e.ts)}</div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      {pending ? (
+                        <>
+                          <button data-testid={`contain-now-${e.id}`} onClick={() => reviewContainment(e.id, "contain")} className="px-3 py-1.5 rounded-md bg-crit text-white text-xs font-bold flex items-center gap-1"><Lock className="w-3.5 h-3.5" /> Contain now</button>
+                          <button data-testid={`contain-dismiss-${e.id}`} onClick={() => reviewContainment(e.id, "rollback")} className="px-3 py-1.5 rounded-md bg-secondary text-xs font-bold">Dismiss</button>
+                        </>
+                      ) : auto ? (
+                        <>
+                          <button data-testid={`contain-ack-${e.id}`} onClick={() => reviewContainment(e.id, "acknowledge")} className="px-3 py-1.5 rounded-md bg-low text-white text-xs font-bold flex items-center gap-1"><ThumbsUp className="w-3.5 h-3.5" /> Acknowledge</button>
+                          <button data-testid={`contain-rollback-${e.id}`} onClick={() => reviewContainment(e.id, "rollback")} className="px-3 py-1.5 rounded-md bg-secondary text-xs font-bold">Roll back</button>
+                        </>
+                      ) : (
+                        <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full" style={{ background: "hsl(142 70% 45% / 0.15)", color: "hsl(142 70% 40%)" }}>{e.status.replace("_", " ")}</span>
+                      )}
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {done ? (
-                      <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full" style={{ background: "hsl(142 70% 45% / 0.15)", color: "hsl(142 70% 40%)" }}>{e.status.replace("_", " ")}</span>
-                    ) : (
-                      <>
-                        <button data-testid={`contain-ack-${e.id}`} onClick={() => reviewContainment(e.id, "acknowledge")} className="px-3 py-1.5 rounded-md bg-low text-white text-xs font-bold flex items-center gap-1"><ThumbsUp className="w-3.5 h-3.5" /> Acknowledge</button>
-                        <button data-testid={`contain-rollback-${e.id}`} onClick={() => reviewContainment(e.id, "rollback")} className="px-3 py-1.5 rounded-md bg-secondary text-xs font-bold">Roll back</button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

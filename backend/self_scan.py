@@ -19,12 +19,12 @@ upgrades. It can be paused/resumed at any time.
 import os
 import re
 import sys
+import shutil
 import time
 import uuid
 import json
 import asyncio
 import logging
-import importlib.metadata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -56,6 +56,18 @@ _COUPLED = {
     "fastapi": ["starlette"],
     "pydantic": ["fastapi"],
 }
+
+# Containment playbook — per threat-kind × severity: "auto" (contain instantly) or "review".
+_DEFAULT_PLAYBOOK = {
+    "dependency": {"critical": "auto", "high": "review", "medium": "review", "low": "review"},
+    "identity": {"critical": "auto", "high": "auto", "medium": "review", "low": "review"},
+    "device": {"critical": "auto", "high": "review", "medium": "review", "low": "review"},
+}
+
+
+def _policy(playbook, kind, severity):
+    pb = (playbook or {}).get(kind) or _DEFAULT_PLAYBOOK.get(kind) or {}
+    return pb.get(severity, "review")
 
 # MITRE ATT&CK techniques associated with each finding class (known exploit context).
 # Keyed by full finding id first, then by id prefix (id.split("-")[0]).
@@ -788,56 +800,76 @@ async def _run_upgrade_job(org_id, job_id, package, target, finding_id):
                                    "No fixed version is published yet for this advisory — monitoring for an upstream patch.",
                                    ref="self-scan")
         return
-    # Close-loop: bump companion packages together (e.g. FastAPI ↔ Starlette) so an
-    # upgrade that would otherwise break a coupled framework can be applied safely.
+    # Close-loop + restart-safe: verify the upgrade (with coupled companions) in an
+    # isolated sandbox venv BEFORE touching the live environment. Only a sandbox-verified
+    # upgrade can be promoted, so approving one never risks the running service.
     companions = _COUPLED.get(package.lower(), [])
+    pkgs = [package] + list(companions)
     install_args = [f"{package}=={target}"] + list(companions)
+    sandbox = f"/tmp/obserra-sb-{job_id}"
     try:
+        v = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "venv", sandbox,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        await asyncio.wait_for(v.communicate(), timeout=60)
+        sbpy = f"{sandbox}/bin/python"
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "pip", "install", "-U", *install_args,
+            sbpy, "-m", "pip", "install", "-U", *install_args,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         try:
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=190)
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=210)
         except asyncio.TimeoutError:
             proc.kill()
-            await setjob(status="failed", finished_at=_now(), log="pip install timed out after 190s.")
+            shutil.rmtree(sandbox, ignore_errors=True)
+            await setjob(status="failed", finished_at=_now(), log="Sandbox pip install timed out.")
             return
-        logtxt = (out or b"").decode(errors="replace")[-4000:]
+        logtxt = (out or b"").decode(errors="replace")[-3500:]
         if proc.returncode != 0:
-            await setjob(status="failed", finished_at=_now(), log=logtxt)
-            await notifications.create(org_id, "security", f"Upgrade failed: {package} → {target}",
-                                       "pip could not install the target version; no changes were pinned. See maintenance log.",
-                                       ref="self-scan")
-            await _post_chat_alert(org_id, f"❌ Upgrade failed: {package} → {target}",
-                                   "pip install failed; no changes pinned. Review the maintenance log in Obserra.")
+            shutil.rmtree(sandbox, ignore_errors=True)
+            await setjob(status="failed", finished_at=_now(), log="Sandbox install failed:\n" + logtxt)
+            await notifications.create(org_id, "security", f"Upgrade rejected (sandbox): {package} → {target}",
+                                       "Sandbox install failed — live environment untouched.", ref="self-scan")
             return
-        # Import smoke-test coupled frameworks; if broken, mark failed so admins know a restart is unsafe.
-        bumped = {}
-        for pkg in [package] + list(companions):
-            try:
-                _pin_requirement(pkg, importlib.metadata.version(pkg))
-                bumped[pkg] = importlib.metadata.version(pkg)
-            except Exception:
-                pass
-        smoke_ok, smoke_msg = await _smoke_import(companions + [package])
-        scan = await _execute_scan(org_id)
-        still = any(f["id"] == finding_id and f["status"] == "fail" for f in scan["findings"])
-        cleared = not still
-        bumped_txt = ", ".join(f"{k}={v}" for k, v in bumped.items())
-        status = "success" if (cleared and smoke_ok) else ("failed" if not smoke_ok else "applied")
-        await setjob(status=status, finished_at=_now(), log=(smoke_msg + "\n\n" + logtxt) if smoke_msg else logtxt,
-                     cleared=cleared, new_score=scan["score"], scan_id=scan["id"], bumped=bumped_txt)
+        # Smoke-import coupled frameworks inside the sandbox.
+        mods = [m for m in {"fastapi", "starlette", "pydantic"} if m in [p.lower() for p in pkgs]]
+        smoke_ok, smoke_msg = True, "No coupled framework to smoke-test."
+        if mods:
+            sp = await asyncio.create_subprocess_exec(
+                sbpy, "-c", "import " + ", ".join(sorted(mods)),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            so, _ = await asyncio.wait_for(sp.communicate(), timeout=60)
+            smoke_ok = sp.returncode == 0
+            smoke_msg = ("Sandbox import passed." if smoke_ok
+                         else "Sandbox import FAILED:\n" + (so or b"").decode(errors="replace")[-400:])
+        # Capture the resolved versions from the sandbox.
+        verified = {}
+        try:
+            vp = await asyncio.create_subprocess_exec(
+                sbpy, "-c", "import importlib.metadata as m;print('|'.join(p+'=='+m.version(p) for p in " + repr(pkgs) + "))",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            vo, _ = await asyncio.wait_for(vp.communicate(), timeout=30)
+            for tok in (vo or b"").decode().strip().split("|"):
+                if "==" in tok:
+                    p, ver = tok.split("==", 1)
+                    verified[p.strip()] = ver.strip()
+        except Exception:
+            verified = {package: target}
+        shutil.rmtree(sandbox, ignore_errors=True)
         if not smoke_ok:
-            msg = f"Upgrade installed ({bumped_txt}) but a coupled-framework import check FAILED — do not restart until resolved. {smoke_msg}"
-        elif cleared:
-            msg = f"Re-scan confirms the advisory is cleared ({bumped_txt}). Security score is now {scan['score']}/100."
-        else:
-            msg = f"Upgraded & re-pinned ({bumped_txt}); a service restart may be required to fully clear it. Score {scan['score']}/100."
-        await notifications.create(org_id, "security",
-                                   f"Upgrade {status}: {package} → {target}", msg, ref="self-scan")
-        await _post_chat_alert(org_id,
-                               f"{'✅ Upgrade verified' if status == 'success' else '⚠ Upgrade needs attention' if status == 'failed' else '☑ Upgrade applied'}: {package} → {target}", msg)
+            await setjob(status="failed", finished_at=_now(), log=smoke_msg + "\n\n" + logtxt)
+            await notifications.create(org_id, "security", f"Upgrade rejected (sandbox smoke-test): {package} → {target}",
+                                       "Coupled-framework import failed in sandbox — NOT promoted. Live untouched.", ref="self-scan")
+            await _post_chat_alert(org_id, f"⛔ Upgrade blocked in sandbox: {package} → {target}", smoke_msg)
+            return
+        vtxt = ", ".join(f"{k}={v}" for k, v in verified.items())
+        await setjob(status="verified", finished_at=_now(), verified_versions=verified, bumped=vtxt,
+                     log=f"Sandbox verified ({vtxt}). {smoke_msg}\n\n{logtxt}")
+        msg = f"Upgrade verified in an isolated sandbox ({vtxt}). Promote to apply it live — zero restart risk until you do."
+        await notifications.create(org_id, "security", f"Upgrade verified — ready to promote: {package} → {target}",
+                                   msg, ref="self-scan")
+        await _post_chat_alert(org_id, f"🧪 Upgrade verified in sandbox: {package} → {target}", msg)
     except Exception as e:
+        shutil.rmtree(sandbox, ignore_errors=True)
         await setjob(status="failed", finished_at=_now(), log=f"Job error: {str(e)[:500]}")
 
 
@@ -1157,6 +1189,7 @@ async def _alert_new_kev_matches(new_kev):
         hits = sorted({c for f in scan.get("findings", []) for c in f.get("cve_ids", []) if c in new_set})
         if hits:
             await _evaluate_threats(org_id)
+            await db.kev_match_log.insert_one({"org_id": org_id, "ts": _now(), "cves": hits})
             await notifications.create(
                 org_id, "security", f"New actively-exploited CVE in your stack: {', '.join(hits[:3])}",
                 "A newly-added CISA KEV entry matches a dependency running in your environment. Review Security Scanner.",
@@ -1188,19 +1221,32 @@ async def refresh_intel(admin: dict = Depends(require_roles("admin"))):
 # ---------------------------------------------------------------------------
 
 async def _add_containment(org_id, kind, severity, subject, description, action, real=False, evidence=""):
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    policy = _policy(org.get("containment_playbook"), kind, severity)
     existing = await db.containment_events.find_one(
-        {"org_id": org_id, "kind": kind, "subject": subject, "status": "auto-contained"})
+        {"org_id": org_id, "kind": kind, "subject": subject, "status": {"$in": ["auto-contained", "pending"]}})
     if existing:
         return existing["id"]
-    ev = {"id": str(uuid.uuid4()), "org_id": org_id, "ts": _now(), "kind": kind, "severity": severity,
-          "subject": subject, "description": description, "action": action, "status": "auto-contained",
-          "auto": True, "real": real, "evidence": evidence}
+    now = _now()
+    status = "auto-contained" if policy == "auto" else "pending"
+    ev = {"id": str(uuid.uuid4()), "org_id": org_id, "ts": now, "detected_at": now,
+          "contained_at": now if status == "auto-contained" else None,
+          "kind": kind, "severity": severity, "subject": subject, "description": description,
+          "action": action, "status": status, "policy": policy, "auto": policy == "auto",
+          "real": real, "evidence": evidence}
     await db.containment_events.insert_one(dict(ev))
-    await notifications.create(org_id, "security", f"Auto-contained threat: {subject}",
-                               f"{action} — {description} Review in Security Scanner.",
-                               ref="self-scan", dedupe_key=f"contain:{kind}:{subject}")
-    await _post_chat_alert(org_id, f"🛡 Auto-contained threat: {subject}",
-                           f"{action}\n{description}\nReview in Obserra → Security Scanner.")
+    if status == "auto-contained":
+        await notifications.create(org_id, "security", f"Auto-contained threat: {subject}",
+                                   f"{action} — {description} Review in Security Scanner.",
+                                   ref="self-scan", dedupe_key=f"contain:{kind}:{subject}")
+        await _post_chat_alert(org_id, f"🛡 Auto-contained threat: {subject}",
+                               f"{action}\n{description}\nReview in Obserra → Security Scanner.")
+    else:
+        await notifications.create(org_id, "control_drift", f"Threat detected — containment awaiting approval: {subject}",
+                                   f"{description} Approve containment in Security Scanner (playbook: review).",
+                                   ref="self-scan", dedupe_key=f"contain:{kind}:{subject}")
+        await _post_chat_alert(org_id, f"⚠ Threat detected (awaiting containment approval): {subject}",
+                               f"{description}\nPlaybook is set to review for {kind}/{severity} — approve in Obserra.")
     return ev["id"]
 
 
@@ -1253,7 +1299,7 @@ async def list_containment(user: dict = Depends(get_current_user)):
 
 
 class ReviewBody(BaseModel):
-    action: str  # acknowledge | rollback
+    action: str  # contain | acknowledge | rollback
 
 
 @self_scan_router.post("/containment/{event_id}/review")
@@ -1261,14 +1307,134 @@ async def review_containment(event_id: str, body: ReviewBody, admin: dict = Depe
     ev = await db.containment_events.find_one({"org_id": admin["org_id"], "id": event_id})
     if not ev:
         raise HTTPException(404, "Containment event not found")
-    status = "rolled_back" if body.action == "rollback" else "reviewed"
-    await db.containment_events.update_one(
-        {"_id": ev["_id"]}, {"$set": {"status": status, "reviewed_by": admin["email"], "reviewed_at": _now()}})
-    return {"ok": True, "status": status}
+    upd = {"reviewed_by": admin["email"], "reviewed_at": _now()}
+    if body.action == "rollback":
+        upd["status"] = "rolled_back"
+    elif body.action == "contain":
+        upd["status"] = "contained"
+        upd["contained_at"] = _now()
+    else:
+        upd["status"] = "reviewed"
+    await db.containment_events.update_one({"_id": ev["_id"]}, {"$set": upd})
+    return {"ok": True, "status": upd["status"]}
 
 
 @self_scan_router.post("/containment/scan")
 async def run_containment(admin: dict = Depends(require_roles("admin"))):
     await _evaluate_threats(admin["org_id"])
     evs = await db.containment_events.find({"org_id": admin["org_id"]}, {"_id": 0}).sort("ts", -1).to_list(100)
-    return {"events": evs, "active": len([e for e in evs if e["status"] == "auto-contained"])}
+    return {"events": evs, "active": len([e for e in evs if e["status"] in ("auto-contained", "pending")])}
+
+
+class PlaybookBody(BaseModel):
+    playbook: dict
+
+
+@self_scan_router.get("/containment/playbook")
+async def get_playbook(user: dict = Depends(get_current_user)):
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    return {"playbook": org.get("containment_playbook") or _DEFAULT_PLAYBOOK, "default": _DEFAULT_PLAYBOOK}
+
+
+@self_scan_router.put("/containment/playbook")
+async def set_playbook(body: PlaybookBody, admin: dict = Depends(require_roles("admin"))):
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])},
+                                      {"$set": {"containment_playbook": body.playbook}})
+    return {"ok": True, "playbook": body.playbook}
+
+
+def _secs(a, b):
+    try:
+        return max(0, (datetime.fromisoformat(b) - datetime.fromisoformat(a)).total_seconds())
+    except Exception:
+        return None
+
+
+@self_scan_router.get("/containment/metrics")
+async def containment_metrics(user: dict = Depends(get_current_user)):
+    evs = await db.containment_events.find({"org_id": user["org_id"]}, {"_id": 0}).sort("ts", 1).to_list(500)
+    ttc, ttr = [], []
+    by_day = {}
+    for e in evs:
+        c = _secs(e.get("detected_at") or e.get("ts"), e["contained_at"]) if e.get("contained_at") else None
+        r = _secs(e.get("detected_at") or e.get("ts"), e["reviewed_at"]) if e.get("reviewed_at") else None
+        if c is not None:
+            ttc.append(c)
+        if r is not None:
+            ttr.append(r)
+        day = (e.get("ts") or "")[:10]
+        d = by_day.setdefault(day, {"date": day, "count": 0, "ttr": []})
+        d["count"] += 1
+        if r is not None:
+            d["ttr"].append(r)
+    trend = [{"date": d["date"], "count": d["count"],
+              "mttr_min": round((sum(d["ttr"]) / len(d["ttr"])) / 60, 1) if d["ttr"] else 0}
+             for d in sorted(by_day.values(), key=lambda x: x["date"])[-14:]]
+    return {"mttc_seconds": round(sum(ttc) / len(ttc)) if ttc else None,
+            "mttr_seconds": round(sum(ttr) / len(ttr)) if ttr else None,
+            "contained_count": len(ttc), "reviewed_count": len(ttr), "total": len(evs), "trend": trend}
+
+
+async def _promote_upgrade_job(org_id, job_id):
+    async def setjob(**k):
+        await db.maintenance_jobs.update_one({"id": job_id}, {"$set": k})
+    job = await db.maintenance_jobs.find_one({"id": job_id})
+    if not job:
+        return
+    versions = job.get("verified_versions") or {}
+    finding_id = job.get("finding_id")
+    if not versions:
+        await setjob(status="failed", finished_at=_now(), log="No verified versions to promote.")
+        return
+    try:
+        args = [f"{p}=={v}" for p, v in versions.items()]
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-m", "pip", "install", "-U", *args,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=190)
+        logtxt = (out or b"").decode(errors="replace")[-4000:]
+        if proc.returncode != 0:
+            await setjob(status="failed", finished_at=_now(), log="PROMOTE failed:\n" + logtxt)
+            return
+        for p, v in versions.items():
+            _pin_requirement(p, v)
+        scan = await _execute_scan(org_id)
+        cleared = not any(f["id"] == finding_id and f["status"] == "fail" for f in scan["findings"])
+        await setjob(status="success" if cleared else "applied", finished_at=_now(),
+                     cleared=cleared, new_score=scan["score"], scan_id=scan["id"],
+                     log="Promoted verified upgrade to live.\n" + logtxt)
+        msg = (f"Promoted & re-scan confirms cleared. Score {scan['score']}/100." if cleared
+               else f"Promoted to live; a restart may be needed to fully clear. Score {scan['score']}/100.")
+        await notifications.create(org_id, "security", f"Upgrade promoted: {', '.join(args)}", msg, ref="self-scan")
+        await _post_chat_alert(org_id, f"✅ Upgrade promoted to live: {', '.join(args)}", msg)
+    except Exception as e:
+        await setjob(status="failed", finished_at=_now(), log=f"Promote error: {str(e)[:400]}")
+
+
+@self_scan_router.post("/maintenance/{job_id}/promote")
+async def promote_upgrade(job_id: str, background: BackgroundTasks, admin: dict = Depends(require_roles("admin"))):
+    job = await db.maintenance_jobs.find_one({"org_id": admin["org_id"], "id": job_id})
+    if not job:
+        raise HTTPException(404, "Job not found")
+    if job.get("status") != "verified":
+        raise HTTPException(400, "Only sandbox-verified upgrades can be promoted.")
+    await db.maintenance_jobs.update_one({"id": job_id}, {"$set": {"status": "promoting"}})
+    background.add_task(_promote_upgrade_job, admin["org_id"], job_id)
+    return {"ok": True, "status": "promoting"}
+
+
+async def _run_kev_digest():
+    """Daily rollup of new KEV entries that hit each org's stack (last 24h)."""
+    since = (datetime.now(timezone.utc) - __import__("datetime").timedelta(hours=24)).isoformat()
+    logs = await db.kev_match_log.find({"ts": {"$gte": since}}).to_list(2000)
+    by_org = {}
+    for lg in logs:
+        by_org.setdefault(lg["org_id"], set()).update(lg.get("cves", []))
+    for org_id, cves in by_org.items():
+        cl = sorted(cves)
+        await notifications.create(
+            org_id, "security", f"Daily KEV digest: {len(cl)} newly-exploited CVE(s) in your stack",
+            f"{', '.join(cl[:10])} — open Security Scanner to remediate.", ref="self-scan")
+        await _post_chat_alert(
+            org_id, f"📋 Daily KEV digest: {len(cl)} new exploited CVE(s) in your stack",
+            f"{', '.join(cl[:15])}\nJump to remediation → Obserra → Security Scanner.")
