@@ -93,10 +93,55 @@ async def overview(user: dict = Depends(get_current_user)):
     }
 
 
-@sap_router.get("/systems")
-async def systems(user: dict = Depends(get_current_user)):
-    org_id = user["org_id"]
-    await _ensure(org_id)
+def _overlay_health(connectors, state):
+    """Compute per-connector sync drift + health (healthy / stale / degraded) from persisted state."""
+    now = _now()
+    smap = state.get("states", {})
+    degraded = set(state.get("degraded", []))
+    for c in connectors:
+        ls = smap.get(c["id"]) or c.get("last_sync") or now.isoformat()
+        c["last_sync"] = ls
+        try:
+            age = (now - datetime.fromisoformat(ls)).total_seconds() / 60
+        except Exception:
+            age = 0
+        c["age_min"] = round(age)
+        if c["id"] in degraded:
+            c["health"] = "degraded"
+            c["drift_note"] = "Credential / permission drift — re-probe or refresh credentials to restore live sync."
+        elif age > 180:
+            c["health"] = "stale"
+            c["drift_note"] = f"Sync drift — last sync {int(age // 60)}h {int(age % 60)}m ago (beyond 3h SLA)."
+        else:
+            c["health"] = "healthy"
+            c["drift_note"] = f"Fresh — last sync {int(age)}m ago." if age >= 1 else "Fresh — just synced."
+        c["freshness"] = "fresh" if c["health"] == "healthy" else "stale"
+    return connectors
+
+
+async def _connector_states(org_id, ids, reprobe=False):
+    """Persisted per-org connector sync state. Initializes with staggered last-syncs (Entra degraded,
+    mirroring the seed); a re-probe refreshes every connector to now and clears drift."""
+    now = _now()
+    doc = await db.sap_connector_state.find_one({"org_id": org_id}, {"_id": 0})
+    if reprobe or not doc:
+        offsets = [5, 22, 47, 8, 130, 205, 15, 33, 71, 12]
+        states = {i: (now - timedelta(minutes=(3 if reprobe else offsets[idx % len(offsets)]))).isoformat()
+                  for idx, i in enumerate(ids)}
+        degraded = [] if reprobe else [i for i in ids if i == "CON-ENTRA"]
+        doc = {"org_id": org_id, "states": states, "degraded": degraded, "probed_at": now.isoformat()}
+        await db.sap_connector_state.update_one({"org_id": org_id}, {"$set": doc}, upsert=True)
+    else:
+        smap = doc.get("states", {})
+        missing = {i: (now - timedelta(minutes=10)).isoformat() for i in ids if i not in smap}
+        if missing:
+            smap.update(missing)
+            await db.sap_connector_state.update_one({"org_id": org_id}, {"$set": {"states": smap}})
+            doc["states"] = smap
+    return doc
+
+
+async def _systems_payload(org_id, reprobe=False):
     _, accounts = await _load(org_id)
     persons = await db.sap_persons.find({"org_id": org_id}, {"_id": 0, "hr_authority": 1}).to_list(5000)
     npersons = len(persons)
@@ -105,7 +150,6 @@ async def systems(user: dict = Depends(get_current_user)):
     n_s4 = len([a for a in accounts if a["system"] in ("S4P", "BWP")])
     n_ecc = len([a for a in accounts if a["system"] in ("ECP", "ECQ")])
     tickets = await db.sap_snow_tickets.count_documents({"org_id": org_id})
-    now_iso = _now().isoformat()
     sysrows = []
     for s in SYSTEMS:
         accs = [a for a in accounts if a["system"] == s["ref"]]
@@ -122,8 +166,7 @@ async def systems(user: dict = Depends(get_current_user)):
         {"id": "CON-ENTRA", "name": "Microsoft Entra ID", "category": "Directory", "mode": "Read-Only", "records": npersons},
         {"id": "CON-SNOW", "name": "ServiceNow ITSM", "category": "ITSM & Workflow", "mode": "Bidirectional", "records": tickets},
     ]
-    connectors = [{**c, "status": "connected", "auth_ready": True, "freshness": "fresh",
-                   "scope": "SAP UAC", "last_sync": now_iso} for c in sap_conns]
+    connectors = [{**c, "status": "connected", "auth_ready": True, "scope": "SAP UAC"} for c in sap_conns]
     try:
         from connectors_catalog import CATALOG
     except Exception:
@@ -131,10 +174,30 @@ async def systems(user: dict = Depends(get_current_user)):
     for e in CATALOG:
         mode = "Outbound" if e.get("auth") == "webhook_post" else ("Bidirectional" if e.get("id") in ("servicenow", "sap-scim") else "Read-Only")
         connectors.append({"id": e["id"], "name": e["name"], "category": e["category"], "mode": mode,
-                           "status": "connected", "auth_ready": True, "records": npersons,
-                           "freshness": "fresh", "scope": "Obserra Platform", "last_sync": now_iso})
-    return {"systems": sysrows, "connectors": connectors,
+                           "status": "connected", "auth_ready": True, "records": npersons, "scope": "Obserra Platform"})
+    state = await _connector_states(org_id, [c["id"] for c in connectors], reprobe=reprobe)
+    connectors = _overlay_health(connectors, state)
+    hsum = {k: sum(1 for c in connectors if c["health"] == k) for k in ("healthy", "stale", "degraded")}
+    return {"systems": sysrows, "connectors": connectors, "connector_health": hsum,
+            "last_probe_at": state.get("probed_at"),
             "authority_matrix": HR_AUTHORITY_MATRIX, "legal_entities": LEGAL_ENTITIES}
+
+
+@sap_router.get("/systems")
+async def systems(user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    return await _systems_payload(org_id)
+
+
+@sap_router.post("/systems/reprobe")
+async def systems_reprobe(user: dict = Depends(get_current_user)):
+    """Simulated live re-probe of every connector — refreshes last-sync, clears drift, recomputes health."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    payload = await _systems_payload(org_id, reprobe=True)
+    await _audit(org_id, user["email"], "sap.systems.reprobe", f"{len(payload['connectors'])} connectors re-probed")
+    return {"ok": True, **payload}
 
 
 @sap_router.get("/identities")
