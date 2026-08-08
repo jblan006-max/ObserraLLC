@@ -4,6 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { useDeepDive } from "@/context/DeepDiveContext";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
+import { SapInsight } from "@/components/SapInsight";
 import { ChartBox } from "@/components/ChartBox";
 import {
   PieChart, Pie, Cell, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
@@ -82,6 +83,8 @@ export default function SapOverview() {
             : "Operational access posture across identities, roles, privileged accounts, dormant/orphan access and the joiner/mover/leaver pipeline."}
         </p>
       </div>
+
+      <SapInsight dashboard="SAP Access Overview" accent="190 90% 50%" auto slug="sap-overview" />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {kpis.map((k) => <StatCard key={k.label} {...k} />)}

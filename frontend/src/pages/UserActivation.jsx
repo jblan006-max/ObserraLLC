@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
+import { SapInsight } from "@/components/SapInsight";
 import { toast } from "sonner";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
@@ -16,12 +17,24 @@ import {
   PieChart, Pie, Cell, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
 } from "recharts";
 import {
-  UserCheck, UserX, RefreshCw, Search, Ticket, Ban, ToggleRight, Users, Gauge, TriangleAlert, CheckCircle2, Mail, Workflow, Power, UserPlus, Zap,
+  UserCheck, UserX, RefreshCw, Search, Ticket, Ban, ToggleRight, Users, Gauge, TriangleAlert, CheckCircle2, Mail, Workflow, Power, UserPlus, Zap, PauseCircle, PlayCircle,
 } from "lucide-react";
 
 const CHART_TT = { background: "hsl(215 38% 10%)", border: "1px solid hsl(215 30% 18%)", borderRadius: 8, fontSize: 12 };
 const fmtDate = (s) => (s ? new Date(s).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—");
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
+
+const VERB = { activate: "activated", deactivate: "deactivated", suspend: "suspended", resume: "resumed" };
+const ACTION_META = {
+  activate: { label: "Activate", Icon: UserCheck, btn: "bg-low hover:bg-low/90", tone: "text-low",
+    desc: "Restores login access and re-provisions the account (consuming a license). A ServiceNow provisioning request is opened and auto-closed across HR (ADP/IZ8) → AD/Entra → SAP." },
+  deactivate: { label: "Deactivate", Icon: Ban, btn: "bg-crit hover:bg-crit/90", tone: "text-crit",
+    desc: "The user can no longer log in and their license is freed (private content retained). A ServiceNow deactivation workflow is opened and auto-closed across HR (ADP/IZ8) → SAP → AD/Entra." },
+  suspend: { label: "Suspend", Icon: PauseCircle, btn: "bg-amber hover:bg-amber/90", tone: "text-amber",
+    desc: "Temporary hold (leave of absence): sign-in is disabled but the license and private content are retained. A ServiceNow suspension workflow is opened and auto-closed." },
+  resume: { label: "Resume", Icon: PlayCircle, btn: "bg-low hover:bg-low/90", tone: "text-low",
+    desc: "Restores access for a suspended user (re-enables sign-in). A ServiceNow resume workflow is opened and auto-closed across HR (ADP/IZ8) → AD/Entra → SAP." },
+};
 
 export default function UserActivation() {
   const [d, setD] = useState(null);
@@ -53,6 +66,11 @@ export default function UserActivation() {
     setD(a.data); setTickets(t.data);
   }, [q, dept, status]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const h = () => load();
+    window.addEventListener("sap-data-changed", h);
+    return () => window.removeEventListener("sap-data-changed", h);
+  }, [load]);
   useEffect(() => { api.get("/sap/roles").then((r) => setRoleList(r.data.roles)).catch(() => {}); }, []);
 
   if (!d) return <Spinner />;
@@ -68,7 +86,7 @@ export default function UserActivation() {
     try {
       const { data } = await api.post("/sap/activation/set", { person_refs: confirm.refs, action: confirm.action, reason, work_note: reason, notify });
       const nums = (data.tickets || []).map((t) => t.number).join(", ");
-      toast.success(`${data.changed} user(s) ${confirm.action === "deactivate" ? "deactivated" : "activated"}`, {
+      toast.success(`${data.changed} user(s) ${VERB[confirm.action] || "updated"}`, {
         description: nums ? `ServiceNow ${nums} opened & auto-closed` : undefined,
       });
       setConfirm(null); setSel(new Set()); await load();
@@ -80,7 +98,7 @@ export default function UserActivation() {
     setBusy(true);
     try {
       const { data } = await api.post("/sap/activation/bulk", { action: bulk.action, scope: "all", reason, work_note: reason, notify });
-      toast.success(`${data.changed} user(s) ${bulk.action === "deactivate" ? "deactivated" : "reactivated"}`, { description: `${data.ticket_count} ServiceNow ticket(s) opened & auto-closed` });
+      toast.success(`${data.changed} user(s) ${VERB[bulk.action] || "updated"}`, { description: `${data.ticket_count} ServiceNow ticket(s) opened & auto-closed` });
       setBulk(null); setSel(new Set()); await load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Bulk action failed"); }
     setBusy(false);
@@ -115,13 +133,17 @@ export default function UserActivation() {
         </div>
       </div>
 
+      {/* AI summary (Obserra standard) */}
+      <SapInsight dashboard="User Access Activation" accent="35 90% 55%" auto slug="user-activation" />
+
       {/* Summary cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">
         <StatCard label="Total users" value={S.total} accent="190 90% 50%" icon={Users} testid="ua-total" />
         <StatCard label="Activated" value={S.activated} sub="Consuming a license" accent="142 70% 45%" icon={UserCheck} testid="ua-activated" />
+        <StatCard label="Suspended" value={S.suspended} sub="On hold · license kept" accent="35 90% 55%" icon={PauseCircle} testid="ua-suspended" />
         <StatCard label="Deactivated" value={S.deactivated} sub="License freed · content kept" accent="0 84% 60%" icon={UserX} testid="ua-deactivated" />
-        <StatCard label="License usage" value={`${S.license_usage_pct}%`} sub="Activated of total" accent="35 90% 55%" icon={Gauge} testid="ua-usage" />
-        <StatCard label="Underutilized" value={S.underutilized_licenses} sub="Prof. license · inactive >30d" accent="266 85% 66%" icon={TriangleAlert} testid="ua-underutilized" />
+        <StatCard label="License usage" value={`${S.license_usage_pct}%`} sub="Consumed of total" accent="266 85% 66%" icon={Gauge} testid="ua-usage" />
+        <StatCard label="Underutilized" value={S.underutilized_licenses} sub="Prof. license · inactive >30d" accent="168 76% 46%" icon={TriangleAlert} testid="ua-underutilized" />
       </div>
 
       {/* Analytics */}
@@ -177,8 +199,9 @@ export default function UserActivation() {
         <p className="text-[11px] text-muted-foreground mb-3">One-click, work-note-enabled ServiceNow workflows that kick off and complete automatically — create, deactivate all, or reactivate all accounts.</p>
         <div className="flex flex-wrap gap-2">
           <Button data-testid="ua-create-user" onClick={() => { setReason(""); setNotify(true); setCreateOpen(true); }} className="gap-1.5"><UserPlus className="w-4 h-4" /> Create User</Button>
-          <Button data-testid="ua-deactivate-all" variant="outline" className="gap-1.5 text-crit border-crit/30" onClick={() => { setReason(""); setNotify(true); setBulk({ action: "deactivate" }); }}><Power className="w-4 h-4" /> Deactivate All Active ({S.activated})</Button>
-          <Button data-testid="ua-reactivate-all" variant="outline" className="gap-1.5 text-low border-low/30" onClick={() => { setReason(""); setNotify(true); setBulk({ action: "activate" }); }}><UserCheck className="w-4 h-4" /> Reactivate All ({S.deactivated})</Button>
+          <Button data-testid="ua-suspend-all" variant="outline" className="gap-1.5 text-amber border-amber/30" onClick={() => { setReason(""); setNotify(true); setBulk({ action: "suspend" }); }}><PauseCircle className="w-4 h-4" /> Suspend All Active ({S.activated})</Button>
+          <Button data-testid="ua-deactivate-all" variant="outline" className="gap-1.5 text-crit border-crit/30" onClick={() => { setReason(""); setNotify(true); setBulk({ action: "deactivate" }); }}><Power className="w-4 h-4" /> Deactivate All ({S.activated + S.suspended})</Button>
+          <Button data-testid="ua-reactivate-all" variant="outline" className="gap-1.5 text-low border-low/30" onClick={() => { setReason(""); setNotify(true); setBulk({ action: "activate" }); }}><UserCheck className="w-4 h-4" /> Reactivate All ({S.deactivated + S.suspended})</Button>
         </div>
       </div>
 
@@ -194,13 +217,14 @@ export default function UserActivation() {
           <Select value={dept} onValueChange={setDept}><SelectTrigger data-testid="ua-filter-dept" className="w-[150px] h-9"><SelectValue /></SelectTrigger>
             <SelectContent><SelectItem value="all">All departments</SelectItem>{d.departments.map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}</SelectContent></Select>
           <Select value={status} onValueChange={setStatus}><SelectTrigger data-testid="ua-filter-status" className="w-[140px] h-9"><SelectValue /></SelectTrigger>
-            <SelectContent><SelectItem value="all">All statuses</SelectItem><SelectItem value="Activated">Activated</SelectItem><SelectItem value="Deactivated">Deactivated</SelectItem></SelectContent></Select>
+            <SelectContent><SelectItem value="all">All statuses</SelectItem><SelectItem value="Activated">Activated</SelectItem><SelectItem value="Suspended">Suspended</SelectItem><SelectItem value="Deactivated">Deactivated</SelectItem></SelectContent></Select>
         </div>
 
         {sel.size > 0 && (
           <div className="flex items-center gap-3 px-4 py-2.5 bg-primary/10 border-b border-border" data-testid="ua-bulk-bar">
             <span className="text-xs font-medium">{sel.size} selected</span>
             <Button data-testid="ua-bulk-activate" size="sm" variant="outline" className="h-8 gap-1.5" onClick={() => askAction("activate", [...sel], `${sel.size} users`)}><UserCheck className="w-3.5 h-3.5" /> Activate</Button>
+            <Button data-testid="ua-bulk-suspend" size="sm" variant="outline" className="h-8 gap-1.5 text-amber border-amber/30" onClick={() => askAction("suspend", [...sel], `${sel.size} users`)}><PauseCircle className="w-3.5 h-3.5" /> Suspend</Button>
             <Button data-testid="ua-bulk-deactivate" size="sm" className="h-8 gap-1.5 bg-crit hover:bg-crit/90" onClick={() => askAction("deactivate", [...sel], `${sel.size} users`)}><Ban className="w-3.5 h-3.5" /> Deactivate</Button>
           </div>
         )}
@@ -213,7 +237,7 @@ export default function UserActivation() {
                 <th className="p-3 w-8"><Checkbox checked={allSelected} onCheckedChange={toggleAll} data-testid="ua-select-all" /></th>
                 <th className="p-3">User Name</th><th className="p-3">Name</th><th className="p-3">Display Name</th><th className="p-3">Email</th>
                 <th className="p-3">Roles</th><th className="p-3">SAML Mapping</th><th className="p-3">License</th>
-                <th className="p-3">Last Login</th><th className="p-3">Deactivated</th><th className="p-3 text-right">Actions</th>
+                <th className="p-3">Last Login</th><th className="p-3">Status</th><th className="p-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -223,7 +247,8 @@ export default function UserActivation() {
                   <td className="p-3 font-mono text-xs">{u.user_name}</td>
                   <td className="p-3 font-medium whitespace-nowrap">
                     <span className="inline-flex items-center gap-1.5">
-                      {u.is_user_deactivated && <Ban className="w-3.5 h-3.5 text-crit shrink-0" title="Deactivated" />}
+                      {u.status === "Deactivated" && <Ban className="w-3.5 h-3.5 text-crit shrink-0" title="Deactivated" />}
+                      {u.status === "Suspended" && <PauseCircle className="w-3.5 h-3.5 text-amber shrink-0" title="Suspended" />}
                       {u.name}
                     </span>
                   </td>
@@ -237,14 +262,22 @@ export default function UserActivation() {
                     {u.inactivity_flag && <span className="ml-1 text-[9px] text-amber font-mono">{u.inactive_days}d</span>}
                   </td>
                   <td className="p-3">
-                    <span className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded ${u.is_user_deactivated ? "bg-crit/15 text-crit" : "bg-low/15 text-low"}`}>{u.is_user_deactivated ? "TRUE" : "FALSE"}</span>
+                    <span data-testid={`ua-status-${u.user_id}`} className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded ${u.status === "Deactivated" ? "bg-crit/15 text-crit" : u.status === "Suspended" ? "bg-amber/15 text-amber" : "bg-low/15 text-low"}`}>{u.status}</span>
                   </td>
                   <td className="p-3 text-right whitespace-nowrap">
-                    {u.status === "Activated" ? (
-                      <button data-testid={`ua-deactivate-${u.user_id}`} onClick={() => askAction("deactivate", [u.user_id], u.name)} className="text-crit hover:bg-crit/10 rounded-md p-1.5" title="Deactivate user"><Ban className="w-4 h-4" /></button>
-                    ) : (
-                      <button data-testid={`ua-activate-${u.user_id}`} onClick={() => askAction("activate", [u.user_id], u.name)} className="text-low hover:bg-low/10 rounded-md p-1.5" title="Activate user"><UserCheck className="w-4 h-4" /></button>
-                    )}
+                    <div className="inline-flex items-center gap-1 justify-end">
+                      {u.status === "Activated" && (
+                        <button data-testid={`ua-suspend-${u.user_id}`} onClick={() => askAction("suspend", [u.user_id], u.name)} className="text-amber hover:bg-amber/10 rounded-md p-1.5" title="Suspend user (temporary hold)"><PauseCircle className="w-4 h-4" /></button>
+                      )}
+                      {u.status === "Suspended" && (
+                        <button data-testid={`ua-resume-${u.user_id}`} onClick={() => askAction("resume", [u.user_id], u.name)} className="text-low hover:bg-low/10 rounded-md p-1.5" title="Resume user"><PlayCircle className="w-4 h-4" /></button>
+                      )}
+                      {u.status === "Activated" || u.status === "Suspended" ? (
+                        <button data-testid={`ua-deactivate-${u.user_id}`} onClick={() => askAction("deactivate", [u.user_id], u.name)} className="text-crit hover:bg-crit/10 rounded-md p-1.5" title="Deactivate user"><Ban className="w-4 h-4" /></button>
+                      ) : (
+                        <button data-testid={`ua-activate-${u.user_id}`} onClick={() => askAction("activate", [u.user_id], u.name)} className="text-low hover:bg-low/10 rounded-md p-1.5" title="Activate user"><UserCheck className="w-4 h-4" /></button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -280,13 +313,11 @@ export default function UserActivation() {
         <DialogContent data-testid="ua-confirm-dialog">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              {confirm?.action === "deactivate" ? <Ban className="w-5 h-5 text-crit" /> : <UserCheck className="w-5 h-5 text-low" />}
-              {confirm?.action === "deactivate" ? "Deactivate" : "Activate"} — {confirm?.names}
+              {confirm && (() => { const M = ACTION_META[confirm.action]; const I = M.Icon; return <I className={`w-5 h-5 ${M.tone}`} />; })()}
+              {confirm && ACTION_META[confirm.action].label} — {confirm?.names}
             </DialogTitle>
             <DialogDescription>
-              {confirm?.action === "deactivate"
-                ? "This user will no longer be able to log in and their license will be freed. Private content is retained under the account. A ServiceNow ticket will be opened and auto-closed."
-                : "This restores login access and re-provisions the account (consuming a license). A ServiceNow provisioning request will be opened and auto-closed."}
+              {confirm && ACTION_META[confirm.action].desc}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
@@ -298,8 +329,8 @@ export default function UserActivation() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setConfirm(null)}>Cancel</Button>
-            <Button data-testid="ua-confirm-btn" disabled={busy} onClick={runAction} className={confirm?.action === "deactivate" ? "bg-crit hover:bg-crit/90" : "bg-low hover:bg-low/90"}>
-              {busy ? "Working…" : confirm?.action === "deactivate" ? "Deactivate" : "Activate"}
+            <Button data-testid="ua-confirm-btn" disabled={busy} onClick={runAction} className={confirm ? ACTION_META[confirm.action].btn : ""}>
+              {busy ? "Working…" : confirm && ACTION_META[confirm.action].label}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -337,14 +368,14 @@ export default function UserActivation() {
       <Dialog open={!!bulk} onOpenChange={(o) => !o && setBulk(null)}>
         <DialogContent data-testid="ua-bulk-dialog">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">{bulk?.action === "deactivate" ? <Power className="w-5 h-5 text-crit" /> : <UserCheck className="w-5 h-5 text-low" />}{bulk?.action === "deactivate" ? `Deactivate all ${S.activated} active users` : `Reactivate all ${S.deactivated} deactivated users`}</DialogTitle>
-            <DialogDescription>{bulk?.action === "deactivate" ? "Turns off every active account, freeing all licenses (content retained). A ServiceNow ticket is opened & auto-closed per user." : "Restores login for every deactivated user (consuming licenses). A ServiceNow provisioning request is opened & auto-closed per user."}</DialogDescription>
+            <DialogTitle className="flex items-center gap-2">{bulk && (() => { const M = ACTION_META[bulk.action]; const I = M.Icon; return <I className={`w-5 h-5 ${M.tone}`} />; })()}{bulk?.action === "deactivate" ? `Deactivate all ${S.activated + S.suspended} active / suspended users` : bulk?.action === "suspend" ? `Suspend all ${S.activated} active users` : `Reactivate all ${S.deactivated + S.suspended} deactivated / suspended users`}</DialogTitle>
+            <DialogDescription>{bulk?.action === "deactivate" ? "Turns off every active/suspended account, freeing all licenses (content retained). A ServiceNow workflow is opened & auto-closed per user." : bulk?.action === "suspend" ? "Places every active account on temporary hold (sign-in disabled; licenses & content retained). A ServiceNow suspension workflow is opened & auto-closed per user." : "Restores login for every deactivated/suspended user (consuming licenses). A ServiceNow provisioning request is opened & auto-closed per user."}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <Textarea data-testid="ua-bulk-note" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="ServiceNow work note (added to every ticket)…" rows={2} />
             <label className="flex items-center gap-2 text-sm cursor-pointer"><Checkbox checked={notify} onCheckedChange={(v) => setNotify(!!v)} /> <Mail className="w-3.5 h-3.5 text-muted-foreground" /> Email affected users</label>
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setBulk(null)}>Cancel</Button><Button data-testid="ua-bulk-confirm" disabled={busy} onClick={runBulk} className={bulk?.action === "deactivate" ? "bg-crit hover:bg-crit/90" : "bg-low hover:bg-low/90"}>{busy ? "Running…" : bulk?.action === "deactivate" ? "Deactivate All" : "Reactivate All"}</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setBulk(null)}>Cancel</Button><Button data-testid="ua-bulk-confirm" disabled={busy} onClick={runBulk} className={bulk ? ACTION_META[bulk.action].btn : ""}>{busy ? "Running…" : bulk?.action === "deactivate" ? "Deactivate All" : bulk?.action === "suspend" ? "Suspend All" : "Reactivate All"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 

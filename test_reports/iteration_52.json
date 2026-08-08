@@ -1,0 +1,23 @@
+{
+  "summary": "Iteration 52 (SAP UAC 3-state activation + agentic advisor). Backend: 7/7 pytest passed (test_sap_uac_iter52.py) — GET /api/sap/insight returns headline + 3-5 grounded insights (kind fact/estimate/risk) + 2-4 actions; POST /api/sap/activation/set drives all 4 transitions (activate/deactivate/suspend/resume) with changed>=1 and per-user ServiceNow tickets whose systems_touched includes ServiceNow + HR (ADP/IZ8) + SAP + AD/Entra and state=Closed (auto-closed); POST /api/sap/activation/bulk with suspend suspends all Activated users and emits ticket_count==changed; deactivate/activate bulk still work; POST /api/sap/activation/create provisions + returns Closed ticket; POST /api/sap/advisor/plan returns actionable=true action=suspend count>0 person_refs populated for 'suspend all active users', action=deactivate for residual-access instruction, and actionable=false action=create with guidance for 'create a finance user'. Frontend: login (cookie) OK, /app SapOverview shows sap-insight-sap-overview card (rich AI headline). /app/activation shows sap-insight-user-activation with 5 sap-insight-item-* entries, ua-suspended StatCard present. Per-row Suspend (45) + Deactivate (46) buttons render; clicking ua-suspend-P-0042 opens ua-confirm-dialog, entering ua-reason and clicking ua-confirm-btn POSTs /activation/set 200 and row status badge flips to Suspended; ua-resume-P-0042 then appears and returns row to Activated. ServiceNow Automation ua-suspend-all opens ua-bulk-dialog; ua-bulk-confirm POSTs /activation/bulk 200. Row checkbox selection surfaces the bulk action bar with ua-bulk-suspend. sap-advisor-fab opens the panel; typing 'suspend all active users' into sap-advisor-input and clicking sap-advisor-send POSTs /api/sap/advisor/plan 200 (actionable=true, count=45), sap-advisor-plan card + sap-advisor-plan-execute render, clicking Execute POSTs /api/sap/activation/set (or bulk), success toast '45 user(s) suspended · INC100185…' appears, and the button transitions to completed state. A normal question 'Summarize the critical SoD conflicts' routes to /api/sap/advisor (chat, 200) with no plan card.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_sap_uac_iter52.py",
+    "/app/test_reports/pytest/iter52_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "sap_uac.py is now 1802 lines — recommend splitting into modules (insight, activation/workflow, advisor, identities, sod, hr, requests, certifications) per >700 lines guideline.",
+    "_snow_workflow.systems_touched uses 'AD/Entra' as one label; make sure downstream consumers don't split on '/'.",
+    "advisor/plan token-match branch (line ~1781) could false-positive on very short names; consider requiring 2+ token hits."
+  ],
+  "updated_files": ["/app/backend/tests/test_sap_uac_iter52.py"],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100% of listed testids and flows"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Test mutated activation state during flows; explicitly reset via bulk activate at end of run so all 45 users are back to Activated. Created one TEST_ Iter52 user via /api/sap/activation/create (persisted per no-mock policy).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Cookie login flow requires waiting for POST /api/auth/login 200 before navigating; do NOT click the 'Sign In' tab (submit via Enter or button[type=submit]). To exercise the advisor plan card, ensure there are Activated users first (call POST /api/sap/activation/bulk with action='activate' via fetch with credentials:'include'). ua-bulk-suspend appears only after selecting rows via the row-level checkbox; ServiceNow Automation panel exposes ua-suspend-all for the auto-bulk path. Tests live at /app/backend/tests/test_sap_uac_iter52.py — run with REACT_APP_BACKEND_URL env exported.",
+  "rca of the issue": "N/A — no bugs found."
+}

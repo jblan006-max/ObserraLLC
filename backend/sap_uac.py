@@ -1663,6 +1663,139 @@ async def advisor(body: AskBody, user: dict = Depends(get_current_user)):
         return _advisor_fallback(body.question, ctx)
 
 
+# ── AI Summary (Obserra-standard auto insight, grounded in the live SAP model) ─
+def _sap_insight_fallback(ctx):
+    insights = [
+        {"text": f"{ctx['identities']} SAP identities across {ctx['accounts']} accounts; average Obserra SAP Access Risk Score {ctx['avg_risk_score']}/100.", "kind": "fact"},
+        {"text": f"{ctx['open_sod_conflicts']} open Segregation-of-Duties conflicts detected live against {ctx['sod_rules_count']} rules.", "kind": "fact"},
+    ]
+    if ctx["critical_sod"]:
+        insights.append({"text": "Critical toxic combinations: " + "; ".join(f"{c['person']} — {c['rule']}" for c in ctx["critical_sod"][:3]) + ".", "kind": "risk"})
+    if ctx["terminated_with_access"]:
+        insights.append({"text": f"{len(ctx['terminated_with_access'])} terminated worker(s) still hold active SAP access (residual exposure).", "kind": "risk"})
+    if ctx["sap_all_holders"]:
+        insights.append({"text": f"{len(ctx['sap_all_holders'])} account(s) hold SAP_ALL / full authorization.", "kind": "estimate"})
+    actions = []
+    if ctx["terminated_with_access"]:
+        actions.append("De-provision residual SAP access for terminated workers now — run the automated ServiceNow deactivation workflow.")
+    if ctx["critical_sod"]:
+        actions.append("Remediate the highest-severity SoD conflicts by removing one conflicting role or attaching a mitigating control.")
+    actions.append("Review SAP_ALL and privileged holders against least privilege.")
+    return {"headline": f"{ctx['open_sod_conflicts']} open SoD conflicts · avg access risk {ctx['avg_risk_score']}/100",
+            "insights": insights, "actions": actions[:4],
+            "model": "deterministic-fallback", "generated_at": _now().isoformat()}
+
+
+@sap_router.get("/insight")
+async def sap_insight(user: dict = Depends(get_current_user)):
+    """Obserra-standard AI analyst summary of the live SAP access posture."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    ctx = await overview_context(org_id)
+    try:
+        import asyncio, re
+        from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
+        system = (
+            "You are the Obserra SAP UAC AI Analyst. Read the LIVE SAP access-model JSON and return a concise, "
+            "board-grade briefing STRICTLY as JSON with this schema: {\"headline\": str, \"insights\": "
+            "[{\"text\": str, \"kind\": one of \"fact\"|\"estimate\"|\"risk\"}], \"actions\": [str]}. "
+            "3-5 insights, 2-4 actions. Ground every statement in the data (cite SoD rule names, person names, figures). "
+            "Never invent data. Return ONLY the JSON object.")
+        chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"sap-insight-{org_id}",
+                       system_message=system).with_model("openai", "gpt-5.4")
+        prompt = f"LIVE SAP ACCESS CONTEXT (JSON):\n{json.dumps(ctx, default=str)[:9000]}"
+        collected = []
+
+        async def _run():
+            async for ev in chat.stream_message(UserMessage(text=prompt)):
+                if isinstance(ev, TextDelta):
+                    collected.append(ev.content)
+                elif isinstance(ev, StreamDone):
+                    break
+        await asyncio.wait_for(_run(), timeout=16)
+        raw = "".join(collected).strip()
+        m = re.search(r"\{.*\}", raw, re.S)
+        parsed = json.loads(m.group(0)) if m else None
+        if not parsed or not parsed.get("insights"):
+            return _sap_insight_fallback(ctx)
+        parsed.setdefault("actions", [])
+        parsed["model"] = "openai/gpt-5.4"
+        parsed["generated_at"] = _now().isoformat()
+        return parsed
+    except Exception:
+        return _sap_insight_fallback(ctx)
+
+
+# ── Agentic advisor: resolve a natural-language instruction into an executable
+#    activation workflow plan (the advisor can ACT, not just answer). ───────────
+class AdvisorPlanBody(BaseModel):
+    instruction: str
+
+
+_ADVISOR_ACTION_WORDS = [
+    ("deactivate", "deactivate"), ("disable", "deactivate"), ("revoke", "deactivate"),
+    ("offboard", "deactivate"), ("suspend", "suspend"), ("pause", "suspend"), ("hold", "suspend"),
+    ("resume", "resume"), ("unsuspend", "resume"), ("reinstate", "resume"),
+    ("reactivate", "activate"), ("activate", "activate"), ("enable", "activate"),
+    ("restore", "activate"), ("provision", "activate"), ("onboard", "create"), ("create", "create"),
+]
+_ADVISOR_WANT = {
+    "deactivate": {"Activated", "Suspended"}, "suspend": {"Activated"},
+    "resume": {"Suspended"}, "activate": {"Deactivated", "Suspended"},
+}
+
+
+@sap_router.post("/advisor/plan")
+async def advisor_plan(body: AdvisorPlanBody, user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    low = body.instruction.lower().strip()
+    action = next((act for kw, act in _ADVISOR_ACTION_WORDS if kw in low), None)
+    if not action:
+        return {"actionable": False, "message": "I didn't detect an access action. Ask me to activate, deactivate, suspend, resume or create a user."}
+    if action == "create":
+        return {"actionable": False, "action": "create",
+                "message": "To create a new SAP user, use the ‘Create User’ button on the User Account Activation page — it runs the automated provisioning workflow (ServiceNow → HR → AD/Entra → SAP). I can then activate, suspend or deactivate them for you."}
+    persons, accounts, conflicts, pmap = await _correlate(org_id)
+    overrides = {o["person_ref"]: o for o in await db.sap_activation.find({"org_id": org_id}, {"_id": 0}).to_list(5000)}
+    def cur(p):
+        return _activation_status(p, overrides.get(p["ref"]))
+    scope_label, targets, residual = "", [], False
+    if any(k in low for k in ("terminated", "leaver", "residual", "offboard")):
+        targets, scope_label, residual = [p for p in persons if p["status"] == "Terminated"], "terminated workers with residual access", True
+    elif any(k in low for k in ("dormant", "inactive")):
+        targets, scope_label = [p for p in persons if any(a.get("flags", {}).get("dormant") for a in p.get("accounts", []))], "dormant-access identities"
+    elif "sap_all" in low or "sap all" in low:
+        targets, scope_label = [p for p in persons if any(a.get("flags", {}).get("sap_all") for a in p.get("accounts", []))], "SAP_ALL holders"
+    elif "all suspended" in low:
+        targets, scope_label = [p for p in persons if cur(p) == "Suspended"], "all suspended users"
+    elif "all active" in low or "all activated" in low or (" all " in f" {low} " and action in ("deactivate", "suspend")):
+        targets, scope_label = [p for p in persons if cur(p) == "Activated"], "all activated users"
+    elif "all deactivated" in low or (" all " in f" {low} " and action == "activate"):
+        targets, scope_label = [p for p in persons if cur(p) in ("Deactivated", "Suspended")], "all deactivated / suspended users"
+    else:
+        exact = [p for p in persons if p["name"].lower() in low or p["email"].lower() in low]
+        if exact:
+            targets, scope_label = exact, ", ".join(p["name"] for p in exact[:5])
+        else:
+            tok = [p for p in persons if any(len(t) > 2 and t in low.split() for t in p["name"].lower().split())]
+            targets, scope_label = tok, ", ".join(p["name"] for p in tok[:5])
+    want = _ADVISOR_WANT.get(action, set())
+    if residual and action == "deactivate":
+        # residual-access remediation: lock terminated workers still holding any unlocked SAP account
+        eligible = [p for p in targets if any(a.get("lock_state") == "unlocked" for a in p.get("accounts", []))]
+    else:
+        eligible = [p for p in targets if cur(p) in want]
+    refs = [p["ref"] for p in eligible]
+    return {
+        "actionable": bool(refs), "action": action, "scope_label": scope_label, "count": len(refs),
+        "person_refs": refs,
+        "affected": [{"ref": p["ref"], "name": p["name"], "department": p["department"], "status": cur(p)} for p in eligible[:25]],
+        "message": (f"Ready to {action} {len(refs)} {scope_label or 'user(s)'} via the automated ServiceNow → HR (ADP/IZ8) → SAP → AD/Entra workflow — each ticket opens and auto-closes end-to-end."
+                    if refs else f"No users are currently eligible to {action}" + (f" ({scope_label})" if scope_label else "") + "."),
+    }
+
+
 async def _audit(org_id, actor, action, detail=""):
     await db.audit_logs.insert_one({"org_id": org_id, "actor": actor, "action": action,
                                     "detail": detail, "ts": _now().isoformat()})
