@@ -10,7 +10,7 @@ import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@
 import {
   Target, Wrench, Boxes, ShieldCheck, AlertTriangle, Loader2, Building2, Sparkles,
   ShieldX, ChevronDown, Gauge, DollarSign, Bug, User, FileWarning, Clock, MapPin, Zap,
-  Radar, TrendingUp, Network,
+  Radar, TrendingUp, Network, ScrollText, PlugZap, CheckCircle2, XCircle,
 } from "lucide-react";
 
 const ACCENT = "255 85% 66%";
@@ -22,6 +22,36 @@ const worstRating = (list) => ["Critical", "High", "Medium", "Low"].find((r) => 
 
 function Pill({ label, tone }) {
   return <span className="text-[9px] font-mono font-bold px-2 py-0.5 rounded-full whitespace-nowrap" style={{ background: `hsl(${tone} / 0.15)`, color: `hsl(${tone})` }}>{label}</span>;
+}
+
+// One immutable Defensibility Ledger record — every REAL remediation / verification attempt
+// with its raw provider response, shown as board-defensible evidence.
+function LedgerRow({ e }) {
+  const [open, setOpen] = useState(false);
+  const verified = e.verified === true;
+  const inProg = e.status === "In Progress";
+  const isVerify = !!e.results;
+  const tone = isVerify ? ACCENT : verified ? "142 70% 45%" : inProg ? "35 90% 55%" : "0 84% 60%";
+  const evidence = e.external || e.results || e.trace;
+  const label = isVerify ? "VERIFY-CONNECTORS" : `${(e.action || "action").toUpperCase()} · ${e.task_id || "—"}`;
+  const when = e.finished_at || e.at || e.started_at;
+  return (
+    <div data-testid={`ledger-row-${e.id}`} className="rounded-lg bg-secondary/30 p-2.5 text-xs">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-mono truncate min-w-0">{label}</span>
+        <span className="shrink-0 font-mono text-[9px] px-2 py-0.5 rounded-full" style={{ background: `hsl(${tone} / 0.15)`, color: `hsl(${tone})` }}>{isVerify ? "VERIFY" : (e.status || "—")}</span>
+      </div>
+      {e.message && <div className="text-[11px] text-muted-foreground mt-1 leading-snug">{e.message}</div>}
+      <div className="flex items-center gap-2 mt-1 text-[9px] font-mono text-muted-foreground flex-wrap">
+        {e.provider && <span>{e.provider}</span>}
+        {e.by && <span>· {e.by}</span>}
+        {when && <span>· {new Date(when).toLocaleString()}</span>}
+        {(e.risk_reduced || 0) > 0 && <span style={{ color: "hsl(142 70% 45%)" }}>· ALE ↓ {money(e.risk_reduced)}</span>}
+        {evidence && <button data-testid={`ledger-raw-${e.id}`} onClick={() => setOpen((o) => !o)} className="ml-auto underline hover:text-foreground">{open ? "Hide raw evidence" : "Raw evidence"}</button>}
+      </div>
+      {open && evidence && <pre className="text-[10px] font-mono bg-[#0a0e17] border border-border rounded-lg p-2 mt-1.5 overflow-x-auto max-h-52 overflow-y-auto">{JSON.stringify(evidence, null, 2)}</pre>}
+    </div>
+  );
 }
 
 function LensCard({ icon: Icon, title, subtitle, rating, compliancePct, metrics, frameworks, children, explainTitle, explainKind, explainContext, testid, remedy }) {
@@ -80,15 +110,29 @@ export default function Remediations() {
   const [busy, setBusy] = useState("");
   const [detail, setDetail] = useState(null);
   const [detailBusy, setDetailBusy] = useState(false);
+  const [actionResult, setActionResult] = useState(null);
+  const [ledger, setLedger] = useState([]);
+  const [verify, setVerify] = useState(null);
+  const [verifyBusy, setVerifyBusy] = useState(false);
 
+  const loadLedger = () => api.get("/risk-engine/ledger").then((r) => setLedger(r.data.entries || [])).catch(() => setLedger([]));
   const load = () => {
     api.get("/risk-engine/strategic").then((r) => setStrat(r.data)).catch(() => setStrat(null));
     api.get("/risk-engine/tactical").then((r) => setTac(r.data)).catch(() => setTac(null));
     api.get("/risk-engine/exposure").then((r) => setExp(r.data)).catch(() => setExp(null));
     api.get("/risk-engine/compliance").then((r) => setComp(r.data)).catch(() => setComp(null));
     api.get("/controls/compliance").then((r) => setFw((r.data.frameworks || []).map((f) => ({ framework: f.framework, coverage: f.coverage })))).catch(() => setFw([]));
+    loadLedger();
   };
   useEffect(() => { load(); }, []);
+  useEffect(() => { setActionResult(null); }, [detail?.taskId]);
+
+  const doVerify = async () => {
+    setVerifyBusy(true);
+    try { const { data } = await api.post("/risk-engine/verify-connectors"); setVerify(data); toast.success("Live connector verification complete — evidence logged"); loadLedger(); }
+    catch (e) { toast.error(e.response?.data?.detail || "Verification failed"); }
+    setVerifyBusy(false);
+  };
 
   const runAction = async (kind) => {
     setBusy(kind);
@@ -127,9 +171,22 @@ export default function Remediations() {
       if (kind === "remediate" || kind === "isolate") ({ data } = await api.post(`/risk-engine/task/${detail.taskId}/action`, { action: kind }));
       else ({ data } = await api.post(`/risk-engine/task/${detail.taskId}/status`, { status: kind === "soc" ? "In Progress" : "Accepted" }));
       const rr = data.risk_reduced || 0;
-      const label = kind === "remediate" ? "Fix executed" : kind === "isolate" ? "Asset isolated" : kind === "soc" ? "Assigned to SOC" : "Risk accepted";
-      toast.success(`${label} — ALE now ${money(data.portfolio_after.residual_ale)}${rr ? ` (↓ ${money(rr)} risk reduced)` : ""}`);
-      setDetail(null); load();
+      const after = data.portfolio_after?.residual_ale;
+      // Honest outcome — reflect the REAL backend verification, never a fake success.
+      if (kind === "remediate" || kind === "isolate") {
+        const verified = data.verified === true;
+        const inProgress = data.status === "In Progress";
+        const msg = data.message || (verified ? "Verified remediation applied" : "Action complete");
+        if (verified) toast.success(`Verified — ${msg}${rr ? ` · ALE ↓ ${money(rr)}` : ""}`);
+        else if (inProgress) toast(`Sandbox-verifying — ${msg}`);
+        else toast.error(`Not applied — ${msg}`);
+        setActionResult({ ...data, kind, taskId: detail.taskId });
+      } else {
+        const label = kind === "soc" ? "Assigned to SOC" : "Risk accepted";
+        toast.success(`${label}${after != null ? ` — ALE now ${money(after)}` : ""}${rr ? ` (↓ ${money(rr)} risk reduced)` : ""}`);
+        setDetail(null);
+      }
+      load();
     } catch (e) { toast.error(e.response?.data?.detail || "Action failed"); }
     setDetailBusy(false);
   };
@@ -386,7 +443,41 @@ export default function Remediations() {
         )}
       </CardShell>
 
-      <RiskDetailModal item={detail} accent={ACCENT} busy={detailBusy} onClose={() => setDetail(null)} onAction={doAction} />
+      {/* Automated Action-Verification Suite + Defensibility Ledger */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <CardShell testid="rem-verify-suite" title="Automated Action-Verification Suite" icon={PlugZap} accent={ACCENT}
+          right={isAdmin && <button data-testid="rem-verify-run" disabled={verifyBusy} onClick={doVerify} className="flex items-center gap-1 text-[11px] font-head font-bold px-2.5 py-1.5 rounded-full disabled:opacity-50" style={{ background: `hsl(${ACCENT})`, color: "#050810" }}>{verifyBusy ? <Loader2 className="w-3 h-3 animate-spin" /> : <PlugZap className="w-3 h-3" />} Verify live connectors</button>}>
+          <p className="text-xs text-muted-foreground mb-3">Hits each external provider with a live authenticated request, confirms a real HTTP 200, and writes the raw result to the Defensibility Ledger. No mock — an unconfigured connector reports the truth, not a fake pass.</p>
+          {!verify ? <EmptyState icon={PlugZap} text="Run the suite to make live authenticated calls to Stripe & Clerk and record the evidence." /> : (
+            <div className="space-y-2">
+              {Object.entries(verify).map(([prov, r]) => {
+                const ok = r.ok; const tone = ok ? "142 70% 45%" : "0 84% 60%";
+                return (
+                  <div key={prov} data-testid={`rem-verify-${prov}`} className="rounded-lg bg-secondary/40 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-head font-bold text-sm capitalize flex items-center gap-1.5">{ok ? <CheckCircle2 className="w-4 h-4" style={{ color: `hsl(${tone})` }} /> : <XCircle className="w-4 h-4" style={{ color: `hsl(${tone})` }} />}{prov}</span>
+                      <span className="font-mono text-[10px] px-2 py-0.5 rounded-full" style={{ background: `hsl(${tone} / 0.15)`, color: `hsl(${tone})` }}>{r.configured === false ? "NOT CONFIGURED" : `HTTP ${r.status}`}</span>
+                    </div>
+                    <div className="text-[11px] text-muted-foreground mt-1 font-mono">{r.endpoint}</div>
+                    <div className="text-[11px] mt-0.5 break-words">{r.summary || r.error || "OK"}</div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardShell>
+
+        <CardShell testid="rem-ledger" title="Defensibility Ledger — recorded remediation evidence" icon={ScrollText} accent={ACCENT}
+          right={<span className="text-[10px] font-mono text-muted-foreground">{ledger.length} record(s)</span>}>
+          {!ledger.length ? <EmptyState icon={ScrollText} text="No remediation attempts recorded yet. Every Execute Fix / Verify writes an immutable, board-defensible evidence entry here with the raw provider response." /> : (
+            <div className="space-y-2 max-h-[360px] overflow-y-auto pr-1">
+              {ledger.map((e) => <LedgerRow key={e.id} e={e} />)}
+            </div>
+          )}
+        </CardShell>
+      </div>
+
+      <RiskDetailModal item={detail} accent={ACCENT} busy={detailBusy} result={actionResult} onClose={() => setDetail(null)} onAction={doAction} />
     </div>
   );
 }

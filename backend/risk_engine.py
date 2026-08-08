@@ -122,6 +122,7 @@ async def correlate(org_id: str) -> dict:
     controls = [_control_status(c) for c in controls_raw]
     scan = await db.self_scans.find_one({"org_id": org_id}, sort=[("ts", -1)]) or {}
     recs = await db.recommendations.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    vendors = await db.vendors.find({"org_id": org_id}, {"_id": 0}).to_list(500)
 
     # ---- Benchmark, risk appetite & remediation-status context ----
     from bson import ObjectId
@@ -373,9 +374,60 @@ async def correlate(org_id: str) -> dict:
                      "note": (f"Exposure is drifting {direction} {abs(ch)}% month-on-month"
                               + ("; trending toward the appetite ceiling — pre-empt before breach." if tc else "."))}
 
+    # ---- Enterprise economics: TPRM vendor risk premium + security spend optimization ----
+    def _vendor_premium(v):
+        tier_w = {"Critical": 1.0, "High": 0.7, "Medium": 0.4, "Low": 0.2}
+        da_w = {"Restricted": 1.0, "PII": 0.95, "Confidential": 0.8, "Internal": 0.5, "Public": 0.2, "None": 0.1}
+        tier = v.get("risk_tier") or v.get("tier") or "Medium"
+        da = v.get("data_access") or "Internal"
+        inc = v.get("incidents", 0) or 0
+        return round(750_000 * tier_w.get(tier, 0.4) * da_w.get(da, 0.5) * (1 + 0.15 * inc))
+
+    vendor_items = sorted(
+        [{"ref": v.get("ref"), "name": v.get("name"),
+          "tier": v.get("risk_tier") or v.get("tier") or "Medium",
+          "data_access": v.get("data_access") or "Internal", "attestation": v.get("attestation", 0),
+          "incidents": v.get("incidents", 0) or 0, "premium": _vendor_premium(v)} for v in vendors],
+        key=lambda x: x["premium"], reverse=True)
+    tprm_total = sum(x["premium"] for x in vendor_items)
+    high_risk_vendors = sum(1 for v in vendors if (v.get("risk_tier") or v.get("tier")) in ("High", "Critical"))
+    tprm = {
+        "vendor_count": len(vendors), "total_premium": tprm_total, "high_risk_vendors": high_risk_vendors,
+        "avg_attestation": round(sum(v.get("attestation", 0) for v in vendors) / len(vendors)) if vendors else 0,
+        "top_vendors": vendor_items[:6],
+        "pct_of_portfolio": round(tprm_total / residual_total * 100) if residual_total else 0,
+        "note": ("No third-party vendors are connected — vendor risk premium is $0. Add vendors in Third-Party "
+                 "Risk to quantify supply-chain exposure." if not vendors else
+                 f"{len(vendors)} vendor(s) add a modelled {_m(tprm_total)} risk premium "
+                 f"({high_risk_vendors} high/critical tier)."),
+    }
+
+    open_r = [r for r in risk_out if r["status"] != "Remediated"]
+    spend_invest = sum(r["remediation_roi"]["cost"] for r in open_r)
+    spend_reducible = sum(r["remediation_roi"]["ale_reduced"] for r in open_r)
+    spend_area = {}
+    for r in open_r:
+        e = spend_area.setdefault(r["category"], {"area": r["category"], "cost": 0, "ale_reduced": 0})
+        e["cost"] += r["remediation_roi"]["cost"]
+        e["ale_reduced"] += r["remediation_roi"]["ale_reduced"]
+    spend_areas = sorted(
+        [{**e, "roi": round(e["ale_reduced"] / e["cost"], 1) if e["cost"] else 0} for e in spend_area.values()],
+        key=lambda x: x["roi"], reverse=True)
+    spend = {
+        "modelled_investment": round(spend_invest), "ale_reducible": round(spend_reducible),
+        "blended_roi": round(spend_reducible / spend_invest, 1) if spend_invest else 0,
+        "by_area": spend_areas[:6], "best_area": spend_areas[0] if spend_areas else None,
+        "note": ("Every modelled remediation dollar is tied to ALE reduction (deterministic FAIR ROI model — "
+                 f"not booked spend). {_m(round(spend_invest))} of prioritized investment retires "
+                 f"{_m(round(spend_reducible))} of exposure." if spend_invest
+                 else "No open remediation investment modelled yet — the surface is clean."),
+    }
+    economics = {"tprm": tprm, "spend": spend}
+
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "endpoint": scan.get("endpoint"), "scan_score": scan.get("score"), "benchmark": benchmark,
+        "economics": economics,
         "portfolio": {
             "residual_ale": residual_total, "inherent_ale": inherent_total,
             "reduction_pct": round((inherent_total - residual_total) / inherent_total * 100) if inherent_total else 0,
@@ -435,7 +487,16 @@ async def engine_strategic(user: dict = Depends(get_current_user)):
              f"down {p['reduction_pct']}% from inherent. Overall compliance {c['compliance']['overall_pct']}%. "
              f"{p['ratings_dist']['Critical']} Critical / {p['ratings_dist']['High']} High rated." + bench_line)
     return {"portfolio": p, "compliance": c["compliance"], "top_risks": top, "benchmark": b,
-            "areas": c["areas"], "appetite": c["appetite"], "drift": c["drift"], "board_summary": board, "generated_at": c["generated_at"]}
+            "areas": c["areas"], "appetite": c["appetite"], "drift": c["drift"], "economics": c["economics"],
+            "board_summary": board, "generated_at": c["generated_at"]}
+
+
+@risk_engine_router.get("/economics")
+async def engine_economics(user: dict = Depends(get_current_user)):
+    """Enterprise economics lens — TPRM vendor risk premium + security-spend optimization
+    (every modelled remediation dollar tied to ALE reduction)."""
+    c = await correlate(user["org_id"])
+    return {"economics": c["economics"], "portfolio": c["portfolio"], "generated_at": c["generated_at"]}
 
 
 @risk_engine_router.get("/tactical")
