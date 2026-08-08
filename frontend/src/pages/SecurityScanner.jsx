@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { ShieldCheck, Loader2, AlertTriangle, CheckCircle2, XCircle, Bug, RefreshCw, Bot, Play, Pause, Zap, Clock, ThumbsUp, ThumbsDown, Globe, MonitorSmartphone, Server, Activity, TrendingUp, Send, Wrench, X, Smartphone, Radar, Sparkles } from "lucide-react";
+import { ShieldCheck, Loader2, AlertTriangle, CheckCircle2, XCircle, Bug, RefreshCw, Bot, Play, Pause, Zap, Clock, ThumbsUp, ThumbsDown, Globe, MonitorSmartphone, Server, Activity, TrendingUp, Send, Wrench, X, Smartphone, Radar, Sparkles, ShieldAlert, Lock } from "lucide-react";
 import { AreaChart, Area, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 const SEV = {
@@ -13,6 +13,12 @@ const SEV = {
 };
 const scoreCol = (v) => (v >= 85 ? "142 70% 45%" : v >= 65 ? "35 90% 55%" : "0 84% 60%");
 const rel = (iso) => (iso ? new Date(iso).toLocaleString() : "never");
+const kevSince = (iso) => {
+  if (!iso) return null;
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  const d = new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  return `In CISA KEV since ${d} · ${days}d`;
+};
 
 // ECG / heartbeat trace — hospital-monitor style vitals for endpoint health.
 const _BEAT = [[0, 20], [10, 20], [14, 17], [18, 20], [24, 20], [26, 23], [30, 4], [33, 33], [36, 20], [44, 20], [48, 15], [54, 20], [60, 20]];
@@ -80,6 +86,8 @@ export default function SecurityScanner() {
   const [intel, setIntel] = useState(null);
   const [intelRefreshing, setIntelRefreshing] = useState(false);
   const [autofixing, setAutofixing] = useState(false);
+  const [containment, setContainment] = useState([]);
+  const [containmentActive, setContainmentActive] = useState(0);
 
   const loadScan = () => api.get("/self-scan/latest").then((r) => setScan(r.data && r.data.id ? r.data : null)).catch(() => setScan(null));
   const loadEngine = () => api.get("/self-scan/engine").then((r) => { setEngine(r.data.engine); setPending(r.data.pending || []); setEndpoint(r.data.endpoint || ""); }).catch(() => {});
@@ -88,12 +96,13 @@ export default function SecurityScanner() {
   const loadAlerts = () => api.get("/self-scan/alerts").then((r) => setAlerts(r.data)).catch(() => {});
   const loadJobs = () => api.get("/self-scan/maintenance").then((r) => setJobs(r.data || [])).catch(() => {});
   const loadIntel = () => api.get("/self-scan/intel").then((r) => setIntel(r.data)).catch(() => {});
-  useEffect(() => { Promise.all([loadScan(), loadEngine(), loadAssets(), loadTrend(), loadAlerts(), loadJobs(), loadIntel()]).finally(() => setLoading(false)); }, []);
+  const loadContainment = () => api.get("/self-scan/containment").then((r) => { setContainment(r.data.events || []); setContainmentActive(r.data.active || 0); }).catch(() => {});
+  useEffect(() => { Promise.all([loadScan(), loadEngine(), loadAssets(), loadTrend(), loadAlerts(), loadJobs(), loadIntel(), loadContainment()]).finally(() => setLoading(false)); }, []);
 
   // Auto-detect + live maintenance progress: poll so new sources/devices and running jobs update on their own.
   useEffect(() => {
     const id = setInterval(() => {
-      loadAssets(); loadEngine();
+      loadAssets(); loadEngine(); loadContainment();
       if (jobs.some((j) => ["queued", "running"].includes(j.status))) { loadJobs(); loadTrend(); loadScan(); }
     }, 15000);
     const onVis = () => { if (!document.hidden) { loadAssets(); loadEngine(); loadJobs(); } };
@@ -190,6 +199,10 @@ export default function SecurityScanner() {
     } catch (e) { toast.error("Autofix failed"); }
     setAutofixing(false);
   };
+  const reviewContainment = async (id, action) => {
+    try { await api.post(`/self-scan/containment/${id}/review`, { action }); await loadContainment(); toast.success(action === "rollback" ? "Containment rolled back" : "Acknowledged"); }
+    catch (e) { toast.error("Could not update containment"); }
+  };
 
   const toggleDeviceItem = async (item, done) => {
     try {
@@ -200,6 +213,13 @@ export default function SecurityScanner() {
   const forceSync = async () => {
     try { await api.post(`/self-scan/device/${encodeURIComponent(selDevice.id)}/sync`); toast.success("Intune sync requested"); }
     catch (e) { toast.error(e?.response?.data?.detail || "Sync requires a connected Microsoft 365 (Intune)"); }
+  };
+  const autoRemediate = async () => {
+    try {
+      await api.post(`/self-scan/device/${encodeURIComponent(selDevice.id)}/remediate`);
+      setSelDevice((d) => ({ ...d, done: d.items || [] }));
+      toast.success("Compliance policy pushed + sync triggered");
+    } catch (e) { toast.error(e?.response?.data?.detail || "Auto-remediate requires a connected Intune"); }
   };
   const openDevice = async (d) => {
     setSelDevice({ ...d, done: [], items: [] });
@@ -378,6 +398,50 @@ export default function SecurityScanner() {
         </div>
       )}
 
+      {/* Real-time threat containment */}
+      {containment.length > 0 && (
+        <div className="bg-card fact-border rounded-xl p-6" data-testid="threat-containment">
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+            <div>
+              <h2 className="font-head font-bold text-lg flex items-center gap-2"><ShieldAlert className="w-5 h-5 text-crit" /> Real-time threat containment</h2>
+              <p className="text-xs text-muted-foreground mt-1 max-w-2xl">Actively-exploited &amp; malicious threats are auto-contained the moment they're detected, then logged here for your review.</p>
+            </div>
+            <span data-testid="containment-active" className="text-[10px] font-mono uppercase px-2.5 py-1 rounded-full font-bold" style={{ background: containmentActive ? "hsl(0 84% 60% / 0.15)" : "hsl(142 70% 45% / 0.15)", color: containmentActive ? "hsl(0 84% 55%)" : "hsl(142 70% 40%)" }}>{containmentActive ? `${containmentActive} awaiting review` : "all reviewed"}</span>
+          </div>
+          <div className="space-y-2">
+            {containment.slice(0, 12).map((e) => {
+              const col = e.severity === "critical" ? "0 84% 60%" : e.severity === "high" ? "15 80% 55%" : "35 90% 55%";
+              const done = e.status !== "auto-contained";
+              return (
+                <div key={e.id} data-testid={`containment-${e.id}`} className="p-3 rounded-lg bg-secondary/40 flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Lock className="w-3.5 h-3.5 shrink-0" style={{ color: `hsl(${col})` }} />
+                      <span className="font-medium text-sm">{e.subject}</span>
+                      <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full" style={{ background: `hsl(${col} / 0.15)`, color: `hsl(${col})` }}>{e.severity}</span>
+                      <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full bg-ai/10 text-ai">{e.kind}</span>
+                      {e.real ? <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full bg-low/15 text-low">enforced</span> : <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full bg-secondary text-muted-foreground">advisory</span>}
+                    </div>
+                    <div className="text-xs mt-1"><b>Contained:</b> {e.action}</div>
+                    <div className="text-[11px] text-muted-foreground mt-0.5">{e.description} · {rel(e.ts)}</div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {done ? (
+                      <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full" style={{ background: "hsl(142 70% 45% / 0.15)", color: "hsl(142 70% 40%)" }}>{e.status.replace("_", " ")}</span>
+                    ) : (
+                      <>
+                        <button data-testid={`contain-ack-${e.id}`} onClick={() => reviewContainment(e.id, "acknowledge")} className="px-3 py-1.5 rounded-md bg-low text-white text-xs font-bold flex items-center gap-1"><ThumbsUp className="w-3.5 h-3.5" /> Acknowledge</button>
+                        <button data-testid={`contain-rollback-${e.id}`} onClick={() => reviewContainment(e.id, "rollback")} className="px-3 py-1.5 rounded-md bg-secondary text-xs font-bold">Roll back</button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Threat intelligence feeds — continuously synced */}
       {intel && (
         <div className="bg-card fact-border rounded-xl p-6" data-testid="threat-intel">
@@ -402,6 +466,7 @@ export default function SecurityScanner() {
                     <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full shrink-0" style={{ background: `hsl(${col} / 0.15)`, color: `hsl(${col})` }}>{f.status}</span>
                   </div>
                   <div className="text-[11px] text-muted-foreground mt-1">{f.count != null ? `${f.count.toLocaleString()} entries` : ""}{f.version ? `${f.count != null ? " · " : ""}v${f.version}` : ""}</div>
+                  {f.added_since_last > 0 && <div className="text-[10px] text-crit mt-0.5 font-medium" data-testid={`feed-${k}-new`}>+{f.added_since_last} new since last sync</div>}
                   <div className="text-[10px] text-muted-foreground mt-0.5">updated {rel(f.updated_at)}</div>
                   {f.error && <div className="text-[10px] text-crit mt-0.5 truncate" title={f.error}>{f.error}</div>}
                 </div>
@@ -525,9 +590,10 @@ export default function SecurityScanner() {
               ))}
             </div>
             <div className="flex items-center gap-2 mt-4">
+              <button data-testid="device-auto-remediate" onClick={autoRemediate} className="px-3 py-2 rounded-md bg-ai text-white text-xs font-bold flex items-center gap-1"><Sparkles className="w-3.5 h-3.5" /> Auto-remediate (push policy)</button>
               <button data-testid="device-force-sync" onClick={forceSync} className="px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-bold flex items-center gap-1"><RefreshCw className="w-3.5 h-3.5" /> Force Intune sync</button>
-              <span className="text-[10px] text-muted-foreground">Progress saved automatically</span>
             </div>
+            <div className="text-[10px] text-muted-foreground mt-2">Progress saved automatically</div>
           </div>
         </div>
       )}
@@ -585,6 +651,7 @@ export default function SecurityScanner() {
                     {f.cve_ids?.length > 0 && <div className="flex flex-wrap gap-1 mb-2">{f.cve_ids.slice(0, 12).map((c) => <span key={c} className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm bg-crit/10 text-crit border border-crit/20">{c}</span>)}</div>}
                     <div className="text-xs flex items-start gap-1.5"><ShieldCheck className="w-3.5 h-3.5 mt-0.5 text-low shrink-0" /><span><b>Fix:</b> {f.remediation}</span></div>
                     <div className="flex flex-wrap gap-1 mt-2">{f.control_refs?.map((r) => <span key={r} className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm bg-ai/10 text-ai border border-ai/20">{r}</span>)}</div>
+                    {f.kev_added && <div className="text-[10px] text-crit mt-1 flex items-center gap-1 font-medium" data-testid={`kev-since-${f.id}`}><Clock className="w-3 h-3" /> {kevSince(f.kev_added)} to remediate</div>}
                     {f.mitre?.length > 0 && <div className="flex flex-wrap gap-1 mt-1.5">{f.mitre.map((m) => <span key={m.id} className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm bg-crit/5 text-crit/80 border border-crit/15" title={m.tactic}>ATT&CK {m.id} · {m.name}</span>)}</div>}
                     {f.cwe?.length > 0 && <div className="flex flex-wrap gap-1 mt-1.5">{f.cwe.map((w) => <span key={w.id} className="text-[9px] font-mono px-1.5 py-0.5 rounded-sm bg-high/5 text-high/90 border border-high/20" title={w.name}>{w.id} · {w.name}</span>)}</div>}
                     <label className="flex items-center gap-2 mt-3 text-[11px] cursor-pointer text-low font-medium" data-testid={`remediate-${f.id}`}>

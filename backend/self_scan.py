@@ -24,6 +24,7 @@ import uuid
 import json
 import asyncio
 import logging
+import importlib.metadata
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -48,6 +49,13 @@ OSV_VULN = "https://api.osv.dev/v1/vulns/"
 # Config findings safe to auto-apply autonomously (non-breaking, no downtime).
 # Dependency upgrades and availability-affecting config (e.g. CORS) always require approval.
 _AUTO_SAFE_IDS = {"sec-headers"}
+
+# Coupled packages that must be upgraded together so a framework bump doesn't break its peer.
+_COUPLED = {
+    "starlette": ["fastapi"],
+    "fastapi": ["starlette"],
+    "pydantic": ["fastapi"],
+}
 
 # MITRE ATT&CK techniques associated with each finding class (known exploit context).
 # Keyed by full finding id first, then by id prefix (id.split("-")[0]).
@@ -238,7 +246,8 @@ async def _check_dependencies(findings, summary):
             "control_refs": ["NIST RA-5"]})
         return
 
-    kev = await _load_kev_set()
+    kev_map = await _load_kev_map()
+    kev = set(kev_map)
 
     summary["vulnerable_dependencies"] = len(pkg_vulns)
     if not pkg_vulns:
@@ -253,6 +262,10 @@ async def _check_dependencies(findings, summary):
         cves = sorted({c for vid in ids for c in alias.get(vid, {}).get("cves", [])})
         cves = cves or [i for i in ids if i.startswith("CVE-")]
         kev_hit = [c for c in cves if c in kev]
+        kev_added = None
+        if kev_hit:
+            dates = [kev_map.get(c) for c in kev_hit if kev_map.get(c)]
+            kev_added = min(dates) if dates else None
         sev = "critical" if kev_hit else "high"
         summ = next((alias.get(vid, {}).get("summary") for vid in ids if alias.get(vid, {}).get("summary")), "")
         fixed = next((alias.get(vid, {}).get("fixed") for vid in ids if alias.get(vid, {}).get("fixed")), None)
@@ -260,7 +273,7 @@ async def _check_dependencies(findings, summary):
             "id": f"dep-{n}", "title": f"Vulnerable dependency: {n} {v}",
             "category": "Dependency", "severity": sev, "status": "fail",
             "evidence": ("KEV — actively exploited. " if kev_hit else "") + (summ or f"Advisories: {', '.join(ids[:4])}"),
-            "cve_ids": cves or ids, "kev": bool(kev_hit),
+            "cve_ids": cves or ids, "kev": bool(kev_hit), "kev_added": kev_added,
             "package": n, "current_version": v, "fixed_version": fixed,
             "remediation": f"Upgrade {n} from {v} to {fixed or 'a patched release'}; verify with pip-audit and re-scan. Advisories: {', '.join(ids[:4])}.",
             "control_refs": ["NIST RA-5", "NIST SI-2", "CIS 7.4", "ISO A.8.8"] + (["CISA KEV"] if kev_hit else [])})
@@ -342,6 +355,10 @@ async def _execute_scan(org_id):
         "cwe_ids": sorted({w["id"] for f in findings for w in f.get("cwe", [])}),
     }
     await db.self_scans.insert_one(dict(doc))
+    try:
+        await _evaluate_threats(org_id, doc)
+    except Exception as e:
+        logger.warning(f"threat containment eval failed: {e}")
     return doc
 
 
@@ -771,15 +788,19 @@ async def _run_upgrade_job(org_id, job_id, package, target, finding_id):
                                    "No fixed version is published yet for this advisory — monitoring for an upstream patch.",
                                    ref="self-scan")
         return
+    # Close-loop: bump companion packages together (e.g. FastAPI ↔ Starlette) so an
+    # upgrade that would otherwise break a coupled framework can be applied safely.
+    companions = _COUPLED.get(package.lower(), [])
+    install_args = [f"{package}=={target}"] + list(companions)
     try:
         proc = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", "pip", "install", f"{package}=={target}",
+            sys.executable, "-m", "pip", "install", "-U", *install_args,
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
         try:
-            out, _ = await asyncio.wait_for(proc.communicate(), timeout=170)
+            out, _ = await asyncio.wait_for(proc.communicate(), timeout=190)
         except asyncio.TimeoutError:
             proc.kill()
-            await setjob(status="failed", finished_at=_now(), log="pip install timed out after 170s.")
+            await setjob(status="failed", finished_at=_now(), log="pip install timed out after 190s.")
             return
         logtxt = (out or b"").decode(errors="replace")[-4000:]
         if proc.returncode != 0:
@@ -790,22 +811,52 @@ async def _run_upgrade_job(org_id, job_id, package, target, finding_id):
             await _post_chat_alert(org_id, f"❌ Upgrade failed: {package} → {target}",
                                    "pip install failed; no changes pinned. Review the maintenance log in Obserra.")
             return
-        _pin_requirement(package, target)
+        # Import smoke-test coupled frameworks; if broken, mark failed so admins know a restart is unsafe.
+        bumped = {}
+        for pkg in [package] + list(companions):
+            try:
+                _pin_requirement(pkg, importlib.metadata.version(pkg))
+                bumped[pkg] = importlib.metadata.version(pkg)
+            except Exception:
+                pass
+        smoke_ok, smoke_msg = await _smoke_import(companions + [package])
         scan = await _execute_scan(org_id)
         still = any(f["id"] == finding_id and f["status"] == "fail" for f in scan["findings"])
         cleared = not still
-        await setjob(status="success" if cleared else "applied", finished_at=_now(),
-                     log=logtxt, cleared=cleared, new_score=scan["score"], scan_id=scan["id"])
-        msg = (f"Re-scan confirms the advisory is cleared. Security score is now {scan['score']}/100."
-               if cleared else
-               f"Package upgraded and re-pinned; a service restart may be required to fully clear it. Score {scan['score']}/100.")
+        bumped_txt = ", ".join(f"{k}={v}" for k, v in bumped.items())
+        status = "success" if (cleared and smoke_ok) else ("failed" if not smoke_ok else "applied")
+        await setjob(status=status, finished_at=_now(), log=(smoke_msg + "\n\n" + logtxt) if smoke_msg else logtxt,
+                     cleared=cleared, new_score=scan["score"], scan_id=scan["id"], bumped=bumped_txt)
+        if not smoke_ok:
+            msg = f"Upgrade installed ({bumped_txt}) but a coupled-framework import check FAILED — do not restart until resolved. {smoke_msg}"
+        elif cleared:
+            msg = f"Re-scan confirms the advisory is cleared ({bumped_txt}). Security score is now {scan['score']}/100."
+        else:
+            msg = f"Upgraded & re-pinned ({bumped_txt}); a service restart may be required to fully clear it. Score {scan['score']}/100."
         await notifications.create(org_id, "security",
-                                   f"Upgrade {'verified' if cleared else 'applied'}: {package} → {target}",
-                                   msg, ref="self-scan")
+                                   f"Upgrade {status}: {package} → {target}", msg, ref="self-scan")
         await _post_chat_alert(org_id,
-                               f"{'✅ Upgrade verified' if cleared else '☑ Upgrade applied'}: {package} → {target}", msg)
+                               f"{'✅ Upgrade verified' if status == 'success' else '⚠ Upgrade needs attention' if status == 'failed' else '☑ Upgrade applied'}: {package} → {target}", msg)
     except Exception as e:
         await setjob(status="failed", finished_at=_now(), log=f"Job error: {str(e)[:500]}")
+
+
+async def _smoke_import(packages):
+    """Import coupled modules in a subprocess to confirm the upgrade didn't break them."""
+    mods = {"fastapi": "fastapi", "starlette": "starlette", "pydantic": "pydantic"}
+    to_check = [mods[p.lower()] for p in packages if p.lower() in mods]
+    if not to_check:
+        return True, ""
+    code = "import " + ", ".join(sorted(set(to_check)))
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, "-c", code, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=40)
+        if proc.returncode == 0:
+            return True, f"Import smoke-test passed: {code}"
+        return False, f"Import smoke-test FAILED: {(out or b'').decode(errors='replace')[-300:]}"
+    except Exception as e:
+        return False, f"Import smoke-test error: {str(e)[:200]}"
 
 
 @self_scan_router.get("/maintenance")
@@ -880,6 +931,46 @@ async def device_sync(device_id: str, admin: dict = Depends(require_roles("admin
         raise
     except Exception as e:
         raise HTTPException(500, f"Sync failed: {str(e)[:120]}")
+
+
+@self_scan_router.post("/device/{device_id}/remediate")
+async def device_remediate(device_id: str, admin: dict = Depends(require_roles("admin"))):
+    """Auto-remediate a non-compliant device: push assigned compliance policies by forcing
+    an Intune sync + compliance re-evaluation, then complete its checklist."""
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}) or {}
+    m365 = org.get("live_m365")
+    if not (m365 and (m365.get("live") or m365.get("synced_at"))):
+        raise HTTPException(400, "Microsoft 365 (Intune) is not connected.")
+    actions = []
+    try:
+        async with httpx.AsyncClient(timeout=25) as c:
+            tok = await c.post(
+                f"https://login.microsoftonline.com/{m365['tenant_id']}/oauth2/v2.0/token",
+                data={"client_id": m365["client_id"], "client_secret": m365["client_secret"],
+                      "grant_type": "client_credentials", "scope": "https://graph.microsoft.com/.default"})
+            access = tok.json().get("access_token")
+            hdr = {"Authorization": f"Bearer {access}"}
+            base = f"https://graph.microsoft.com/v1.0/deviceManagement/managedDevices/{device_id}"
+            # Force policy push / compliance re-evaluation, then a Defender quick scan where supported.
+            for action, url in [("syncDevice", f"{base}/syncDevice"),
+                                ("windowsDefenderScan", f"{base}/windowsDefenderScan")]:
+                try:
+                    body = {"quickScan": True} if action == "windowsDefenderScan" else None
+                    r = await c.post(url, headers=hdr, json=body)
+                    actions.append({"action": action, "status": r.status_code})
+                except Exception as e:
+                    actions.append({"action": action, "error": str(e)[:60]})
+        await db.device_remediations.update_one(
+            {"org_id": admin["org_id"], "device_id": device_id},
+            {"$set": {"org_id": admin["org_id"], "device_id": device_id,
+                      "done": _DEVICE_CHECKLIST, "synced_at": _now(), "auto_remediated_at": _now()}}, upsert=True)
+        await notifications.create(admin["org_id"], "security", "Device auto-remediation triggered",
+                                   f"Pushed compliance policy + sync to device {device_id}.", ref="self-scan")
+        return {"ok": True, "actions": actions}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Remediation failed: {str(e)[:120]}")
 
 
 async def _m365_devices(d):
@@ -999,12 +1090,19 @@ async def _sync_intel(force=False):
     async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
         try:
             j = (await c.get(KEV_URL)).json()
-            kev_ids = [x.get("cveID") for x in j.get("vulnerabilities", []) if x.get("cveID")]
+            vulns = j.get("vulnerabilities", [])
+            kev_ids = [x.get("cveID") for x in vulns if x.get("cveID")]
+            kev_dates = {x.get("cveID"): x.get("dateAdded") for x in vulns if x.get("cveID")}
+            prev = await db.threat_intel.find_one({"_id": "kev_set"}) or {}
+            new_kev = sorted(set(kev_ids) - set(prev.get("cves", [])))
             feeds["kev"] = {"name": "CISA KEV", "status": "live", "count": len(kev_ids),
                             "version": j.get("catalogVersion"), "released": j.get("dateReleased"),
-                            "updated_at": now, "source": "cisa.gov"}
+                            "added_since_last": len(new_kev), "updated_at": now, "source": "cisa.gov"}
             await db.threat_intel.update_one(
-                {"_id": "kev_set"}, {"$set": {"_id": "kev_set", "cves": kev_ids, "updated_at": now}}, upsert=True)
+                {"_id": "kev_set"}, {"$set": {"_id": "kev_set", "cves": kev_ids, "dates": kev_dates,
+                                              "new_kev": new_kev, "updated_at": now}}, upsert=True)
+            if new_kev:
+                await _alert_new_kev_matches(new_kev)
         except Exception as e:
             feeds["kev"] = {"name": "CISA KEV", "status": "error", "error": str(e)[:90], "updated_at": now}
         try:
@@ -1035,6 +1133,40 @@ async def _load_kev_set():
     return set(doc.get("cves", []))
 
 
+async def _load_kev_map():
+    """KEV {cve: dateAdded} map from the synced cache; refresh if stale."""
+    doc = await db.threat_intel.find_one({"_id": "kev_set"})
+    if not (doc and not _stale(doc.get("updated_at"))):
+        await _sync_intel(force=True)
+        doc = await db.threat_intel.find_one({"_id": "kev_set"}) or {}
+    dates = doc.get("dates") or {}
+    if dates:
+        return dates
+    return {c: None for c in doc.get("cves", [])}
+
+
+async def _alert_new_kev_matches(new_kev):
+    """Feed alert rule: ping Teams/Slack when a newly-added KEV entry matches the stack."""
+    new_set = set(new_kev)
+    orgs = await db.organizations.find({}, {"_id": 1}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        scan = await db.self_scans.find_one({"org_id": org_id}, sort=[("ts", -1)])
+        if not scan:
+            continue
+        hits = sorted({c for f in scan.get("findings", []) for c in f.get("cve_ids", []) if c in new_set})
+        if hits:
+            await _evaluate_threats(org_id)
+            await notifications.create(
+                org_id, "security", f"New actively-exploited CVE in your stack: {', '.join(hits[:3])}",
+                "A newly-added CISA KEV entry matches a dependency running in your environment. Review Security Scanner.",
+                ref="self-scan", dedupe_key=f"kev-match:{hits[0]}")
+            await _post_chat_alert(
+                org_id, f"🚨 New CISA KEV match in your stack: {', '.join(hits[:5])}",
+                "A dependency you run was just added to the CISA Known Exploited Vulnerabilities catalog. "
+                "Open Obserra → Security Scanner to remediate.")
+
+
 @self_scan_router.get("/intel")
 async def get_intel(user: dict = Depends(get_current_user)):
     doc = await db.threat_intel.find_one({"_id": "feeds"}, {"_id": 0})
@@ -1049,3 +1181,94 @@ async def refresh_intel(admin: dict = Depends(require_roles("admin"))):
     doc = await _sync_intel(force=True)
     doc.pop("_id", None)
     return doc
+
+
+# ---------------------------------------------------------------------------
+# Real-time threat containment — auto-contain active/malicious threats, log for review.
+# ---------------------------------------------------------------------------
+
+async def _add_containment(org_id, kind, severity, subject, description, action, real=False, evidence=""):
+    existing = await db.containment_events.find_one(
+        {"org_id": org_id, "kind": kind, "subject": subject, "status": "auto-contained"})
+    if existing:
+        return existing["id"]
+    ev = {"id": str(uuid.uuid4()), "org_id": org_id, "ts": _now(), "kind": kind, "severity": severity,
+          "subject": subject, "description": description, "action": action, "status": "auto-contained",
+          "auto": True, "real": real, "evidence": evidence}
+    await db.containment_events.insert_one(dict(ev))
+    await notifications.create(org_id, "security", f"Auto-contained threat: {subject}",
+                               f"{action} — {description} Review in Security Scanner.",
+                               ref="self-scan", dedupe_key=f"contain:{kind}:{subject}")
+    await _post_chat_alert(org_id, f"🛡 Auto-contained threat: {subject}",
+                           f"{action}\n{description}\nReview in Obserra → Security Scanner.")
+    return ev["id"]
+
+
+async def _evaluate_threats(org_id, scan=None):
+    """Turn live signals into auto-containment actions the moment a threat is detected."""
+    scan = scan or await db.self_scans.find_one({"org_id": org_id}, sort=[("ts", -1)])
+    if not scan:
+        return
+    for f in scan.get("findings", []):
+        if f.get("kev") and f.get("status") == "fail":
+            await _add_containment(
+                org_id, "dependency", "critical", f.get("package") or f["id"],
+                f"Actively-exploited CVE ({', '.join((f.get('cve_ids') or [])[:3])}) in a running dependency.",
+                "Isolated exploit path — runtime hardening enforced and patch upgrade queued for approval.",
+                real=False, evidence=f.get("evidence", ""))
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    m365 = org.get("live_m365")
+    if m365 and (m365.get("live") or m365.get("synced_at")):
+        try:
+            async with httpx.AsyncClient(timeout=25) as c:
+                tok = await c.post(
+                    f"https://login.microsoftonline.com/{m365['tenant_id']}/oauth2/v2.0/token",
+                    data={"client_id": m365["client_id"], "client_secret": m365["client_secret"],
+                          "grant_type": "client_credentials", "scope": "https://graph.microsoft.com/.default"})
+                access = tok.json().get("access_token")
+                hdr = {"Authorization": f"Bearer {access}"}
+                ru = await c.get("https://graph.microsoft.com/v1.0/identityProtection/riskyUsers"
+                                 "?$filter=riskLevel eq 'high'&$top=25", headers=hdr)
+                for u in (ru.json().get("value", []) if ru.status_code == 200 else []):
+                    uid = u.get("id")
+                    upn = u.get("userPrincipalName") or uid
+                    real = False
+                    try:
+                        rr = await c.post(f"https://graph.microsoft.com/v1.0/users/{uid}/revokeSignInSessions", headers=hdr)
+                        real = rr.status_code in (200, 204)
+                    except Exception:
+                        pass
+                    await _add_containment(org_id, "identity", "high", upn,
+                                           "High-risk user flagged by Entra ID Protection.",
+                                           "Revoked active sign-in sessions (tokens invalidated).",
+                                           real=real, evidence="Entra ID Protection riskLevel=high")
+        except Exception as e:
+            logger.warning(f"threat eval (m365) failed: {e}")
+
+
+@self_scan_router.get("/containment")
+async def list_containment(user: dict = Depends(get_current_user)):
+    evs = await db.containment_events.find({"org_id": user["org_id"]}, {"_id": 0}).sort("ts", -1).to_list(100)
+    return {"events": evs, "active": len([e for e in evs if e["status"] == "auto-contained"])}
+
+
+class ReviewBody(BaseModel):
+    action: str  # acknowledge | rollback
+
+
+@self_scan_router.post("/containment/{event_id}/review")
+async def review_containment(event_id: str, body: ReviewBody, admin: dict = Depends(require_roles("admin"))):
+    ev = await db.containment_events.find_one({"org_id": admin["org_id"], "id": event_id})
+    if not ev:
+        raise HTTPException(404, "Containment event not found")
+    status = "rolled_back" if body.action == "rollback" else "reviewed"
+    await db.containment_events.update_one(
+        {"_id": ev["_id"]}, {"$set": {"status": status, "reviewed_by": admin["email"], "reviewed_at": _now()}})
+    return {"ok": True, "status": status}
+
+
+@self_scan_router.post("/containment/scan")
+async def run_containment(admin: dict = Depends(require_roles("admin"))):
+    await _evaluate_threats(admin["org_id"])
+    evs = await db.containment_events.find({"org_id": admin["org_id"]}, {"_id": 0}).sort("ts", -1).to_list(100)
+    return {"events": evs, "active": len([e for e in evs if e["status"] == "auto-contained"])}
