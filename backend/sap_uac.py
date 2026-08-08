@@ -1234,7 +1234,7 @@ async def activation(q: str = "", department: str = "", status: str = "",
             "first_name": p["name"].split(" ")[0], "last_name": (p["name"].split(" ") + [""])[1],
             "email": p["email"], "saml_user_mapping": p["email"], "department": p["department"],
             "manager": p.get("manager"), "roles": rolenames, "role_count": len(rolenames),
-            "status": st, "is_user_deactivated": st == "Deactivated",
+            "status": st, "is_user_deactivated": st == "Deactivated", "is_user_suspended": st == "Suspended",
             "last_login": last_login, "inactive_days": inactive,
             "license_type": lic, "worker_type": p["worker_type"], "legal_entity": p["legal_entity"],
             "inactivity_flag": bool(inactive is not None and inactive > 30 and st == "Activated"),
@@ -1246,8 +1246,10 @@ async def activation(q: str = "", department: str = "", status: str = "",
                 and (not status or r["status"] == status)]
     filtered.sort(key=lambda r: (r["status"] != "Activated", -(r["inactive_days"] or 0)))
     activated = sum(1 for r in rows if r["status"] == "Activated")
-    deactivated = len(rows) - activated
+    suspended = sum(1 for r in rows if r["status"] == "Suspended")
+    deactivated = sum(1 for r in rows if r["status"] == "Deactivated")
     total = len(rows)
+    consumed = activated + suspended  # deactivate frees the license; suspend retains it
     underutilized = sum(1 for r in rows if r["inactivity_flag"] and r["license_type"] in ("Professional", "Limited Professional"))
     # trend from REAL hire/termination dates + admin activation events (live-derived)
     events = await db.sap_activation_events.find({"org_id": org_id}, {"_id": 0}).to_list(5000)
@@ -1275,10 +1277,10 @@ async def activation(q: str = "", department: str = "", status: str = "",
     license_breakdown = sorted(({"name": k, "value": v} for k, v in lic_map.items()), key=lambda x: -x["value"])
     return {
         "users": filtered, "total_returned": len(filtered),
-        "summary": {"total": total, "activated": activated, "deactivated": deactivated,
-                    "license_usage_pct": round(activated / total * 100) if total else 0,
+        "summary": {"total": total, "activated": activated, "suspended": suspended, "deactivated": deactivated,
+                    "license_consumed": consumed, "license_usage_pct": round(consumed / total * 100) if total else 0,
                     "underutilized_licenses": underutilized},
-        "pie": [{"name": "Activated", "value": activated}, {"name": "Deactivated", "value": deactivated}],
+        "pie": [{"name": "Activated", "value": activated}, {"name": "Suspended", "value": suspended}, {"name": "Deactivated", "value": deactivated}],
         "trend": trend, "license_breakdown": license_breakdown, "license_types": sorted(lic_map.keys()),
         "heatmap": sorted(dept_map.values(), key=lambda x: -x["inactive_pct"]),
         "departments": sorted({r["department"] for r in rows}),
@@ -1295,58 +1297,80 @@ class ActivationBody(BaseModel):
 
 
 async def _snow_workflow(org_id, person, action, by, reason, notify, work_note=""):
-    """Real internal workflow that MIRRORS a ServiceNow ticket lifecycle end-to-end (with work notes) and
-    would sync to ServiceNow once the CON-SNOW connector holds live credentials. Deactivation opens &
-    auto-closes an incident; activation/create run provisioning requests."""
+    """Fully automated cross-system orchestration mirroring a ServiceNow ticket that fans out to
+    ADP/IZ8 HR, SAP and AD/Entra and closes end-to-end. Syncs to real ServiceNow once CON-SNOW is live.
+    Actions: create | activate | resume | deactivate | suspend."""
     count = await db.sap_snow_tickets.count_documents({"org_id": org_id})
     t0 = _now()
-
-    def at(sec):
-        return (t0 + timedelta(seconds=sec)).isoformat()
-
+    hr = person.get("hr_authority", "ADP")
     if action == "deactivate":
-        number = f"INC{100000 + count + 1}"
-        ttype = "SAP Access Deactivation"
-        stages = [
-            {"state": "New", "note": "Deactivation request created from Obserra SAP UAC", "at": at(0)},
-            {"state": "Approved", "note": f"Auto-approved (policy: leaver / license recovery) · {by}", "at": at(2)},
-            {"state": "In Progress", "note": "Locking SAP accounts, revoking roles, freeing license (content retained)", "at": at(4)},
-            {"state": "Resolved", "note": "Access revoked & license freed; private content preserved under the account", "at": at(6)},
-            {"state": "Closed", "note": "Auto-closed after successful verification", "at": at(8)},
+        prefix, ttype = "INC", "SAP Access Deactivation"
+        steps = [
+            ("ServiceNow", "Deactivation incident opened from Obserra SAP UAC"),
+            ("ServiceNow", f"Auto-approved (policy: leaver / license recovery) · {by}"),
+            (hr, f"Setting worker inactive / processing leaver in {hr} HR"),
+            ("SAP", "Locking SAP accounts, revoking roles, freeing license (content retained)"),
+            ("AD/Entra", "Disabling Active Directory / Entra sign-in"),
+            ("ServiceNow", "All fulfilment tasks complete; access revoked & license freed"),
+        ]
+    elif action == "suspend":
+        prefix, ttype = "INC", "SAP Access Suspension"
+        steps = [
+            ("ServiceNow", "Suspension (temporary hold) incident opened"),
+            ("ServiceNow", f"Auto-approved (policy: leave of absence) · {by}"),
+            (hr, f"Recording leave of absence in {hr} HR"),
+            ("AD/Entra", "Disabling sign-in (temporary hold)"),
+            ("SAP", "Locking SAP accounts — license & private content retained"),
+            ("ServiceNow", "Access suspended; license retained"),
         ]
     elif action == "create":
-        number = f"REQ{100000 + count + 1}"
-        ttype = "SAP Account Creation"
-        stages = [
-            {"state": "New", "note": "Account creation request submitted from Obserra SAP UAC", "at": at(0)},
-            {"state": "In Progress", "note": "Creating SAP user, assigning birthright roles, enabling login", "at": at(3)},
-            {"state": "Resolved", "note": "Account created & activated; license consumed", "at": at(6)},
-            {"state": "Closed", "note": "Auto-closed after successful verification", "at": at(8)},
+        prefix, ttype = "REQ", "SAP Account Creation"
+        steps = [
+            ("ServiceNow", "Account creation request submitted"),
+            (hr, f"Creating worker record in {hr} HR"),
+            ("AD/Entra", "Provisioning Active Directory / Entra identity + mailbox"),
+            ("SAP", "Creating SAP user, assigning birthright roles, enabling login"),
+            ("ServiceNow", "Account created & activated; license consumed"),
         ]
-    else:  # activate
-        number = f"REQ{100000 + count + 1}"
-        ttype = "SAP Account Provisioning"
-        stages = [
-            {"state": "New", "note": "Provisioning request created from Obserra SAP UAC", "at": at(0)},
-            {"state": "In Progress", "note": "Enabling account, restoring login, re-assigning birthright roles", "at": at(3)},
-            {"state": "Resolved", "note": "Account activated; login restored; license consumed", "at": at(6)},
-            {"state": "Closed", "note": "Auto-closed after successful verification", "at": at(8)},
+    else:  # activate / resume
+        prefix, ttype = "REQ", ("SAP Access Resume" if action == "resume" else "SAP Account Reactivation")
+        steps = [
+            ("ServiceNow", "Reactivation request submitted"),
+            (hr, f"Setting worker active in {hr} HR"),
+            ("AD/Entra", "Enabling Active Directory / Entra sign-in"),
+            ("SAP", "Unlocking SAP accounts, restoring roles, login enabled"),
+            ("ServiceNow", "Access restored; license consumed"),
         ]
+    number = f"{prefix}{100000 + count + 1}"
+    total = len(steps)
+    stages = []
+    for i, (system, note) in enumerate(steps):
+        state = "New" if i == 0 else "Resolved" if i == total - 1 else "In Progress"
+        stages.append({"state": state, "system": system, "note": note, "at": (t0 + timedelta(seconds=i * 2)).isoformat()})
     if work_note and work_note.strip():
-        stages.insert(1, {"state": "Work Note", "note": f"{work_note.strip()} — {by}", "at": at(1)})
+        stages.insert(1, {"state": "Work Note", "system": "ServiceNow", "note": f"{work_note.strip()} — {by}", "at": (t0 + timedelta(seconds=1)).isoformat()})
+    closed_at = (t0 + timedelta(seconds=total * 2)).isoformat()
+    stages.append({"state": "Closed", "system": "ServiceNow", "note": "Auto-closed after successful verification", "at": closed_at})
     doc = {"org_id": org_id, "number": number, "type": ttype, "action": action,
            "person_ref": person["ref"], "person_name": person.get("name"), "email": person.get("email"),
+           "hr_system": hr, "systems_touched": sorted({s for s, _ in steps}),
            "requested_by": by, "reason": reason, "work_note": work_note, "notify_user": notify,
            "work_notes_enabled": True, "state": "Closed", "stages": stages, "auto_closed": True,
-           "synced_to_servicenow": False, "opened_at": at(0), "closed_at": at(8), "duration_sec": 8}
+           "synced_to_servicenow": False, "opened_at": t0.isoformat(), "closed_at": closed_at,
+           "duration_sec": total * 2}
     await db.sap_snow_tickets.insert_one(doc)
     doc.pop("_id", None)
     return doc
 
 
+_ACTIVATION_STATUS_MAP = {"activate": "Activated", "resume": "Activated", "deactivate": "Deactivated", "suspend": "Suspended"}
+
+
 async def _apply_activation(org_id, refs, action, reason, notify, by, work_note=""):
-    """Run activate/deactivate across identities, driving lock state + a ServiceNow workflow each."""
-    status = "Activated" if action == "activate" else "Deactivated"
+    """Run activate/deactivate/suspend/resume across identities, driving lock state + a ServiceNow
+    cross-system workflow for each. Deactivate frees the license; suspend retains it (content kept)."""
+    status = _ACTIVATION_STATUS_MAP.get(action, "Activated")
+    lock = action in ("deactivate", "suspend")
     now = _now().isoformat()
     changed, tickets = 0, []
     for ref in refs:
@@ -1357,16 +1381,15 @@ async def _apply_activation(org_id, refs, action, reason, notify, by, work_note=
             {"org_id": org_id, "person_ref": ref},
             {"$set": {"org_id": org_id, "person_ref": ref, "status": status,
                       "reason": reason, "by": by, "at": now}}, upsert=True)
-        # Deactivating frees the license & blocks login → lock accounts; activating restores.
         await db.sap_accounts.update_many(
             {"org_id": org_id, "person_ref": ref},
-            {"$set": {"lock_state": "locked" if action == "deactivate" else "unlocked"}})
+            {"$set": {"lock_state": "locked" if lock else "unlocked"}})
         await db.sap_activation_events.insert_one(
             {"org_id": org_id, "person_ref": ref, "action": action,
              "by": by, "at": now, "reason": reason, "work_note": work_note, "notify": notify})
         ticket = await _snow_workflow(org_id, p, action, by, reason, notify, work_note)
         tickets.append({"person_ref": ref, "person_name": p.get("name"), "number": ticket["number"],
-                        "type": ticket["type"], "state": ticket["state"]})
+                        "type": ticket["type"], "state": ticket["state"], "systems": ticket["systems_touched"]})
         await _audit(org_id, by, f"sap.activation.{action}",
                      f"{p.get('name', ref)} ({ref}) → {status} · {ticket['number']} auto-closed"
                      + (f" · {work_note or reason}" if (work_note or reason) else ""))
@@ -1374,9 +1397,8 @@ async def _apply_activation(org_id, refs, action, reason, notify, by, work_note=
         if notify:
             try:
                 from kernel import notifications
-                verb = "deactivated" if action == "deactivate" else "activated"
-                await notifications.create(org_id, "activation", f"User {verb}",
-                                           f"{p.get('name', ref)} was {verb} by {by} ({ticket['number']}).", ref=ref)
+                await notifications.create(org_id, "activation", f"User {status.lower()}",
+                                           f"{p.get('name', ref)} was {status.lower()} by {by} ({ticket['number']}).", ref=ref)
             except Exception:
                 pass
     return changed, tickets
@@ -1386,12 +1408,12 @@ async def _apply_activation(org_id, refs, action, reason, notify, by, work_note=
 async def set_activation(body: ActivationBody, user: dict = Depends(get_current_user)):
     org_id = user["org_id"]
     await _ensure(org_id)
-    if body.action not in ("activate", "deactivate"):
-        raise HTTPException(status_code=400, detail="action must be activate or deactivate")
+    if body.action not in ("activate", "deactivate", "suspend", "resume"):
+        raise HTTPException(status_code=400, detail="action must be activate, deactivate, suspend or resume")
     changed, tickets = await _apply_activation(org_id, body.person_refs, body.action, body.reason,
                                                body.notify, user["email"], body.work_note)
     return {"ok": True, "changed": changed,
-            "status": "Activated" if body.action == "activate" else "Deactivated", "tickets": tickets}
+            "status": _ACTIVATION_STATUS_MAP.get(body.action, "Activated"), "tickets": tickets}
 
 
 class BulkBody(BaseModel):
@@ -1405,17 +1427,22 @@ class BulkBody(BaseModel):
 
 @sap_router.post("/activation/bulk")
 async def bulk_activation(body: BulkBody, user: dict = Depends(get_current_user)):
-    """One-click bulk: turn off (deactivate) all active accounts, or reactivate all deactivated."""
+    """One-click bulk: deactivate all active, reactivate all deactivated/suspended, or suspend all active."""
     org_id = user["org_id"]
     await _ensure(org_id)
-    if body.action not in ("activate", "deactivate"):
-        raise HTTPException(status_code=400, detail="action must be activate or deactivate")
+    if body.action not in ("activate", "deactivate", "suspend"):
+        raise HTTPException(status_code=400, detail="action must be activate, deactivate or suspend")
     persons = await db.sap_persons.find({"org_id": org_id}, {"_id": 0}).to_list(5000)
     overrides = {o["person_ref"]: o for o in await db.sap_activation.find({"org_id": org_id}, {"_id": 0}).to_list(5000)}
-    want = "Activated" if body.action == "deactivate" else "Deactivated"
+    if body.action == "deactivate":
+        want = {"Activated", "Suspended"}
+    elif body.action == "suspend":
+        want = {"Activated"}
+    else:
+        want = {"Deactivated", "Suspended"}
     refs = []
     for p in persons:
-        if _activation_status(p, overrides.get(p["ref"])) != want:
+        if _activation_status(p, overrides.get(p["ref"])) not in want:
             continue
         if body.department and body.department != "all" and p["department"] != body.department:
             continue
@@ -1423,7 +1450,7 @@ async def bulk_activation(body: BulkBody, user: dict = Depends(get_current_user)
     reason = body.reason or f"Bulk {body.action} via ServiceNow automation"
     changed, tickets = await _apply_activation(org_id, refs, body.action, reason, body.notify, user["email"], body.work_note)
     return {"ok": True, "changed": changed,
-            "status": "Activated" if body.action == "activate" else "Deactivated",
+            "status": _ACTIVATION_STATUS_MAP.get(body.action, "Activated"),
             "tickets": tickets[:50], "ticket_count": len(tickets)}
 
 
