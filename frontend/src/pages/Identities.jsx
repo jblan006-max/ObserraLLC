@@ -2,13 +2,35 @@ import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
 import { SapInsight } from "@/components/SapInsight";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { toast } from "sonner";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Users, ShieldAlert, KeyRound, ShieldCheck } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Search, ShieldAlert, KeyRound, ShieldCheck, UserCheck, Ban, PauseCircle, PlayCircle, Lock, Mail, Workflow } from "lucide-react";
 
 const RATE = { Critical: "0 84% 60%", High: "35 90% 55%", Medium: "190 90% 50%", Low: "142 70% 45%" };
 const fmtDate = (s) => (s ? new Date(s).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "—");
 const Chip = ({ v }) => <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full" style={{ background: `hsl(${RATE[v] || "220 10% 55%"} / 0.15)`, color: `hsl(${RATE[v] || "220 10% 55%"})` }}>{v}</span>;
+
+const VERB = { activate: "activated", deactivate: "deactivated", suspend: "suspended", resume: "resumed", lock: "locked", recertify: "sent for recertification" };
+// scope: "person" → /sap/activation/set · "account" → /sap/accounts/{ref}/action
+const ACTION_META = {
+  activate: { scope: "person", label: "Activate", Icon: UserCheck, btn: "bg-low hover:bg-low/90", tone: "text-low",
+    desc: "Restores login access and re-provisions the account across HR (ADP/IZ8) → AD/Entra → SAP. A ServiceNow provisioning request is opened and auto-closed." },
+  suspend: { scope: "person", label: "Suspend", Icon: PauseCircle, btn: "bg-amber hover:bg-amber/90", tone: "text-amber",
+    desc: "Temporary hold (leave of absence): sign-in is disabled but the license and content are retained. A ServiceNow suspension workflow is opened and auto-closed." },
+  resume: { scope: "person", label: "Resume", Icon: PlayCircle, btn: "bg-low hover:bg-low/90", tone: "text-low",
+    desc: "Restores access for a suspended user (re-enables sign-in) across HR (ADP/IZ8) → AD/Entra → SAP. A ServiceNow resume workflow is opened and auto-closed." },
+  deactivate: { scope: "person", label: "Deactivate", Icon: Ban, btn: "bg-crit hover:bg-crit/90", tone: "text-crit",
+    desc: "The user can no longer log in, all roles are revoked and the license is freed (content retained). A ServiceNow deactivation workflow is opened and auto-closed across HR (ADP/IZ8) → SAP → AD/Entra." },
+  lock: { scope: "account", label: "Emergency lock", Icon: Lock, btn: "bg-crit hover:bg-crit/90", tone: "text-crit",
+    desc: "Locks this SAP account, terminates sessions and disables directory sign-in via the automated ServiceNow → HR → SAP → AD/Entra workflow." },
+  recertify: { scope: "account", label: "Recertify", Icon: ShieldCheck, btn: "bg-ai hover:bg-ai/90", tone: "text-ai",
+    desc: "Opens an access recertification task with entitlement and last-use evidence for the account owner to review in ServiceNow." },
+};
+const PERSON_ACTIONS = { Activated: ["suspend", "deactivate"], Suspended: ["resume", "deactivate"], Deactivated: ["activate"] };
 
 export default function Identities() {
   const [d, setD] = useState(null);
@@ -18,6 +40,10 @@ export default function Identities() {
   const [rating, setRating] = useState("all");
   const [detail, setDetail] = useState(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
+  const [confirm, setConfirm] = useState(null); // { action, target, name }
+  const [reason, setReason] = useState("");
+  const [notify, setNotify] = useState(true);
+  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     const p = new URLSearchParams();
@@ -29,6 +55,11 @@ export default function Identities() {
     setD(data);
   }, [q, status, le, rating]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const h = () => load();
+    window.addEventListener("sap-data-changed", h);
+    return () => window.removeEventListener("sap-data-changed", h);
+  }, [load]);
 
   const open = async (ref) => {
     setLoadingDetail(true); setDetail({ loading: true });
@@ -39,11 +70,37 @@ export default function Identities() {
 
   if (!d) return <Spinner />;
 
+  const askAction = (action, target, name) => { setReason(""); setNotify(true); setConfirm({ action, target, name }); };
+  const runAction = async () => {
+    setBusy(true);
+    const { action, target } = confirm;
+    const meta = ACTION_META[action];
+    try {
+      let nums = "";
+      if (meta.scope === "person") {
+        const { data } = await api.post("/sap/activation/set", { person_refs: [target], action, reason, work_note: reason, notify });
+        nums = (data.tickets || []).map((t) => t.number).join(", ");
+      } else {
+        const { data } = await api.post(`/sap/accounts/${target}/action`, { action, reason });
+        nums = data.ticket?.number || "";
+      }
+      toast.success(`${confirm.name} — ${VERB[action] || "updated"}`, { description: nums ? `ServiceNow ${nums} opened & auto-closed` : undefined });
+      setConfirm(null);
+      window.dispatchEvent(new Event("sap-data-changed"));
+      if (detail?.person?.ref) await open(detail.person.ref);
+      await load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Action failed"); }
+    setBusy(false);
+  };
+
+  const actStatus = detail?.activation_status || (detail?.person?.status === "Terminated" ? "Deactivated" : "Activated");
+  const personActions = PERSON_ACTIONS[actStatus] || [];
+
   return (
     <div className="space-y-6" data-testid="identities-page">
       <div>
         <h1 className="font-head font-black text-3xl lg:text-4xl tracking-tight" data-testid="identities-title">Identities</h1>
-        <p className="text-sm text-muted-foreground mt-1">Canonical identities correlated across ADP / IZ8 / AD / Entra / SAP with live access-risk scoring.</p>
+        <p className="text-sm text-muted-foreground mt-1">Canonical identities correlated across ADP / IZ8 / AD / Entra / SAP — click any identity to view details and kick off a live ServiceNow access workflow.</p>
       </div>
 
       <SapInsight dashboard="Identities" focus="highest-risk identities and their access-risk drivers" accent="190 90% 50%" auto slug="identities" />
@@ -93,8 +150,18 @@ export default function Identities() {
                 <DialogTitle className="flex items-center gap-3">
                   <span className="font-head font-black text-2xl" style={{ color: `hsl(${RATE[detail.risk.rating]})` }}>{detail.risk.score}</span>
                   {detail.person.name} <Chip v={detail.risk.rating} />
+                  <span data-testid="id-activation-status" className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded ${actStatus === "Deactivated" ? "bg-crit/15 text-crit" : actStatus === "Suspended" ? "bg-amber/15 text-amber" : "bg-low/15 text-low"}`}>{actStatus}</span>
                 </DialogTitle>
               </DialogHeader>
+
+              {/* Universal ServiceNow action bar (person-level lifecycle workflows) */}
+              <div className="flex flex-wrap items-center gap-2 mb-3 p-3 rounded-lg bg-secondary/30 border border-border" data-testid="id-action-bar">
+                <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground inline-flex items-center gap-1.5 mr-1"><Workflow className="w-3.5 h-3.5 text-ai" /> ServiceNow workflow</span>
+                {personActions.map((a) => { const M = ACTION_META[a]; const I = M.Icon; return (
+                  <Button key={a} size="sm" data-testid={`id-action-${a}`} onClick={() => askAction(a, detail.person.ref, detail.person.name)} className={`h-8 gap-1.5 ${M.btn}`}><I className="w-3.5 h-3.5" /> {M.label}</Button>
+                ); })}
+              </div>
+
               <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm mb-4">
                 <div><span className="text-muted-foreground text-xs">Department</span><div>{detail.person.department} · {detail.person.job_title}</div></div>
                 <div><span className="text-muted-foreground text-xs">Employment</span><div>{detail.person.status} · {detail.person.worker_type}</div></div>
@@ -110,11 +177,19 @@ export default function Identities() {
 
               <Section title={`SAP Accounts (${detail.accounts.length})`} icon={KeyRound}>
                 {detail.accounts.map((a) => (
-                  <div key={a.ref} className="p-2.5 rounded-lg bg-secondary/30 mb-2">
-                    <div className="flex items-center justify-between text-sm"><span className="font-mono">{a.sap_user} <span className="text-muted-foreground">· {a.system}/{a.client}</span></span><span className="text-[10px] text-muted-foreground">{a.lock_state} · last login {fmtDate(a.last_login)}</span></div>
+                  <div key={a.ref} className="p-2.5 rounded-lg bg-secondary/30 mb-2" data-testid={`id-account-${a.ref}`}>
+                    <div className="flex items-center justify-between gap-2 text-sm">
+                      <span className="font-mono">{a.sap_user} <span className="text-muted-foreground">· {a.system}/{a.client}</span></span>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="text-[10px] text-muted-foreground">{a.lock_state} · last login {fmtDate(a.last_login)}</span>
+                        {a.lock_state !== "locked" && <button data-testid={`id-acc-lock-${a.ref}`} title="Emergency lock" onClick={() => askAction("lock", a.ref, a.sap_user)} className="text-crit hover:bg-crit/10 rounded-md p-1"><Lock className="w-3.5 h-3.5" /></button>}
+                        <button data-testid={`id-acc-recertify-${a.ref}`} title="Recertify access" onClick={() => askAction("recertify", a.ref, a.sap_user)} className="text-ai hover:bg-ai/10 rounded-md p-1"><ShieldCheck className="w-3.5 h-3.5" /></button>
+                      </div>
+                    </div>
                     <div className="flex flex-wrap gap-1 mt-1.5">{a.roles.map((r) => <span key={r.ref} className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${r.functions.length ? "bg-secondary" : "bg-secondary/50 text-muted-foreground"}`} title={r.functions.join(", ")}>{r.name}</span>)}</div>
                   </div>
                 ))}
+                {detail.accounts.length === 0 && <p className="text-xs text-muted-foreground">No SAP accounts linked.</p>}
               </Section>
 
               {detail.sod_conflicts.length > 0 && (
@@ -140,6 +215,34 @@ export default function Identities() {
               </Section>
             </>
           )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Confirm dialog — shared by person + account workflows */}
+      <Dialog open={!!confirm} onOpenChange={(o) => !o && setConfirm(null)}>
+        <DialogContent data-testid="id-confirm-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              {confirm && (() => { const M = ACTION_META[confirm.action]; const I = M.Icon; return <I className={`w-5 h-5 ${M.tone}`} />; })()}
+              {confirm && ACTION_META[confirm.action].label} — {confirm?.name}
+            </DialogTitle>
+            <DialogDescription>{confirm && ACTION_META[confirm.action].desc}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <Textarea data-testid="id-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="ServiceNow work note / reason…" rows={2} />
+            {confirm && ACTION_META[confirm.action].scope === "person" && (
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <Checkbox checked={notify} onCheckedChange={(v) => setNotify(!!v)} data-testid="id-notify" />
+                <Mail className="w-3.5 h-3.5 text-muted-foreground" /> Email the user about this change
+              </label>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirm(null)}>Cancel</Button>
+            <Button data-testid="id-confirm-btn" disabled={busy} onClick={runAction} className={confirm ? ACTION_META[confirm.action].btn : ""}>
+              {busy ? "Working…" : confirm && ACTION_META[confirm.action].label}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

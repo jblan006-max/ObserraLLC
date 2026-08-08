@@ -678,6 +678,8 @@ async def identity_detail(ref: str, user: dict = Depends(get_current_user)):
     if not p:
         raise HTTPException(status_code=404, detail="Identity not found")
     hr_conflicts, hr_state = await _hr_state(org_id, p)
+    ov = await db.sap_activation.find_one({"org_id": org_id, "person_ref": ref}, {"_id": 0})
+    activation_status = _activation_status(p, ov)
     pconf = [c for c in conflicts if c.get("person_ref") == ref]
     accs = []
     for a in p["accounts"]:
@@ -701,6 +703,7 @@ async def identity_detail(ref: str, user: dict = Depends(get_current_user)):
                                      "ad_enabled", "mfa", "risky_signin", "match_confidence", "sources"]},
         "risk": p["risk"], "accounts": accs, "sod_conflicts": pconf,
         "hr_sources": p["hr"], "hr_conflicts": hr_conflicts, "hr_state": hr_state,
+        "activation_status": activation_status,
         "timeline": timeline,
     }
 

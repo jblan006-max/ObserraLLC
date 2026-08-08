@@ -1,0 +1,29 @@
+{
+  "summary": "Iter55 verified the new Identities action parity (person + per-account) and Access Monitoring live ServiceNow workflows end-to-end. Backend: 6/6 pytest passed (test_iter55_identities_monitoring.py). Frontend E2E via Playwright with cookie login (jblan2026@gmail.com): (a) /app/identities loads with 44 id-row-* rows, clicking row opens id-detail with id-activation-status badge and id-action-bar; (b) for Activated person P-0008 (Amara Rossi) action bar shows id-action-suspend + id-action-deactivate (per PERSON_ACTIONS spec); (c) Per-account recertify on A-P-0008-S4P: opens id-confirm-dialog WITHOUT id-notify (correct for account scope), reason accepted via id-reason, id-confirm-btn -> POST /api/sap/accounts/{ref}/action, toast 'ServiceNow REQ100473 opened & auto-closed'; (d) Person suspend -> id-confirm-dialog WITH id-notify checkbox (correct for person scope), toast 'ServiceNow INC100474 opened & auto-closed', status badge flips to Suspended and action bar re-renders to Resume+Deactivate as per spec; (e) Resume restores to Activated with REQ100475 (state restored per NO-DESTRUCTIVE directive); (f) /app/monitoring loads with SapInsight AI card, mon-dormant/orphan/service StatCards, mon-tab-* tabs, per-row mon-lock/deactivate/recertify buttons; mon-recertify-A-TECH-RFC_MDM -> mon-confirm-dialog + mon-reason + mon-confirm-btn -> POST /api/sap/accounts/A-TECH-RFC_MDM/action, toast 'ServiceNow REQ100476 opened & auto-closed'. Connectors: GET /api/sap/systems returns 43 connectors total (7 SAP UAC + 36 Obserra Platform), all status=connected and auth_ready=true. Backend verifies systems_touched via ticket.systems=['SAP','ServiceNow'] on both account recertify and person suspend/resume. Note: the ticket payload uses field name 'systems' (inside ticket object) not 'systems_touched' at root — functionally equivalent.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "id-confirm-dialog + mon-confirm-dialog", "issues": ["Radix a11y warning: 'DialogContent requires a DialogTitle' and 'Missing Description or aria-describedby' fired on some dialogs — cosmetic a11y warnings only, no user-facing impact. The Identities confirm dialog does render DialogTitle+DialogDescription; the warnings appear to come from other secondary dialogs (deep-dive) opened during navigation."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter55_identities_monitoring.py",
+    "/app/test_reports/pytest/iter55.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "sap_uac.py has now grown past ~2270 lines — well beyond the 700-line guideline. Strongly recommend splitting into modules: identities.py, activation.py, accounts.py, access_monitoring.py, systems.py, tickets.py, insight.py.",
+    "Response payload naming inconsistency: /sap/accounts/{ref}/action returns ticket.systems while the review-request spec / prior context refers to systems_touched. Consider standardising on one field name (systems_touched at top level) across ALL action endpoints (activation/set already returns tickets[].* while accounts/action returns ticket.systems).",
+    "Identities.jsx: activation status fallback ternary (line 96) infers Deactivated from person.status=='Terminated' — safe fallback, but the real source of truth is detail.activation_status from the backend. Consider surfacing an error/warning if backend omits it rather than silently defaulting."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter55_identities_monitoring.py"],
+  "success_rate": {"backend": "6/6 (100%)", "frontend": "5/5 flows (100%) — Identities list, person suspend, person resume, per-account recertify, Access Monitoring recertify"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (cookie-based, submit via data-testid=auth-submit)",
+  "seed_data_creation": "Tickets created during test run: REQ100473 (account recertify), INC100474 (person suspend P-0008), REQ100475 (person resume P-0008 - state restored to Activated), REQ100476 (monitoring recertify A-TECH-RFC_MDM). Two extra REQ tickets (REQ100467, REQ100468) from pytest run. All destructive states were reversed — no persons left in Suspended/Deactivated.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Access Monitoring nav lives at /app/monitoring (not /app/access-monitoring). Identities detail modal returns activation_status directly from backend; PERSON_ACTIONS map is: Activated=>[suspend,deactivate], Suspended=>[resume,deactivate], Deactivated=>[activate]. Person scope uses POST /sap/activation/set (returns tickets[] array), account scope uses POST /sap/accounts/{ref}/action (returns single ticket object). Account confirm dialogs correctly hide id-notify checkbox. Backend uses ticket.systems (not systems_touched). 43 connectors = 7 SAP UAC (S4P,ECP,BWP,ECQ + ADP,IZ8,AD,Entra,SNOW mapped) plus 36 from connectors_catalog CATALOG.",
+  "rca of the issue": "N/A — all requested capabilities verified live."
+}
