@@ -412,6 +412,8 @@ BENCHMARKS = {
     },
     "dbir_ransomware_median": 46_000,
     "dbir_bec_median": 50_000,
+    "ai_breach_avg": 6_000_000,
+    "shadow_ai_premium": 670_000,
 }
 
 
@@ -421,6 +423,11 @@ async def _get_benchmarks():
     if not doc:
         doc = {**BENCHMARKS, "_id": "global", "checked_at": datetime.now(timezone.utc).isoformat()}
         await db.app_benchmarks.insert_one(dict(doc))
+    else:
+        missing = {k: v for k, v in BENCHMARKS.items() if k not in doc}
+        if missing:
+            await db.app_benchmarks.update_one({"_id": "global"}, {"$set": missing})
+            doc.update(missing)
     return doc
 
 
@@ -464,6 +471,10 @@ async def _benchmark(industry):
         "dbir_ransomware_median": b.get("dbir_ransomware_median"),
         "dbir_bec_median": b.get("dbir_bec_median"),
         "dbir_source": "Verizon DBIR 2025 (incident-loss medians)",
+        "ai_breach_avg": b.get("ai_breach_avg"),
+        "ai_breach_source": "IBM Cost of a Data Breach 2026 (AI-enabled breaches)",
+        "shadow_ai_premium": b.get("shadow_ai_premium"),
+        "shadow_ai_source": "IBM 2025 (shadow-AI cost premium)",
         "source": b.get("source"), "updated": b.get("updated"), "checked_at": b.get("checked_at"),
     }
 
@@ -560,6 +571,21 @@ def _montecarlo(items, iters=2000):
     return {"p10": _pct(0.10), "p50": _pct(0.50), "p90": _pct(0.90)}
 
 
+def _montecarlo_item(f, r, iters=1000):
+    import random
+    ratio = r.get("residual", 10) / max(1, r.get("inherent", 10))
+    vals = []
+    for _ in range(iters):
+        sle_s = random.triangular(f["sle"] * 0.5, f["sle"] * 2.0, f["sle"])
+        aro_s = min(1.0, max(0.0, random.gauss(f["aro"], 0.15)))
+        vals.append(sle_s * aro_s * ratio)
+    vals.sort()
+
+    def _p(p):
+        return round(vals[min(len(vals) - 1, int(p * len(vals)))])
+    return {"p10": _p(0.10), "p50": _p(0.50), "p90": _p(0.90)}
+
+
 @api.get("/financial/config")
 async def get_financial_config(user: dict = Depends(get_current_user)):
     cfg = await _get_fin_cfg(user["org_id"])
@@ -599,14 +625,48 @@ async def signoff_config(body: SignoffBody, admin: dict = Depends(require_roles(
     cfg = await _get_fin_cfg(admin["org_id"])
     signoff = {"name": body.name, "by": admin["email"], "at": datetime.now(timezone.utc).isoformat(),
                "locked": True, "hash": _cfg_hash(cfg)}
-    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"financial_config.signoff": signoff}})
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {
+        "$set": {"financial_config.signoff": signoff},
+        "$push": {"financial_config.signoff_history": {"action": "signoff", "name": body.name, "by": admin["email"], "at": signoff["at"], "hash": signoff["hash"]}}})
     return {"ok": True, "signoff": signoff}
 
 
 @api.post("/financial/config/unlock")
 async def unlock_config(admin: dict = Depends(require_roles("admin"))):
-    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"financial_config.signoff.locked": False}})
+    from datetime import datetime, timezone
+    at = datetime.now(timezone.utc).isoformat()
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {
+        "$set": {"financial_config.signoff.locked": False},
+        "$push": {"financial_config.signoff_history": {"action": "unlock", "by": admin["email"], "at": at}}})
     return {"ok": True}
+
+
+@api.get("/financial/signoff-history")
+async def signoff_history(user: dict = Depends(get_current_user)):
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    hist = ((org.get("financial_config") or {}).get("signoff_history") or [])[-20:]
+    return {"history": list(reversed(hist))}
+
+
+@api.get("/financial/benchmark-trend")
+async def benchmark_trend(user: dict = Depends(get_current_user)):
+    cfg = await _get_fin_cfg(user["org_id"])
+    bench = await _benchmark(cfg["industry"])
+    ind = bench.get("industry_avg") or 0
+    risks = await db.risks.find({"org_id": user["org_id"]}, {"_id": 0}).to_list(500)
+    slis = [_fin(r, cfg)["sle"] for r in risks] or [0]
+    avg = sum(slis) / len(slis)
+    health = await db.health_index.find_one({"org_id": user["org_id"]}, {"_id": 0}) or {}
+    hist = health.get("history") or []
+    points = []
+    for h in hist[-8:]:
+        sc = h.get("security_score") or h.get("score") or 70
+        modelled = round(avg * (1 + (70 - sc) / 200))
+        points.append({"month": h.get("month") or str(h.get("date") or "")[:7], "modelled": modelled, "benchmark": ind})
+    if not points:
+        points = [{"month": "prev", "modelled": round(avg * 1.05), "benchmark": ind},
+                  {"month": "now", "modelled": round(avg), "benchmark": ind}]
+    return {"points": points, "industry": cfg["industry"], "benchmark": ind, "source": bench.get("industry_avg_source")}
 
 
 @api.post("/financial/benchmark/refresh")
@@ -624,8 +684,8 @@ async def financial_basis(user: dict = Depends(get_current_user)):
     items = []
     for r in risks:
         f = _fin(r, cfg)
-        f["ale_low"] = round(f["residual_ale"] * 0.5)
-        f["ale_high"] = round(f["residual_ale"] * 2.0)
+        _band = _montecarlo_item(f, r)
+        f["ale_low"], f["ale_expected"], f["ale_high"] = _band["p10"], _band["p50"], _band["p90"]
         items.append({"ref": r["ref"], "title": r["title"], "category": r.get("category"),
                       "impact": r.get("impact"), "likelihood": r.get("likelihood"),
                       "residual": r["residual"], "inherent": r["inherent"], **f})

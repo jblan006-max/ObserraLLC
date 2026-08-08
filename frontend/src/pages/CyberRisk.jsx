@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { ShieldAlert, Loader2, Layers, PlayCircle, Gauge, ShieldCheck, TrendingDown, Calculator, BarChart3, Building2, RefreshCw } from "lucide-react";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 const TIER = (residual) => residual >= 16 ? "0 84% 60%" : residual >= 9 ? "35 90% 55%" : "142 70% 45%";
 
@@ -90,8 +91,10 @@ function FinancialBasis({ isAdmin }) {
   const [basis, setBasis] = useState(null);
   const [cfg, setCfg] = useState(null);
   const [saving, setSaving] = useState(false);
-  const load = () => Promise.all([api.get("/financial/basis"), api.get("/financial/config")])
-    .then(([b, c]) => { setBasis(b.data); setCfg(c.data); }).catch(() => {});
+  const [trend, setTrend] = useState(null);
+  const [hist, setHist] = useState([]);
+  const load = () => Promise.all([api.get("/financial/basis"), api.get("/financial/config"), api.get("/financial/benchmark-trend").catch(() => ({ data: { points: [] } })), api.get("/financial/signoff-history").catch(() => ({ data: { history: [] } }))])
+    .then(([b, c, t, h]) => { setBasis(b.data); setCfg(c.data); setTrend(t.data); setHist(h.data.history || []); }).catch(() => {});
   useEffect(() => { load(); }, []);
   if (!basis || !cfg) return null;
   const fmt = (n) => n == null ? "—" : `$${(n / 1e6).toFixed(n < 1e6 ? 3 : 2)}M`;
@@ -130,6 +133,18 @@ function FinancialBasis({ isAdmin }) {
           <div className="text-[10px] text-muted-foreground">{ratio == null ? "" : ratio > 1.25 ? "above published avg" : ratio < 0.75 ? "below published avg" : "in line with published avg"}</div>
         </div>
       </div>
+      <div className="grid sm:grid-cols-2 gap-3" data-testid="fin-ai-cost">
+        <div className="rounded-lg bg-med/5 border border-med/20 p-3">
+          <div className="text-[10px] font-mono uppercase text-muted-foreground">AI-enabled breach avg</div>
+          <div className="font-head font-black text-2xl">{fmt(bench.ai_breach_avg)}</div>
+          <div className="text-[10px] text-muted-foreground">{bench.ai_breach_source}</div>
+        </div>
+        <div className="rounded-lg bg-med/5 border border-med/20 p-3">
+          <div className="text-[10px] font-mono uppercase text-muted-foreground">Shadow-AI cost premium</div>
+          <div className="font-head font-black text-2xl">+{fmt(bench.shadow_ai_premium)}</div>
+          <div className="text-[10px] text-muted-foreground">{bench.shadow_ai_source}</div>
+        </div>
+      </div>
       {basis.scenario && (
         <div className="rounded-lg bg-ai/5 border border-ai/20 p-3" data-testid="fin-scenario">
           <div className="text-[10px] font-mono uppercase text-muted-foreground">Board exposure range · Monte-Carlo (P10 – expected – P90)</div>
@@ -150,7 +165,7 @@ function FinancialBasis({ isAdmin }) {
                 <td className="px-3 py-2"><div className="font-mono text-ai">{i.ref}</div><div className="truncate max-w-[180px]">{i.title}</div></td>
                 <td className="px-3 py-2">${(i.sle / 1e6).toFixed(2)}M<div className="text-[10px] text-muted-foreground max-w-[220px]">{i.sle_source}</div></td>
                 <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">{i.math}</td>
-                <td className="px-3 py-2 text-right font-bold">${(i.residual_ale / 1e6).toFixed(2)}M</td>
+                <td className="px-3 py-2 text-right"><div className="font-bold">${(i.residual_ale / 1e6).toFixed(2)}M</div><div className="text-[10px] text-muted-foreground">P10–P90 ${(i.ale_low / 1e6).toFixed(1)}–${(i.ale_high / 1e6).toFixed(1)}M</div></td>
               </tr>
             ))}
           </tbody>
@@ -194,6 +209,26 @@ function FinancialBasis({ isAdmin }) {
               ))}
             </div>
           )}
+        </div>
+      )}
+      {trend?.points?.length > 1 && (
+        <div className="rounded-lg border border-border p-3" data-testid="fin-trend">
+          <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2 flex items-center gap-1"><TrendingDown className="w-3.5 h-3.5" /> Modelled exposure vs {trend.industry} benchmark (IBM)</div>
+          <ResponsiveContainer width="100%" height={160}>
+            <LineChart data={trend.points}>
+              <XAxis dataKey="month" tick={{ fontSize: 10 }} stroke="hsl(215 15% 55%)" />
+              <YAxis tickFormatter={(v) => `$${(v / 1e6).toFixed(1)}M`} tick={{ fontSize: 10 }} stroke="hsl(215 15% 55%)" width={48} />
+              <Tooltip formatter={(v) => `$${(v / 1e6).toFixed(2)}M`} contentStyle={{ background: "hsl(222 18% 12%)", border: "1px solid hsl(222 12% 22%)", fontSize: 11 }} />
+              <Line type="monotone" dataKey="modelled" stroke="hsl(190 90% 50%)" strokeWidth={2} dot={false} name="Modelled" />
+              <Line type="monotone" dataKey="benchmark" stroke="hsl(35 90% 55%)" strokeDasharray="4 4" strokeWidth={2} dot={false} name="IBM avg" />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+      {hist.length > 0 && (
+        <div className="text-[10px] text-muted-foreground space-y-0.5" data-testid="fin-signoff-history">
+          <div className="font-mono uppercase">Sign-off audit trail</div>
+          {hist.slice(0, 6).map((h, idx) => (<div key={idx}>{h.action === "signoff" ? "🔒 Signed off" : "🔓 Unlocked"} · {h.name || h.by} · {String(h.at).slice(0, 16).replace("T", " ")}</div>))}
         </div>
       )}
       <p className="text-[11px] text-muted-foreground">{basis.disclaimer}</p>

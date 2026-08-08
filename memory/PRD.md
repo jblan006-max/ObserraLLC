@@ -136,3 +136,12 @@ Enterprise SaaS "continuous AI control plane" with Dual-Mode dashboards (Executi
 - Scenario ranges (Monte-Carlo): `_montecarlo` 2000-iter simulation → portfolio P10/P50/P90; per-item `ale_low`/`ale_high`. In `/financial/basis`; UI `fin-scenario` band.
 - CRO assumption sign-off: `POST /financial/config/signoff` (name) locks calibration with signer+timestamp+config hash; `POST /financial/config/unlock`; PUT config returns 409 while locked; `stale` flag when config changed since sign-off. Shown as approved badge on dashboard + board report/deck. Endpoints admin-only via `require_roles`.
 - VERIFIED via curl: sources, suggested_records, scenario P10/P50/P90, per-item bands, signoff lock→409→unlock→stale, benchmark refresh. Both services compile/boot.
+
+## AI-cost benchmark, methodology appendix, per-risk Monte-Carlo, sign-off history, benchmark trend, drift note (Jun 2026)
+- AI-cost benchmarks: added `ai_breach_avg` ($6.0M, IBM 2026 AI-enabled breaches) + `shadow_ai_premium` (+$670k, IBM 2025) with explicit sources; `_get_benchmarks` backfills these into existing stored doc. Shown in CyberRisk (`fin-ai-cost` cards) and board `bench_line`.
+- Methodology appendix (`ai_advisor._methodology_appendix`): appended to every board report — FAIR model explanation, external citations (IBM 2025/2026 + AI + DBIR with sources/updated), Monte-Carlo note, and CRO sign-off provenance (or "not yet signed"). Verified via direct call.
+- Board drift note: same appendix opens with a plain-English "Board Note — Exposure vs Industry" — flags when modelled per-incident runs >1.25× the IBM industry avg (else "in line/defensible").
+- Per-risk Monte-Carlo: `_montecarlo_item` gives each risk its own P10/P50/P90 (replaces flat ½×–2×); `/financial/basis` items now carry `ale_low`/`ale_expected`/`ale_high`. UI math table shows the P10–P90 band per risk.
+- Sign-off history: `signoff_config`/`unlock_config` push to `financial_config.signoff_history`; `GET /financial/signoff-history` returns who/when/action. UI `fin-signoff-history` audit trail.
+- Benchmark trend: `GET /financial/benchmark-trend` derives modelled-exposure-over-time (from health history) vs the flat IBM industry line. UI `fin-trend` Recharts line chart (recharts already a dep).
+- VERIFIED via curl: AI-cost fields, per-risk bands (asymmetric), trend points, signoff history entries, methodology appendix text. Both services compile/boot.

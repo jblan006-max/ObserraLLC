@@ -452,6 +452,50 @@ async def _autonomy_scorecard(org_id: str) -> str:
     )
 
 
+async def _methodology_appendix(org_id):
+    from routes import _get_fin_cfg, _benchmark, _fin
+    cfg = await _get_fin_cfg(org_id)
+    risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    slis = [_fin(r, cfg)["sle"] for r in risks] or [0]
+    avg = round(sum(slis) / len(slis))
+    bench = await _benchmark(cfg["industry"])
+    ind = bench.get("industry_avg") or 0
+    ratio = round(avg / ind, 2) if ind else None
+    signoff = cfg.get("signoff")
+    md = "\n\n## Board Note — Exposure vs Industry\n"
+    if ratio and ratio > 1.25:
+        md += (f"[ESTIMATE] Our modelled per-incident exposure (${avg/1e6:.2f}M) runs **{ratio}x the "
+               f"{bench['industry']} industry average** (${ind/1e6:.2f}M, IBM). In plain terms: our loss-magnitude "
+               f"assumptions are more conservative than the published benchmark, driven by the concentration of "
+               f"high-impact risks in the register. The board should note this deliberately prudent stance, or "
+               f"recalibrate the impact-to-dollar table if it overstates true asset exposure.\n")
+    elif ratio:
+        md += (f"[ESTIMATE] Our modelled per-incident exposure (${avg/1e6:.2f}M) is broadly in line with the "
+               f"{bench['industry']} industry average (${ind/1e6:.2f}M, IBM) at {ratio}x — figures are defensible "
+               f"against published data.\n")
+    md += "\n## Methodology & Sources (for auditors)\n"
+    md += ("[FACT] Financial exposure uses the FAIR model: Annualized Loss Expectancy (ALE) = Single Loss "
+           "Expectancy (SLE) x Annualized Rate of Occurrence (ARO), scaled by residual/inherent control "
+           "effectiveness and an evidence-confidence factor. ")
+    if cfg.get("method") == "records":
+        md += f"SLE derives from {int(cfg.get('records') or 0):,} records x ${int(cfg.get('per_record_cost') or 165)}/record (IBM per-record method). "
+    else:
+        md += ("SLE magnitudes come from the organisation's configured impact-to-dollar table"
+               + (" (calibrated by the risk team)." if cfg.get("custom_table") else " (default analyst assumptions; calibration recommended).") + " ")
+    md += "Ranges use a 2,000-iteration Monte-Carlo over magnitude and frequency uncertainty (P10/P50/P90).\n\n"
+    md += "External benchmarks cited:\n"
+    md += f"- {bench.get('industry_avg_source')}: {bench['industry']} ${ind/1e6:.2f}M; global ${(bench.get('global_avg') or 0)/1e6:.2f}M ({bench.get('global_avg_source')}).\n"
+    md += f"- {bench.get('ai_breach_source')}: AI-enabled breach avg ${(bench.get('ai_breach_avg') or 0)/1e6:.2f}M; shadow-AI premium +${(bench.get('shadow_ai_premium') or 0)/1e3:.0f}k ({bench.get('shadow_ai_source')}).\n"
+    md += f"- {bench.get('dbir_source')}: ransomware median ${(bench.get('dbir_ransomware_median') or 0)/1e3:.0f}k, BEC median ${(bench.get('dbir_bec_median') or 0)/1e3:.0f}k.\n"
+    md += f"- Benchmark table last updated {bench.get('updated')}; re-checked at most annually.\n"
+    if signoff and signoff.get("locked"):
+        md += f"\n[FACT] Calibration approved & locked by {signoff['name']} on {str(signoff.get('at'))[:10]} (config hash {signoff.get('hash')}).\n"
+    else:
+        md += "\n[ESTIMATE] Calibration is not yet CRO-signed; figures are working estimates pending sign-off.\n"
+    md += "\n_Decision-support estimates, not guarantees. Sources: IBM Cost of a Data Breach (2025/2026) and Verizon DBIR (2025)._\n"
+    return md
+
+
 async def generate_board_report(org_id: str, by: str):
     context = await _build_context(org_id)
     chat = LlmChat(
@@ -476,6 +520,10 @@ async def generate_board_report(org_id: str, by: str):
     report = "".join(collected)
     try:
         report += await _autonomy_scorecard(org_id)
+    except Exception:
+        pass
+    try:
+        report += await _methodology_appendix(org_id)
     except Exception:
         pass
     now = datetime.now(timezone.utc).isoformat()

@@ -344,6 +344,7 @@ async def _board_metrics(org_id: str, report_text: str = "") -> dict:
     bench_line = (f"Modelled per-incident ${avg_sle/1e6:.2f}M vs IBM {bench['industry']} avg "
                   f"${(bench.get('industry_avg') or 0)/1e6:.2f}M"
                   + (f" ({bratio}x {'above' if bratio and bratio > 1 else 'in line with'} published)" if bratio else "")
+                  + f"; AI-enabled breach avg ${(bench.get('ai_breach_avg') or 0)/1e6:.2f}M, shadow-AI premium +${(bench.get('shadow_ai_premium') or 0)/1e3:.0f}k"
                   + f"; DBIR ransomware median ${bench.get('dbir_ransomware_median',0)/1e3:.0f}k. Source: IBM/Verizon DBIR ({bench.get('updated')}).")
     signoff = (org.get("financial_config") or {}).get("signoff")
     signoff_line = (f"Financial calibration approved by {signoff['name']} on {str(signoff.get('at',''))[:10]}"
