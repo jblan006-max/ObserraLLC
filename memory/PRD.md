@@ -214,5 +214,13 @@ User's FINAL COMMAND satisfied: every KPI/summary card across all dashboards is 
 - Fixed duplicate-React-key warning globally in `RiskDetailModal` facet render (`key={label-index}`).
 - VERIFIED via testing_agent iteration_49.json: 100% of card + regression assertions passed across 11 dashboards; exactly one deep-dive-modal in DOM at a time; AI insight resolves < ~15s (grounded, non-spinning); all existing row/detail modals still work. Remaining: only a cosmetic dev-instrumentation `<span>`-in-`<option>` warning on two pre-existing selects (not introduced here).
 
+## Follow-ups: Tour, Studio Report Types, AI Preload, Spend Deep-Dives, $-at-Stake — DONE (Jun 2026)
+- **Onboarding tour non-blocking** (`OnboardingTour.jsx`): outer overlay is now `pointer-events-none` so new admins can click KPI cards immediately without dismissing the tour; the tour dialog itself stays interactive.
+- **Studio full-story report types** (`studio.py` + `Studio.jsx`): NEW `GET /studio/report/types` (story / board / cfo / soc). Each preset one-click sets title + sections and auto-composes; `_ai_narrative(...report_type)` varies persona + length (story ≈230 words end-to-end enterprise narrative). `compose` accepts `report_type`; response carries it; output header tags the type.
+- **Card AI preload / warm-on-hover** (`AIExplain.jsx` module cache + `prefetchExplain`, `DeepDiveContext.warm`, cards call `warm()` onMouseEnter): hovering a card pre-fetches its grounded brief so the deep-dive shows insight + $ impact instantly on click.
+- **Spend deep-dives** (`SpendGovernance.jsx`): `sg-budget-deepdive` (Monthly budget) and `sg-teammate-deepdive` (Spend by teammate) open the universal deep-dive with grounded cost-governance recommendations; existing month-card / per-user modals unchanged.
+- **$ at stake / reduction if fixed on every deep-dive** (`ai_advisor.py` `_deep_num`/`_impact_estimate`, returned on BOTH LLM-success and fallback paths; rendered by `AIExplain` `ai-impact` banner): item-scope real $ where the card carries it; else honest portfolio residual-ALE (`$10.22M` live) with a modelled ~35% reduction — labelled `item`/`portfolio`/`modelled`, never fabricated. Fixed a bug where the LLM-success path was missing `data.update(impact)`.
+- VERIFIED via testing_agent iteration_50.json: all 5 items 100% pass; regressions intact (spend month-card, report-compose, section toggles, PDF export). Backend curl confirms item/portfolio/modelled scopes + cached responses retain fields.
+
 
 

@@ -411,6 +411,8 @@ def _impact_estimate(item_ctx, eng):
         red, rscope = round(item_stake * 0.35), "modelled"
     elif port_red:
         red, rscope = port_red, "portfolio"
+    elif port_stake:
+        red, rscope = round(port_stake * 0.35), "modelled"
     else:
         red, rscope = None, None
     return {"at_stake": round(at_stake) if at_stake else None, "at_stake_scope": scope,
