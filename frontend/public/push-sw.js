@@ -1,31 +1,34 @@
-/* Obserra service worker — install/offline shell + web-push */
-const CACHE = "obserra-shell-v1";
-const SHELL = ["/app", "/index.html", "/brand-mark.png", "/logo-mark-192.png", "/manifest.json"];
+/* Obserra service worker — installable PWA + web-push.
+   IMPORTANT: never cache the HTML app shell or JS chunks. Caching the shell pins
+   stale build references and breaks code-split chunk loading after a rebuild
+   (symptom: app stuck on a spinner after login). We only cache a few stable
+   brand assets and always serve HTML/scripts from the network. */
+const CACHE = "obserra-static-v3";
+const STATIC_ASSETS = ["/brand-mark.png", "/logo-mark-192.png", "/manifest.json"];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).catch(() => {}));
+  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(STATIC_ASSETS)).catch(() => {}));
   self.skipWaiting();
 });
 
 self.addEventListener("activate", (event) => {
+  // Drop every previous cache (e.g. the old shell cache that pinned stale chunks).
   event.waitUntil(
-    caches.keys().then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+    caches.keys()
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
-  self.clients.claim();
 });
 
-// Network-first for navigations (fresh app), cache fallback keeps it installable + offline-tolerant.
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
-  if (req.mode === "navigate") {
-    event.respondWith(
-      fetch(req).catch(() => caches.match("/app").then((r) => r || caches.match("/index.html")))
-    );
-    return;
-  }
+  // Navigations always hit the network so the freshest index.html + code-split
+  // chunks are used. Never serve a cached HTML shell.
+  if (req.mode === "navigate") return;
   const url = new URL(req.url);
-  if (url.origin === self.location.origin && SHELL.includes(url.pathname)) {
+  // Cache-first only for the small set of stable static brand assets.
+  if (url.origin === self.location.origin && STATIC_ASSETS.includes(url.pathname)) {
     event.respondWith(caches.match(req).then((r) => r || fetch(req)));
   }
 });
