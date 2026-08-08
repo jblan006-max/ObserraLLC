@@ -9,6 +9,7 @@ import { NotificationBell } from "@/components/NotificationBell";
 import ForcePasswordReset from "@/pages/ForcePasswordReset";
 import { Footer } from "@/components/Footer";
 import { DeepDiveProvider } from "@/context/DeepDiveContext";
+import { InstallButton } from "@/components/InstallButton";
 import {
   LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
   Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp,
@@ -304,6 +305,7 @@ export default function AppShell() {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            <InstallButton className="hidden sm:inline-flex" />
             <NotificationBell />
             <DualModeToggle />
           </div>

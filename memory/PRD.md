@@ -227,5 +227,9 @@ User's FINAL COMMAND satisfied: every KPI/summary card across all dashboards is 
 - **"Add to remediation plan" from any deep-dive** (`RiskDetailModal.jsx` AddToPlanButton → `POST /risk-engine/plan`): one click turns any card into a tracked task. NEW `db.remediation_plan` collection + endpoints `POST /risk-engine/plan`, `GET /risk-engine/plan`, `POST /risk-engine/plan/{id}/status`. The stored $ at stake / reduction is grounded via the same `_impact_estimate` (no fabrication). Surfaced on the Remediations page in a new "Remediation Plan — added from deep-dives" card (`rem-plan`) with per-task status dropdowns (Open/In Progress/Remediated/Accepted) and the $ pill.
 - VERIFIED: curl create→list→status all 200 (portfolio $10.22M, modelled $3.58M reduction); screenshot confirms button → "Added to plan" toast and the task appears on Remediations with status control. Test artifacts cleaned from the live org.
 
+## v1 release packaging + in-app PWA install (Jun 2026)
+- Repo made GitHub-ready: rewrote `README.md`, added `backend/.env.example` + `frontend/.env.example` (no secrets, un-ignored in `.gitignore`). Clean source zip built at `release/obserra-v1-source.zip` (excludes real `.env` + `node_modules`). Existing one-command on-prem Docker installer confirmed at `deploy/onprem/`.
+- **In-app "Install app" button** (`components/InstallButton.jsx`, mounted in `AppShell` header): captures `beforeinstallprompt` and fires the native PWA install on click (Chrome/Edge/Android); iOS Safari shows an Add-to-Home-Screen hint. Renders nothing once installed/standalone. VERIFIED via synthetic `beforeinstallprompt` — button appears and invokes the prompt. (Distribution guidance: deploy → live URL/PWA is the cross-device "install"; a zero-dependency offline `.exe`/USB installer isn't possible for a live web app.)
+
 
 
