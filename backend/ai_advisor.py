@@ -365,6 +365,144 @@ async def advisor_insight(body: InsightReq, user: dict = Depends(require_active_
     return data
 
 
+class FixReq(BaseModel):
+    entity: str
+    ref: str | None = None
+
+
+_FIX_CACHE = {}
+
+
+async def _fix_grounding(org_id, entity, ref):
+    scan = await db.self_scans.find_one({"org_id": org_id}, sort=[("ts", -1)]) or {}
+    controls = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    summary = scan.get("summary") or {}
+    findings = scan.get("findings") or []
+    kev = len(scan.get("kev_matches") or []) or sum(1 for f in findings if f.get("kev"))
+    cves = summary.get("vulnerable_dependencies") or 0
+    open_findings = [f for f in findings if f.get("status") != "pass"]
+    high = sum(1 for f in open_findings if f.get("severity") in ("critical", "high"))
+    implicated = sorted({c for f in findings for c in (f.get("control_refs") or [])})
+    gap = sorted([c for c in controls if c.get("effectiveness", 100) < (c.get("baseline") or 80)],
+                 key=lambda c: c.get("effectiveness", 0))[:3]
+    obj, exposure, title = None, 0, ref
+    if entity == "risk":
+        obj = await db.risks.find_one({"org_id": org_id, "ref": ref}, {"_id": 0})
+        exposure = (obj or {}).get("residual", 0) * 5
+        title = (obj or {}).get("title", ref)
+    elif entity == "asset":
+        obj = await db.assets.find_one({"org_id": org_id, "ref": ref}, {"_id": 0})
+        exposure = (obj or {}).get("exposure", 0)
+        title = (obj or {}).get("name", ref)
+    elif entity == "vendor":
+        obj = await db.vendors.find_one({"org_id": org_id, "ref": ref}, {"_id": 0})
+        exposure = (obj or {}).get("risk_score", 0)
+        title = (obj or {}).get("name", ref)
+    return {"summary": summary, "kev": kev, "cves": cves, "high_findings": high,
+            "open_findings": [{"title": f.get("title"), "severity": f.get("severity"),
+                               "remediation": f.get("remediation"), "cve_ids": f.get("cve_ids"),
+                               "control_refs": f.get("control_refs")} for f in open_findings[:6]],
+            "implicated_controls": implicated, "gap_controls": gap, "entity_obj": obj,
+            "exposure": exposure, "title": title}
+
+
+def _rating(g, entity):
+    kev, cves, gaps, high, exposure = g["kev"], g["cves"], len(g["gap_controls"]), g["high_findings"], g["exposure"]
+    score = 0
+    if kev:
+        score += 45
+    score += min(30, cves * 15)
+    score += min(20, gaps * 7)
+    score += min(15, high * 10)
+    score += min(20, (exposure or 0) / 5)
+    if entity == "risk" and g["entity_obj"]:
+        score = max(score, round((g["entity_obj"].get("residual", 0) / 25) * 100 * 0.92))
+    score = round(min(100, score))
+    rating = "Critical" if (kev or score >= 70) else "High" if score >= 45 else "Medium" if score >= 25 else "Low"
+    rationale = []
+    if kev:
+        rationale.append(f"{kev} CISA KEV-listed vulnerabilit{'y' if kev == 1 else 'ies'} present — actively exploited in the wild, auto-escalating severity to Critical.")
+    if cves:
+        rationale.append(f"{cves} unpatched dependency CVE(s) detected on the scanned surface.")
+    if high:
+        rationale.append(f"{high} high/critical open scan finding(s) currently unremediated.")
+    if g["gap_controls"]:
+        rationale.append("Compliance control gaps below baseline: " + ", ".join(
+            f"{c.get('control_id')} {c.get('name')} ({c.get('framework')} · {c.get('effectiveness')}%)" for c in g["gap_controls"]) + ".")
+    if g["implicated_controls"]:
+        rationale.append("Implicated framework controls: " + ", ".join(g["implicated_controls"][:6]) + ".")
+    if not rationale:
+        rationale.append("No active exploit signals, CVEs or control gaps detected for this entity.")
+    return rating, score, rationale
+
+
+@advisor_router.post("/fix")
+async def advisor_fix(body: FixReq, user: dict = Depends(require_active_subscription)):
+    """Grounded per-entity risk rating (from compliance controls + CVE/KEV analysis) plus an
+    AI-written recommendation to fix. Used inside detail views across every dashboard."""
+    import re as _re
+    org_id = user["org_id"]
+    now = datetime.now(timezone.utc)
+    key = (org_id, body.entity, body.ref)
+    cached = _FIX_CACHE.get(key)
+    if cached and (now - cached["ts"]).total_seconds() < 180:
+        return cached["data"]
+    g = await _fix_grounding(org_id, body.entity, body.ref)
+    rating, score, rationale = _rating(g, body.entity)
+    result = {"rating": rating, "score": score, "rationale": rationale,
+              "implicated_controls": g["implicated_controls"][:8],
+              "recommendation": "", "steps": [], "model": ""}
+    if not await _is_paused(org_id):
+        provider, model = MODEL_ROUTES["executive"]
+        chosen = (await db.organizations.find_one({"_id": ObjectId(org_id)}, {"advisor_model": 1}) or {}).get("advisor_model")
+        if chosen and chosen in _MODEL_PROVIDER:
+            provider, model = _MODEL_PROVIDER[chosen], chosen
+        system = (
+            "You are the Obserra EIOS Advisor. Given a security entity, its live CVE/KEV signals and the "
+            "compliance-control gaps driving its risk rating, write a SHORT, concrete remediation. Ground every "
+            "point in the provided data (cite CVE ids, control ids/frameworks). Return STRICT JSON only, no markdown: "
+            '{"recommendation": string (<=220 chars, imperative), "steps": [string] (2-4 concrete steps)}.')
+        ctx = {"entity": body.entity, "ref": body.ref, "title": g["title"], "rating": rating,
+               "kev": g["kev"], "cves": g["cves"], "open_findings": g["open_findings"],
+               "gap_controls": [{"id": c.get("control_id"), "name": c.get("name"),
+                                 "framework": c.get("framework"), "effectiveness": c.get("effectiveness")} for c in g["gap_controls"]],
+               "implicated_controls": g["implicated_controls"]}
+        chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"fix-{org_id}-{body.entity}-{body.ref}",
+                       system_message=system).with_model(provider, model)
+        prompt = f"ENTITY CONTEXT (JSON):\n{json.dumps(ctx, default=str)[:8000]}\n\nProduce the remediation JSON now."
+        collected = []
+        try:
+            async for ev in chat.stream_message(UserMessage(text=prompt)):
+                if isinstance(ev, TextDelta):
+                    collected.append(ev.content)
+                elif isinstance(ev, StreamDone):
+                    break
+        except Exception:
+            collected = []
+        raw = "".join(collected).strip()
+        mm = _re.search(r"\{.*\}", raw, _re.S)
+        try:
+            parsed = json.loads(mm.group(0)) if mm else {}
+        except Exception:
+            parsed = {}
+        result["recommendation"] = parsed.get("recommendation") or ""
+        result["steps"] = parsed.get("steps") or []
+        result["model"] = f"{provider}/{model}"
+        if raw:
+            usage = _estimate_usage(f"{provider}/{model}", prompt, system, raw)
+            await db.advisor_logs.insert_one({"org_id": org_id, "user": user["email"], "mode": "fix",
+                                              "model": f"{provider}/{model}", "prompt": f"[fix] {body.entity} {body.ref}",
+                                              "response": raw, "usage": usage, "ts": now.isoformat()})
+            await _check_budget(org_id)
+    if not result["recommendation"]:
+        fr = g["open_findings"][0]["remediation"] if g["open_findings"] else None
+        result["recommendation"] = fr or "Maintain current hardening; no active exploit or control gap requires immediate action."
+        result["steps"] = [f["remediation"] for f in g["open_findings"] if f.get("remediation")][:4] or ["Continue monitoring and re-scan on the next cycle."]
+    result["generated_at"] = now.isoformat()
+    _FIX_CACHE[key] = {"ts": now, "data": result}
+    return result
+
+
 @advisor_router.get("/logs")
 async def advisor_logs(user: dict = Depends(get_current_user)):
     logs = await db.advisor_logs.find({"org_id": user["org_id"]}, {"_id": 0}).sort("ts", -1).to_list(50)

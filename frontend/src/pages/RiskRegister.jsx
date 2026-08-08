@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { EvidenceLineageModal } from "@/components/EvidenceLineageModal";
 import { EvidenceModal } from "@/components/EvidenceModal";
 import { AssetDetailModal } from "@/components/AssetDetailModal";
+import { AIFix } from "@/components/AIFix";
 import { SourceBadge, FreshnessBadge, ConfidenceBadge, DataTypeBadge, ScorePill } from "@/components/badges";
 import { AIInsight } from "@/components/AIInsight";
 import { StatCard, CardShell, EmptyState, BarList, Spinner } from "@/components/dash";
@@ -411,6 +412,7 @@ export default function RiskRegister() {
               <div className="flex justify-between gap-2"><span className="text-muted-foreground">Status</span><span className="text-right">{selected.status}</span></div>
             </div>
             <div className="text-[11px] font-mono text-muted-foreground bg-secondary/30 rounded-md p-2">KRI: {selected.kri}</div>
+            <AIFix entity="risk" refId={selected.ref} accent={ACCENT} />
             <div className="flex flex-col gap-1.5"><SourceBadge source={selected.source} /><div className="flex flex-wrap items-center gap-2"><FreshnessBadge freshness={selected.freshness} /><DataTypeBadge type={selected.data_type} /><ConfidenceBadge value={selected.confidence} /></div></div>
             <div className="flex gap-2 pt-1">
               <button data-testid="risk-detail-lineage" onClick={() => setLineage(selected.ref)} className="flex-1 text-xs px-3 py-2 rounded-md bg-primary/10 border border-primary/30 hover:bg-primary/20 transition-colors">Full lineage</button>

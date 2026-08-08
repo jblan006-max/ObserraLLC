@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { X, Loader2, Network, Cpu, ShieldCheck, Lock, AlertTriangle, Wrench } from "lucide-react";
+import { AIFix } from "@/components/AIFix";
 
 // Full asset drill-down: live network metadata + vulnerability data + fix recommendations.
 export function AssetDetailModal({ assetRef, findings = [], accent = "35 92% 55%", onClose }) {
@@ -18,12 +19,6 @@ export function AssetDetailModal({ assetRef, findings = [], accent = "35 92% 55%
 
   if (!assetRef) return null;
   const d = asset?.detail || {};
-  const recs = [];
-  (d.security_headers?.missing || []).forEach((h) => recs.push(`Enable missing security header: ${h}`));
-  if ((d.cves || 0) > 0) recs.push(`Patch ${d.cves} dependency CVE(s) detected on this endpoint`);
-  if ((d.kev_matches || 0) > 0) recs.push(`Prioritise ${d.kev_matches} CISA KEV-listed vulnerabilit(ies) — actively exploited in the wild`);
-  findings.filter((f) => f.status !== "pass" && f.remediation).slice(0, 4).forEach((f) => recs.push(f.remediation));
-  if (!recs.length) recs.push("No open remediation — maintain current hardening, headers and monitoring.");
 
   const Kv = ({ k, v }) => (
     <div className="flex items-start justify-between gap-3 text-xs py-1 border-b border-border/40 last:border-0">
@@ -49,6 +44,7 @@ export function AssetDetailModal({ assetRef, findings = [], accent = "35 92% 55%
           <div className="flex items-center justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>
         ) : (
           <div className="grid sm:grid-cols-2 gap-4">
+            <div className="sm:col-span-2" data-testid="asset-modal-recs"><AIFix entity="asset" refId={assetRef} accent={accent} /></div>
             <div className="space-y-1 bg-secondary/20 rounded-lg p-3">
               <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1 flex items-center gap-1"><Network className="w-3 h-3" /> Network metadata</div>
               <Kv k="Host" v={d.host} />
@@ -89,12 +85,8 @@ export function AssetDetailModal({ assetRef, findings = [], accent = "35 92% 55%
             </div>
 
             <div className="sm:col-span-2 rounded-lg p-3 border" style={{ borderColor: `hsl(${accent} / 0.35)`, background: `hsl(${accent} / 0.06)` }}>
-              <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5 flex items-center gap-1" style={{ color: `hsl(${accent})` }}><Wrench className="w-3 h-3" /> Recommendations to fix</div>
-              <ul className="space-y-1.5" data-testid="asset-modal-recs">
-                {recs.map((r, i) => (
-                  <li key={i} className="text-sm flex items-start gap-2"><span style={{ color: `hsl(${accent})` }}>→</span> {r}</li>
-                ))}
-              </ul>
+              <div className="text-[10px] font-mono uppercase tracking-wider mb-1.5 flex items-center gap-1" style={{ color: `hsl(${accent})` }}><Wrench className="w-3 h-3" /> Open ports &amp; posture summary</div>
+              <div className="text-[11px] text-muted-foreground">Security score {d.security_score != null ? `${d.security_score}/100` : "—"} · {(d.open_ports || []).filter((p) => p.open).length} open port(s) · {(d.security_headers?.missing || []).length} missing header(s). See the AI risk rating &amp; fix above for prioritised remediation.</div>
             </div>
           </div>
         )}
