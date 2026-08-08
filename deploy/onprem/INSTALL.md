@@ -112,10 +112,38 @@ MongoDB data persists in the `obserra_mongo` Docker volume across restarts.
 
 ## 7. HTTPS (production)
 
-For production, terminate TLS in front of the `frontend` container — e.g. put a
-reverse proxy (Caddy, Traefik, or your corporate load balancer) in front of port
-`8080` and point your certificate/domain at it. Update `PUBLIC_URL`/`FRONTEND_URL`
-to the `https://` address.
+Two ready-made options give you a valid TLS certificate automatically (Let's Encrypt).
+Both require a **public DNS record for your domain pointing at this host** and **ports 80
+and 443 open**. In `deploy/.env` set:
+
+```bash
+DOMAIN=obserra.yourcompany.com
+ACME_EMAIL=admin@yourcompany.com
+PUBLIC_URL=https://obserra.yourcompany.com   # must match DOMAIN
+FRONTEND_URL=https://obserra.yourcompany.com
+```
+
+### Option A — Caddy (recommended, simplest)
+
+```bash
+docker compose -f deploy/docker-compose.https.yml --env-file deploy/.env up -d --build
+```
+
+Caddy obtains and renews the certificate automatically and proxies to the app. Open
+`https://<DOMAIN>`. (Uses `deploy/Caddyfile`.)
+
+### Option B — Traefik
+
+```bash
+docker compose -f deploy/docker-compose.traefik.yml --env-file deploy/.env up -d --build
+```
+
+Traefik provisions the cert, redirects HTTP→HTTPS, and routes to the app via labels.
+
+> Both HTTPS compose files are **self-contained** (they include MongoDB, backend and
+> frontend) — use them *instead of* the plain `docker-compose.yml`, not alongside it.
+> The plain compose remains the HTTP-only / behind-your-own-load-balancer option.
+
 
 ---
 

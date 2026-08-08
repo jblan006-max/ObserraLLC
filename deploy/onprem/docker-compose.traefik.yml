@@ -1,0 +1,79 @@
+version: "3.9"
+
+# Obserra EIOS — self-hosted with automatic HTTPS via Traefik v3 (Let's Encrypt).
+# Alternative to docker-compose.https.yml (Caddy). Traefik auto-provisions the cert
+# and redirects HTTP -> HTTPS.
+#
+# Prerequisites:
+#   • A public DNS A/AAAA record for $DOMAIN pointing at this host.
+#   • Ports 80 AND 443 open to the internet.
+#   • In deploy/.env set:  DOMAIN=your.domain  ACME_EMAIL=you@company  PUBLIC_URL=https://your.domain
+#
+# Launch (from the project root that contains backend/ frontend/ deploy/):
+#   docker compose -f deploy/docker-compose.traefik.yml --env-file deploy/.env up -d --build
+#
+# Then open:  https://<DOMAIN>
+
+services:
+  traefik:
+    image: traefik:v3.1
+    restart: unless-stopped
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--certificatesresolvers.le.acme.email=${ACME_EMAIL}"
+      - "--certificatesresolvers.le.acme.tlschallenge=true"
+      - "--certificatesresolvers.le.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik_letsencrypt:/letsencrypt
+    networks: [obserra]
+
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - obserra_mongo:/data/db
+    networks: [obserra]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: ../deploy/backend.Dockerfile
+    restart: unless-stopped
+    env_file: ./.env
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017
+    depends_on: [mongodb]
+    networks: [obserra]
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: ../deploy/frontend.Dockerfile
+      args:
+        REACT_APP_BACKEND_URL: ${PUBLIC_URL}
+    restart: unless-stopped
+    depends_on: [backend]
+    networks: [obserra]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.obserra.rule=Host(`${DOMAIN}`)"
+      - "traefik.http.routers.obserra.entrypoints=websecure"
+      - "traefik.http.routers.obserra.tls.certresolver=le"
+      - "traefik.http.services.obserra.loadbalancer.server.port=80"
+
+volumes:
+  obserra_mongo:
+  traefik_letsencrypt:
+
+networks:
+  obserra:
+    driver: bridge
