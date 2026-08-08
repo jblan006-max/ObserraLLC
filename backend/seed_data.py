@@ -8,6 +8,10 @@ def _iso(days_ago=0, hours_ago=0):
 
 async def seed_org(org_id: str):
     """Idempotently seed rich demo data scoped to an organization."""
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"live_only": 1})
+    if org and org.get("live_only"):
+        return
     if await db.risks.find_one({"org_id": org_id}):
         return
 

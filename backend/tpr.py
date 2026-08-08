@@ -43,6 +43,10 @@ def _score(v):
 
 
 async def _seed(org_id):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"live_only": 1})
+    if org and org.get("live_only"):
+        return
     if await db.vendors.count_documents({"org_id": org_id}) == 0:
         docs = []
         for v in SEED:

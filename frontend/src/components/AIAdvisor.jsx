@@ -223,6 +223,12 @@ export function AIAdvisor() {
           </div>
         </div>
       )}
+      {!open && (
+        <a data-testid="advisor-connect-ai" href="/app/connectors"
+          className="fixed bottom-[104px] right-6 z-40 flex items-center gap-1.5 px-3 py-2 rounded-full bg-ai text-background font-head font-bold text-[11px] shadow-lg ring-1 ring-ai/40 hover:-translate-y-0.5 transition-transform duration-200">
+          <Zap className="w-3.5 h-3.5" /> Connect AI
+        </a>
+      )}
       <button data-testid="advisor-toggle" onClick={openFromHint}
         style={{ backgroundColor: "#0f1e3d" }}
         className="fixed bottom-6 right-6 z-40 flex flex-col items-center gap-1 px-4 py-3 rounded-2xl font-head font-bold text-xs shadow-lg ring-1 ring-white/10 hover:-translate-y-0.5 transition-transform duration-200">

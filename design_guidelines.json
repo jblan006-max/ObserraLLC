@@ -1,128 +1,112 @@
 {
-  "theme": "dark",
-  "design_archetype": "Enterprise High-Trust / Board-Ready",
   "typography": {
-    "headings": {
-      "family": "Chivo",
-      "weights": ["400", "700"],
-      "classes": "font-['Chivo'] font-bold tracking-tight text-foreground",
-      "rules": "Used exclusively for executive metrics, section titles, and high-level KPIs. No 'Inter' or generic sans for headings."
+    "fonts": {
+      "heading": "font-head (display font, use tracking-tight for crispness)",
+      "mono": "font-mono (use for data points, metrics, logs, technical IDs)",
+      "body": "sans (system default or configured sans for general readability)"
     },
-    "body": {
-      "family": "IBM Plex Sans",
-      "weights": ["400", "500"],
-      "classes": "font-['IBM_Plex_Sans'] text-sm leading-relaxed text-muted-foreground",
-      "rules": "Optimized for dense operational tables and logs. Left-aligned."
-    },
-    "mono": {
-      "family": "IBM Plex Mono",
-      "classes": "font-mono text-xs tracking-wider",
-      "rules": "Use for hashes, UUIDs, model versions, and code."
+    "hierarchy": {
+      "page_title": "text-2xl sm:text-3xl font-head tracking-tight text-white",
+      "section_title": "text-lg sm:text-xl font-head tracking-tight text-white/90 border-b border-white/10 pb-2 mb-4",
+      "card_title": "text-base font-head tracking-tight text-white/80",
+      "metric_value": "text-3xl sm:text-4xl font-mono text-white tracking-tight",
+      "metric_label": "text-xs font-mono uppercase tracking-widest text-white/50",
+      "table_header": "text-xs font-mono uppercase tracking-wider text-white/60",
+      "source_badge": "text-[10px] font-mono uppercase tracking-wider"
     }
   },
   "colors": {
-    "background": "hsl(222, 40%, 6%)",
-    "foreground": "hsl(210, 40%, 90%)",
-    "card": "hsl(215, 38%, 10%)",
-    "card_foreground": "hsl(210, 40%, 90%)",
-    "border": "hsl(215, 30%, 18%)",
-    "primary": "hsl(225, 70%, 50%)",
-    "primary_foreground": "hsl(0, 0%, 100%)",
-    "semantic": {
-      "critical": "hsl(0, 84%, 60%)",
-      "high": "hsl(15, 80%, 55%)",
-      "medium": "hsl(35, 90%, 55%)",
-      "low": "hsl(142, 70%, 45%)",
-      "ai_insight": "hsl(190, 90%, 50%)"
+    "theme": "Dark Theme (Executive/Premium)",
+    "tokens": {
+      "background": "bg-slate-950 or bg-[#0A0A0C] (deepest structural dark)",
+      "surface_1": "bg-slate-900 or bg-white/5",
+      "surface_2": "bg-slate-800 or bg-white/10",
+      "border": "border-white/10",
+      "ai_cyan": "var(--ai-cyan) - use for AI specific features, glowing accents",
+      "primary_blue": "var(--primary-blue) - use for active states, main brand color",
+      "low_risk": "var(--low-green) - success, low risk, positive trend",
+      "med_risk": "var(--med-amber) - warning, medium risk, attention",
+      "high_risk": "var(--high-orange) - danger, high risk, action required",
+      "crit_risk": "var(--crit-red) - critical, immediate action, breach"
     },
-    "rules": "Never use pure black. Use tinted deep blue-grays. Accent colors must strictly map to risk severities or AI insight."
+    "usage": "Use color sparingly. 90% of the UI should be dark shades of gray/blue (slate) to allow the status colors (green, amber, orange, red) to pop. Use AI Cyan for 'continuous AI control' glowing accents."
   },
   "visual_enhancers": {
-    "badges": {
-      "confidence": "Render as a miniature horizontal bar chart or percentage alongside the metric. Colors shift from green (high) to amber (low).",
-      "freshness": "Render with a clock icon. 'Live' = green pulse; '>24h' = muted gray.",
-      "source": "Small database or document icon with tooltips showing system of origin."
-    },
-    "data_distinction": {
-      "fact": "Solid 1px border around the metric or cell, high-contrast text.",
-      "estimate": "Dashed 1px border, muted text color.",
-      "ai_recommendation": "Subtle 1px glowing cyan border (hsl(190, 90%, 50%)) or subtle left-accent line to clearly demarcate AI-generated content."
-    },
-    "surfaces": {
-      "cards": "Flat background (hsl(215, 38%, 10%)), 1px subtle border (hsl(215, 30%, 18%)), NO shadow. Inner padding p-6.",
-      "glass": "Use for sticky headers only: backdrop-blur-xl bg-background/70 border-b border-border/40."
-    }
+    "depth_layering": "Use crisp 1px borders (border-white/10) rather than heavy shadows to define cards in the dark theme. Use inner shadows/glows for active elements.",
+    "glass_grain": "For overlays, sticky headers, or floating menus: backdrop-blur-xl bg-slate-950/80 border-b border-white/10. NEVER use purely transparent backgrounds. Add an SVG noise texture overlay at 2-3% opacity across the main app background to reduce digital flatness and add a 'board-grade' tactile feel.",
+    "glow": "Use subtle drop shadows on status metrics. Example: drop-shadow-[0_0_8px_var(--ai-cyan)]."
   },
   "grids": {
-    "executive_mode": {
-      "type": "bento",
-      "classes": "grid grid-cols-1 md:grid-cols-4 lg:grid-cols-12 gap-6",
-      "rules": "Asymmetrical focus. The Health Index takes col-span-full lg:col-span-8 row-span-2. Sub-metrics take col-span-4."
-    },
-    "operational_mode": {
-      "type": "high_density",
-      "classes": "grid grid-cols-1 lg:grid-cols-4 gap-4",
-      "rules": "Strict, dense rows. Tables take col-span-full. Every pixel utilized."
+    "page_shell": {
+      "container": "w-full max-w-none px-4 sm:px-6 lg:px-8 py-6 (No max-width, fills the screen)",
+      "grid_system": "grid grid-cols-1 md:grid-cols-6 xl:grid-cols-12 gap-4 lg:gap-6",
+      "rhythm": "Group related cards with clear section headers. Maintain strict symmetry in the 12-col grid (e.g., 4 cards of col-span-3, 3 cards of col-span-4, or 2 cards of col-span-6)."
     }
   },
   "layouts": {
-    "navigation": "Top or left persistent navigation with the Executive/Operational Mode Toggle centrally placed or highly prominent. Includes breadcrumbs for deep evidence lineage.",
-    "spacing": "Use p-6 to p-8 inside cards. The main wrapper must have generous padding to let the bento grid breathe.",
-    "alignment": "KPI numbers left-aligned. Tables left-aligned. Only empty states can be center-aligned."
+    "dashboard_grid": "Full-width masonry or strict CSS grid. Avoid dead space by ensuring child elements stretch. Add `align-items: stretch` to grid rows.",
+    "card_spans": {
+      "kpi_row": "col-span-1 md:col-span-2 xl:col-span-3 (4 items per row on desktop)",
+      "chart_half": "col-span-1 md:col-span-6 xl:col-span-6",
+      "chart_full": "col-span-1 md:col-span-6 xl:col-span-12",
+      "side_panel": "col-span-1 md:col-span-2 xl:col-span-4"
+    }
+  },
+  "components": {
+    "card_anatomy": {
+      "wrapper": "flex flex-col bg-slate-900/50 border border-white/10 rounded-xl overflow-hidden hover:border-white/20 transition-colors duration-200 h-full backdrop-blur-sm",
+      "header": "flex items-center justify-between px-5 py-4 border-b border-white/5",
+      "header_title": "text-sm font-head font-medium tracking-tight text-white/90 flex items-center gap-2",
+      "header_badge": "px-2 py-0.5 rounded-full text-[10px] font-mono font-medium flex items-center gap-1.5",
+      "header_badge_live": "bg-green-500/10 text-green-400 border border-green-500/20 (with a pulsing 4px dot: w-1 h-1 rounded-full bg-green-400 animate-pulse)",
+      "body": "flex-1 p-5 flex flex-col justify-center",
+      "footer": "px-5 py-3 bg-slate-950/30 border-t border-white/5 text-[10px] font-mono text-white/40 flex items-center justify-between"
+    },
+    "kpi_stat_card": {
+      "layout": "Use the standard card anatomy. The body should contain the `metric_value` and a trend indicator.",
+      "trend_up": "text-red-400 (for risk) or text-green-400 (for performance) flex items-center gap-1 text-xs font-mono",
+      "trend_down": "text-green-400 (for risk reduction) flex items-center gap-1 text-xs font-mono"
+    },
+    "chart_card": {
+      "wrapper": "Use the standard card anatomy.",
+      "chart_box": "w-full h-[300px] sm:h-[400px] relative overflow-hidden",
+      "recharts_rule": "CRITICAL: DO NOT USE Recharts ResponsiveContainer. It crashes React 19. Use a fixed-height/fixed-width div wrapper or standard SVG charting techniques, or pass explicit pixel dimensions to Recharts elements. Ensure charts fit neatly within the ChartBox wrapper without overflowing."
+    },
+    "empty_state": {
+      "wrapper": "flex flex-col items-center justify-center h-full min-h-[200px] w-full p-8 text-center border border-dashed border-white/10 rounded-xl bg-slate-900/20",
+      "icon": "w-10 h-10 text-white/20 mb-3",
+      "title": "text-sm font-head text-white/60 mb-1",
+      "description": "text-xs font-mono text-white/40 max-w-xs",
+      "action": "mt-4 text-xs font-mono text-[var(--ai-cyan)] hover:brightness-110 transition-colors"
+    }
   },
   "motion": {
-    "transitions": "transition-all duration-200 ease-out",
-    "hover": "-translate-y-[2px] shadow-lg border-primary/50",
-    "ai_pulse": "animate-pulse for AI active generating states, using subtle cyan."
+    "hover_states": "Cards should have subtle border brightens (`hover:border-white/20`). Buttons get `active:scale-95`. DO NOT use `transition-all`. Use `transition-colors`, `transition-transform`, or `transition-opacity` with `duration-200`.",
+    "live_data": "Use a subtle pulsing dot (`animate-pulse`) next to 'LIVE' badges to indicate real-time data streams."
   },
   "accessibility": {
-    "contrast": "Text must pass WCAG AA against dark backgrounds. Use hsl(210, 40%, 90%) for body, hsl(210, 40%, 98%) for headers.",
-    "testing": "All actionable items must have data-testid attributes (e.g., data-testid='mode-toggle-button', data-testid='kpi-health-index')."
+    "contrast": "Ensure all text against dark backgrounds passes APCA/WCAG contrast ratios. Muted text should not fall below text-white/40.",
+    "test_ids": "CRITICAL: All interactive and key informational elements MUST include a `data-testid` attribute (kebab-case, role-based). Example: `data-testid=\"kpi-residual-risk\"` or `data-testid=\"nav-executive-dashboard\"`."
   },
-  "media": {
-    "icons": "Use @phosphor-icons/react for dense dashboard metrics.",
-    "charts": "Use Recharts (customized via Shadcn) for trend lines and gauges. Use strict semantic colors for series."
-  },
-  "3d_libraries": {
-    "evidence_lineage": "Use React Flow for mapping Evidence Lineage (source -> observation -> recommendation -> decision -> action). It provides the exact node-based structure needed for root-cause trees."
-  },
-  "component_name": {
-    "DualModeToggle": "A high-end segmented control that switches the entire dashboard context.",
-    "EnterpriseHealthGauge": "A customized semi-circle gauge chart showing the component score breakdown.",
-    "RiskRegisterTable": "A dense data table with inherent vs residual heat scoring (semantic colors mapped to cells).",
-    "MetricCard": "Displays KPI, trend, and the mandatory source/freshness/confidence badges.",
-    "AIAdvisorChat": "A side-panel or floating chat interface showing AI recommendations with explicit citation badges."
-  },
-  "image_urls": [
-    {
-      "url": "https://images.unsplash.com/photo-1644088379091-d574269d422f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1OTV8MHwxfHNlYXJjaHwxfHxkYXJrJTIwbmV0d29yayUyMGNvbm5lY3Rpb25zJTIwYWJzdHJhY3R8ZW58MHx8fHwxNzg2MDcwNzI5fDA&ixlib=rb-4.1.0&q=85",
-      "category": "background",
-      "description": "Abstract dark blue network data connection, to be used sparingly with heavy opacity (opacity-10) behind the Executive login or empty state."
-    }
-  ],
   "instructions_to_main_agent": {
-    "1": "You MUST configure Tailwind with the provided HSL color variables.",
-    "2": "Initialize Shadcn UI and overwrite standard card/table/badge components to remove generic Vercel looks. Make them flat with sharp 1px borders.",
-    "3": "Install `lucide-react` or `@phosphor-icons/react` for detailed enterprise dashboard iconography.",
-    "4": "Implement the 'Dual-Mode toggle' at the root layout state, which conditionally renders either the ExecutiveBoard or OperationalBoard components.",
-    "5": "Do NOT use pure transparent backgrounds for any cards, popovers, or tables.",
-    "6": "Data generation: Mock rich enterprise data to populate the Risk Register, Health Index, and AI Model Inventory. The data should reflect a cyber-security / AI governance context.",
-    "7": "Integrate 'Fact vs Estimate vs AI-Recommendation' styling rules across all rendered metrics."
+    "general": [
+      "Avoid 'AI slop' gradients. Stick to a highly structured, data-dense, symmetric grid.",
+      "Remove dead space by allowing the grid to fill the entire screen width (remove max-w-7xl, use w-full max-w-none).",
+      "Scale padding for mobile (px-4) to desktop (lg:px-8).",
+      "Never use a completely transparent background for headers, modals, or dropdowns. Always use a solid dark background or a heavily blurred background with high opacity (e.g., bg-slate-950/90 backdrop-blur-md).",
+      "Use JavaScript (.js) or JSX (.jsx) for files. Do not use TypeScript (.tsx).",
+      "Ensure all charts use the fixed-height ChartBox approach avoiding Recharts ResponsiveContainer.",
+      "Integrate the HSL CSS variables directly into Tailwind classes via inline styles or tailwind config (e.g., `text-[var(--crit-red)]` or `bg-[var(--ai-cyan)]`)."
+    ]
   },
   "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
-    "You tend to converge toward generic, 'on distribution' outputs. In frontend design, this creates what users call the 'AI slop' aesthetic. Avoid this: make creative, distinctive frontends that surprise and delight.",
-    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
-    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
-    "Create depth through layered design elements with z-index hierarchy.",
-    "Use glass-morphism effects with backdrop filters (12-24px blur).",
-    "You MUST NOT apply universal transition. Eg: transition: all. This results in breaking transforms. Always add transitions for specific interactive elements.",
-    "You MUST NOT center align the app container, ie do not add .App { text-align: center; } in the css file.",
-    "Always use modern button styles like pill-shaped, or sharp button with interaction animations & color relevant to the app style.",
-    "NEVER: use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons.",
-    "Every interaction needs micro-animations - hover states, transitions, parallax effects, and entrance animations. Static = dead.",
-    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
-    "Subtle grain textures, noise overlays, custom cursors, selection states, and loading animations: separates good from extraordinary.",
-    "All interactive and key informational elements MUST include a data-testid attribute to facilitate robust automated testing.",
-    "Use `sonner` for toasts. Sonner component are located in `/app/src/components/ui/sonner.tsx`."
+    "You tend to converge toward generic, 'on distribution' outputs. Make this look like a premium, board-grade, executive command center.",
+    "Create depth through layered design elements with z-index hierarchy and subtle 1px borders.",
+    "Use glass-morphism effects with backdrop filters for floating elements, but NEVER fully transparent.",
+    "You MUST NOT apply universal transition (e.g., `transition: all`).",
+    "You MUST NOT center align the app container. Text alignment should be left-aligned for data readability.",
+    "Never use AI assistant Emoji characters (🤖🧠💭). Use clean SVG icons (lucide-react or phosphor-icons).",
+    "Include a `data-testid` on all interactive elements.",
+    "Do not use generic centered layouts or simplistic gradients."
   ]
 }

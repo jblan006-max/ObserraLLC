@@ -252,6 +252,18 @@ export default function Settings() {
       </div>
 
       {isAdmin && (
+        <div className="bg-card fact-border rounded-xl p-6 space-y-3" data-testid="live-data-settings">
+          <h2 className="font-head font-bold text-lg">Live data mode</h2>
+          <p className="text-sm text-muted-foreground">Remove all demo/sample data from this organization and run on live data only — your endpoint self-scan and live threat feeds, benchmarked against the IBM/AI figures. This cannot be undone.</p>
+          <button data-testid="reset-to-live-btn" onClick={async () => {
+            if (!window.confirm("Remove all demo data and switch to live-only? This clears sample risks, vendors, assets and mock connectors.")) return;
+            try { const { data } = await api.post("/admin/reset-to-live"); toast.success(`Live-only enabled — ${data.live?.risks ?? 0} live risk(s) derived. Reloading…`); setTimeout(() => window.location.reload(), 1200); }
+            catch (e) { toast.error(e.response?.data?.detail || "Reset failed"); }
+          }} className="px-4 py-2 rounded-md bg-crit/15 text-crit border border-crit/30 font-head font-bold text-sm hover:bg-crit/25 transition-colors">Clear demo data &amp; go live</button>
+        </div>
+      )}
+
+      {isAdmin && (
         <div className="bg-card fact-border rounded-xl p-6 space-y-4" data-testid="owner-directory-settings">
           <div className="flex items-center gap-2"><Users className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Owner Directory</h2></div>
           <p className="text-sm text-muted-foreground">Map each control / vendor owner name to a real email so remediation nudges reach the right person instead of falling back to all admins. Leave blank to keep the admin fallback.</p>

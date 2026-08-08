@@ -46,6 +46,23 @@ export default function RiskRegister() {
         <p className="text-sm text-muted-foreground mt-1">{isExec ? "Business-impact view of the cyber risk register — exposure and residual severity by risk (read-only)." : "Taxonomy, inherent vs residual scoring, ownership, treatment & KRIs. Click any row for evidence lineage."}</p>
       </div>
 
+      {risks.length === 0 ? (
+        <div data-testid="risk-empty" className="bg-card fact-border rounded-xl p-8 text-center space-y-2">
+          <div className="font-head font-bold text-lg">No live risks yet</div>
+          <p className="text-sm text-muted-foreground">Risks auto-populate from your live self-scan. Run a scan on the <a href="/app/security" className="text-ai underline">Security Scanner</a>, or connect a source.</p>
+        </div>
+      ) : (
+        <div className="grid gap-4 lg:grid-cols-3">
+          <div className="lg:col-span-2 grid grid-cols-2 lg:grid-cols-4 gap-3 content-start" data-testid="risk-kpis">
+            <div className="bg-card fact-border rounded-xl p-4"><div className="text-[10px] font-mono uppercase text-muted-foreground">Total risks</div><div className="font-head font-black text-3xl mt-1">{risks.length}</div></div>
+            <div className="bg-card fact-border rounded-xl p-4"><div className="text-[10px] font-mono uppercase text-muted-foreground">Open</div><div className="font-head font-black text-3xl mt-1">{risks.filter((r) => r.status !== "Remediated").length}</div></div>
+            <div className="bg-card fact-border rounded-xl p-4" style={{ borderLeft: "3px solid hsl(0 84% 60%)" }}><div className="text-[10px] font-mono uppercase text-muted-foreground">Critical</div><div className="font-head font-black text-3xl mt-1">{risks.filter((r) => r.residual >= 16).length}</div></div>
+            <div className="bg-card fact-border rounded-xl p-4"><div className="text-[10px] font-mono uppercase text-muted-foreground">$ Exposure</div><div className="font-head font-black text-2xl mt-1 text-high">{fmtM(risks.reduce((s, r) => s + riskExposure(r), 0))}</div></div>
+          </div>
+          <RiskMatrix risks={risks} onPick={(c) => setSelected(c[0])} />
+        </div>
+      )}
+
       <div className="flex flex-wrap gap-3 sticky top-16 z-20 -mx-4 px-4 sm:mx-0 sm:px-0 py-2 bg-background/90 backdrop-blur">
         <div className="relative flex-1 min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -198,3 +215,36 @@ export default function RiskRegister() {
 }
 
 const SLE_BY_IMPACT = { 5: 8000000, 4: 3000000, 3: 1000000, 2: 300000, 1: 75000 };
+const riskExposure = (r) => (SLE_BY_IMPACT[r.impact] || 1e6) * ((r.likelihood || 3) / 5) * ((r.residual || 1) / Math.max(r.inherent || 1, 1));
+const fmtM = (n) => `$${(n / 1e6).toFixed(2)}M`;
+
+function RiskMatrix({ risks, onPick }) {
+  const cellRisks = (imp, lik) => risks.filter((r) => r.impact === imp && r.likelihood === lik);
+  const color = (s) => (s >= 15 ? "0 84% 60%" : s >= 8 ? "35 90% 55%" : "142 70% 45%");
+  return (
+    <div className="bg-card fact-border rounded-xl p-4" data-testid="risk-matrix">
+      <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2">Risk heat map — Impact × Likelihood (auto-populated)</div>
+      <div className="flex gap-2">
+        <div className="flex flex-col-reverse justify-between text-[9px] font-mono text-muted-foreground py-0.5">
+          {[1, 2, 3, 4, 5].map((i) => <span key={i} className="flex-1 flex items-center">{i}</span>)}
+        </div>
+        <div className="grid grid-cols-5 gap-1 flex-1">
+          {[5, 4, 3, 2, 1].map((imp) => [1, 2, 3, 4, 5].map((lik) => {
+            const c = cellRisks(imp, lik);
+            const s = imp * lik;
+            return (
+              <button key={`${imp}-${lik}`} data-testid={`risk-matrix-cell-${imp}-${lik}`}
+                onClick={() => c.length && onPick(c)} disabled={!c.length}
+                title={`Impact ${imp} × Likelihood ${lik} — ${c.length} risk(s)`}
+                style={{ background: `hsl(${color(s)} / ${c.length ? 0.9 : 0.1})` }}
+                className="aspect-square rounded-md flex items-center justify-center text-sm font-head font-black text-white/95 disabled:cursor-default transition-transform hover:scale-[1.04]">
+                {c.length || ""}
+              </button>
+            );
+          }))}
+        </div>
+      </div>
+      <div className="text-center text-[9px] font-mono text-muted-foreground mt-1.5">Likelihood 1 → 5 · vertical axis = Impact</div>
+    </div>
+  );
+}

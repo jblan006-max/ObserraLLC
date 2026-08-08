@@ -371,6 +371,15 @@ async def _execute_scan(org_id):
         await _evaluate_threats(org_id, doc)
     except Exception as e:
         logger.warning(f"threat containment eval failed: {e}")
+    # Live-only orgs: derive the Risk Register / endpoint asset / health index
+    # from this fresh scan so every dashboard reflects real posture.
+    try:
+        org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"live_only": 1})
+        if org and org.get("live_only"):
+            from live_engine import rebuild_live_posture
+            await rebuild_live_posture(org_id)
+    except Exception as e:
+        logger.warning(f"live posture rebuild failed: {e}")
     return doc
 
 

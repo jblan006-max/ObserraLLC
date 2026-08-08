@@ -1,7 +1,7 @@
 import random
 from datetime import datetime, timezone, timedelta
 from bson import ObjectId
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel, field_validator
 
 from db import db
@@ -1171,6 +1171,46 @@ async def _nist_ai_rmf_coverage(org_id: str):
 @api.get("/financial/nist-coverage")
 async def nist_coverage(user: dict = Depends(get_current_user)):
     return await _nist_ai_rmf_coverage(user["org_id"])
+
+
+async def _rescan_and_rebuild(org_id: str):
+    from self_scan import _execute_scan
+    from live_engine import rebuild_live_posture
+    try:
+        await _execute_scan(org_id)
+    except Exception:
+        pass
+    try:
+        await rebuild_live_posture(org_id)
+    except Exception:
+        pass
+
+
+@api.post("/admin/reset-to-live")
+async def reset_to_live(background: BackgroundTasks, admin: dict = Depends(require_roles("admin"))):
+    """Clear all demo/seed data for this org and switch to live-only: the Risk
+    Register, endpoint asset and Health Index are derived from the live self-scan;
+    IBM/AI benchmarks and live threat feeds are kept. Idempotent + admin-only."""
+    from live_engine import rebuild_live_posture
+    org_id = admin["org_id"]
+    for coll in ["risks", "vendors", "ai_systems", "ai_incidents", "recommendations",
+                 "decisions", "assets", "ai_agents", "connectors", "health_index"]:
+        await db[coll].delete_many({"org_id": org_id})
+    await db.enterprise_connectors.update_many(
+        {"org_id": org_id},
+        {"$set": {"status": "available", "live": False, "records_ingested": 0, "last_sync": None},
+         "$unset": {"credentials": "", "connected_at": ""}})
+    await db.organizations.update_one(
+        {"_id": ObjectId(org_id)},
+        {"$set": {"live_only": True},
+         "$unset": {"live_m365": "", "live_copilot": "", "live_openai": "", "live_sso": "", "live_teams": ""}})
+    await db.audit_logs.delete_many({"org_id": org_id, "action": "org.seeded"})
+    summary = await rebuild_live_posture(org_id)
+    background.add_task(_rescan_and_rebuild, org_id)
+    await _audit(org_id, admin["email"], "org.reset_to_live",
+                 f"Cleared demo data; live-only. Derived {summary.get('risks', 0)} risk(s) from last scan.")
+    return {"ok": True, "live": summary,
+            "note": "Demo data cleared. Now running on your live self-scan + benchmarks. A fresh scan is refreshing in the background."}
 
 
 # ---------- Decision simulation (what-if) ----------

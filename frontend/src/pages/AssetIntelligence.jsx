@@ -16,6 +16,10 @@ export default function AssetIntelligence() {
         <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><Boxes className="w-7 h-7 text-primary" /> Asset Intelligence</h1>
         <p className="text-sm text-muted-foreground mt-1">Unified asset inventory with criticality and internet-exposure scoring from connected sources.</p>
       </div>
+      <div data-testid="assets-connect-note" className="text-xs bg-ai/5 border border-ai/20 rounded-lg px-4 py-2.5 text-muted-foreground">Your live endpoint is inventoried automatically from the self-scan. <a href="/app/connectors" className="text-ai underline">Connect Microsoft 365 (Intune)</a> to inventory managed devices, and other sources to expand this list.</div>
+      {assets.length === 0 ? (
+        <div data-testid="assets-empty" className="bg-card fact-border rounded-xl p-8 text-center text-sm text-muted-foreground">No assets yet — run a live scan or connect a source to populate your inventory.</div>
+      ) : (
       <div className="bg-card fact-border rounded-xl overflow-x-auto">
         <table className="w-full text-sm min-w-[820px]">
           <thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border">
@@ -41,6 +45,7 @@ export default function AssetIntelligence() {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }

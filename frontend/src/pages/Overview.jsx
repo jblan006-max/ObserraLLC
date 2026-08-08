@@ -10,10 +10,11 @@ import { SyncTicker } from "@/components/SyncTicker";
 import { BoardReportModal } from "@/components/BoardReportModal";
 import { EvidenceLineageModal } from "@/components/EvidenceLineageModal";
 import { CountUp } from "@/components/CountUp";
+import { ChartBox } from "@/components/ChartBox";
 import { ConfidenceBadge, DataTypeBadge, FreshnessBadge } from "@/components/badges";
 import {
   AreaChart, Area, ResponsiveContainer, PieChart, Pie, Cell, Tooltip,
-  BarChart, Bar, LineChart, Line, XAxis, CartesianGrid,
+  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, ComposedChart,
 } from "recharts";
 import {
   TrendingUp, TrendingDown, Minus, ShieldAlert, AlertTriangle, Cpu, GitBranch, Loader2,
@@ -43,7 +44,7 @@ function MetricCard({ icon: Icon, label, value, unit, accent, sub, testid }) {
         <span className="text-xs text-muted-foreground">{label}</span>
         {Icon && <Icon className="w-4 h-4" style={accent ? { color: `hsl(${accent})` } : { color: "hsl(var(--muted-foreground))" }} />}
       </div>
-      <div className="font-head font-black text-3xl tracking-tight" style={accent ? { color: `hsl(${accent})` } : {}}>{value}{unit}</div>
+      <div className="font-head font-black text-3xl tracking-tight" style={accent ? { color: `hsl(${accent})` } : {}}>{value}<span className="text-lg">{unit}</span></div>
       {sub && <div className="text-[11px] text-muted-foreground mt-1">{sub}</div>}
     </div>
   );
@@ -77,7 +78,7 @@ function QuarterChart({ title, data, kind = "bar", color = "hsl(190 90% 50%)", s
   );
 }
 
-function ExecutiveOverview({ health, m, momentum, activity, onLineage }) {
+function ExecutiveOverview({ health, m, basis, cyber, trend, momentum, activity, onLineage }) {
   const [actFilter, setActFilter] = useState("all");
   const actKinds = { upgrades: ["auto-upgrade", "auto-applied"], rollbacks: ["rollback"], containment: ["contained"], fixes: ["auto-fix"], approvals: ["needs-approval"] };
   const filteredActivity = (activity || []).filter((e) => actFilter === "all" || (actKinds[actFilter] || []).includes(e.kind));
@@ -87,56 +88,96 @@ function ExecutiveOverview({ health, m, momentum, activity, onLineage }) {
     const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
     const a = document.createElement("a"); a.href = url; a.download = "autonomy-activity.csv"; a.click(); URL.revokeObjectURL(url);
   };
-  const strategicKpis = [
-    { icon: DollarSign, label: "Residual exposure / yr", value: fmtM(m.exposure_residual_ale), accent: "15 80% 55%", sub: "Modeled annualized loss", testid: "exec-kpi-residual" },
-    { icon: ShieldCheck, label: "Exposure avoided", value: fmtM(m.exposure_avoided), accent: "142 70% 45%", sub: "Inherent − residual", testid: "exec-kpi-avoided" },
-    { icon: Percent, label: "Risk reduction", value: m.risk_reduction_pct, unit: "%", accent: "190 90% 50%", sub: "vs inherent exposure", testid: "exec-kpi-reduction" },
-    { icon: Wallet, label: "Risk-adjusted exposure", value: fmtM(m.risk_adjusted), accent: "35 90% 55%", sub: "Confidence-weighted", testid: "exec-kpi-adjusted" },
+
+  const items = (basis && basis.items) || [];
+  const totalResidual = items.reduce((s, i) => s + (i.residual_ale || 0), 0);
+  const totalInherent = items.reduce((s, i) => s + (i.inherent_ale || 0), 0);
+  const avoided = Math.max(0, totalInherent - totalResidual);
+  const reduction = totalInherent ? Math.round((avoided / totalInherent) * 100) : 0;
+  const scenario = (basis && basis.scenario) || { p10: 0, p50: 0, p90: 0 };
+  const bench = (basis && basis.benchmark) || {};
+  const ratio = basis && basis.benchmark_ratio;
+  const lossDrivers = items.slice(0, 6);
+  const trendPts = (trend && trend.points) || [];
+  const hist = (health && health.history) || [];
+
+  const heroKpis = [
+    { icon: Gauge, label: "Enterprise health", value: (health?.score ?? "—"), unit: health?.grade ? ` · ${health.grade}` : "", accent: "190 90% 50%", sub: "Live composite posture", testid: "exec-kpi-health" },
+    { icon: ShieldCheck, label: "Control posture", value: cyber?.posture_score ?? "—", unit: "%", accent: "142 70% 45%", sub: `${cyber?.control_coverage ?? 0}% control coverage`, testid: "exec-kpi-posture" },
+    { icon: DollarSign, label: "Residual exposure / yr", value: fmtM(totalResidual), accent: "15 80% 55%", sub: "Annualized loss (residual ALE)", testid: "exec-kpi-residual" },
+    { icon: Percent, label: "Risk reduction", value: reduction, unit: "%", accent: "266 85% 66%", sub: `${fmtM(avoided)} exposure avoided`, testid: "exec-kpi-reduction" },
   ];
+
   return (
     <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-12 gap-5" data-testid="executive-overview">
-      {/* 1 — Live intelligence (charts & data first) */}
-      <SectionLabel icon={Activity}>Live intelligence</SectionLabel>
-      <motion.div custom={0} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-7 bg-card fact-border rounded-xl p-6 flex flex-col">
-        <h2 className="font-head font-bold text-lg mb-1">Posture Trend</h2>
-        <p className="text-[11px] text-muted-foreground mb-2">Board-level trajectory of enterprise health.</p>
-        <ResponsiveContainer width="100%" height={190}>
-          <AreaChart data={m.health.history}>
-            <defs><linearGradient id="eg1" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="hsl(190 90% 50%)" stopOpacity={0.6} /><stop offset="100%" stopColor="hsl(190 90% 50%)" stopOpacity={0} /></linearGradient></defs>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(215 30% 18%)" vertical={false} />
-            <XAxis dataKey="month" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
-            <Tooltip contentStyle={CHART_TT} />
-            <Area type="monotone" dataKey="score" stroke="hsl(190 90% 50%)" strokeWidth={2.5} fill="url(#eg1)" />
-          </AreaChart>
-        </ResponsiveContainer>
-      </motion.div>
-      <motion.div custom={1} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-5 bg-card fact-border rounded-xl p-6 relative overflow-hidden">
-        <div className="absolute -right-10 -top-10 w-40 h-40 rounded-full bg-primary/5 blur-2xl" />
-        <div className="flex items-center justify-between mb-2 relative">
-          <h2 className="font-head font-bold text-lg">Enterprise Health Index</h2>
-          <FreshnessBadge freshness="live" />
-        </div>
-        <HealthGauge score={health?.score || 0} grade={health?.grade || "—"} />
+      <SectionLabel icon={Activity}>Strategic synthesis · live</SectionLabel>
+      {heroKpis.map((k, i) => (
+        <motion.div key={k.label} custom={i} variants={fade} initial="hidden" animate="show" className="col-span-6 md:col-span-2 lg:col-span-3"><MetricCard {...k} /></motion.div>
+      ))}
+
+      <motion.div custom={4} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-7 bg-card fact-border rounded-xl p-6" data-testid="exec-exposure-trend">
+        <div className="flex items-center justify-between mb-1"><h2 className="font-head font-bold text-lg">Financial Exposure vs Industry</h2><FreshnessBadge freshness={trend?.real ? "live" : "modeled"} /></div>
+        <p className="text-[11px] text-muted-foreground mb-3">Modelled per-incident exposure against the {trend?.industry || bench?.industry || "industry"} benchmark and estimated peer band.</p>
+        {trendPts.length ? (
+          <ChartBox height={210}>
+            <ComposedChart data={trendPts}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(215 30% 18%)" vertical={false} />
+              <XAxis dataKey="month" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
+              <YAxis width={46} tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} tickFormatter={(v) => `$${Math.round(v / 1e6)}M`} />
+              <Tooltip contentStyle={CHART_TT} formatter={(v) => fmtM(v)} />
+              <Area dataKey="peerBase" stackId="peer" stroke="none" fill="transparent" />
+              <Area dataKey="peerSpan" stackId="peer" stroke="none" fill="hsl(190 90% 50% / 0.08)" name="Peer band" />
+              <Line type="monotone" dataKey="benchmark" stroke="hsl(35 90% 55%)" strokeWidth={2} dot={false} name="Industry avg" />
+              <Line type="monotone" dataKey="modelled" stroke="hsl(190 90% 50%)" strokeWidth={2.5} dot={{ r: 3, fill: "hsl(190 90% 50%)" }} name="Your modelled" />
+            </ComposedChart>
+          </ChartBox>
+        ) : <div className="text-sm text-muted-foreground py-12 text-center">Run a live scan to build your exposure trend.</div>}
       </motion.div>
 
-      <motion.div custom={2} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-7 bg-card fact-border rounded-xl p-6">
-        <h2 className="font-head font-bold text-lg mb-4">Top Risks by Business Impact</h2>
-        <div className="space-y-3">
-          {m.top_strategic_risks.map((r) => {
-            const c = r.residual >= 16 ? "0 84% 60%" : r.residual >= 9 ? "35 90% 55%" : "142 70% 45%";
-            return (
-              <div key={r.ref} data-testid={`exec-risk-${r.ref}`} onClick={() => onLineage(r.ref)} className="flex items-center gap-4 p-3 rounded-lg bg-secondary/30 hover:bg-secondary/50 cursor-pointer transition-colors">
-                <span className="px-2 py-0.5 rounded-sm text-[10px] font-mono font-bold shrink-0" style={{ background: `hsl(${c} / 0.15)`, color: `hsl(${c})` }}>{r.residual}/25</span>
-                <div className="min-w-0 flex-1"><div className="font-medium text-sm truncate">{r.title}</div><div className="text-[11px] text-high">{r.business_impact}</div></div>
-                <Trend t={r.trend} />
-              </div>
-            );
-          })}
+      <motion.div custom={5} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-5 bg-card fact-border rounded-xl p-6 space-y-5">
+        <div data-testid="exec-loss-range">
+          <h2 className="font-head font-bold text-lg mb-1">Annual Loss Exposure</h2>
+          <p className="text-[11px] text-muted-foreground mb-3">Monte-Carlo portfolio range (P10 / P50 / P90).</p>
+          <div className="flex items-end justify-between mb-1 text-xs font-mono">
+            <span className="text-low">P10 {fmtM(scenario.p10)}</span>
+            <span className="text-foreground font-bold">P50 {fmtM(scenario.p50)}</span>
+            <span className="text-crit">P90 {fmtM(scenario.p90)}</span>
+          </div>
+          <div className="h-3 rounded-full" style={{ background: "linear-gradient(90deg, hsl(142 70% 45%), hsl(35 90% 55%), hsl(0 84% 60%))" }} />
+        </div>
+        <div data-testid="exec-benchmark" className="pt-1 border-t border-border/60">
+          <h3 className="font-head font-bold text-sm mb-2">Benchmark position</h3>
+          <div className="space-y-1.5 text-xs">
+            <div className="flex justify-between"><span className="text-muted-foreground">Your modelled avg / incident</span><span className="font-mono">{fmtM(basis?.modelled_avg_sle)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">{bench?.industry || "Industry"} avg breach</span><span className="font-mono text-med">{fmtM(bench?.industry_avg)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">AI-enabled breach avg</span><span className="font-mono">{fmtM(bench?.ai_breach_avg)}</span></div>
+            {ratio != null && <div className="flex justify-between"><span className="text-muted-foreground">Your model vs industry</span><span className={`font-mono ${ratio > 1 ? "text-crit" : "text-low"}`}>{ratio}×</span></div>}
+          </div>
+          <a href="/app/benchmark" className="inline-block mt-2 text-[11px] text-ai underline">Open full benchmarking →</a>
         </div>
       </motion.div>
-      <motion.div custom={3} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-5 bg-card fact-border rounded-xl p-6">
+
+      <motion.div custom={6} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-7 bg-card fact-border rounded-xl p-6" data-testid="exec-loss-drivers">
+        <h2 className="font-head font-bold text-lg mb-4">Top Loss Drivers <span className="text-xs font-normal text-muted-foreground">· by residual annualized loss</span></h2>
+        {lossDrivers.length ? (
+          <div className="space-y-3">
+            {lossDrivers.map((r) => {
+              const max = lossDrivers[0]?.residual_ale || 1;
+              const pct = Math.max(4, Math.round((r.residual_ale / max) * 100));
+              return (
+                <div key={r.ref} data-testid={`exec-driver-${r.ref}`} onClick={() => onLineage(r.ref)} className="cursor-pointer group">
+                  <div className="flex items-center justify-between text-sm mb-1"><span className="truncate pr-3">{r.title}</span><span className="font-mono text-high shrink-0">{fmtM(r.residual_ale)}/yr</span></div>
+                  <div className="h-2 rounded-full bg-secondary overflow-hidden"><div className="h-full bg-high/70 group-hover:bg-high transition-colors" style={{ width: `${pct}%` }} /></div>
+                </div>
+              );
+            })}
+          </div>
+        ) : <div className="text-sm text-muted-foreground py-8 text-center">No live risks yet — run a scan on the Security Scanner.</div>}
+      </motion.div>
+
+      <motion.div custom={7} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-5 bg-card fact-border rounded-xl p-6">
         <div className="flex items-center gap-2 mb-4"><GitBranch className="w-4 h-4 text-med" /><h2 className="font-head font-bold text-lg">Decisions Required</h2></div>
-        {m.decisions_required.length === 0 ? <div className="text-sm text-muted-foreground py-6 text-center">No decisions awaiting executive authority.</div> : (
+        {(m.decisions_required || []).length === 0 ? <div className="text-sm text-muted-foreground py-6 text-center">No decisions awaiting executive authority.</div> : (
           <div className="space-y-3">
             {m.decisions_required.map((d) => (
               <div key={d.ref} data-testid={`exec-decision-${d.ref}`} className="ai-border rounded-lg p-3">
@@ -149,8 +190,30 @@ function ExecutiveOverview({ health, m, momentum, activity, onLineage }) {
         )}
       </motion.div>
 
+      <motion.div custom={8} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-7 bg-card fact-border rounded-xl p-6" data-testid="exec-posture-trend">
+        <h2 className="font-head font-bold text-lg mb-1">Enterprise Health Trajectory</h2>
+        <p className="text-[11px] text-muted-foreground mb-3">Board-level trajectory of live enterprise health.</p>
+        {hist.length ? (
+          <ChartBox height={180}>
+            <AreaChart data={hist}>
+              <defs><linearGradient id="eg1" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="hsl(190 90% 50%)" stopOpacity={0.6} /><stop offset="100%" stopColor="hsl(190 90% 50%)" stopOpacity={0} /></linearGradient></defs>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(215 30% 18%)" vertical={false} />
+              <XAxis dataKey="month" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
+              <YAxis width={30} domain={[0, 100]} tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={CHART_TT} />
+              <Area type="monotone" dataKey="score" stroke="hsl(190 90% 50%)" strokeWidth={2.5} fill="url(#eg1)" />
+            </AreaChart>
+          </ChartBox>
+        ) : <div className="text-sm text-muted-foreground py-10 text-center">Trajectory builds as scans accumulate.</div>}
+      </motion.div>
+      <motion.div custom={9} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-5 bg-card fact-border rounded-xl p-6 relative overflow-hidden">
+        <div className="absolute -right-10 -top-10 w-40 h-40 rounded-full bg-primary/5 blur-2xl" />
+        <div className="flex items-center justify-between mb-2 relative"><h2 className="font-head font-bold text-lg">Enterprise Health Index</h2><FreshnessBadge freshness="live" /></div>
+        <HealthGauge score={health?.score || 0} grade={health?.grade || "—"} />
+      </motion.div>
+
       {momentum && (
-        <motion.div custom={4} variants={fade} initial="hidden" animate="show" className="col-span-full bg-card fact-border rounded-xl p-6" data-testid="exec-remediation-momentum">
+        <motion.div custom={10} variants={fade} initial="hidden" animate="show" className="col-span-full bg-card fact-border rounded-xl p-6" data-testid="exec-remediation-momentum">
           <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
             <div className="flex items-center gap-2"><Activity className="w-4 h-4 text-low" /><h2 className="font-head font-bold text-lg">Remediation Momentum <span className="text-xs font-normal text-muted-foreground">· last {momentum.window_days} days</span></h2></div>
             <div className="text-right">
@@ -164,20 +227,6 @@ function ExecutiveOverview({ health, m, momentum, activity, onLineage }) {
             <div className="bg-secondary/30 rounded-lg p-3"><div className="text-[10px] text-muted-foreground">Recs applied</div><div className="font-head font-bold text-xl">{momentum.applied_recommendations}</div></div>
           </div>
           <div className="h-2 rounded-full bg-secondary overflow-hidden mb-4"><div className="h-full transition-all duration-500" style={{ width: `${momentum.score}%`, background: `hsl(${momentum.score >= 66 ? "142 70% 45%" : momentum.score >= 33 ? "35 90% 55%" : "0 84% 60%"})` }} /></div>
-          {momentum.trend && momentum.trend.length > 0 && (
-            <div className="mb-4" data-testid="exec-momentum-trend">
-              <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Score trajectory (weekly)</div>
-              <ResponsiveContainer width="100%" height={110}>
-                <AreaChart data={momentum.trend}>
-                  <defs><linearGradient id="mg1" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="hsl(142 70% 45%)" stopOpacity={0.5} /><stop offset="100%" stopColor="hsl(142 70% 45%)" stopOpacity={0} /></linearGradient></defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke="hsl(215 30% 18%)" vertical={false} />
-                  <XAxis dataKey="week" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
-                  <Tooltip contentStyle={CHART_TT} formatter={(v) => [`${v}/100`, "Score"]} />
-                  <Area type="monotone" dataKey="score" stroke="hsl(142 70% 45%)" strokeWidth={2.5} fill="url(#mg1)" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          )}
           {momentum.activity.length === 0 ? <p className="text-xs text-muted-foreground">No remediation activity yet — logs added on Controls or Vendors appear here.</p> : (
             <div className="space-y-2" data-testid="exec-remediation-activity">
               {momentum.activity.map((it, i) => (
@@ -194,7 +243,7 @@ function ExecutiveOverview({ health, m, momentum, activity, onLineage }) {
       )}
 
       {activity && activity.length > 0 && (
-        <motion.div custom={5} variants={fade} initial="hidden" animate="show" className="col-span-full bg-card fact-border rounded-xl p-6" data-testid="exec-autonomy-activity">
+        <motion.div custom={11} variants={fade} initial="hidden" animate="show" className="col-span-full bg-card fact-border rounded-xl p-6" data-testid="exec-autonomy-activity">
           <div className="flex flex-wrap items-center gap-2 mb-4">
             <Bot className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Autonomy Activity <span className="text-xs font-normal text-muted-foreground">· AI fixes shipping live</span></h2>
             <div className="flex-1" />
@@ -219,12 +268,6 @@ function ExecutiveOverview({ health, m, momentum, activity, onLineage }) {
           </div>
         </motion.div>
       )}
-
-      {/* 2 — Status */}
-      <SectionLabel icon={Gauge}>Status</SectionLabel>
-      {strategicKpis.map((k, i) => (
-        <motion.div key={k.label} custom={4 + i} variants={fade} initial="hidden" animate="show" className="col-span-6 md:col-span-2 lg:col-span-3"><MetricCard {...k} /></motion.div>
-      ))}
     </div>
   );
 }
@@ -240,7 +283,6 @@ function OperationalOverview({ d, an, audit, intg, running, runAction, onLineage
   ];
   return (
     <div className="grid grid-cols-1 md:grid-cols-4 lg:grid-cols-12 gap-5" data-testid="operational-overview">
-      {/* 1 — Live intelligence (charts & data first) */}
       <SectionLabel icon={Activity}>Live intelligence</SectionLabel>
       <motion.div custom={0} variants={fade} initial="hidden" animate="show" className="col-span-full md:col-span-2 lg:col-span-6"><QuarterChart testid="chart-nist" title="NIST Control Maturity by Quarter" data={op.nist_maturity_by_quarter} kind="bar" color="hsl(142 70% 45%)" suffix="%" accent="142 70% 45%" source={op.sources?.nist} /></motion.div>
       <motion.div custom={1} variants={fade} initial="hidden" animate="show" className="col-span-full md:col-span-2 lg:col-span-6"><QuarterChart testid="chart-vendor" title="Third-Party Vendor Risk by Quarter" data={op.vendor_risk_by_quarter} kind="line" color="hsl(35 90% 55%)" suffix="/100" accent="35 90% 55%" source={op.sources?.vendor} /></motion.div>
@@ -268,6 +310,7 @@ function OperationalOverview({ d, an, audit, intg, running, runAction, onLineage
 
       <motion.div custom={6} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-8 bg-card fact-border rounded-xl p-6">
         <h2 className="font-head font-bold text-lg mb-4">Remediation Recommendations</h2>
+        {recommendations.length === 0 ? <div className="text-sm text-muted-foreground py-6 text-center" data-testid="recs-empty">No open recommendations — remediations are generated from live scan findings.</div> : (
         <div className="grid md:grid-cols-2 gap-4">
           {recommendations.map((r) => (
             <div key={r.ref} className="ai-border rounded-lg p-4 flex flex-col hover:-translate-y-0.5 transition-transform duration-200">
@@ -285,6 +328,7 @@ function OperationalOverview({ d, an, audit, intg, running, runAction, onLineage
             </div>
           ))}
         </div>
+        )}
       </motion.div>
       <motion.div custom={7} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-4 bg-card fact-border rounded-xl p-6">
         <div className="flex items-center gap-2 mb-3"><Activity className="w-4 h-4 text-low" /><h2 className="font-head font-bold text-lg">Live Activity</h2></div>
@@ -298,7 +342,6 @@ function OperationalOverview({ d, an, audit, intg, running, runAction, onLineage
         </div>
       </motion.div>
 
-      {/* 2 — Status */}
       <SectionLabel icon={Gauge}>Status</SectionLabel>
       {COUNT_KPIS.map((k, i) => (
         <motion.div key={k.label} custom={8 + i} variants={fade} initial="hidden" animate="show" className="col-span-6 md:col-span-2 lg:col-span-3">
@@ -314,7 +357,6 @@ function OperationalOverview({ d, an, audit, intg, running, runAction, onLineage
       <motion.div custom={18} variants={fade} initial="hidden" animate="show" className="col-span-6 md:col-span-2 lg:col-span-3"><MetricCard testid="op-phishing" icon={MailWarning} label="Phishing click rate" value={op.phishing_click_rate_by_quarter.at(-1)?.value} unit="%" accent="0 84% 60%" sub="Latest quarter" /></motion.div>
       <motion.div custom={19} variants={fade} initial="hidden" animate="show" className="col-span-6 md:col-span-2 lg:col-span-3"><MetricCard testid="op-nist" icon={Layers} label="NIST control maturity" value={op.nist_maturity_by_quarter.at(-1)?.value} unit="%" accent="142 70% 45%" sub="Avg control effectiveness" /></motion.div>
 
-      {/* 3 — Connectors & one-click remediation */}
       <SectionLabel icon={Plug}>Connectors &amp; remediation</SectionLabel>
       <motion.div custom={20} variants={fade} initial="hidden" animate="show" className="col-span-full">
         <SyncTicker />
@@ -336,13 +378,20 @@ export default function Overview() {
   const [report, setReport] = useState(false);
   const [momentum, setMomentum] = useState(null);
   const [autonomy, setAutonomy] = useState([]);
+  const [basis, setBasis] = useState(null);
+  const [cyber, setCyber] = useState(null);
+  const [trend, setTrend] = useState(null);
 
   const load = useCallback(async () => {
-    const [o, a, au, ig, mt, rm, ac] = await Promise.all([
+    const [o, a, au, ig, mt, rm, ac, fb, cy, tr] = await Promise.all([
       api.get("/overview"), api.get("/analytics"), api.get("/audit-logs"), api.get("/integrations"), api.get("/metrics/dashboard"), api.get("/remediation/activity"),
       api.get("/self-scan/activity").catch(() => ({ data: { events: [] } })),
+      api.get("/financial/basis").catch(() => ({ data: null })),
+      api.get("/cyber/overview").catch(() => ({ data: null })),
+      api.get("/financial/benchmark-trend").catch(() => ({ data: null })),
     ]);
     setD(o.data); setAn(a.data); setAudit(au.data.slice(0, 8)); setIntg(ig.data); setMetrics(mt.data); setMomentum(rm.data); setAutonomy(ac.data.events || []);
+    setBasis(fb.data); setCyber(cy.data); setTrend(tr.data);
   }, []);
 
   useEffect(() => { load(); const t = setInterval(() => load(), 20000); return () => clearInterval(t); }, [load]);
@@ -368,7 +417,7 @@ export default function Overview() {
             {isExec ? "Executive Overview" : "Operational Command"}
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            {isExec ? "Strategic, board-ready intelligence — financial exposure, risk reduction & decisions required." : "Operational control posture — AI usage, patching, MTTD/MTTR, incidents & remediation workflows."}
+            {isExec ? "Strategic, board-ready intelligence — financial exposure, loss drivers, risk reduction & decisions required." : "Operational control posture — AI usage, patching, MTTD/MTTR, incidents & remediation workflows."}
           </p>
         </motion.div>
         {isExec && (
@@ -379,7 +428,7 @@ export default function Overview() {
       </div>
 
       {isExec
-        ? <ExecutiveOverview health={d.health} m={metrics.executive} momentum={momentum} activity={autonomy} onLineage={setLineage} />
+        ? <ExecutiveOverview health={d.health} m={metrics.executive} basis={basis} cyber={cyber} trend={trend} momentum={momentum} activity={autonomy} onLineage={setLineage} />
         : <OperationalOverview d={d} an={an} audit={audit} intg={intg} running={running} runAction={runAction} onLineage={setLineage} m={metrics} />}
 
       <BoardReportModal open={report} onClose={() => setReport(false)} />

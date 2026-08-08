@@ -57,6 +57,10 @@ def _now():
 
 
 async def _seed(org_id):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"live_only": 1})
+    if org and org.get("live_only"):
+        return
     if await db.ai_agents.count_documents({"org_id": org_id}) == 0:
         await db.ai_agents.insert_many([{**a, "org_id": org_id, "last_redteam": None} for a in AGENT_SEED])
 
