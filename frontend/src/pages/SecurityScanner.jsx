@@ -90,6 +90,8 @@ export default function SecurityScanner() {
   const [containmentActive, setContainmentActive] = useState(0);
   const [playbook, setPlaybook] = useState(null);
   const [metrics, setMetrics] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   const loadScan = () => api.get("/self-scan/latest").then((r) => setScan(r.data && r.data.id ? r.data : null)).catch(() => setScan(null));
   const loadEngine = () => api.get("/self-scan/engine").then((r) => { setEngine(r.data.engine); setPending(r.data.pending || []); setEndpoint(r.data.endpoint || ""); }).catch(() => {});
@@ -220,6 +222,16 @@ export default function SecurityScanner() {
     try { await api.post(`/self-scan/maintenance/${id}/dismiss`); await loadJobs(); toast.success("Dismissed — kept on the previous version"); }
     catch (e) { toast.error(e?.response?.data?.detail || "Dismiss failed"); }
   };
+  const restartService = async () => {
+    if (!window.confirm("Safe-restart the service now to finalize applied upgrades? The app will reload for a few seconds.")) return;
+    try { await api.post("/self-scan/restart"); toast.success("Reloading service to finalize upgrades — this page will reconnect shortly…"); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Restart failed"); }
+  };
+  const previewDigest = async () => {
+    try { const { data } = await api.post("/self-scan/digest/preview"); toast.success("Digest preview sent to your chat alerts", { description: data.title }); }
+    catch (e) { toast.error("Digest preview failed"); }
+  };
+  const loadHistory = () => api.get("/self-scan/maintenance-history").then((r) => setHistory(r.data.jobs || [])).catch(() => {});
   const fmtDur = (s) => (s == null ? "—" : s < 1 ? "instant" : s < 60 ? `${Math.round(s)}s` : s < 3600 ? `${Math.round(s / 60)}m` : `${(s / 3600).toFixed(1)}h`);
 
   const toggleDeviceItem = async (item, done) => {
@@ -344,6 +356,7 @@ export default function SecurityScanner() {
             <span data-testid="alerts-teams-chip" className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full" style={{ background: alerts?.teams_url_set ? "hsl(142 70% 45% / 0.15)" : "hsl(0 0% 50% / 0.12)", color: alerts?.teams_url_set ? "hsl(142 70% 40%)" : "hsl(0 0% 45%)" }}>Teams {alerts?.teams_url_set ? "✓" : "—"}</span>
             <span data-testid="alerts-slack-chip" className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full" style={{ background: alerts?.slack_url_set ? "hsl(142 70% 45% / 0.15)" : "hsl(0 0% 50% / 0.12)", color: alerts?.slack_url_set ? "hsl(142 70% 40%)" : "hsl(0 0% 45%)" }}>Slack {alerts?.slack_url_set ? "✓" : "—"}</span>
             {(alerts?.teams_url_set || alerts?.slack_url_set) && <button data-testid="alerts-test" onClick={testAlerts} className="text-[10px] px-2 py-0.5 rounded-md bg-secondary flex items-center gap-1"><Send className="w-3 h-3" /> Send test</button>}
+            <button data-testid="digest-preview-btn" onClick={previewDigest} className="text-[10px] px-2 py-0.5 rounded-md bg-ai/15 text-ai flex items-center gap-1"><Send className="w-3 h-3" /> Preview digest</button>
           </div>
           <div className="flex flex-wrap gap-2 mt-2">
             <input data-testid="alerts-teams" value={teamsUrl} onChange={(e) => setTeamsUrl(e.target.value)} placeholder={alerts?.teams_masked || "Teams Incoming Webhook URL"} className="bg-secondary/60 rounded-md px-3 py-1.5 text-xs outline-none focus:ring-1 focus:ring-primary w-72 max-w-full" />
@@ -402,7 +415,28 @@ export default function SecurityScanner() {
         )}
         {jobs.length > 0 && (
           <div className="mt-4 border-t border-border pt-4" data-testid="maintenance-jobs">
-            <div className="flex items-center gap-2 mb-3"><Wrench className="w-4 h-4 text-primary" /><h3 className="font-head font-bold text-sm">Patch-apply jobs (upgrade → re-pin → re-scan)</h3></div>
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <Wrench className="w-4 h-4 text-primary" /><h3 className="font-head font-bold text-sm">Patch-apply jobs (upgrade → re-pin → re-scan)</h3>
+              <div className="flex-1" />
+              {jobs.some((j) => j.status === "applied") && <button data-testid="safe-restart-btn" onClick={restartService} className="px-3 py-1.5 rounded-md bg-med text-white text-xs font-bold flex items-center gap-1"><RefreshCw className="w-3.5 h-3.5" /> Safe restart to finalize</button>}
+              <button data-testid="history-toggle" onClick={() => { setShowHistory((s) => !s); if (!showHistory) loadHistory(); }} className="px-3 py-1.5 rounded-md bg-secondary text-xs font-bold flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> {showHistory ? "Hide history" : "Change history"}</button>
+            </div>
+            {showHistory && (
+              <div className="mb-3 rounded-lg border border-border overflow-hidden" data-testid="rollback-history">
+                <div className="grid grid-cols-[1.4fr_1.2fr_0.9fr_1.1fr_1fr] gap-2 px-3 py-2 bg-secondary/50 text-[10px] font-mono uppercase text-muted-foreground">
+                  <span>Package</span><span>Change</span><span>Status</span><span>Actor</span><span>When</span>
+                </div>
+                {history.length === 0 ? <div className="px-3 py-3 text-xs text-muted-foreground">No change history yet.</div> : history.slice(0, 30).map((h) => (
+                  <div key={h.id} data-testid={`history-${h.package}`} className="grid grid-cols-[1.4fr_1.2fr_0.9fr_1.1fr_1fr] gap-2 px-3 py-2 text-[11px] border-t border-border/60 items-center">
+                    <span className="font-medium truncate">{h.package}</span>
+                    <span className="font-mono text-muted-foreground truncate">{h.from_version} → {h.to_version || "patched"}</span>
+                    <span className="font-mono uppercase text-[9px]" style={{ color: h.status === "success" ? "hsl(142 70% 45%)" : h.status === "rolled_back" ? "hsl(35 90% 55%)" : (h.status === "failed" || h.status === "requires_approval") ? "hsl(0 84% 60%)" : "hsl(215 15% 60%)" }}>{h.status}</span>
+                    <span className="truncate">{h.promoted_by || h.dismissed_by || h.by || "—"}</span>
+                    <span className="text-muted-foreground">{h.created_at ? new Date(h.created_at).toLocaleDateString() : "—"}</span>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="space-y-2">
               {jobs.slice(0, 6).map((j) => {
                 const jc = j.status === "success" ? "142 70% 45%" : (j.status === "failed" || j.status === "requires_approval") ? "0 84% 60%" : (j.status === "applied" || j.status === "rolled_back") ? "35 90% 55%" : j.status === "dismissed" ? "215 15% 55%" : j.status === "verified" ? "199 70% 50%" : "48 90% 55%";

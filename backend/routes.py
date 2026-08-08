@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, field_validator
 
 from db import db
-from auth import get_current_user, require_active_subscription
+from auth import get_current_user, require_active_subscription, require_roles
 
 api = APIRouter(prefix="/api")
 
@@ -396,26 +396,143 @@ async def assets(user: dict = Depends(get_current_user)):
 # ---------- Financial quantification (FAIR-style) ----------
 SLE_BY_IMPACT = {5: 8_000_000, 4: 3_000_000, 3: 1_000_000, 2: 300_000, 1: 75_000}
 
+# Published external benchmarks (stored figures, updated on request — no live scrape dependency).
+BENCHMARKS = {
+    "updated": "2026-07-29",
+    "source": ("IBM Cost of a Data Breach 2026 (global avg $4.99M) & 2025 industry table; "
+               "Verizon DBIR 2025 typical incident-loss medians."),
+    "global_avg": 4_990_000,
+    "industries": {
+        "Healthcare": 7_420_000, "Financial": 6_080_000, "Pharmaceuticals": 5_100_000,
+        "Technology": 5_450_000, "Energy": 5_290_000, "Industrial": 5_560_000,
+        "Professional Services": 5_000_000, "Retail": 3_480_000, "Public sector": 2_860_000,
+        "Education": 3_700_000, "Hospitality": 3_500_000, "Media": 3_500_000,
+        "Transportation": 4_400_000, "Communications": 4_400_000,
+    },
+    "dbir_ransomware_median": 46_000,
+    "dbir_bec_median": 50_000,
+}
 
-def _fin(r):
-    sle = SLE_BY_IMPACT.get(r.get("impact", 3), 1_000_000)
+
+def _benchmark(industry):
+    return {
+        "industry": industry,
+        "industry_avg": BENCHMARKS["industries"].get(industry),
+        "global_avg": BENCHMARKS["global_avg"],
+        "dbir_ransomware_median": BENCHMARKS["dbir_ransomware_median"],
+        "dbir_bec_median": BENCHMARKS["dbir_bec_median"],
+        "source": BENCHMARKS["source"], "updated": BENCHMARKS["updated"],
+    }
+
+
+async def _get_fin_cfg(org_id):
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    cfg = org.get("financial_config") or {}
+    impact_sle = {int(k): int(v) for k, v in (cfg.get("impact_sle") or {}).items()} or dict(SLE_BY_IMPACT)
+    return {
+        "impact_sle": impact_sle,
+        "custom_table": bool(cfg.get("impact_sle")),
+        "industry": cfg.get("industry", "Technology"),
+        "method": cfg.get("method", "flat"),
+        "records": cfg.get("records"),
+        "per_record_cost": cfg.get("per_record_cost", 165),
+    }
+
+
+def _fin(r, cfg=None):
+    impact = r.get("impact", 3)
+    if cfg and cfg.get("method") == "records" and cfg.get("records"):
+        base = int(cfg["records"]) * int(cfg.get("per_record_cost") or 165)
+        sle = round(base * (impact / 5))
+        sle_source = (f"{int(cfg['records']):,} records × ${int(cfg.get('per_record_cost') or 165)}/record "
+                      f"× impact {impact}/5 (IBM per-record method)")
+    else:
+        table = (cfg or {}).get("impact_sle") or SLE_BY_IMPACT
+        sle = table.get(impact, table.get(3, 1_000_000))
+        sle_source = ("org-configured impact→$ table" if cfg and cfg.get("custom_table")
+                      else "default impact→$ table (analyst assumption — calibrate for defensibility)")
     aro = r.get("likelihood", 3) / 5
     inherent = max(1, r.get("inherent", 10))
     residual = r.get("residual", inherent)
+    conf = r.get("confidence", 0.7)
     inherent_ale = sle * aro
     residual_ale = inherent_ale * (residual / inherent)
     return {
-        "sle": sle, "aro": round(aro, 2),
+        "sle": sle, "sle_source": sle_source,
+        "aro": round(aro, 2), "aro_basis": f"likelihood {r.get('likelihood', 3)}/5",
         "inherent_ale": round(inherent_ale), "residual_ale": round(residual_ale),
-        "risk_adjusted": round(residual_ale * r.get("confidence", 0.7)),
+        "confidence": conf, "risk_adjusted": round(residual_ale * conf),
+        "math": f"SLE ${sle:,.0f} × ARO {round(aro, 2)} × (residual {residual}/inherent {inherent}) × confidence {conf}",
     }
+
+
+class FinConfig(BaseModel):
+    impact_sle: dict | None = None
+    industry: str | None = None
+    method: str | None = None
+    records: int | None = None
+    per_record_cost: int | None = None
+
+
+@api.get("/financial/config")
+async def get_financial_config(user: dict = Depends(get_current_user)):
+    cfg = await _get_fin_cfg(user["org_id"])
+    return {"config": {**cfg, "impact_sle": {str(k): v for k, v in cfg["impact_sle"].items()}},
+            "benchmark": _benchmark(cfg["industry"]),
+            "industries": sorted(BENCHMARKS["industries"].keys()),
+            "default_impact_sle": {str(k): v for k, v in SLE_BY_IMPACT.items()}}
+
+
+@api.put("/financial/config")
+async def put_financial_config(body: FinConfig, admin: dict = Depends(require_roles("admin"))):
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}) or {}
+    cfg = org.get("financial_config") or {}
+    if body.impact_sle is not None:
+        cfg["impact_sle"] = {str(int(k)): int(v) for k, v in body.impact_sle.items()}
+    if body.industry is not None:
+        cfg["industry"] = body.industry
+    if body.method is not None:
+        cfg["method"] = body.method
+    if body.records is not None:
+        cfg["records"] = body.records
+    if body.per_record_cost is not None:
+        cfg["per_record_cost"] = body.per_record_cost
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"financial_config": cfg}})
+    return await get_financial_config(admin)
+
+
+@api.post("/financial/benchmark/refresh")
+async def refresh_benchmark(admin: dict = Depends(require_roles("admin"))):
+    cfg = await _get_fin_cfg(admin["org_id"])
+    return {"ok": True, "benchmark": _benchmark(cfg["industry"]),
+            "note": "Stored published figures (IBM/Verizon DBIR); updated on request — no live scrape dependency."}
+
+
+@api.get("/financial/basis")
+async def financial_basis(user: dict = Depends(get_current_user)):
+    cfg = await _get_fin_cfg(user["org_id"])
+    risks = await db.risks.find({"org_id": user["org_id"]}, {"_id": 0}).to_list(500)
+    items = [{"ref": r["ref"], "title": r["title"], "category": r.get("category"),
+              "impact": r.get("impact"), "likelihood": r.get("likelihood"),
+              "residual": r["residual"], "inherent": r["inherent"], **_fin(r, cfg)} for r in risks]
+    items.sort(key=lambda x: x["residual_ale"], reverse=True)
+    slis = [i["sle"] for i in items] or [0]
+    modelled_avg_sle = round(sum(slis) / len(slis))
+    bench = _benchmark(cfg["industry"])
+    ratio = round(modelled_avg_sle / bench["industry_avg"], 2) if bench.get("industry_avg") else None
+    return {"items": items, "modelled_avg_sle": modelled_avg_sle, "modelled_max_sle": max(slis),
+            "benchmark": bench, "benchmark_ratio": ratio, "method": cfg["method"], "custom_table": cfg["custom_table"],
+            "disclaimer": ("Per-incident magnitudes are modelling assumptions from your configured impact→$ table "
+                           "(or records × per-record cost), benchmarked against published industry figures. "
+                           "Decision-support estimates — not guarantees.")}
 
 
 @api.get("/financials")
 async def financials(user: dict = Depends(get_current_user)):
+    cfg = await _get_fin_cfg(user["org_id"])
     risks = await db.risks.find({"org_id": user["org_id"]}, {"_id": 0}).to_list(500)
     items = [{"ref": r["ref"], "title": r["title"], "category": r["category"],
-              "residual": r["residual"], "inherent": r["inherent"], **_fin(r)} for r in risks]
+              "residual": r["residual"], "inherent": r["inherent"], **_fin(r, cfg)} for r in risks]
     items.sort(key=lambda x: x["residual_ale"], reverse=True)
     total_residual = sum(i["residual_ale"] for i in items)
     total_inherent = sum(i["inherent_ale"] for i in items)

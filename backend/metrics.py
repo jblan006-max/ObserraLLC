@@ -11,7 +11,7 @@ from bson import ObjectId
 
 from db import db
 from auth import get_current_user
-from routes import _fin
+from routes import _fin, _get_fin_cfg
 from ai_advisor import _month_key
 
 metrics_router = APIRouter(prefix="/api/metrics")
@@ -53,7 +53,8 @@ async def dashboard(user: dict = Depends(get_current_user)):
     vendors = await db.vendors.find({"org_id": org_id}, {"_id": 0}).to_list(500)
 
     # ---------- Executive (strategic $-impact) ----------
-    fins = [_fin(r) for r in risks]
+    _fincfg = await _get_fin_cfg(org_id)
+    fins = [_fin(r, _fincfg) for r in risks]
     residual_ale = sum(f["residual_ale"] for f in fins)
     inherent_ale = sum(f["inherent_ale"] for f in fins)
     avoided = inherent_ale - residual_ale

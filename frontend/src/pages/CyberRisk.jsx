@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { ShieldAlert, Loader2, Layers, PlayCircle, Gauge, ShieldCheck, TrendingDown } from "lucide-react";
+import { ShieldAlert, Loader2, Layers, PlayCircle, Gauge, ShieldCheck, TrendingDown, Calculator, BarChart3, Building2, RefreshCw } from "lucide-react";
 
 const TIER = (residual) => residual >= 16 ? "0 84% 60%" : residual >= 9 ? "35 90% 55%" : "142 70% 45%";
 
@@ -80,6 +80,107 @@ export default function CyberRisk() {
         </table>
       </div>
       <p className="text-[11px] text-muted-foreground">Treating a risk opens a remediation workflow and alerts owners — proving the kernel loop.</p>
+
+      <FinancialBasis isAdmin={isAdmin} />
+    </div>
+  );
+}
+
+function FinancialBasis({ isAdmin }) {
+  const [basis, setBasis] = useState(null);
+  const [cfg, setCfg] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const load = () => Promise.all([api.get("/financial/basis"), api.get("/financial/config")])
+    .then(([b, c]) => { setBasis(b.data); setCfg(c.data); }).catch(() => {});
+  useEffect(() => { load(); }, []);
+  if (!basis || !cfg) return null;
+  const fmt = (n) => n == null ? "—" : `$${(n / 1e6).toFixed(n < 1e6 ? 3 : 2)}M`;
+  const bench = basis.benchmark;
+  const ratio = basis.benchmark_ratio;
+  const ratioColor = ratio == null ? "215 15% 55%" : ratio > 1.25 ? "0 84% 60%" : ratio < 0.75 ? "35 90% 55%" : "142 70% 45%";
+  const save = async (patch) => {
+    setSaving(true);
+    try { const { data } = await api.put("/financial/config", patch); setCfg(data); await load(); toast.success("Financial model updated"); }
+    catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+    setSaving(false);
+  };
+  return (
+    <div className="bg-card fact-border rounded-xl p-5 space-y-5" data-testid="financial-basis">
+      <div className="flex items-center gap-2"><Calculator className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Financial basis &amp; benchmark</h2><span className="text-[10px] font-mono px-2 py-0.5 rounded-sm bg-secondary text-muted-foreground">defensible math</span></div>
+
+      <div className="grid sm:grid-cols-3 gap-3" data-testid="fin-benchmark">
+        <div className="rounded-lg bg-secondary/40 p-3">
+          <div className="text-[10px] font-mono uppercase text-muted-foreground">Your modelled per-incident</div>
+          <div className="font-head font-black text-2xl">{fmt(basis.modelled_avg_sle)}</div>
+          <div className="text-[10px] text-muted-foreground">avg SLE · max {fmt(basis.modelled_max_sle)}</div>
+        </div>
+        <div className="rounded-lg bg-secondary/40 p-3">
+          <div className="text-[10px] font-mono uppercase text-muted-foreground">{bench.industry} benchmark (IBM)</div>
+          <div className="font-head font-black text-2xl">{fmt(bench.industry_avg)}</div>
+          <div className="text-[10px] text-muted-foreground">global avg {fmt(bench.global_avg)}</div>
+        </div>
+        <div className="rounded-lg p-3" style={{ background: `hsl(${ratioColor} / 0.12)` }} data-testid="fin-ratio">
+          <div className="text-[10px] font-mono uppercase text-muted-foreground">Your model vs benchmark</div>
+          <div className="font-head font-black text-2xl" style={{ color: `hsl(${ratioColor})` }}>{ratio == null ? "—" : `${ratio}×`}</div>
+          <div className="text-[10px] text-muted-foreground">{ratio == null ? "" : ratio > 1.25 ? "above published avg" : ratio < 0.75 ? "below published avg" : "in line with published avg"}</div>
+        </div>
+      </div>
+      <div className="text-[11px] text-muted-foreground flex items-start gap-2"><BarChart3 className="w-3.5 h-3.5 mt-0.5 shrink-0" /> <span>DBIR medians for context — ransomware {fmt(bench.dbir_ransomware_median)}, BEC {fmt(bench.dbir_bec_median)}. Source: {bench.source} (updated {bench.updated}).</span></div>
+
+      <div className="rounded-lg border border-border overflow-x-auto" data-testid="fin-math-table">
+        <table className="w-full text-xs min-w-[720px]">
+          <thead className="text-[10px] font-mono uppercase text-muted-foreground border-b border-border">
+            <tr><th className="text-left px-3 py-2">Risk</th><th className="text-left px-3 py-2">SLE (source)</th><th className="text-left px-3 py-2">Derivation</th><th className="text-right px-3 py-2">Residual ALE</th></tr>
+          </thead>
+          <tbody>
+            {basis.items.map((i) => (
+              <tr key={i.ref} data-testid={`fin-row-${i.ref}`} className="border-b border-border/60">
+                <td className="px-3 py-2"><div className="font-mono text-ai">{i.ref}</div><div className="truncate max-w-[180px]">{i.title}</div></td>
+                <td className="px-3 py-2">${(i.sle / 1e6).toFixed(2)}M<div className="text-[10px] text-muted-foreground max-w-[220px]">{i.sle_source}</div></td>
+                <td className="px-3 py-2 font-mono text-[10px] text-muted-foreground">{i.math}</td>
+                <td className="px-3 py-2 text-right font-bold">${(i.residual_ale / 1e6).toFixed(2)}M</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {isAdmin && (
+        <div className="rounded-lg bg-secondary/30 p-4 space-y-3" data-testid="fin-config">
+          <div className="flex items-center gap-2 text-sm font-bold"><Building2 className="w-4 h-4" /> Calibrate the model (admin)</div>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="text-xs flex items-center gap-2">Industry
+              <select data-testid="fin-industry" value={cfg.config.industry} onChange={(e) => save({ industry: e.target.value })} className="bg-background border border-border rounded-md px-2 py-1 text-xs">
+                {cfg.industries.map((x) => <option key={x} value={x}>{x}</option>)}
+              </select>
+            </label>
+            <label className="text-xs flex items-center gap-2">Method
+              <select data-testid="fin-method" value={cfg.config.method} onChange={(e) => save({ method: e.target.value })} className="bg-background border border-border rounded-md px-2 py-1 text-xs">
+                <option value="flat">Impact→$ table</option>
+                <option value="records">Records × per-record cost</option>
+              </select>
+            </label>
+            <button data-testid="fin-refresh" onClick={async () => { await api.post("/financial/benchmark/refresh"); toast.success("Benchmark refreshed"); load(); }} className="text-xs px-2.5 py-1 rounded-md bg-secondary flex items-center gap-1"><RefreshCw className="w-3.5 h-3.5" /> Refresh benchmark</button>
+            {saving && <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />}
+          </div>
+          {cfg.config.method === "records" ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="text-xs flex items-center gap-2">Records at risk<input data-testid="fin-records" type="number" defaultValue={cfg.config.records || 0} onBlur={(e) => save({ records: Number(e.target.value) })} className="w-32 bg-background border border-border rounded-md px-2 py-1 text-xs" /></label>
+              <label className="text-xs flex items-center gap-2">$/record<input data-testid="fin-perrecord" type="number" defaultValue={cfg.config.per_record_cost || 165} onBlur={(e) => save({ per_record_cost: Number(e.target.value) })} className="w-24 bg-background border border-border rounded-md px-2 py-1 text-xs" /></label>
+              <span className="text-[10px] text-muted-foreground">IBM per-record method (2023: $165/record).</span>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-end gap-3">
+              {["5", "4", "3", "2", "1"].map((k) => (
+                <label key={k} className="text-xs flex flex-col gap-1">Impact {k} SLE ($)
+                  <input data-testid={`fin-sle-${k}`} type="number" defaultValue={cfg.config.impact_sle[k]} onBlur={(e) => save({ impact_sle: { ...cfg.config.impact_sle, [k]: Number(e.target.value) } })} className="w-28 bg-background border border-border rounded-md px-2 py-1 text-xs" />
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      <p className="text-[11px] text-muted-foreground">{basis.disclaimer}</p>
     </div>
   );
 }

@@ -18,7 +18,7 @@ import {
 import {
   TrendingUp, TrendingDown, Minus, ShieldAlert, AlertTriangle, Cpu, GitBranch, Loader2,
   FileText, Zap, Activity, DollarSign, Percent, ShieldCheck, Wallet, Bug, Clock, Building,
-  Gauge, MailWarning, Layers, Plug, Bot,
+  Gauge, MailWarning, Layers, Plug, Bot, Download, Filter,
 } from "lucide-react";
 
 const RECMAP = { "CR-001": "entra_enforce_pim", "CR-004": "casb_quarantine_shadow", "CR-002": "tenable_patch_critical", "CR-005": "entra_enforce_mfa" };
@@ -78,6 +78,15 @@ function QuarterChart({ title, data, kind = "bar", color = "hsl(190 90% 50%)", s
 }
 
 function ExecutiveOverview({ health, m, momentum, activity, onLineage }) {
+  const [actFilter, setActFilter] = useState("all");
+  const actKinds = { upgrades: ["auto-upgrade", "auto-applied"], rollbacks: ["rollback"], containment: ["contained"], fixes: ["auto-fix"], approvals: ["needs-approval"] };
+  const filteredActivity = (activity || []).filter((e) => actFilter === "all" || (actKinds[actFilter] || []).includes(e.kind));
+  const exportActivity = () => {
+    const rows = [["timestamp", "type", "title", "detail"], ...filteredActivity.map((e) => [e.ts, e.kind, (e.title || "").replace(/"/g, "'"), (e.detail || "").replace(/"/g, "'")])];
+    const csv = rows.map((r) => r.map((c) => `"${c ?? ""}"`).join(",")).join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const a = document.createElement("a"); a.href = url; a.download = "autonomy-activity.csv"; a.click(); URL.revokeObjectURL(url);
+  };
   const strategicKpis = [
     { icon: DollarSign, label: "Residual exposure / yr", value: fmtM(m.exposure_residual_ale), accent: "15 80% 55%", sub: "Modeled annualized loss", testid: "exec-kpi-residual" },
     { icon: ShieldCheck, label: "Exposure avoided", value: fmtM(m.exposure_avoided), accent: "142 70% 45%", sub: "Inherent − residual", testid: "exec-kpi-avoided" },
@@ -186,10 +195,18 @@ function ExecutiveOverview({ health, m, momentum, activity, onLineage }) {
 
       {activity && activity.length > 0 && (
         <motion.div custom={5} variants={fade} initial="hidden" animate="show" className="col-span-full bg-card fact-border rounded-xl p-6" data-testid="exec-autonomy-activity">
-          <div className="flex items-center gap-2 mb-4"><Bot className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Autonomy Activity <span className="text-xs font-normal text-muted-foreground">· AI fixes shipping live</span></h2></div>
+          <div className="flex flex-wrap items-center gap-2 mb-4">
+            <Bot className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Autonomy Activity <span className="text-xs font-normal text-muted-foreground">· AI fixes shipping live</span></h2>
+            <div className="flex-1" />
+            <Filter className="w-3.5 h-3.5 text-muted-foreground" />
+            {["all", "upgrades", "rollbacks", "containment", "fixes", "approvals"].map((k) => (
+              <button key={k} data-testid={`activity-filter-${k}`} onClick={() => setActFilter(k)} className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded-full transition-colors ${actFilter === k ? "bg-ai text-white" : "bg-secondary text-muted-foreground hover:text-foreground"}`}>{k}</button>
+            ))}
+            <button data-testid="activity-export" onClick={exportActivity} className="text-[10px] px-2 py-0.5 rounded-md bg-secondary flex items-center gap-1 hover:text-foreground"><Download className="w-3 h-3" /> Export</button>
+          </div>
           <div className="space-y-2">
-            {activity.slice(0, 8).map((e) => {
-              const map = { "auto-fix": ["#42c98e", "AUTO-FIX"], "auto-upgrade": ["#12b4d6", "UPGRADE"], "auto-applied": ["#42c98e", "APPLIED"], rollback: ["#f5a623", "ROLLBACK"], "needs-approval": ["#e0574a", "APPROVAL"], contained: ["#8a7bf0", "CONTAINED"], digest: ["#94a3b8", "DIGEST"] };
+            {filteredActivity.length === 0 ? <p className="text-xs text-muted-foreground" data-testid="autonomy-empty">No activity of this type yet.</p> : filteredActivity.slice(0, 12).map((e) => {
+              const map = { "auto-fix": ["#42c98e", "AUTO-FIX"], "auto-upgrade": ["#12b4d6", "UPGRADE"], "auto-applied": ["#42c98e", "APPLIED"], rollback: ["#f5a623", "ROLLBACK"], "needs-approval": ["#e0574a", "APPROVAL"], contained: ["#8a7bf0", "CONTAINED"], digest: ["#94a3b8", "DIGEST"], restart: ["#12b4d6", "RESTART"] };
               const [c, lbl] = map[e.kind] || ["#94a3b8", (e.kind || "EVENT").toUpperCase()];
               return (
                 <div key={e.id} data-testid="autonomy-item" className="flex items-center gap-3 text-xs">
