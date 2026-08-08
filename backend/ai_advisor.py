@@ -488,6 +488,16 @@ async def _methodology_appendix(org_id):
     md += f"- {bench.get('ai_breach_source')}: AI-enabled breach avg ${(bench.get('ai_breach_avg') or 0)/1e6:.2f}M; shadow-AI premium +${(bench.get('shadow_ai_premium') or 0)/1e3:.0f}k ({bench.get('shadow_ai_source')}).\n"
     md += f"- {bench.get('dbir_source')}: ransomware median ${(bench.get('dbir_ransomware_median') or 0)/1e3:.0f}k, BEC median ${(bench.get('dbir_bec_median') or 0)/1e3:.0f}k.\n"
     md += f"- Benchmark table last updated {bench.get('updated')}; re-checked at most annually.\n"
+    from routes import _montecarlo_item
+    top = sorted(risks, key=lambda r: _fin(r, cfg)["residual_ale"], reverse=True)[:5]
+    if top:
+        md += "\n## Per-Risk Exposure Bands (Monte-Carlo P10–P90)\n"
+        md += "| Ref | Risk | Expected ALE | P10–P90 band |\n|---|---|---|---|\n"
+        for r in top:
+            ff = _fin(r, cfg)
+            band = _montecarlo_item(ff, r)
+            md += (f"| {r.get('ref')} | {str(r.get('title'))[:40]} | ${ff['residual_ale']/1e6:.2f}M | "
+                   f"${band['p10']/1e6:.2f}M – ${band['p90']/1e6:.2f}M |\n")
     if signoff and signoff.get("locked"):
         md += f"\n[FACT] Calibration approved & locked by {signoff['name']} on {str(signoff.get('at'))[:10]} (config hash {signoff.get('hash')}).\n"
     else:

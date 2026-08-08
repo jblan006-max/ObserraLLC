@@ -586,6 +586,79 @@ def _montecarlo_item(f, r, iters=1000):
     return {"p10": _p(0.10), "p50": _p(0.50), "p90": _p(0.90)}
 
 
+async def _record_exposure_snapshot(org_id):
+    from datetime import datetime, timezone
+    cfg = await _get_fin_cfg(org_id)
+    risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    if not risks:
+        return
+    fins = [_fin(r, cfg) for r in risks]
+    avg = round(sum(f["sle"] for f in fins) / len(fins))
+    residual_total = round(sum(f["residual_ale"] for f in fins))
+    bench = await _benchmark(cfg["industry"])
+    now = datetime.now(timezone.utc)
+    month = now.strftime("%Y-%m")
+    await db.exposure_snapshots.update_one(
+        {"org_id": org_id, "month": month},
+        {"$set": {"org_id": org_id, "month": month, "label": now.strftime("%b %y"),
+                  "modelled_avg_sle": avg, "residual_total": residual_total,
+                  "benchmark": bench.get("industry_avg"), "industry": cfg["industry"],
+                  "ts": now.isoformat()}}, upsert=True)
+
+
+async def _record_all_snapshots():
+    orgs = await db.organizations.find({}, {"_id": 1}).to_list(1000)
+    for o in orgs:
+        try:
+            await _record_exposure_snapshot(str(o["_id"]))
+        except Exception:
+            pass
+
+
+_INDUSTRY_KEYWORDS = {
+    "Healthcare": ["health", "hospital", "clinic", "med", "care", "pharma"],
+    "Financial": ["bank", "financial", "capital", "invest", "insur", "fintech", "credit"],
+    "Technology": ["tech", "software", "cloud", "data", "ai", "cyber", "digital", "labs"],
+    "Retail": ["retail", "shop", "store", "commerce"],
+    "Public sector": ["gov", "public", "city", "county", "federal", "state"],
+    "Education": ["school", "university", "college", "edu", "academy"],
+    "Energy": ["energy", "power", "oil", "gas", "utility", "grid"],
+    "Transportation": ["transport", "logistic", "freight", "airline", "rail"],
+}
+
+
+async def _detect_industry(org_id):
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    if org.get("sector"):
+        for ind in BENCHMARKS["industries"]:
+            if ind.lower() in str(org["sector"]).lower():
+                return {"industry": ind, "reason": f"organisation sector '{org['sector']}'"}
+    name = (org.get("name") or "").lower()
+    for ind, kws in _INDUSTRY_KEYWORDS.items():
+        if any(k in name for k in kws):
+            return {"industry": ind, "reason": f"matched organisation name '{org.get('name')}'"}
+    return {"industry": "Technology", "reason": "no strong signal — defaulted to Technology"}
+
+
+async def _signoff_reminders():
+    """Nudge when a locked calibration has drifted from its signed hash."""
+    import notifications
+    orgs = await db.organizations.find({"financial_config.signoff.locked": True}).to_list(1000)
+    for org in orgs:
+        cfg = org.get("financial_config") or {}
+        so = cfg.get("signoff") or {}
+        current = _cfg_hash({
+            "impact_sle": {int(k): int(v) for k, v in (cfg.get("impact_sle") or {}).items()} or dict(SLE_BY_IMPACT),
+            "industry": cfg.get("industry", "Technology"), "method": cfg.get("method", "flat"),
+            "records": cfg.get("records"), "per_record_cost": cfg.get("per_record_cost", 165)})
+        if so.get("hash") and so.get("hash") != current:
+            await notifications.create(
+                str(org["_id"]), "control_drift", "Financial calibration changed since CRO sign-off",
+                f"The model changed since {so.get('name')} signed off on {str(so.get('at'))[:10]}. "
+                "Re-approve so board numbers stay defensible.", ref="cyber-risk",
+                dedupe_key=f"signoff-stale:{current}")
+
+
 @api.get("/financial/config")
 async def get_financial_config(user: dict = Depends(get_current_user)):
     cfg = await _get_fin_cfg(user["org_id"])
@@ -596,7 +669,8 @@ async def get_financial_config(user: dict = Depends(get_current_user)):
             "benchmark": await _benchmark(cfg["industry"]),
             "industries": sorted((await _get_benchmarks()).get("industries", {}).keys()),
             "default_impact_sle": {str(k): v for k, v in SLE_BY_IMPACT.items()},
-            "suggested_records": await _suggested_records(user["org_id"])}
+            "suggested_records": await _suggested_records(user["org_id"]),
+            "suggested_industry": await _detect_industry(user["org_id"])}
 
 
 @api.put("/financial/config")
@@ -653,6 +727,12 @@ async def benchmark_trend(user: dict = Depends(get_current_user)):
     cfg = await _get_fin_cfg(user["org_id"])
     bench = await _benchmark(cfg["industry"])
     ind = bench.get("industry_avg") or 0
+    snaps = await db.exposure_snapshots.find({"org_id": user["org_id"]}, {"_id": 0}).sort("month", 1).to_list(24)
+    if len(snaps) >= 2:
+        points = [{"month": s.get("label") or s["month"], "modelled": s["modelled_avg_sle"],
+                   "benchmark": s.get("benchmark") or ind} for s in snaps]
+        return {"points": points, "industry": cfg["industry"], "benchmark": ind,
+                "source": bench.get("industry_avg_source"), "real": True}
     risks = await db.risks.find({"org_id": user["org_id"]}, {"_id": 0}).to_list(500)
     slis = [_fin(r, cfg)["sle"] for r in risks] or [0]
     avg = sum(slis) / len(slis)
@@ -666,7 +746,8 @@ async def benchmark_trend(user: dict = Depends(get_current_user)):
     if not points:
         points = [{"month": "prev", "modelled": round(avg * 1.05), "benchmark": ind},
                   {"month": "now", "modelled": round(avg), "benchmark": ind}]
-    return {"points": points, "industry": cfg["industry"], "benchmark": ind, "source": bench.get("industry_avg_source")}
+    return {"points": points, "industry": cfg["industry"], "benchmark": ind,
+            "source": bench.get("industry_avg_source"), "real": False}
 
 
 @api.post("/financial/benchmark/refresh")
@@ -695,6 +776,7 @@ async def financial_basis(user: dict = Depends(get_current_user)):
     bench = await _benchmark(cfg["industry"])
     ratio = round(modelled_avg_sle / bench["industry_avg"], 2) if bench.get("industry_avg") else None
     scenario = _montecarlo(items)
+    await _record_exposure_snapshot(user["org_id"])
     signoff = cfg.get("signoff")
     if signoff:
         signoff = {**signoff, "stale": signoff.get("hash") != _cfg_hash(cfg)}
