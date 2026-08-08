@@ -23,6 +23,21 @@ MODEL_ROUTES = {
     "ingestion": ("gemini", "gemini-3.1-pro-preview"),
 }
 
+# User-selectable advisor models ("Connect to model"). These identifiers are already
+# verified against emergentintegrations elsewhere in this file (FAIR-AIR + board reports).
+ADVISOR_MODELS = [
+    {"id": "gpt-5.6-sol", "label": "GPT-5.6 Sol", "provider": "openai", "tier": "Frontier reasoning", "note": "Deepest multi-step reasoning"},
+    {"id": "gpt-5.6-terra", "label": "GPT-5.6 Terra", "provider": "openai", "tier": "Frontier", "note": "High reasoning, balanced latency"},
+    {"id": "gpt-5.6-luna", "label": "GPT-5.6 Luna", "provider": "openai", "tier": "Frontier", "note": "Fast frontier tier"},
+    {"id": "gpt-5.5", "label": "GPT-5.5", "provider": "openai", "tier": "Advanced", "note": "Strong general analysis"},
+    {"id": "gpt-5.4", "label": "GPT-5.4", "provider": "openai", "tier": "Balanced", "note": "Great default"},
+    {"id": "gpt-5.4-mini", "label": "GPT-5.4 Mini", "provider": "openai", "tier": "Fast", "note": "Lowest cost, quick answers"},
+    {"id": "claude-opus-4-8", "label": "Claude Opus 4.8", "provider": "anthropic", "tier": "Frontier synthesis", "note": "Board-grade synthesis (auto default)"},
+    {"id": "claude-sonnet-5", "label": "Claude Sonnet 5", "provider": "anthropic", "tier": "Balanced", "note": "Fast, capable synthesis"},
+    {"id": "gemini-3.1-pro-preview", "label": "Gemini 3.1 Pro", "provider": "gemini", "tier": "Long-context", "note": "Best for large context ingestion"},
+]
+_MODEL_PROVIDER = {m["id"]: m["provider"] for m in ADVISOR_MODELS}
+
 DEEP_ANALYSIS_DIRECTIVE = (
     "\n\nDEEP ANALYSIS MODE — think in structured steps before answering. Internally: "
     "(1) gather the relevant evidence from context, (2) reason through second-order impacts and "
@@ -38,6 +53,12 @@ COST_PER_MTOK = {
     "anthropic/claude-opus-4-8": (15.0, 75.0),
     "anthropic/claude-sonnet-5": (3.0, 15.0),
     "gemini/gemini-3.1-pro-preview": (1.25, 5.0),
+    "openai/gpt-5.6-sol": (10.0, 30.0),
+    "openai/gpt-5.6-terra": (8.0, 24.0),
+    "openai/gpt-5.6-luna": (5.0, 15.0),
+    "openai/gpt-5.5": (4.0, 12.0),
+    "openai/gpt-5.4": (2.5, 10.0),
+    "openai/gpt-5.4-mini": (0.4, 1.6),
 }
 
 
@@ -167,6 +188,7 @@ class AdvisorQuery(BaseModel):
     mode: str = "executive"
     session_id: str | None = None
     deep: bool = False
+    model: str | None = None
 
 
 async def _build_context(org_id: str) -> str:
@@ -209,6 +231,9 @@ async def advisor_chat(body: AdvisorQuery, user: dict = Depends(require_active_s
         raise HTTPException(status_code=429, detail="Advisor paused: monthly spend cap reached. An admin can raise or turn off the cap in the advisor panel.")
     context = await _build_context(org_id)
     provider, model = MODEL_ROUTES.get(body.mode, MODEL_ROUTES["executive"])
+    chosen = body.model or (await db.organizations.find_one({"_id": ObjectId(org_id)}, {"advisor_model": 1}) or {}).get("advisor_model")
+    if chosen and chosen in _MODEL_PROVIDER:
+        provider, model = _MODEL_PROVIDER[chosen], chosen
     session_id = body.session_id or f"{org_id}-{user['id']}"
 
     await db.advisor_logs.insert_one({
@@ -246,6 +271,98 @@ async def advisor_chat(body: AdvisorQuery, user: dict = Depends(require_active_s
 
     return StreamingResponse(event_generator(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+class ModelPref(BaseModel):
+    model: str | None = None
+
+
+@advisor_router.get("/models")
+async def advisor_models(user: dict = Depends(get_current_user)):
+    """Catalog of models the advisor can connect to, plus the org's saved default and the
+    auto (mode-routed) model so the UI can show what's currently powering replies."""
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}, {"advisor_model": 1}) or {}
+    ep, em = MODEL_ROUTES["executive"]
+    op, om = MODEL_ROUTES["operational"]
+    return {"models": ADVISOR_MODELS, "default": org.get("advisor_model"),
+            "auto": {"executive": f"{ep}/{em}", "operational": f"{op}/{om}"}}
+
+
+@advisor_router.put("/model")
+async def set_advisor_model(body: ModelPref, user: dict = Depends(get_current_user)):
+    """Connect the advisor to a specific model (org-wide default). None = Auto (mode routing)."""
+    mid = body.model if body.model in _MODEL_PROVIDER else None
+    await db.organizations.update_one({"_id": ObjectId(user["org_id"])}, {"$set": {"advisor_model": mid}})
+    return {"default": mid, "connected": bool(mid)}
+
+
+class InsightReq(BaseModel):
+    dashboard: str
+    mode: str = "executive"
+
+
+_INSIGHT_CACHE = {}
+
+
+@advisor_router.post("/insight")
+async def advisor_insight(body: InsightReq, user: dict = Depends(require_active_subscription)):
+    """AI-native, grounded analysis of a single dashboard's LIVE data. Returns a small JSON
+    insight card (headline + 3-4 cited findings + 1-2 next actions). Cached 3 min per org+dashboard."""
+    import re as _re
+    org_id = user["org_id"]
+    now = datetime.now(timezone.utc)
+    key = (org_id, body.dashboard, body.mode)
+    cached = _INSIGHT_CACHE.get(key)
+    if cached and (now - cached["ts"]).total_seconds() < 180:
+        return cached["data"]
+    if await _is_paused(org_id):
+        raise HTTPException(status_code=429, detail="Advisor paused: monthly spend cap reached.")
+    ctx = await _all_dashboards_context(org_id)
+    provider, model = MODEL_ROUTES["executive"]
+    chosen = (await db.organizations.find_one({"_id": ObjectId(org_id)}, {"advisor_model": 1}) or {}).get("advisor_model")
+    if chosen and chosen in _MODEL_PROVIDER:
+        provider, model = _MODEL_PROVIDER[chosen], chosen
+    system = (
+        "You are the Obserra EIOS Advisor generating a CONCISE, board-grade AI insight card for the "
+        f"'{body.dashboard}' dashboard in {body.mode} mode. Ground every point in the provided live context; "
+        "cite a specific metric, ref, framework or $ figure in each finding. Separate FACT (connected/measured), "
+        "ESTIMATE (modeled) and PREDICTION (forward-looking). Return STRICT JSON only, no markdown: "
+        '{"headline": string (<=90 chars), "insights": [{"text": string, "kind": "fact"|"estimate"|"prediction"}] '
+        '(exactly 3-4 items), "actions": [string] (1-2 short imperative next steps)}.'
+    )
+    chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"],
+                   session_id=f"insight-{org_id}-{body.dashboard}", system_message=system).with_model(provider, model)
+    prompt = (f"DASHBOARD: {body.dashboard}\nLIVE CONTEXT (JSON):\n{json.dumps(ctx, default=str)[:12000]}\n\n"
+              "Produce the insight JSON now.")
+    collected = []
+    try:
+        async for ev in chat.stream_message(UserMessage(text=prompt)):
+            if isinstance(ev, TextDelta):
+                collected.append(ev.content)
+            elif isinstance(ev, StreamDone):
+                break
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Advisor unavailable: {e}")
+    raw = "".join(collected).strip()
+    mm = _re.search(r"\{.*\}", raw, _re.S)
+    try:
+        data = json.loads(mm.group(0)) if mm else {}
+    except Exception:
+        data = {}
+    if not isinstance(data, dict) or "insights" not in data:
+        data = {"headline": (raw[:88] or "Insight unavailable"), "insights": [], "actions": []}
+    data.setdefault("headline", "")
+    data.setdefault("insights", [])
+    data.setdefault("actions", [])
+    data["model"] = f"{provider}/{model}"
+    data["generated_at"] = now.isoformat()
+    _INSIGHT_CACHE[key] = {"ts": now, "data": data}
+    usage = _estimate_usage(f"{provider}/{model}", prompt, system, raw)
+    await db.advisor_logs.insert_one({"org_id": org_id, "user": user["email"], "mode": body.mode,
+                                      "model": f"{provider}/{model}", "prompt": f"[insight] {body.dashboard}",
+                                      "response": raw, "usage": usage, "ts": now.isoformat()})
+    await _check_budget(org_id)
+    return data
 
 
 @advisor_router.get("/logs")

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { X, Send, Loader2, Zap, Brain, Download } from "lucide-react";
+import { X, Send, Loader2, Zap, Brain, Download, Cpu, ChevronDown, Check } from "lucide-react";
 import { API, api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
@@ -51,6 +51,9 @@ export function AIAdvisor() {
   const [messages, setMessages] = useState([]);
   const [streaming, setStreaming] = useState(false);
   const [modelTag, setModelTag] = useState("");
+  const [models, setModels] = useState([]);
+  const [modelDefault, setModelDefault] = useState(null);
+  const [modelMenu, setModelMenu] = useState(false);
   const [working, setWorking] = useState(null);
   const [deep, setDeep] = useState(false);
   const [spend, setSpend] = useState(null);
@@ -92,6 +95,10 @@ export function AIAdvisor() {
   }, [open, isAdmin]);
 
   useEffect(() => {
+    if (open) api.get("/advisor/models").then((r) => { setModels(r.data.models || []); setModelDefault(r.data.default || null); }).catch(() => {});
+  }, [open]);
+
+  useEffect(() => {
     if (typeof window !== "undefined" && window.innerWidth >= 640 && !sessionStorage.getItem("advisor-opened")) {
       setOpen(true); sessionStorage.setItem("advisor-opened", "1");
     }
@@ -119,7 +126,7 @@ export function AIAdvisor() {
     try {
       const res = await fetch(`${API}/advisor/chat`, {
         method: "POST", headers: { "Content-Type": "application/json" }, credentials: "include",
-        body: JSON.stringify({ message: q, mode, deep }),
+        body: JSON.stringify({ message: q, mode, deep, model: modelDefault }),
       });
       if (res.status === 429) {
         const j = await res.json().catch(() => ({}));
@@ -146,6 +153,14 @@ export function AIAdvisor() {
     setStreaming(false);
   };
   sendRef.current = send;
+
+  const selectModel = async (id) => {
+    setModelDefault(id); setModelMenu(false);
+    try {
+      await api.put("/advisor/model", { model: id });
+      toast.success(id ? `Connected · ${models.find((m) => m.id === id)?.label || id}` : "Advisor set to Auto routing");
+    } catch { toast.error("Could not connect model"); }
+  };
 
   const saveBudget = async () => {
     const v = parseFloat(budgetInput);
@@ -243,7 +258,37 @@ export function AIAdvisor() {
               {AVATAR("w-8 h-8")}
               <div>
                 <div className="font-head font-bold text-ai">Obserrian Advisor</div>
-                <div className="text-[10px] font-mono text-muted-foreground">{mode} · helper + worker · {modelTag || "claude-opus-4-8"}</div>
+                <div className="text-[10px] font-mono text-muted-foreground">{mode} · helper + worker</div>
+                <div className="relative mt-1">
+                  <button data-testid="advisor-connect-model" onClick={() => setModelMenu((v) => !v)}
+                    className="flex items-center gap-1.5 text-[10px] font-mono px-2 py-0.5 rounded-full border border-ai/30 bg-ai/10 text-ai hover:bg-ai/20 transition-colors">
+                    <Cpu className="w-3 h-3" />
+                    {modelDefault ? (models.find((m) => m.id === modelDefault)?.label || modelDefault) : `Auto · ${mode}`}
+                    <ChevronDown className="w-3 h-3" />
+                  </button>
+                  {modelMenu && (
+                    <div data-testid="advisor-model-menu" className="absolute left-0 top-7 z-50 w-64 max-h-80 overflow-y-auto rounded-lg bg-popover border border-border shadow-xl p-1.5">
+                      <div className="px-2.5 pt-1 pb-1.5 text-[9px] font-mono uppercase tracking-wider text-muted-foreground">Connect the advisor to a model</div>
+                      <button data-testid="advisor-model-auto" onClick={() => selectModel(null)}
+                        className={`w-full flex items-center justify-between gap-2 text-left px-2.5 py-1.5 rounded-md text-xs hover:bg-secondary/60 transition-colors ${!modelDefault ? "text-ai" : "text-foreground"}`}>
+                        <span><span className="font-medium">Auto</span> <span className="text-muted-foreground">· routes by mode</span></span>
+                        {!modelDefault && <Check className="w-3.5 h-3.5 shrink-0" />}
+                      </button>
+                      {[["openai", "OpenAI"], ["anthropic", "Anthropic"], ["gemini", "Google"]].map(([prov, label]) => (
+                        <div key={prov}>
+                          <div className="px-2.5 pt-2 pb-1 text-[9px] font-mono uppercase tracking-wider text-muted-foreground/70">{label}</div>
+                          {models.filter((m) => m.provider === prov).map((m) => (
+                            <button key={m.id} data-testid={`advisor-model-${m.id}`} onClick={() => selectModel(m.id)}
+                              className={`w-full flex items-center justify-between gap-2 text-left px-2.5 py-1.5 rounded-md text-xs hover:bg-secondary/60 transition-colors ${modelDefault === m.id ? "text-ai" : "text-foreground"}`}>
+                              <span className="min-w-0"><span className="font-medium">{m.label}</span><span className="block text-[10px] text-muted-foreground truncate">{m.tier} · {m.note}</span></span>
+                              {modelDefault === m.id && <Check className="w-3.5 h-3.5 shrink-0" />}
+                            </button>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
                 {isAdmin && spend && (
                   <div data-testid="advisor-spend" className="text-[10px] font-mono text-ai mt-0.5">
                     spend: ${spend.total_cost_usd?.toFixed(4)} · {spend.total_tokens?.toLocaleString()} tok · {spend.queries}q

@@ -1428,23 +1428,40 @@ def _framework_alignment(framework, statuses, scan_ev=None):
     for c in statuses:
         for ref in (c.get("frameworks") or {}).get(framework, []):
             idx.setdefault(ref, []).append(
-                {"control_id": c["control_id"], "name": c["name"], "compliant": c["status"] == "Passing"})
+                {"control_id": c["control_id"], "name": c["name"], "compliant": c["status"] == "Passing",
+                 "effectiveness": c.get("effectiveness", 0), "status": c["status"]})
     gaps = set(_FRAMEWORK_GAPS.get(framework, []))
     scan_gaps = set((scan_ev or {}).get("gaps", {}).get(framework, []))
     scan_aligned = set((scan_ev or {}).get("aligned", {}).get(framework, []))
     controls, aligned, met, gap = [], 0, 0, 0
     for item in CATALOGS.get(framework, []):
         cid, maps = item["id"], idx.get(item["id"], [])
+        avg_eff = round(sum(m["effectiveness"] for m in maps) / len(maps)) if maps else None
         if cid in gaps or cid in scan_gaps or (maps and not any(m["compliant"] for m in maps)):
             status, gap = "gap", gap + 1
             source = "self-scan" if (cid in scan_gaps and cid not in gaps) else ("control" if maps else "policy")
+            score = avg_eff if avg_eff is not None else 28
+            if maps:
+                why = "Mapped control(s) below passing threshold: " + ", ".join(f"{m['control_id']} ({m['status']}, {m['effectiveness']}%)" for m in maps)
+            elif cid in scan_gaps:
+                why = "Live self-scan flagged this requirement as an open finding."
+            else:
+                why = "Curated baseline gap — no compensating Obserra control mapped yet."
         elif maps or cid in scan_aligned:
             status, aligned = "aligned", aligned + 1
             source = "control" if maps else "self-scan"
+            score = avg_eff if avg_eff is not None else 90
+            if maps:
+                why = "Evidence-backed by passing control(s): " + ", ".join(f"{m['control_id']} {m['name']} ({m['effectiveness']}%)" for m in maps)
+            else:
+                why = "Aligned by a passing live self-scan check (headers / CORS / dependency posture)."
         else:
             status, met = "met", met + 1
             source = "default"
-        controls.append({"id": cid, "group": item["group"], "status": status, "mapped_to": maps, "source": source})
+            score = 70
+            why = "Met by default from the hardened baseline posture — no explicit evidence collected yet."
+        controls.append({"id": cid, "group": item["group"], "status": status, "mapped_to": maps,
+                         "source": source, "score": score, "why": why, "compliant": status != "gap"})
     total = len(controls)
     meeting = aligned + met
     return {"controls": controls, "total": total, "aligned": aligned, "met": met, "gap": gap,

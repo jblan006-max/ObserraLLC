@@ -13,6 +13,38 @@ import {
   Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp,
 } from "lucide-react";
 
+// Per-route accent so each dashboard has its own colour identity (breaks the monotone slate).
+const ROUTE_ACCENT = [
+  ["/app/compliance", "152 65% 45%"],
+  ["/app/cyber-risk", "190 90% 50%"],
+  ["/app/risks", "190 90% 50%"],
+  ["/app/situation-room", "0 84% 62%"],
+  ["/app/controls", "168 76% 46%"],
+  ["/app/security", "24 90% 55%"],
+  ["/app/decisions", "260 85% 66%"],
+  ["/app/assets", "38 92% 55%"],
+  ["/app/ai-governance", "330 82% 60%"],
+  ["/app/agents", "280 80% 66%"],
+  ["/app/vendors", "18 85% 57%"],
+  ["/app/reporting", "142 70% 45%"],
+  ["/app/studio", "292 80% 66%"],
+  ["/app/benchmark", "210 92% 62%"],
+  ["/app/knowledge-graph", "175 72% 50%"],
+  ["/app/kernel", "222 70% 62%"],
+  ["/app/team", "200 85% 56%"],
+  ["/app/enterprise", "232 72% 64%"],
+  ["/app/spend-governance", "160 72% 48%"],
+  ["/app/settings", "220 15% 60%"],
+  ["/app/marketplace", "265 80% 66%"],
+  ["/app/billing", "150 60% 50%"],
+  ["/app/audit", "35 90% 55%"],
+];
+function routeAccent(path) {
+  if (path === "/app") return "222 90% 62%";
+  const hit = ROUTE_ACCENT.find(([p]) => path === p || path.startsWith(p + "/"));
+  return hit ? hit[1] : "225 70% 55%";
+}
+
 function DualModeToggle() {
   const { mode, switchMode } = useAuth();
   return (
@@ -226,9 +258,11 @@ export default function AppShell() {
 
   if (user?.must_change_password) return <ForcePasswordReset />;
 
+  const accent = routeAccent(location.pathname);
   return (
-    <div className="min-h-screen grain flex">
-      <aside className="hidden md:flex w-60 flex-col border-r border-border bg-card/40 sticky top-0 h-screen">
+    <div className="min-h-screen grain flex" style={{ "--page-accent": accent }}>
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0" style={{ background: `radial-gradient(72% 46% at 80% -6%, hsl(${accent} / 0.13), transparent 60%)`, transition: "background 0.6s ease" }} />
+      <aside className="hidden md:flex w-60 flex-col border-r border-border bg-card/40 sticky top-0 h-screen z-10">
         <SidebarInner user={user} sub={sub} owns={owns} doLogout={doLogout} />
       </aside>
 
@@ -241,7 +275,7 @@ export default function AppShell() {
         </div>
       )}
 
-      <div className="flex-1 flex flex-col min-w-0">
+      <div className="flex-1 flex flex-col min-w-0 relative z-10">
         <header className="sticky top-0 z-30 h-16 flex items-center justify-between gap-3 px-4 sm:px-6 border-b border-border/40 backdrop-blur-xl bg-background/70">
           <div className="flex items-center gap-2 min-w-0">
             <button data-testid="mobile-nav-toggle" onClick={() => setMobileNav(true)} className="md:hidden p-2 -ml-1 rounded-md text-muted-foreground hover:text-foreground hover:bg-secondary/50">

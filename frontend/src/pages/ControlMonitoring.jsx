@@ -72,14 +72,43 @@ export default function ControlMonitoring() {
 
   if (!controls) return <div className="flex items-center justify-center h-96"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>;
   const flagged = controls.filter((c) => c.stale || c.drift || c.status === "Failing");
-  const shown = controls.filter((c) => (statusF === "all" || c.status === statusF) && `${c.control_id} ${c.name} ${c.category}`.toLowerCase().includes(q.toLowerCase()));
+  const shown = controls.filter((c) => (statusF === "all" || c.status === statusF) &&
+    `${c.control_id} ${c.name} ${c.category} ${c.owner || ""} ${Object.keys(c.frameworks || {}).join(" ")} ${Object.values(c.frameworks || {}).flat().join(" ")}`.toLowerCase().includes(q.toLowerCase()));
   const shownHistory = history.filter((h) => (logKind === "all" || h.kind === logKind) && h.text.toLowerCase().includes(logQ.toLowerCase()));
+  const total = controls.length;
+  const passing = controls.filter((c) => c.status === "Passing").length;
+  const avgEff = total ? Math.round(controls.reduce((s, c) => s + c.effectiveness, 0) / total) : 0;
+  const avgMat = total ? (controls.reduce((s, c) => s + (c.maturity || 0), 0) / total).toFixed(1) : 0;
+  const expiring = controls.filter((c) => !c.stale && c.days_to_expiry < 30).length;
+  const staleCount = controls.filter((c) => c.stale).length;
+  const effBuckets = [
+    { label: "90–100", min: 90, color: "142 70% 45%" },
+    { label: "75–89", min: 75, color: "142 60% 50%" },
+    { label: "55–74", min: 55, color: "35 90% 55%" },
+    { label: "< 55", min: 0, color: "0 84% 60%" },
+  ].map((b, i, arr) => ({ ...b, count: controls.filter((c) => c.effectiveness >= b.min && (i === 0 || c.effectiveness < arr[i - 1].min)).length }));
 
   return (
     <div className="rise space-y-5">
       <div>
         <h1 className="font-head font-black text-3xl tracking-tight flex items-center gap-2"><ShieldCheck className="w-7 h-7 text-primary" /> Continuous Control Monitoring</h1>
         <p className="text-sm text-muted-foreground mt-1">Control effectiveness, maturity, evidence freshness & drift — auto-flagged the moment proof goes stale.</p>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3" data-testid="control-kpis">
+        {[
+          { k: "total", label: "Controls", val: total, color: "190 90% 50%" },
+          { k: "passing", label: "Passing", val: passing, color: "142 70% 45%" },
+          { k: "attention", label: "Need attention", val: flagged.length, color: flagged.length ? "15 80% 55%" : "142 70% 45%" },
+          { k: "eff", label: "Avg effectiveness", val: `${avgEff}%`, color: avgEff >= 75 ? "142 70% 45%" : "35 90% 55%" },
+          { k: "mat", label: "Avg maturity", val: `${avgMat}/5`, color: "225 70% 60%" },
+          { k: "evidence", label: "Evidence expiring", val: expiring + staleCount, color: (expiring + staleCount) ? "35 90% 55%" : "142 70% 45%" },
+        ].map((s) => (
+          <div key={s.k} data-testid={`control-kpi-${s.k}`} className="bg-card fact-border rounded-xl p-4">
+            <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">{s.label}</div>
+            <div className="font-head font-black text-3xl mt-1 tracking-tight" style={{ color: `hsl(${s.color})` }}>{s.val}</div>
+          </div>
+        ))}
       </div>
 
       {flagged.length > 0 && (
@@ -92,7 +121,7 @@ export default function ControlMonitoring() {
       {compliance && compliance.length > 0 && (
         <div data-testid="compliance-panel">
           <div className="text-[10px] font-mono uppercase tracking-[0.2em] text-muted-foreground mb-3">Framework alignment · NIST · ISO · SOC 2 · CISA</div>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
             {compliance.map((f) => {
               const col = f.coverage >= 75 ? "142 70% 45%" : f.coverage >= 55 ? "35 90% 55%" : "0 84% 60%";
               return (
@@ -249,6 +278,31 @@ export default function ControlMonitoring() {
           </div>
         </aside>
       )}
+      </div>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" data-testid="control-analytics">
+        <div className="bg-card fact-border rounded-xl p-5">
+          <div className="text-sm font-head font-bold mb-3">Effectiveness distribution</div>
+          <div className="space-y-2">
+            {effBuckets.map((b) => (
+              <div key={b.label} className="flex items-center gap-3 text-xs">
+                <span className="w-16 font-mono text-muted-foreground">{b.label}</span>
+                <div className="flex-1 h-2.5 rounded-full bg-secondary overflow-hidden"><div className="h-full rounded-full transition-[width] duration-700" style={{ width: `${total ? (b.count / total) * 100 : 0}%`, background: `hsl(${b.color})` }} /></div>
+                <span className="w-6 text-right font-mono">{b.count}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="bg-card fact-border rounded-xl p-5">
+          <div className="text-sm font-head font-bold mb-3">Status &amp; evidence freshness</div>
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            {[["Passing", passing, "142 70% 45%"], ["Drifting", controls.filter((c) => c.status === "Drifting").length, "35 90% 55%"], ["Failing", controls.filter((c) => c.status === "Failing").length, "0 84% 60%"], ["Evidence stale", staleCount, "15 80% 55%"]].map(([l, v, c]) => (
+              <div key={l} className="rounded-lg p-3 border" style={{ borderColor: `hsl(${c} / 0.3)`, background: `hsl(${c} / 0.06)` }}>
+                <div className="font-head font-black text-2xl" style={{ color: `hsl(${c})` }}>{v}</div>
+                <div className="text-[11px] text-muted-foreground">{l}</div>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
       <p className="text-xs text-muted-foreground">Evidence packs map one control across its aligned frameworks (NIST CSF/800-53/SSDF/AI RMF, EU AI Act, GDPR, SOC 2, ISO 27001/42001) as a downloadable PDF.</p>
     </div>
