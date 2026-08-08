@@ -29,6 +29,32 @@ KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulner
 OSV_BATCH = "https://api.osv.dev/v1/querybatch"
 OSV_VULN = "https://api.osv.dev/v1/vulns/"
 
+# MITRE ATT&CK technique mapping per finding id (real techniques for each weakness class).
+_MITRE = {
+    "sec-headers": [
+        {"id": "T1189", "name": "Drive-by Compromise"},
+        {"id": "T1059.007", "name": "JavaScript (XSS via missing CSP)"},
+    ],
+    "cors": [
+        {"id": "T1190", "name": "Exploit Public-Facing Application"},
+        {"id": "T1539", "name": "Steal Web Session Cookie"},
+    ],
+    "dep": [  # matched by prefix for dep-<pkg> findings
+        {"id": "T1190", "name": "Exploit Public-Facing Application"},
+        {"id": "T1195.001", "name": "Compromise Software Dependencies and Development Tools"},
+    ],
+    "deps": [
+        {"id": "T1195.001", "name": "Compromise Software Dependencies and Development Tools"},
+    ],
+    "auth-policy": [
+        {"id": "T1110.001", "name": "Password Guessing"},
+    ],
+    "auth-bruteforce": [
+        {"id": "T1110", "name": "Brute Force"},
+        {"id": "T1110.004", "name": "Credential Stuffing"},
+    ],
+}
+
 _REQUIRED_HEADERS = {
     "strict-transport-security": "HTTP Strict Transport Security (HSTS)",
     "x-content-type-options": "X-Content-Type-Options: nosniff",
@@ -176,7 +202,7 @@ async def _check_dependencies(findings, summary):
         findings.append({
             "id": f"dep-{n}", "title": f"Vulnerable dependency: {n} {v}",
             "category": "Dependency", "severity": sev, "status": "fail",
-            "evidence": (f"KEV — actively exploited. " if kev_hit else "") + (summ or f"Advisories: {', '.join(ids[:4])}"),
+            "evidence": ("KEV — actively exploited. " if kev_hit else "") + (summ or f"Advisories: {', '.join(ids[:4])}"),
             "cve_ids": cves or ids, "kev": bool(kev_hit),
             "remediation": f"Upgrade {n} to a patched release; verify with pip-audit and re-scan. Advisories: {', '.join(ids[:4])}.",
             "control_refs": ["NIST RA-5", "NIST SI-2", "CIS 7.4", "ISO A.8.8"] + (["CISA KEV"] if kev_hit else [])})
@@ -197,14 +223,41 @@ def _check_auth(findings):
         "control_refs": ["NIST AC-7", "ISO A.8.5"]})
 
 
-@self_scan_router.post("/run")
-async def run_scan(admin: dict = Depends(require_roles("admin"))):
+# MITRE ATT&CK techniques associated with each finding class (known exploit context).
+# Keyed by full finding id first, then by id prefix (id.split("-")[0]).
+_MITRE = {
+    "cors": [
+        {"id": "T1190", "name": "Exploit Public-Facing Application", "tactic": "Initial Access"},
+        {"id": "T1659", "name": "Content Injection", "tactic": "Initial Access"},
+    ],
+    "sec": [
+        {"id": "T1189", "name": "Drive-by Compromise", "tactic": "Initial Access"},
+        {"id": "T1185", "name": "Browser Session Hijacking", "tactic": "Collection"},
+    ],
+    "deps": [
+        {"id": "T1195.001", "name": "Compromise Software Dependencies and Development Tools", "tactic": "Initial Access"},
+        {"id": "T1190", "name": "Exploit Public-Facing Application", "tactic": "Initial Access"},
+    ],
+    "dep": [
+        {"id": "T1195.001", "name": "Compromise Software Dependencies and Development Tools", "tactic": "Initial Access"},
+        {"id": "T1190", "name": "Exploit Public-Facing Application", "tactic": "Initial Access"},
+    ],
+    "auth": [
+        {"id": "T1110", "name": "Brute Force", "tactic": "Credential Access"},
+        {"id": "T1078", "name": "Valid Accounts", "tactic": "Defense Evasion"},
+    ],
+}
+
+
+async def _execute_scan(org_id):
     t0 = time.time()
     findings, summary = [], {}
     await _check_headers(findings)
     _check_cors(findings)
     await _check_dependencies(findings, summary)
     _check_auth(findings)
+    for f in findings:
+        f["mitre"] = _MITRE.get(f["id"]) or _MITRE.get(f["id"].split("-")[0], [])
 
     sev_counts = {s: 0 for s in SEV_WEIGHT}
     passed, score = 0, 100
@@ -217,7 +270,6 @@ async def run_scan(admin: dict = Depends(require_roles("admin"))):
     score = max(0, score)
     kev_matches = sorted({c for f in findings if f.get("kev") for c in f.get("cve_ids", [])})
 
-    # Auto-update compliance: turn scan findings into framework control evidence.
     ev_gaps, ev_aligned = {}, {}
     for f in findings:
         for ref in f.get("control_refs", []):
@@ -225,22 +277,28 @@ async def run_scan(admin: dict = Depends(require_roles("admin"))):
             if not fw or not cid:
                 continue
             (ev_gaps if f["status"] == "fail" else ev_aligned).setdefault(fw, set()).add(cid)
-    gaps_out = {k: sorted(v) for k, v in ev_gaps.items()}
-    aligned_out = {k: sorted(v - ev_gaps.get(k, set())) for k, v in ev_aligned.items()}
     await db.scan_evidence.update_one(
-        {"org_id": admin["org_id"]},
-        {"$set": {"org_id": admin["org_id"], "ts": _now(), "score": score,
-                  "gaps": gaps_out, "aligned": aligned_out}}, upsert=True)
+        {"org_id": org_id},
+        {"$set": {"org_id": org_id, "ts": _now(),
+                  "gaps": {k: sorted(v) for k, v in ev_gaps.items()},
+                  "aligned": {k: sorted(v - ev_gaps.get(k, set())) for k, v in ev_aligned.items()}}}, upsert=True)
+
     doc = {
-        "id": str(uuid.uuid4()), "org_id": admin["org_id"], "ts": _now(),
+        "id": str(uuid.uuid4()), "org_id": org_id, "ts": _now(),
         "duration_ms": int((time.time() - t0) * 1000), "score": score,
         "summary": {**sev_counts, "passed": passed, "total_checks": len(findings),
                     "dependencies_scanned": summary.get("dependencies_scanned", 0),
                     "vulnerable_dependencies": summary.get("vulnerable_dependencies", 0)},
         "kev_matches": kev_matches, "findings": findings, "remediated": [],
+        "mitre_techniques": sorted({m["id"] for f in findings for m in f.get("mitre", [])}),
     }
     await db.self_scans.insert_one(dict(doc))
     return doc
+
+
+@self_scan_router.post("/run")
+async def run_scan(admin: dict = Depends(require_roles("admin"))):
+    return await _execute_scan(admin["org_id"])
 
 
 @self_scan_router.get("/latest")
