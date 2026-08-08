@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate, useLocation, Navigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { AIAdvisor } from "@/components/AIAdvisor";
@@ -271,7 +271,11 @@ export default function AppShell() {
           </div>
         </header>
         <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1500px] w-full min-w-0 overflow-x-hidden pb-28 md:pb-8">
-          {blocked ? <Paywall /> : locked ? <LockedGate ent={currentEnt} /> : <Outlet />}
+          {blocked ? <Paywall /> : locked ? <LockedGate ent={currentEnt} /> : (
+            <Suspense fallback={<div className="min-h-[60vh] flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-primary" /></div>}>
+              <Outlet />
+            </Suspense>
+          )}
         </main>
         <Footer />
       </div>
