@@ -7,6 +7,7 @@ import { EvidenceLineageModal } from "@/components/EvidenceLineageModal";
 import { EvidenceModal } from "@/components/EvidenceModal";
 import { AssetDetailModal } from "@/components/AssetDetailModal";
 import { AIFix } from "@/components/AIFix";
+import { AutoActions } from "@/components/AutoActions";
 import { SourceBadge, FreshnessBadge, ConfidenceBadge, DataTypeBadge, ScorePill } from "@/components/badges";
 import { AIInsight } from "@/components/AIInsight";
 import { StatCard, CardShell, EmptyState, BarList, Spinner } from "@/components/dash";
@@ -129,6 +130,8 @@ export default function RiskRegister() {
       </div>
 
       <AIInsight dashboard="Cyber Risk Register" accent={ACCENT} auto />
+
+      <AutoActions accent={ACCENT} />
 
       {/* Portfolio reporting row 1: heatmap + top risks + rating breakdown */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">

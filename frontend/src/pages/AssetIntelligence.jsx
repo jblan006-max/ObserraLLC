@@ -3,7 +3,10 @@ import { api } from "@/lib/api";
 import { SourceBadge, FreshnessBadge } from "@/components/badges";
 import { AIInsight } from "@/components/AIInsight";
 import { StatCard, CardShell, EmptyState, Spinner } from "@/components/dash";
-import { Boxes, Server, ShieldCheck, Network, Laptop, Radio, Lock, X, Cpu } from "lucide-react";
+import { useAuth } from "@/context/AuthContext";
+import { toast } from "sonner";
+import { AutoActions } from "@/components/AutoActions";
+import { Boxes, Server, ShieldCheck, Network, Laptop, Radio, Lock, X, Cpu, Loader2, RefreshCw, Wrench } from "lucide-react";
 
 const ACCENT = "35 92% 55%"; // Asset Intelligence → amber
 const critColor = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 90% 55%", Low: "142 70% 45%" };
@@ -18,9 +21,12 @@ function Kv({ k, v, mono }) {
 }
 
 export default function AssetIntelligence() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const [d, setD] = useState(null);
   const [conn, setConn] = useState(null);
   const [sel, setSel] = useState(null);
+  const [deviceBusy, setDeviceBusy] = useState("");
 
   useEffect(() => {
     api.get("/dash/assets").then((r) => setD(r.data)).catch(() => setD({ assets: [], summary: {} }));
@@ -56,6 +62,8 @@ export default function AssetIntelligence() {
       </div>
 
       <AIInsight dashboard="Asset Intelligence" accent={ACCENT} auto />
+
+      <AutoActions accent={ACCENT} />
 
       {/* Secondary card grid — always present */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -113,6 +121,12 @@ export default function AssetIntelligence() {
                 <div className="font-medium truncate">{dv.name}</div>
                 <div className="text-muted-foreground truncate">{dv.owner || "—"} · {dv.os || "—"} {dv.os_version || ""}</div>
                 <span className={`inline-block mt-1 font-mono text-[9px] px-1.5 py-0.5 rounded-sm ${dv.compliance === "compliant" ? "bg-low/15 text-low" : "bg-crit/15 text-crit"}`}>{dv.compliance || "unknown"}</span>
+                {isAdmin && (
+                  <div className="flex gap-1.5 mt-2">
+                    <button data-testid={`device-sync-${dv.id}`} disabled={!!deviceBusy} onClick={() => deviceAction(dv.id, "sync")} className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-md bg-secondary/60 hover:bg-secondary disabled:opacity-50">{deviceBusy === dv.id + "sync" ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />} Sync</button>
+                    <button data-testid={`device-fix-${dv.id}`} disabled={!!deviceBusy} onClick={() => deviceAction(dv.id, "remediate")} className="flex items-center gap-1 text-[10px] px-2 py-1 rounded-md disabled:opacity-50" style={{ background: `hsl(${ACCENT})`, color: "#050810" }}>{deviceBusy === dv.id + "remediate" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Wrench className="w-3 h-3" />} Auto-remediate</button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
