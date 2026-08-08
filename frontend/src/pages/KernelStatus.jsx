@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { PolicyModal } from "@/components/PolicyModal";
+import { ClickCard } from "@/components/dash";
 import { Layers, Loader2, ShieldCheck, GitBranch, CheckCircle2, Circle, Plus, Pencil, Activity } from "lucide-react";
 
 const LAYER_COLOR = {
@@ -45,10 +46,15 @@ export default function KernelStatus() {
       {kpi && (
         <div data-testid="remediation-kpi" className="grid grid-cols-3 gap-3 sm:gap-4">
           {[["Open remediations", kpi.open, "190 90% 50%"], ["Overdue", kpi.overdue, "0 84% 60%"], ["Resolved", kpi.resolved, "142 70% 45%"]].map(([label, val, color]) => (
-            <div key={label} className="bg-card fact-border rounded-xl p-4" style={{ borderLeft: `3px solid hsl(${color})` }}>
+            <ClickCard key={label} className="bg-card fact-border rounded-xl p-4" style={{ borderLeft: `3px solid hsl(${color})` }}
+              detail={{ accent: color, refLabel: "KERNEL", title: label,
+                rating: label === "Overdue" && val > 0 ? "High" : "Low",
+                facets: [{ label, value: String(val) }, { label: "Open", value: String(kpi.open) }, { label: "Overdue", value: String(kpi.overdue) }, { label: "Resolved", value: String(kpi.resolved) }],
+                recommendedActions: [label === "Overdue" && val > 0 ? "Escalate overdue remediations to their owners now — overdue items are the primary driver of residual exposure." : "Keep remediation throughput high; resolved items retire ALE on the next scan."],
+                explainTitle: `${label} — remediation KPI`, explainKind: "kernel remediation workflow kpi", explainContext: { kpi } }}>
               <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{label}</div>
               <div className="font-head font-black text-3xl mt-1" style={{ color: val > 0 && label === "Overdue" ? `hsl(${color})` : undefined }}>{val}</div>
-            </div>
+            </ClickCard>
           ))}
         </div>
       )}
@@ -64,8 +70,13 @@ export default function KernelStatus() {
               const h = health[s.id] || {};
               const dot = STATUS_DOT[h.status] || STATUS_DOT.operational;
               return (
-                <div key={s.id} data-testid={`kernel-sub-${s.id}`} className="bg-card fact-border rounded-xl p-4 hover:-translate-y-0.5 transition-transform duration-200"
-                  style={{ borderTop: `2px solid hsl(${LAYER_COLOR[layer]} / 0.6)` }}>
+                <ClickCard key={s.id} testid={`kernel-sub-${s.id}`} className="bg-card fact-border rounded-xl p-4"
+                  style={{ borderTop: `2px solid hsl(${LAYER_COLOR[layer]} / 0.6)` }}
+                  detail={{ accent: LAYER_COLOR[layer], refLabel: `${layer} · ${s.id}`, title: s.name,
+                    rating: h.status === "degraded" ? "High" : "Low",
+                    facets: [{ label: "Layer", value: layer }, { label: "Status", value: h.status || "operational" }, { label: "Records", value: (h.records ?? 0).toLocaleString() }, { label: "Last run", value: fmtTs(h.last_run) }, { label: "Error rate", value: `${((h.error_rate ?? 0) * 100).toFixed(0)}%` }],
+                    recommendedActions: [h.status === "degraded" ? `${s.name} is degraded — inspect its error rate and last run; a stalled subsystem starves dependent apps of live telemetry.` : `${s.name} is healthy — it feeds live telemetry to every app composed on the kernel.`],
+                    explainTitle: s.name, explainKind: "kernel subsystem telemetry health layer", explainContext: { subsystem: { id: s.id, name: s.name, layer, desc: s.desc }, health: h } }}>
                   <div className="flex items-center justify-between mb-1">
                     <div className="font-head font-bold text-sm">{s.name}</div>
                     <span className="flex items-center gap-1 text-[10px] font-mono uppercase" style={{ color: `hsl(${dot})` }}>
@@ -78,7 +89,7 @@ export default function KernelStatus() {
                     <div><div className="text-[9px] font-mono uppercase text-muted-foreground">Last run</div><div className="font-head font-bold text-sm">{fmtTs(h.last_run)}</div></div>
                     <div><div className="text-[9px] font-mono uppercase text-muted-foreground">Err rate</div><div className="font-head font-bold text-sm" style={{ color: h.error_rate > 0 ? "hsl(0 84% 60%)" : undefined }}>{((h.error_rate ?? 0) * 100).toFixed(0)}%</div></div>
                   </div>
-                </div>
+                </ClickCard>
               );
             })}
           </div>
@@ -93,18 +104,23 @@ export default function KernelStatus() {
         </div>
         <div className="grid md:grid-cols-2 gap-3">
           {policies.map((p) => (
-            <div key={p.policy_id} data-testid={`policy-${p.policy_id}`} className="bg-card fact-border rounded-lg p-4">
+            <ClickCard key={p.policy_id} testid={`policy-${p.policy_id}`} className="bg-card fact-border rounded-lg p-4"
+              detail={{ accent: SEV_COLOR[p.severity] || "215 15% 55%", refLabel: p.policy_id, title: p.name,
+                rating: p.severity, facets: [{ label: "Framework", value: p.framework }, { label: "Enforcement", value: p.enforced ? "ENFORCED" : "MONITOR" }, { label: "Severity", value: p.severity }, ...(p.threshold != null ? [{ label: "Threshold", value: String(p.threshold) }] : [])],
+                complianceRefs: p.framework ? [p.framework] : [],
+                recommendedActions: [p.enforced ? "Policy is enforced at the request path — review matched denials periodically for false positives." : "Move this policy from MONITOR to ENFORCED once its match rate is validated, to actively block violations."],
+                explainTitle: p.name, explainKind: "governance policy enforcement framework severity", explainContext: { policy: p } }}>
               <div className="flex items-center justify-between mb-1">
                 <span className="font-mono text-xs text-ai">{p.policy_id}</span>
                 <div className="flex items-center gap-2">
                   <span className="px-2 py-0.5 rounded-sm text-[10px] font-mono font-bold" style={{ background: `hsl(${SEV_COLOR[p.severity]} / 0.15)`, color: `hsl(${SEV_COLOR[p.severity]})` }}>{p.severity}</span>
-                  {isAdmin && <button data-testid={`policy-edit-${p.policy_id}`} onClick={() => setPolicyModal({ policy: p })} className="text-muted-foreground hover:text-foreground"><Pencil className="w-3.5 h-3.5" /></button>}
+                  {isAdmin && <button data-testid={`policy-edit-${p.policy_id}`} onClick={(e) => { e.stopPropagation(); setPolicyModal({ policy: p }); }} className="text-muted-foreground hover:text-foreground"><Pencil className="w-3.5 h-3.5" /></button>}
                 </div>
               </div>
               <div className="font-medium text-sm">{p.name}</div>
               <p className="text-xs text-muted-foreground mt-1">{p.statement}</p>
               <div className="text-[10px] font-mono text-muted-foreground mt-2">{p.framework} · {p.enforced ? "ENFORCED" : "MONITOR"}{p.threshold != null && ` · threshold ${p.threshold}`}</div>
-            </div>
+            </ClickCard>
           ))}
         </div>
       </div>
@@ -116,7 +132,11 @@ export default function KernelStatus() {
         ) : (
           <div className="space-y-3">
             {workflows.map((w) => (
-              <div key={w.id} data-testid={`workflow-${w.id}`} className="bg-card fact-border rounded-lg p-4">
+              <ClickCard key={w.id} testid={`workflow-${w.id}`} className="bg-card fact-border rounded-lg p-4"
+                detail={{ accent: w.type === "remediation" ? "15 80% 55%" : "225 70% 60%", refLabel: `WORKFLOW · ${w.id}`, title: `${w.type} — ${w.subject}`,
+                  facets: [{ label: "Type", value: w.type }, { label: "Subject", value: w.subject }, { label: "Status", value: String(w.status).replace("_", " ") }, ...(w.assignee ? [{ label: "Assignee", value: w.assignee }] : [])],
+                  recommendedActions: ["Advance the open steps to completion — a stalled workflow leaves its underlying finding unremediated."],
+                  explainTitle: `${w.type} workflow — ${w.subject}`, explainKind: "kernel workflow remediation steps assignee", explainContext: { workflow: w } }}>
                 <div className="flex items-center justify-between mb-2">
                   <span className="text-sm font-medium capitalize flex items-center gap-2">
                     {w.type === "remediation" && <Activity className="w-3.5 h-3.5 text-high" />}
@@ -138,7 +158,7 @@ export default function KernelStatus() {
                     </span>
                   ))}
                 </div>
-              </div>
+              </ClickCard>
             ))}
           </div>
         )}

@@ -5,6 +5,7 @@ import { ScorePill } from "@/components/badges";
 import { AIInsight } from "@/components/AIInsight";
 import { AIFix } from "@/components/AIFix";
 import { StatCard } from "@/components/dash";
+import { useDeepDive } from "@/context/DeepDiveContext";
 import { Radar, AlertOctagon, Ban, ShieldAlert, Loader2, Activity, X, ChevronRight } from "lucide-react";
 
 const ACCENT = "190 90% 50%"; // Situation Room → cyan
@@ -39,6 +40,7 @@ export default function SituationRoom() {
   const [incidents, setIncidents] = useState([]);
   const [audit, setAudit] = useState([]);
   const [sel, setSel] = useState(null);
+  const { openDeepDive } = useDeepDive();
 
   useEffect(() => {
     const load = () => {
@@ -102,11 +104,18 @@ export default function SituationRoom() {
             ) : (
               <div className="space-y-3">
                 {incidents.map((inc) => (
-                  <div key={inc.ref} className="flex items-center gap-4 p-3 rounded-lg bg-secondary/30 border border-border">
+                  <button key={inc.ref} type="button" data-testid={`sr-incident-${inc.ref}`}
+                    onClick={() => openDeepDive({ accent: ACCENT, refLabel: inc.ref, title: inc.title,
+                      rating: inc.severity === "Critical" ? "Critical" : "High",
+                      facets: [{ label: "System", value: inc.system }, { label: "Mode", value: inc.mode }, { label: "Severity", value: inc.severity }, { label: "Status", value: inc.status }],
+                      recommendedActions: [`Triage ${inc.ref} on ${inc.system} — confirm containment mode “${inc.mode}”, then drive to Resolved and log the evidence.`],
+                      explainTitle: inc.title, explainKind: "ai incident containment severity system mode",
+                      explainContext: { incident: inc } })}
+                    className="w-full text-left flex items-center gap-4 p-3 rounded-lg bg-secondary/30 border border-border hover:bg-secondary/50 transition-colors">
                     {inc.severity === "Critical" ? <Ban className="w-5 h-5 text-crit shrink-0" /> : <AlertOctagon className="w-5 h-5 text-high shrink-0" />}
                     <div className="flex-1 min-w-0"><div className="font-medium text-sm truncate">{inc.title}</div><div className="text-[11px] font-mono text-muted-foreground truncate">{inc.ref} · {inc.system} · mode: <span className="text-ai">{inc.mode}</span></div></div>
                     <span className="text-xs px-2.5 py-1 rounded-md bg-secondary/60 shrink-0">{inc.status}</span>
-                  </div>
+                  </button>
                 ))}
               </div>
             )}

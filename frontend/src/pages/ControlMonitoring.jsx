@@ -5,6 +5,7 @@ import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { AIInsight } from "@/components/AIInsight";
 import { AIFix } from "@/components/AIFix";
+import { ClickCard } from "@/components/dash";
 import { ShieldCheck, Loader2, AlertTriangle, Clock, FileDown, TrendingDown, Search, X, Plus } from "lucide-react";
 
 const CM_ACCENT = "160 84% 39%";
@@ -110,10 +111,15 @@ export default function ControlMonitoring() {
           { k: "mat", label: "Avg maturity", val: `${avgMat}/5`, color: "225 70% 60%" },
           { k: "evidence", label: "Evidence expiring", val: expiring + staleCount, color: (expiring + staleCount) ? "35 90% 55%" : "142 70% 45%" },
         ].map((s) => (
-          <div key={s.k} data-testid={`control-kpi-${s.k}`} className="bg-card fact-border rounded-xl p-4">
+          <ClickCard key={s.k} testid={`control-kpi-${s.k}`} className="bg-card fact-border rounded-xl p-4"
+            detail={{ accent: s.color, refLabel: "CONTROL KPI", title: s.label,
+              facets: [{ label: s.label, value: String(s.val) }, { label: "Passing / total", value: `${passing}/${total}` }, { label: "Need attention", value: String(flagged.length) }],
+              recommendedActions: ["Action the controls behind this metric — attach fresh evidence or remediate effectiveness drift, then re-scan to raise the score."],
+              explainTitle: s.label, explainKind: "control monitoring kpi effectiveness maturity evidence freshness",
+              explainContext: { kpi: { label: s.label, value: s.val }, totals: { total, passing, flagged: flagged.length, avgEff, avgMat, staleCount } } }}>
             <div className="text-[10px] font-mono uppercase tracking-widest text-muted-foreground">{s.label}</div>
             <div className="font-head font-black text-3xl mt-1 tracking-tight" style={{ color: `hsl(${s.color})` }}>{s.val}</div>
-          </div>
+          </ClickCard>
         ))}
       </div>
 
@@ -131,11 +137,18 @@ export default function ControlMonitoring() {
             {compliance.map((f) => {
               const col = f.coverage >= 75 ? "142 70% 45%" : f.coverage >= 55 ? "35 90% 55%" : "0 84% 60%";
               return (
-                <div key={f.framework} data-testid={`compliance-${f.framework.replace(/[^a-zA-Z0-9]/g, "-")}`} className="bg-card fact-border rounded-xl p-4">
+                <ClickCard key={f.framework} testid={`compliance-${f.framework.replace(/[^a-zA-Z0-9]/g, "-")}`} className="bg-card fact-border rounded-xl p-4"
+                  detail={{ accent: col, refLabel: "FRAMEWORK", title: `${f.framework} alignment`,
+                    score: f.coverage, rating: f.coverage >= 75 ? "Low" : f.coverage >= 55 ? "Medium" : "High",
+                    facets: [{ label: "Coverage", value: `${f.coverage}%` }, { label: "Controls passing", value: `${f.passing}/${f.controls}` }],
+                    complianceRefs: [f.framework],
+                    recommendedActions: [`Close the ${f.controls - f.passing} non-passing ${f.framework} control(s) — attach evidence or remediate, then re-scan to raise coverage.`],
+                    explainTitle: `${f.framework} framework alignment`, explainKind: "compliance framework coverage controls passing",
+                    explainContext: { framework: f } }}>
                   <div className="text-xs font-head font-bold truncate">{f.framework}</div>
                   <div className="font-head font-black text-2xl mt-1" style={{ color: `hsl(${col})` }}>{f.coverage}%</div>
                   <div className="text-[10px] text-muted-foreground">{f.passing}/{f.controls} controls passing</div>
-                </div>
+                </ClickCard>
               );
             })}
           </div>
@@ -287,7 +300,12 @@ export default function ControlMonitoring() {
       )}
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" data-testid="control-analytics">
-        <div className="bg-card fact-border rounded-xl p-5">
+        <ClickCard testid="control-analytics-effectiveness" className="bg-card fact-border rounded-xl p-5"
+          detail={{ accent: "142 70% 45%", refLabel: "ANALYTICS", title: "Control effectiveness distribution",
+            facets: effBuckets.map((b) => ({ label: b.label, value: `${b.count} control(s)` })),
+            recommendedActions: ["Prioritise the < 55% and 55–74% buckets — those controls carry the most residual exposure; remediate to shift them right."],
+            explainTitle: "Control effectiveness distribution", explainKind: "control effectiveness distribution analytics",
+            explainContext: { buckets: effBuckets, total } }}>
           <div className="text-sm font-head font-bold mb-3">Effectiveness distribution</div>
           <div className="space-y-2">
             {effBuckets.map((b) => (
@@ -298,8 +316,13 @@ export default function ControlMonitoring() {
               </div>
             ))}
           </div>
-        </div>
-        <div className="bg-card fact-border rounded-xl p-5">
+        </ClickCard>
+        <ClickCard testid="control-analytics-freshness" className="bg-card fact-border rounded-xl p-5"
+          detail={{ accent: "35 90% 55%", refLabel: "ANALYTICS", title: "Control status & evidence freshness",
+            facets: [{ label: "Passing", value: String(passing) }, { label: "Drifting", value: String(controls.filter((c) => c.status === "Drifting").length) }, { label: "Failing", value: String(controls.filter((c) => c.status === "Failing").length) }, { label: "Evidence stale", value: String(staleCount) }],
+            recommendedActions: ["Re-attest stale evidence and remediate failing/drifting controls first — these directly lower framework coverage."],
+            explainTitle: "Control status & evidence freshness", explainKind: "control status evidence freshness analytics",
+            explainContext: { passing, staleCount, total } }}>
           <div className="text-sm font-head font-bold mb-3">Status &amp; evidence freshness</div>
           <div className="grid grid-cols-2 gap-3 text-xs">
             {[["Passing", passing, "142 70% 45%"], ["Drifting", controls.filter((c) => c.status === "Drifting").length, "35 90% 55%"], ["Failing", controls.filter((c) => c.status === "Failing").length, "0 84% 60%"], ["Evidence stale", staleCount, "15 80% 55%"]].map(([l, v, c]) => (
@@ -309,7 +332,7 @@ export default function ControlMonitoring() {
               </div>
             ))}
           </div>
-        </div>
+        </ClickCard>
       </div>
       <p className="text-xs text-muted-foreground">Evidence packs map one control across its aligned frameworks (NIST CSF/800-53/SSDF/AI RMF, EU AI Act, GDPR, SOC 2, ISO 27001/42001) as a downloadable PDF.</p>
     </div>

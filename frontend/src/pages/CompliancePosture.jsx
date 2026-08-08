@@ -6,6 +6,7 @@ import { ShieldCheck, Loader2, AlertTriangle, ArrowRight, CheckCircle2, XCircle,
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { AIInsight } from "@/components/AIInsight";
 import { ControlDetailModal } from "@/components/ControlDetailModal";
+import { useDeepDive } from "@/context/DeepDiveContext";
 
 const ACCENT = "160 84% 39%"; // Compliance → emerald
 const col = (v) => (v >= 75 ? "142 70% 45%" : v >= 55 ? "35 90% 55%" : "0 84% 60%");
@@ -26,16 +27,21 @@ const RiskBadge = ({ compliant, eff, testid }) => {
 };
 
 function Posture({ d, onOpen }) {
+  const { openDeepDive } = useDeepDive();
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        <motion.div custom={0} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-4 bg-card fact-border rounded-xl p-6 flex flex-col items-center justify-center text-center">
+        <motion.div custom={0} variants={fade} initial="hidden" animate="show" role="button" tabIndex={0}
+          onClick={() => openDeepDive({ accent: ACCENT, refLabel: "COMPLIANCE", title: "Overall compliance alignment", score: d.overall || 0, rating: (d.overall || 0) >= 75 ? "Low" : (d.overall || 0) >= 55 ? "Medium" : "High", facets: [{ label: "Overall alignment", value: `${d.overall || 0}%` }, { label: "Controls passing", value: `${d.passing}/${d.total_controls}` }, { label: "Frameworks", value: String(d.frameworks?.length || 0) }], complianceRefs: (d.frameworks || []).map((f) => f.framework), recommendedActions: ["Close the highest-criticality open gaps first to raise overall alignment fastest.", "Attach independent evidence or run a live self-scan to promote Met → Aligned controls."], explainTitle: "Overall compliance alignment", explainKind: "compliance overall alignment posture frameworks", explainContext: { overall: d.overall, passing: d.passing, total: d.total_controls, frameworks: d.frameworks } })}
+          className="col-span-full lg:col-span-4 bg-card fact-border rounded-xl p-6 flex flex-col items-center justify-center text-center cursor-pointer hover:-translate-y-0.5 transition-transform duration-200">
           <div className="text-xs text-muted-foreground mb-1">Overall alignment</div>
           <div data-testid="compliance-overall" className="font-head font-black text-6xl tracking-tight" style={{ color: `hsl(${col(d.overall || 0)})` }}>{d.overall || 0}%</div>
           <div className="text-[11px] text-muted-foreground mt-2">{d.passing}/{d.total_controls} controls passing across {d.frameworks?.length || 0} frameworks</div>
         </motion.div>
 
-        <motion.div custom={1} variants={fade} initial="hidden" animate="show" className="col-span-full lg:col-span-8 bg-card fact-border rounded-xl p-6">
+        <motion.div custom={1} variants={fade} initial="hidden" animate="show" role="button" tabIndex={0}
+          onClick={() => openDeepDive({ accent: ACCENT, refLabel: "COMPLIANCE", title: "Alignment by framework", facets: (d.frameworks || []).map((f) => ({ label: f.framework, value: `${f.coverage}% · ${f.passing}/${f.controls}` })), recommendedActions: ["Focus on the lowest-coverage framework first — closing its mapped gaps lifts multiple overlapping controls at once."], explainTitle: "Compliance alignment by framework", explainKind: "compliance framework alignment coverage", explainContext: { frameworks: d.frameworks } })}
+          className="col-span-full lg:col-span-8 bg-card fact-border rounded-xl p-6 cursor-pointer hover:-translate-y-0.5 transition-transform duration-200">
           <h2 className="font-head font-bold text-lg mb-4">Alignment by framework</h2>
           <div className="space-y-4">
             {d.frameworks.map((f) => (

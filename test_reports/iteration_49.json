@@ -1,0 +1,39 @@
+{
+  "summary": "Frontend-only UI wiring sweep verified for the global Deep-Dive modal across 11 dashboards. Logged in as admin, dismissed onboarding tour, and validated: (a) new KPI/summary cards open the global deep-dive-modal with correct titles + AI insight; (b) each page's existing page-owned modals still open on their intended rows (regressions preserved); (c) exactly one deep-dive-modal is in the DOM at a time and closes via deep-dive-close.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Global (multiple pages)", "issues": ["React console warning: duplicate keys 'Need attention', 'Overdue', 'Resolved' (non-blocking); hydration warning: <span> inside <option> in CompliancePosture crosswalk framework <select> (line ~249) and CyberRisk AIR model <select> (line ~377) — cosmetic HTML validity issue caused by wrapper span with x-excluded attributes."]}
+    ]
+  },
+  "verified_flows": {
+    "Overview /app": "exec-kpi-health, exec-kpi-posture, exec-kpi-residual, exec-kpi-reduction all open deep-dive-modal with KPI titles. Operational mode: op-kpi-critical-risks, op-ai-usage, op-patching, op-mttd all open deep-dive-modal.",
+    "Control Monitoring /app/controls": "control-kpi-total/passing/attention/eff/mat/evidence, control-analytics-effectiveness, control-analytics-freshness, compliance-CIS-v8 (framework card) all open deep-dive. Regression: control-IAM-3 table row opens control-detail-pane (deep-dive=0). Pack button (pack-m-IAM-3) exists and does not open deep-dive (download flow blocked by column overflow after detail pane opens — not a functional bug).",
+    "Compliance /app/compliance": "tab-posture -> compliance-overall opens deep-dive with 'Overall compliance alignment' title.",
+    "Enterprise /app/enterprise": "estat-m365/sso/scim/abac/brand all open deep-dive. Form inputs do not trigger deep-dive.",
+    "Situation Room /app/situation-room": "sr-kpi-critical/high/risks/incidents/events/mode all open deep-dive. Regression: sr-exposure-LR-001 opens situation-risk-modal (deep-dive=0).",
+    "Kernel /app/kernel": "remediation-kpi (3 children), kernel-sub-tenant, policy-POL-EVID-FRESH (card), workflow-6a770e9f... (card) all open deep-dive.",
+    "Cyber Risk /app/cyber-risk": "cyber-stat-posture/mitigation/coverage/openrisks open cyber-metric-modal (NOT deep-dive) as required. FAIR KPI clickable elements inside fair-kpis open the global deep-dive.",
+    "Asset Intelligence /app/assets": "asset-kpi-total/exposed/tls/exposure/kev/cves all open the global KPI deep-dive with 'KPI METRIC' titles. Regression: discovered-CX-64B2B6D1 row opens the page's rich RiskDetailModal (same deep-dive-modal testid) with asset-specific content (title, risk, ALE, compliance alignment) — distinguishable by content.",
+    "Spot-check pages": "/app/risks rr-kpi-total, /app/decisions dec-kpi-recs, /app/vendors vnd-kpi-total, /app/ai-governance aig-kpi-queries all open the global deep-dive."
+  },
+  "test_report_links": [],
+  "action_items": [
+    "(Minor) Fix duplicate-key React warnings in list rendering (keys 'Need attention', 'Overdue', 'Resolved').",
+    "(Minor) Remove/replace <span> wrappers rendered as children of <select><option> in CompliancePosture (line ~249) and CyberRisk (line ~377) to eliminate hydration warnings."
+  ],
+  "critical_code_review_comments": [
+    "Deep-dive wiring is uniform and correct: exactly one modal rendered at a time; content is disambiguated by title/content even though both the global RiskDetailModal and some page-owned RiskDetailModals share data-testid='deep-dive-modal'.",
+    "Regression stopPropagation working: table rows open their own detail panes; SR exposures open situation-risk-modal; cyber-risk stat KPIs still open cyber-metric-modal.",
+    "AI insight loaded within ~15s on all sampled deep-dives (grounded, non-spinning)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (not tested)", "frontend": "100% of specified card/regression assertions passed"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Global deep-dive modal is stable across every dashboard tested. If retesting, remember to dismiss the onboarding-tour overlay (click 'Skip') immediately after login. Note that BOTH the global RiskDetailModal and several page-owned modals (Asset Intelligence RiskDetailModal, KernelStatus PolicyModal-adjacent, etc.) share data-testid='deep-dive-modal' — validate by title/content, not just count. Only cosmetic React warnings remain."
+}

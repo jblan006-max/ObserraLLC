@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { Building2, Loader2, KeyRound, Users, ShieldCheck, Trash2, Plus, Palette, Cloud } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ClickCard } from "@/components/dash";
 
 export default function Enterprise() {
   const [cfg, setCfg] = useState(null);
@@ -44,11 +45,17 @@ export default function Enterprise() {
 
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4" data-testid="enterprise-status">
         {statuses.map((s) => (
-          <div key={s.key} data-testid={`estat-${s.key}`} className="bg-card fact-border rounded-xl p-4">
+          <ClickCard key={s.key} testid={`estat-${s.key}`} className="bg-card fact-border rounded-xl p-4"
+            detail={{ accent: s.ok ? "142 70% 45%" : s.warn ? "35 90% 55%" : "0 84% 60%", refLabel: "ENTERPRISE", title: s.label,
+              rating: s.ok ? "Low" : s.warn ? "Medium" : "High",
+              facets: [{ label: "Capability", value: s.label }, { label: "State", value: s.text }, { label: "Readiness", value: `${ready}/5 configured` }],
+              recommendedActions: [s.ok ? `${s.label} is live — keep credentials current so identity/telemetry keeps flowing.` : `Configure ${s.label} below to raise enterprise readiness and strengthen identity governance.`],
+              explainTitle: `${s.label} — enterprise readiness`, explainKind: "enterprise identity sso scim abac branding readiness",
+              explainContext: { capability: s.label, ok: s.ok, warn: s.warn, text: s.text, readiness: `${ready}/5` } }}>
             <div className="flex items-center justify-between mb-2"><s.Icon className="w-4 h-4 text-muted-foreground" /><span className={`w-2 h-2 rounded-full ${s.ok ? "bg-low" : s.warn ? "bg-med" : "bg-muted-foreground/40"}`} style={s.ok ? { boxShadow: "0 0 6px hsl(142 70% 45%)" } : {}} /></div>
             <div className="font-head font-bold text-sm">{s.label}</div>
             <div className="text-[11px] text-muted-foreground mt-0.5">{s.text}</div>
-          </div>
+          </ClickCard>
         ))}
       </div>
 

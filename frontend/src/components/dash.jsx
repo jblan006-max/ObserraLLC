@@ -1,34 +1,87 @@
 import { Loader2 } from "lucide-react";
+import { useDeepDive } from "@/context/DeepDiveContext";
 
 // Reusable dense dashboard primitives — every dashboard renders these card shells
 // ALWAYS (even with zero data), so a page is never blank; empty datasets show a
 // graceful "connect / no data yet" state inside a live, functional card.
+// Every KPI/summary card is CLICKABLE → opens the universal deep-dive (live rating,
+// grounded AI recommendations, honest action hub). Cards may pass a rich `detail`
+// item; otherwise one is auto-built from the metric so no card is ever inert.
 
-export function StatCard({ label, value, sub, accent = "199 89% 48%", testid }) {
+function autoDetail({ label, value, sub, accent }) {
+  const v = value === null || value === undefined || value === "" ? "—" : String(value);
+  return {
+    refLabel: "KPI METRIC", title: label, accent,
+    facets: [
+      { label: "Current value", value: v },
+      ...(sub ? [{ label: "Context", value: sub }] : []),
+    ],
+    recommendedActions: [
+      `Review the live drivers behind “${label}” and action the highest-$ contributors first — changes re-price into the Strategic Risk Score on the next scan.`,
+    ],
+    explainTitle: label, explainKind: "kpi metric dashboard live",
+    explainContext: { metric: { label, value: v, sub } },
+  };
+}
+
+export function StatCard({ label, value, sub, accent = "199 89% 48%", testid, detail }) {
+  const { openDeepDive } = useDeepDive();
+  const item = detail || autoDetail({ label, value, sub, accent });
   return (
-    <div data-testid={testid} className="bg-card fact-border rounded-xl p-4 flex flex-col justify-between min-h-[96px] hover:-translate-y-0.5 transition-transform duration-200"
+    <button type="button" data-testid={testid} onClick={() => openDeepDive({ accent, ...item })}
+      className="group text-left w-full bg-card fact-border rounded-xl p-4 flex flex-col justify-between min-h-[96px] cursor-pointer hover:-translate-y-0.5 transition-transform duration-200"
       style={{ borderTop: `2px solid hsl(${accent} / 0.65)` }}>
-      <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">{label}</div>
+        <span className="text-[9px] font-mono text-ai opacity-0 group-hover:opacity-100 transition-opacity shrink-0">Deep-dive →</span>
+      </div>
       <div className="font-head font-black text-3xl tracking-tight mt-1" style={{ color: `hsl(${accent})` }}>
         {value === null || value === undefined || value === "" ? "—" : value}
       </div>
       {sub && <div className="text-[11px] text-muted-foreground mt-0.5 leading-tight">{sub}</div>}
-    </div>
+    </button>
   );
 }
 
-export function CardShell({ title, icon: Icon, accent = "199 89% 48%", right, children, testid, className = "" }) {
+export function CardShell({ title, icon: Icon, accent = "199 89% 48%", right, children, testid, className = "", detail }) {
+  const { openDeepDive } = useDeepDive();
+  const clickable = !!detail;
   return (
     <div data-testid={testid} className={`bg-card fact-border rounded-xl p-5 h-full flex flex-col ${className}`}
       style={{ boxShadow: `inset 0 1px 0 hsl(${accent} / 0.3)` }}>
       <div className="flex items-center justify-between gap-2 mb-4">
-        <div className="flex items-center gap-2 min-w-0">
-          {Icon && <Icon className="w-4 h-4 shrink-0" style={{ color: `hsl(${accent})` }} strokeWidth={1.5} />}
-          <h2 className="font-head font-bold text-base truncate">{title}</h2>
-        </div>
+        {clickable ? (
+          <button type="button" data-testid={testid ? `${testid}-deepdive` : undefined}
+            onClick={() => openDeepDive({ accent, ...detail })}
+            className="group flex items-center gap-2 min-w-0 text-left cursor-pointer hover:opacity-90 transition-opacity">
+            {Icon && <Icon className="w-4 h-4 shrink-0" style={{ color: `hsl(${accent})` }} strokeWidth={1.5} />}
+            <h2 className="font-head font-bold text-base truncate">{title}</h2>
+            <span className="text-[9px] font-mono text-ai opacity-0 group-hover:opacity-100 transition-opacity shrink-0">↗</span>
+          </button>
+        ) : (
+          <div className="flex items-center gap-2 min-w-0">
+            {Icon && <Icon className="w-4 h-4 shrink-0" style={{ color: `hsl(${accent})` }} strokeWidth={1.5} />}
+            <h2 className="font-head font-bold text-base truncate">{title}</h2>
+          </div>
+        )}
         {right}
       </div>
       <div className="flex-1 min-h-0">{children}</div>
+    </div>
+  );
+}
+
+// Clickable wrapper for bespoke (non-primitive) cards on legacy dashboards — makes any
+// card open the universal deep-dive while preserving its existing markup/styling.
+export function ClickCard({ detail, className = "", children, testid, style }) {
+  const { openDeepDive } = useDeepDive();
+  return (
+    <div data-testid={testid} role="button" tabIndex={0}
+      onClick={() => detail && openDeepDive(detail)}
+      onKeyDown={(e) => { if (detail && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openDeepDive(detail); } }}
+      className={`group cursor-pointer transition-transform duration-200 hover:-translate-y-0.5 ${className}`}
+      style={style}>
+      {children}
     </div>
   );
 }

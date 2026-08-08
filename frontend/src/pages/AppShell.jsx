@@ -8,6 +8,7 @@ import { FirstRunWizard } from "@/components/FirstRunWizard";
 import { NotificationBell } from "@/components/NotificationBell";
 import ForcePasswordReset from "@/pages/ForcePasswordReset";
 import { Footer } from "@/components/Footer";
+import { DeepDiveProvider } from "@/context/DeepDiveContext";
 import {
   LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
   Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp,
@@ -262,6 +263,7 @@ export default function AppShell() {
 
   const accent = routeAccent(location.pathname);
   return (
+    <DeepDiveProvider>
     <div className="min-h-screen grain flex" style={{ "--page-accent": accent }}>
       <div aria-hidden className="pointer-events-none fixed inset-0 z-0" style={{ background: `radial-gradient(72% 46% at 80% -6%, hsl(${accent} / 0.13), transparent 60%)`, transition: "background 0.6s ease" }} />
       <aside className="hidden md:flex w-60 flex-col border-r border-border bg-card/40 sticky top-0 h-screen z-10">
@@ -320,5 +322,6 @@ export default function AppShell() {
       <OnboardingTour />
       <FirstRunWizard />
     </div>
+    </DeepDiveProvider>
   );
 }

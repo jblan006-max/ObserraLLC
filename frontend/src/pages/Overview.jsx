@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
+import { useDeepDive } from "@/context/DeepDiveContext";
 import { toast } from "sonner";
 import { HealthGauge } from "@/components/HealthGauge";
 import { RiskHeatmap } from "@/components/RiskHeatmap";
@@ -39,15 +40,23 @@ const SectionLabel = ({ children, icon: Icon }) => (
 );
 
 function MetricCard({ icon: Icon, label, value, unit, accent, sub, testid }) {
+  const { openDeepDive } = useDeepDive();
+  const valStr = (typeof value === "string" || typeof value === "number") ? `${value}${unit || ""}` : null;
+  const open = () => openDeepDive({
+    accent: accent || "225 70% 55%", refLabel: "KPI METRIC", title: label,
+    facets: [...(valStr ? [{ label: "Value", value: valStr }] : []), ...(sub ? [{ label: "Context", value: sub }] : [])],
+    recommendedActions: [`Trace the live drivers behind “${label}” — action the highest-$ contributors first to move this metric; changes re-price into the Strategic Risk Score on the next scan.`],
+    explainTitle: label, explainKind: "executive kpi metric dashboard live", explainContext: { metric: { label, value: valStr, sub } },
+  });
   return (
-    <div data-testid={testid} className="bg-card fact-border rounded-xl p-5 group hover:-translate-y-0.5 transition-transform duration-200">
+    <button type="button" data-testid={testid} onClick={open} className="group w-full text-left bg-card fact-border rounded-xl p-5 cursor-pointer hover:-translate-y-0.5 transition-transform duration-200">
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs text-muted-foreground">{label}</span>
         {Icon && <Icon className="w-4 h-4" style={accent ? { color: `hsl(${accent})` } : { color: "hsl(var(--muted-foreground))" }} />}
       </div>
       <div className="font-head font-black text-3xl tracking-tight" style={accent ? { color: `hsl(${accent})` } : {}}>{value}<span className="text-lg">{unit}</span></div>
       {sub && <div className="text-[11px] text-muted-foreground mt-1">{sub}</div>}
-    </div>
+    </button>
   );
 }
 
