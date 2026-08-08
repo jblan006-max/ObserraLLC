@@ -25,17 +25,26 @@ function ecgPoints(flat) {
 }
 const _PTS = ecgPoints(false);
 const _FLAT = ecgPoints(true);
+// Standby: connected but idle — a low-amplitude "breathing" blip, distinct from a dead flatline.
+const _STANDBY = (() => {
+  const beat = [[0, 20], [26, 20], [29, 17], [32, 20], [60, 20]];
+  const out = [];
+  for (let i = 0; i < 9; i++) for (const [x, y] of beat) out.push(`${x + i * 60},${y}`);
+  return out.join(" ");
+})();
 
 function HeartbeatTrace({ mode = "pulse", color, height = 46 }) {
   const flat = mode === "flat";
-  const dur = mode === "slow" ? "3.4s" : "1.4s";
-  const stroke = color || (mode === "slow" ? "35 90% 55%" : flat ? "0 0% 45%" : "142 70% 45%");
+  const standby = mode === "standby";
+  const dur = (mode === "slow" || standby) ? "3.4s" : "1.4s";
+  const stroke = color || (mode === "slow" ? "35 90% 55%" : standby ? "199 65% 50%" : flat ? "0 0% 45%" : "142 70% 45%");
+  const points = flat ? _FLAT : standby ? _STANDBY : _PTS;
   return (
     <div className="relative overflow-hidden rounded-md ecg-box w-full" style={{ height }} data-testid={`ecg-${mode}`}>
       <div className="ecg-grid" />
       <div style={{ width: 1080, height, animation: flat ? "none" : `ecgScroll ${dur} linear infinite` }}>
         <svg width="1080" height={height} viewBox="0 0 540 40" preserveAspectRatio="none">
-          <polyline points={flat ? _FLAT : _PTS} fill="none" stroke={`hsl(${stroke})`} strokeWidth="1.4"
+          <polyline points={points} fill="none" stroke={`hsl(${stroke})`} strokeWidth="1.4"
             strokeLinejoin="round" strokeLinecap="round"
             style={{ filter: `drop-shadow(0 0 3px hsl(${stroke} / 0.9))`, animation: mode === "slow" ? "ecgWarn 1.6s ease-in-out infinite" : "none" }} />
         </svg>
@@ -145,7 +154,7 @@ export default function SecurityScanner() {
       ? { mode: "slow", c: "35 90% 55%", label: "Stale", health: 62, bpm: 48 }
       : { mode: "pulse", c: "142 70% 45%", label: "Live", health: Math.max(60, 99 - (src.metrics?.risky_users || 0) * 2), bpm: 72 };
     if (src.status === "degraded") return { mode: "slow", c: "35 90% 55%", label: "Degraded", health: 45, bpm: 40 };
-    if (src.status === "available") return { mode: "flat", c: "199 65% 50%", label: "Standby", health: null, bpm: 0 };
+    if (src.status === "available") return { mode: "standby", c: "199 65% 50%", label: "Standby", health: null, bpm: 0 };
     return { mode: "flat", c: "0 0% 45%", label: "Disconnected", health: null, bpm: 0 };
   };
 
