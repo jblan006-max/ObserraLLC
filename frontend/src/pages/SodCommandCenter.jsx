@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot } from "lucide-react";
+import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail } from "lucide-react";
 
 const SEV = { Critical: "0 84% 60%", High: "35 90% 55%", Medium: "190 90% 50%", Low: "142 70% 45%" };
 const Chip = ({ v, map = SEV }) => <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full" style={{ background: `hsl(${map[v] || "220 10% 55%"} / 0.15)`, color: `hsl(${map[v] || "220 10% 55%"})` }}>{v}</span>;
@@ -36,6 +36,7 @@ export default function SodCommandCenter() {
   // auto-remediation engine
   const [arem, setArem] = useState(null);
   const [aremBusy, setAremBusy] = useState(false);
+  const [digestBusy, setDigestBusy] = useState(false);
 
   const loadConflicts = useCallback(async () => {
     const p = new URLSearchParams();
@@ -72,6 +73,12 @@ export default function SodCommandCenter() {
     try { const { data: res } = await api.post("/sap/autoremediation/run"); toast.success(`${res.remediated} auto-remediation workflow(s) opened`); await loadArem(); await loadConflicts(); }
     catch { toast.error("Run failed"); }
     setAremBusy(false);
+  };
+  const sendDigest = async () => {
+    setDigestBusy(true);
+    try { const { data: res } = await api.post("/sap/governance-digest/send"); toast.success(`SAP Governance Digest emailed to ${res.sent} recipient(s)`, { description: (res.recipients || []).join(", ") }); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Could not send digest"); }
+    setDigestBusy(false);
   };
   const toggleSev = (s) => { const cur = arem.config.severities; const next = cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]; saveArem({ severities: next.length ? next : ["Critical"] }); };
 
@@ -160,7 +167,14 @@ export default function SodCommandCenter() {
             <div className="flex-1" />
             <div className="flex items-center gap-2"><span className="text-xs text-muted-foreground">Enable engine</span><Switch data-testid="autorem-toggle" checked={arem.config.enabled} disabled={aremBusy} onCheckedChange={(v) => saveArem({ enabled: v })} /></div>
           </div>
-          <p className="text-[11px] text-muted-foreground mt-1">When enabled, the platform automatically opens a ServiceNow workflow for every account carrying an open SoD conflict of a watched severity — closing risk without a human click.</p>
+          <p className="text-[11px] text-muted-foreground mt-1">When enabled, the platform automatically opens a ServiceNow workflow for every account carrying an open SoD conflict of a watched severity — closing risk without a human click. A daily scheduled sweep (folded into the platform cron, 08:00 UTC) runs it unattended and emails the SAP Access Governance Digest.</p>
+          <div className="flex flex-wrap items-center gap-3 mt-2">
+            {arem.config.last_cron_at && (
+              <span className="text-[10px] font-mono text-muted-foreground" data-testid="autorem-last-cron">Last scheduled sweep {new Date(arem.config.last_cron_at).toLocaleString()} · {arem.config.last_cron_count ?? 0} opened</span>
+            )}
+            <div className="flex-1" />
+            <Button size="sm" variant="outline" className="h-8 gap-1.5" data-testid="autorem-digest" onClick={sendDigest} disabled={digestBusy}><Mail className="w-3.5 h-3.5" />{digestBusy ? "Sending…" : "Email governance digest"}</Button>
+          </div>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
             <div>
               <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1.5">Trigger severities</div>

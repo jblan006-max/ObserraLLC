@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { UserPlus, UserX, GitBranch, Ban, PauseCircle, PlayCircle, Power, ArrowLeftRight } from "lucide-react";
+import { UserPlus, UserX, GitBranch, Ban, PauseCircle, PlayCircle, Power, ArrowLeftRight, Scissors } from "lucide-react";
 
 const VERB = { activate: "reactivated", deactivate: "deactivated", suspend: "suspended" };
 const ACTION_META = {
@@ -30,6 +30,8 @@ export default function Lifecycle() {
   const [reason, setReason] = useState("");
   const [notify, setNotify] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [moverReview, setMoverReview] = useState(null);
+  const [stripBusy, setStripBusy] = useState(false);
   const load = useCallback(async () => { const { data } = await api.get("/sap/jml"); setD(data); }, []);
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -59,6 +61,16 @@ export default function Lifecycle() {
       setBulk(null); window.dispatchEvent(new Event("sap-data-changed")); await load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Failed"); }
     setBusy(false);
+  };
+
+  const stripMover = async (m) => {
+    setStripBusy(true);
+    try {
+      const { data } = await api.post(`/sap/jml/${m.ref}/strip-carried-over`, { reason: "Mover access-accumulation cleanup" });
+      toast.success(`Stripped ${data.stripped_count} carried-over role(s) from ${m.name}`, { description: `ServiceNow ${data.ticket.number} opened & auto-closed` });
+      setMoverReview(null); window.dispatchEvent(new Event("sap-data-changed")); await load();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Strip failed"); }
+    setStripBusy(false);
   };
 
   const rowActions = (ref, name) => (
@@ -159,10 +171,10 @@ export default function Lifecycle() {
         <div className="space-y-2">
           {d.movers.map((m) => (
             <div key={m.ref} data-testid={`jml-mover-${m.ref}`} className="flex items-center gap-3 p-3 rounded-lg bg-purple/5 border border-purple/20">
-              <button onClick={() => openMover(m)} data-testid={`jml-mover-open-${m.ref}`} className="flex items-center gap-3 flex-1 min-w-0 text-left hover:opacity-80 transition-opacity">
+              <button onClick={() => setMoverReview(m)} data-testid={`jml-mover-open-${m.ref}`} className="flex items-center gap-3 flex-1 min-w-0 text-left hover:opacity-80 transition-opacity">
                 <span className="font-head font-black text-xl text-purple w-10">{m.score}</span>
                 <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium">{m.name}</div>
+                  <div className="text-sm font-medium">{m.name}{m.carried_over_count > 0 && <span className="ml-2 text-[9px] font-mono px-1.5 py-0.5 rounded bg-crit/15 text-crit align-middle">{m.carried_over_count} carried over</span>}</div>
                   <div className="text-[11px] text-muted-foreground">{m.department} · {m.accounts} account(s) · {m.roles} role(s) · {m.changes.map((c) => c.field).join(", ")} changed</div>
                 </div>
                 <div className="hidden md:flex flex-wrap gap-1 justify-end max-w-[280px]">{m.changes.slice(0, 3).map((c, i) => <span key={i} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">{c.field}: {c.from ?? "—"}→{c.to ?? "—"}</span>)}</div>
@@ -222,6 +234,64 @@ export default function Lifecycle() {
             <label className="flex items-center gap-2 text-sm cursor-pointer"><Checkbox checked={notify} onCheckedChange={(v) => setNotify(!!v)} /> Notify stakeholders</label>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setBulk(null)}>Cancel</Button><Button data-testid="jml-bulk-confirm" disabled={busy} onClick={runBulk} className="bg-crit hover:bg-crit/90">{busy ? "Running…" : "Deactivate All"}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!moverReview} onOpenChange={(o) => !o && setMoverReview(null)}>
+        <DialogContent className="max-w-2xl" data-testid="jml-mover-dialog">
+          {moverReview && (() => {
+            const m = moverReview;
+            const heldRefs = new Set((m.current_roles || []).map((r) => r.ref));
+            const carriedRefs = new Set((m.carried_over || []).map((r) => r.ref));
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2"><ArrowLeftRight className="w-5 h-5 text-purple" /> {m.name} — mover role review</DialogTitle>
+                  <DialogDescription>In-flight transfer detected from disagreeing ADP / IZ8 HR records. Compare the roles held now against the current department's birthright set, then strip access carried over from the previous role (least privilege).</DialogDescription>
+                </DialogHeader>
+                <div className="flex flex-wrap gap-1.5 mb-3" data-testid="mover-changes">
+                  {m.changes.map((c, i) => <span key={i} className="text-[10px] font-mono px-2 py-0.5 rounded bg-secondary text-muted-foreground">{c.field}: {c.from ?? "—"} → {c.to ?? "—"}</span>)}
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div data-testid="mover-role-current">
+                    <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2">Roles held now ({m.current_roles.length})</div>
+                    <div className="space-y-1.5">
+                      {m.current_roles.map((r) => {
+                        const carried = carriedRefs.has(r.ref);
+                        return (
+                          <div key={r.ref} data-testid={`mover-current-${r.ref}`} className={`flex items-center justify-between gap-2 text-xs p-2 rounded-lg border ${carried ? "bg-crit/5 border-crit/30" : "bg-secondary/30 border-border"}`}>
+                            <span className="truncate"><span className="font-mono">{r.ref}</span> · {r.name}</span>
+                            {carried ? <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-crit/15 text-crit shrink-0">CARRIED OVER</span> : <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-low/15 text-low shrink-0">BIRTHRIGHT</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div data-testid="mover-role-birthright">
+                    <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2">{m.department} birthright ({m.birthright_roles.length})</div>
+                    <div className="space-y-1.5">
+                      {m.birthright_roles.map((r) => {
+                        const held = heldRefs.has(r.ref);
+                        return (
+                          <div key={r.ref} className={`flex items-center justify-between gap-2 text-xs p-2 rounded-lg border ${held ? "bg-low/5 border-low/30" : "bg-secondary/20 border-dashed border-border"}`}>
+                            <span className={`truncate ${held ? "" : "text-muted-foreground"}`}><span className="font-mono">{r.ref}</span> · {r.name}</span>
+                            <span className={`text-[9px] font-mono px-1.5 py-0.5 rounded shrink-0 ${held ? "bg-low/15 text-low" : "bg-secondary text-muted-foreground"}`}>{held ? "HELD" : "NOT PROVISIONED"}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+                <DialogFooter className="mt-4 gap-2 sm:justify-between">
+                  <Button variant="outline" size="sm" data-testid="mover-ai-review" onClick={() => { const mm = m; setMoverReview(null); openMover(mm); }}>AI deep-dive</Button>
+                  <div className="flex gap-2">
+                    <Button variant="outline" onClick={() => setMoverReview(null)}>Close</Button>
+                    <Button data-testid="jml-mover-strip-btn" disabled={stripBusy || m.carried_over_count === 0} onClick={() => stripMover(m)} className="gap-1.5 bg-crit hover:bg-crit/90"><Scissors className="w-3.5 h-3.5" />{stripBusy ? "Stripping…" : m.carried_over_count > 0 ? `Strip carried-over (${m.carried_over_count})` : "No carried-over access"}</Button>
+                  </div>
+                </DialogFooter>
+              </>
+            );
+          })()}
         </DialogContent>
       </Dialog>
     </div>

@@ -639,6 +639,47 @@ async def jml(user: dict = Depends(get_current_user)):
             "counts": {"joiners": len(joiners), "movers": len(movers), "leavers": len(leavers)}}
 
 
+class MoverStripBody(BaseModel):
+    reason: str = ""
+
+
+@sap_router.post("/jml/{person_ref}/strip-carried-over")
+async def strip_carried_over(person_ref: str, body: MoverStripBody, user: dict = Depends(get_current_user)):
+    """Mover access-accumulation cleanup: strip the roles this worker carried over from their
+    previous position (everything not in their current department's birthright set) and open a
+    ServiceNow → HR → SAP least-privilege change end-to-end."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    persons, accounts, conflicts, pmap = await _correlate(org_id)
+    p = pmap.get(person_ref)
+    if not p:
+        raise HTTPException(status_code=404, detail="Identity not found")
+    birthright = {rc["ref"] for rc in ROLE_CATALOG if rc.get("dept") == p["department"]}
+    acct_roles = sorted({r for a in p["accounts"] for r in a.get("roles", [])})
+    carried = [r for r in acct_roles if r not in birthright]
+    if not carried:
+        raise HTTPException(status_code=400, detail="No carried-over roles to strip — access already matches the current role's birthright set")
+    for a in p["accounts"]:
+        await db.sap_accounts.update_one({"org_id": org_id, "ref": a["ref"]}, {"$pull": {"roles": {"$in": carried}}})
+    by = user["email"]
+    hr = p.get("hr_authority", "ADP")
+    names = [ROLE_BY_REF.get(r, {}).get("name", r) for r in carried]
+    steps = [
+        ("ServiceNow", f"Mover access-cleanup change opened for {p['name']}"),
+        ("ServiceNow", f"Auto-approved (least privilege / transfer) · {by}"),
+        (hr, "Recording transfer & access change against worker record"),
+        ("SAP", f"Stripping carried-over roles: {', '.join(names)}"),
+        ("ServiceNow", "Carried-over access removed; SoD re-evaluated; change closed"),
+    ]
+    ticket = await _snow_generic(org_id, "SAP Mover Access Cleanup", "mover_strip", steps, by, prefix="CHG",
+                                 person_ref=person_ref, person_name=p["name"], email=p.get("email"),
+                                 hr_system=hr, reason=f"Strip {len(carried)} carried-over role(s) from {p['name']}",
+                                 work_note=body.reason)
+    await _audit(org_id, by, "sap.mover.strip_carried_over", f"{person_ref} · stripped {', '.join(carried)} · {ticket['number']}")
+    return {"ok": True, "stripped": carried, "stripped_names": names,
+            "stripped_count": len(carried), "ticket": _ticket_public(ticket)}
+
+
 class PrivActionBody(BaseModel):
     action: str  # revoke_privileged | lock | recertify
     reason: str = ""
@@ -1690,6 +1731,108 @@ async def workflow_activity(q: str = "", prefix: str = "", system: str = "",
     }
 
 
+def _filter_workflow(tickets, q, prefix, system, action, days):
+    ql = (q or "").lower().strip()
+    cutoff = (_now() - timedelta(days=days)).isoformat() if days and days > 0 else None
+    rows = []
+    for t in tickets:
+        if prefix and (t.get("number") or "")[:3] != prefix:
+            continue
+        if system and system not in t.get("systems_touched", []):
+            continue
+        if action and t.get("action") != action:
+            continue
+        if cutoff and (t.get("opened_at") or "") < cutoff:
+            continue
+        if ql and ql not in (f"{t.get('number','')} {t.get('type','')} {t.get('person_name') or ''} "
+                             f"{t.get('requested_by') or ''} {t.get('reason') or ''}").lower():
+            continue
+        rows.append(t)
+    return rows
+
+
+def _workflow_evidence_pdf(rows):
+    """Branded SOX-grade PDF evidence pack of ServiceNow workflows (open→auto-close)."""
+    from reportlab.lib.pagesizes import LETTER, landscape
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+    pw, ph = landscape(LETTER)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=(pw, ph), topMargin=0.7 * inch, bottomMargin=0.7 * inch,
+                            leftMargin=0.5 * inch, rightMargin=0.5 * inch)
+    ss = getSampleStyleSheet()
+    navy = colors.HexColor("#0f1e3d")
+    title_st = ParagraphStyle("t", parent=ss["Title"], textColor=navy, fontSize=18, spaceAfter=2)
+    sub_st = ParagraphStyle("s", parent=ss["Normal"], textColor=colors.HexColor("#64748b"), fontSize=9)
+    cell = ParagraphStyle("c", parent=ss["Normal"], fontSize=7.5, leading=9)
+    head = ParagraphStyle("h", parent=ss["Normal"], fontSize=7.5, leading=9, textColor=colors.white, fontName="Helvetica-Bold")
+    flow = []
+    badge = "/app/backend/assets/brand-badge.png"
+    if os.path.exists(badge):
+        flow.append(RLImage(badge, width=34, height=34))
+    flow.append(Paragraph("SAP Access Governance — Workflow Evidence Pack", title_st))
+    flow.append(Paragraph(f"ServiceNow automated remediation & access workflows · {len(rows)} record(s) · "
+                          f"Generated {_now().strftime('%B %d, %Y %H:%M UTC')}", sub_st))
+    flow.append(Spacer(1, 10))
+    data = [[Paragraph(h, head) for h in ["Ticket", "Workflow", "Action", "Systems Touched", "Subject", "Opened", "State"]]]
+    for t in rows[:600]:
+        data.append([
+            Paragraph(t.get("number", ""), cell),
+            Paragraph(t.get("type", ""), cell),
+            Paragraph(t.get("action", "") or "—", cell),
+            Paragraph(" · ".join(t.get("systems_touched", [])) or "—", cell),
+            Paragraph((t.get("person_name") or t.get("reason") or "—"), cell),
+            Paragraph((t.get("opened_at") or "")[:19].replace("T", " "), cell),
+            Paragraph(t.get("state", ""), cell),
+        ])
+    tbl = Table(data, colWidths=[0.85 * inch, 1.9 * inch, 1.15 * inch, 2.25 * inch, 1.9 * inch, 1.25 * inch, 0.75 * inch], repeatRows=1)
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), navy),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e2e8f0")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    flow.append(tbl)
+    flow.append(Spacer(1, 8))
+    flow.append(Paragraph("Obserra — Executive Protection &amp; Intelligence LLC · Confidential · "
+                          "Every workflow is a real ServiceNow-orchestrated action recorded end-to-end.", sub_st))
+    doc.build(flow)
+    buf.seek(0)
+    return buf
+
+
+@sap_router.get("/workflow/activity/export")
+async def workflow_activity_export(format: str = "csv", q: str = "", prefix: str = "", system: str = "",
+                                   action: str = "", days: int = 0, user: dict = Depends(get_current_user)):
+    """Export the filtered ServiceNow workflow stream as a CSV or branded PDF SOX evidence pack."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    if format not in ("csv", "pdf"):
+        raise HTTPException(status_code=400, detail="format must be csv or pdf")
+    tickets = await db.sap_snow_tickets.find({"org_id": org_id}, {"_id": 0}).sort("opened_at", -1).to_list(2000)
+    rows = _filter_workflow(tickets, q, prefix, system, action, days)
+    fname = f"sap-workflow-evidence-{_now().strftime('%Y%m%d-%H%M')}"
+    if format == "csv":
+        sio = io.StringIO()
+        w = csv.writer(sio)
+        w.writerow(["Ticket", "Workflow", "Action", "State", "Systems Touched", "Subject",
+                    "Requested By", "Reason", "Opened", "Closed", "Duration (s)", "Auto-closed"])
+        for t in rows:
+            w.writerow([t.get("number", ""), t.get("type", ""), t.get("action", ""), t.get("state", ""),
+                        " · ".join(t.get("systems_touched", [])), t.get("person_name") or "",
+                        t.get("requested_by") or "", t.get("reason") or "", t.get("opened_at") or "",
+                        t.get("closed_at") or "", t.get("duration_sec", 0), "yes" if t.get("auto_closed") else "no"])
+        return Response(content=sio.getvalue(), media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="{fname}.csv"'})
+    pdf = _workflow_evidence_pdf(rows)
+    return Response(content=pdf.getvalue(), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}.pdf"'})
+
+
 @sap_router.get("/analytics")
 async def analytics(user: dict = Depends(get_current_user)):
     """SAP access analytics / metrics — aggregated live for the metrics dashboard."""
@@ -1974,4 +2117,119 @@ async def advisor_plan(body: AdvisorPlanBody, user: dict = Depends(get_current_u
 async def _audit(org_id, actor, action, detail=""):
     await db.audit_logs.insert_one({"org_id": org_id, "actor": actor, "action": action,
                                     "detail": detail, "ts": _now().isoformat()})
+
+
+# ── SAP Governance Digest + scheduled auto-remediation (folded into daily-drift cron) ─────────
+async def _governance_digest_data(org_id):
+    persons, accounts, conflicts, pmap = await _correlate(org_id)
+    open_conf = [c for c in conflicts if c.get("status") == "Open"]
+    sev = {s: sum(1 for c in open_conf if c["severity"] == s) for s in ("Critical", "High", "Medium")}
+    day_ago = (_now() - timedelta(days=1)).isoformat()
+    autorem = await db.sap_autoremediation_log.find({"org_id": org_id}, {"_id": 0}).to_list(2000)
+    autorem_24h = [r for r in autorem if (r.get("at") or "") >= day_ago]
+    tickets_24h = await db.sap_snow_tickets.count_documents({"org_id": org_id, "opened_at": {"$gte": day_ago}})
+    residual = [p for p in persons if p["status"] == "Terminated" and any(a.get("lock_state") == "unlocked" for a in p.get("accounts", []))]
+    top = sorted(persons, key=lambda p: -p["risk"]["score"])[:5]
+    cfg = await _get_autoremediation(org_id)
+    return {
+        "open_sod": len(open_conf), "sev": sev,
+        "autorem_24h": len(autorem_24h), "autorem_total": len(autorem),
+        "autorem_enabled": bool(cfg.get("enabled")), "autorem_action": cfg.get("action"),
+        "tickets_24h": tickets_24h,
+        "residual": [{"name": p["name"], "dept": p["department"]} for p in residual][:8],
+        "residual_count": len(residual),
+        "top": [{"name": p["name"], "dept": p["department"], "score": p["risk"]["score"], "rating": p["risk"]["rating"]} for p in top],
+        "avg_risk": round(sum(p["risk"]["score"] for p in persons) / len(persons)) if persons else 0,
+        "identities": len(persons),
+    }
+
+
+def _governance_digest_html(d):
+    def row(label, value, color="#0f1e3d"):
+        return (f'<tr><td style="padding:6px 10px;color:#64748b;font-size:13px">{label}</td>'
+                f'<td style="padding:6px 10px;text-align:right;font-weight:700;font-size:15px;color:{color}">{value}</td></tr>')
+    residual = "".join(f'<li>{r["name"]} — {r["dept"]}</li>' for r in d["residual"]) or "<li>None — no terminated worker retains SAP access ✓</li>"
+    top = "".join(f'<li><b>{t["name"]}</b> ({t["dept"]}) — {t["score"]}/100 · {t["rating"]}</li>' for t in d["top"]) or "<li>—</li>"
+    ar = ("enabled" if d["autorem_enabled"] else "disabled")
+    return (
+        '<div style="font:400 14px Arial,Helvetica,sans-serif;color:#1f2937;max-width:640px;margin:auto">'
+        '<div style="background:#0f1e3d;color:#fff;padding:18px 22px;border-radius:12px 12px 0 0">'
+        '<div style="font-size:11px;letter-spacing:2px;opacity:.7">OBSERRA SAP UAC</div>'
+        '<h2 style="margin:4px 0 0;font-size:20px">SAP Access Governance Digest</h2>'
+        f'<div style="font-size:12px;opacity:.75;margin-top:2px">Daily posture · {_now().strftime("%B %d, %Y")}</div></div>'
+        '<div style="border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;padding:6px 12px 18px">'
+        '<table style="width:100%;border-collapse:collapse;margin:6px 0">'
+        + row("Open Segregation-of-Duties conflicts", d["open_sod"], "#b91c1c" if d["open_sod"] else "#16a34a")
+        + row("↳ Critical / High / Medium", f'{d["sev"]["Critical"]} / {d["sev"]["High"]} / {d["sev"]["Medium"]}')
+        + row("Auto-remediated (last 24h)", d["autorem_24h"], "#16a34a")
+        + row("Auto-remediation engine", f'{ar} · {d["autorem_action"] or "recertify"}')
+        + row("ServiceNow workflows opened (24h)", d["tickets_24h"])
+        + row("Terminated workers w/ residual access", d["residual_count"], "#b91c1c" if d["residual_count"] else "#16a34a")
+        + row("Average SAP Access Risk Score", f'{d["avg_risk"]}/100')
+        + '</table>'
+        f'<h3 style="font-size:14px;color:#0f1e3d;margin:14px 0 4px">Residual access to clear</h3>'
+        f'<ul style="margin:0;padding-left:18px;font-size:13px;color:#334155">{residual}</ul>'
+        f'<h3 style="font-size:14px;color:#0f1e3d;margin:14px 0 4px">Top access-risk identities</h3>'
+        f'<ul style="margin:0;padding-left:18px;font-size:13px;color:#334155">{top}</ul>'
+        '<p style="font-size:11px;color:#9ca3af;margin-top:18px;border-top:1px solid #e2e8f0;padding-top:10px">'
+        'Obserra — Executive Protection &amp; Intelligence LLC · Confidential. Auto-remediation opens real '
+        'ServiceNow workflows that fan out to ADP/IZ8 HR → SAP → AD/Entra and auto-close end-to-end.</p></div></div>')
+
+
+async def run_sap_autoremediation_all():
+    """Unattended SoD → ServiceNow auto-remediation sweep across every org that enabled the engine."""
+    orgs = await db.sap_autoremediation.find({"enabled": True}, {"_id": 0, "org_id": 1}).to_list(1000)
+    for o in orgs:
+        org_id = o["org_id"]
+        try:
+            created = await _run_autoremediation(org_id, "cron:daily")
+            await db.sap_autoremediation.update_one(
+                {"org_id": org_id},
+                {"$set": {"last_cron_at": _now().isoformat(), "last_cron_count": len(created)}})
+        except Exception:
+            pass
+
+
+async def run_sap_governance_digest():
+    """Daily SAP Access Governance Digest email to admins/execs of every org with a live SAP model."""
+    from kernel import notifications
+    today = _now().date().isoformat()
+    orgs = await db.organizations.find({}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        if not await db.sap_persons.find_one({"org_id": org_id}):
+            continue
+        try:
+            data = await _governance_digest_data(org_id)
+            html = _governance_digest_html(data)
+            recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
+                                         {"_id": 0, "email": 1}).to_list(200)
+            for r in recips:
+                await notifications.send_email(r["email"], "SAP Access Governance Digest — Obserra UAC", html)
+            await notifications.create(
+                org_id, "report", "SAP Governance Digest delivered",
+                f"{data['open_sod']} open SoD conflict(s), {data['autorem_24h']} auto-remediated (24h), "
+                f"{data['residual_count']} residual-access leaver(s). Emailed to {len(recips)} recipient(s).",
+                ref="sap-governance-digest", dedupe_key=f"sap-digest:{today}")
+        except Exception:
+            pass
+
+
+@sap_router.post("/governance-digest/send")
+async def governance_digest_send(user: dict = Depends(get_current_user)):
+    """On-demand SAP Access Governance Digest email (admins/execs, falling back to the caller)."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    from kernel import notifications
+    data = await _governance_digest_data(org_id)
+    html = _governance_digest_html(data)
+    recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
+                                 {"_id": 0, "email": 1}).to_list(200)
+    emails = [r["email"] for r in recips] or [user["email"]]
+    sent = 0
+    for e in emails:
+        if await notifications.send_email(e, "SAP Access Governance Digest — Obserra UAC", html):
+            sent += 1
+    await _audit(org_id, user["email"], "sap.governance.digest", f"digest emailed to {len(emails)} recipient(s), {sent} sent")
+    return {"ok": True, "recipients": emails, "sent": sent, "data": data}
 

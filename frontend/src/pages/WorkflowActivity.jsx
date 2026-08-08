@@ -4,7 +4,9 @@ import { StatCard, Spinner } from "@/components/dash";
 import { SapInsight } from "@/components/SapInsight";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Workflow, CheckCircle2, Timer, Zap, ArrowRight } from "lucide-react";
+import { Search, Workflow, CheckCircle2, Timer, Zap, ArrowRight, Download, FileText } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 const SYS_COLOR = { ServiceNow: "150 60% 50%", ADP: "330 82% 60%", IZ8: "265 80% 66%", SAP: "210 92% 62%", "AD/Entra": "35 90% 55%" };
 const PFX = { REQ: "142 70% 45%", INC: "0 84% 60%", CHG: "35 90% 55%" };
@@ -35,14 +37,39 @@ export default function WorkflowActivity() {
     return () => window.removeEventListener("sap-data-changed", h);
   }, [load]);
 
+  const doExport = async (format) => {
+    const p = new URLSearchParams();
+    p.set("format", format);
+    if (q) p.set("q", q);
+    if (prefix !== "all") p.set("prefix", prefix);
+    if (system !== "all") p.set("system", system);
+    if (days !== "0") p.set("days", days);
+    try {
+      const res = await api.get(`/sap/workflow/activity/export?${p.toString()}`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `sap-workflow-evidence.${format}`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      toast.success(`Workflow ${format.toUpperCase()} evidence pack exported`);
+    } catch { toast.error("Export failed"); }
+  };
+
   if (!d) return <Spinner />;
   const s = d.summary;
 
   return (
     <div className="space-y-6" data-testid="workflow-activity-page">
-      <div>
-        <h1 className="font-head font-black text-3xl lg:text-4xl tracking-tight" data-testid="wf-title">Workflow Activity</h1>
-        <p className="text-sm text-muted-foreground mt-1">Live, filterable stream of every ServiceNow workflow the platform has opened and auto-closed across all dashboards (ServiceNow → ADP/IZ8 → SAP → AD/Entra).</p>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="font-head font-black text-3xl lg:text-4xl tracking-tight" data-testid="wf-title">Workflow Activity</h1>
+          <p className="text-sm text-muted-foreground mt-1">Live, filterable stream of every ServiceNow workflow the platform has opened and auto-closed across all dashboards (ServiceNow → ADP/IZ8 → SAP → AD/Entra).</p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <Button size="sm" variant="outline" className="gap-1.5" data-testid="wf-export-csv" onClick={() => doExport("csv")}><Download className="w-3.5 h-3.5" />CSV</Button>
+          <Button size="sm" variant="outline" className="gap-1.5" data-testid="wf-export-pdf" onClick={() => doExport("pdf")}><FileText className="w-3.5 h-3.5" />PDF evidence pack</Button>
+        </div>
       </div>
 
       <SapInsight dashboard="Workflow Activity" focus="ServiceNow ticket automation volume, cross-system reach and remediation throughput" accent="265 80% 66%" auto slug="workflow-activity" />

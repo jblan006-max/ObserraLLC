@@ -101,6 +101,22 @@ async def seed_sap_uac(org_id: str):
                                         dormant=(rnd.random() < 0.15),
                                         locked=(status == "Terminated")))
 
+    # ---- Mover access-accumulation scenarios (transferred worker retaining prior-dept roles) ----
+    #  These carry a live ADP↔IZ8 org-attribute disagreement (transfer in flight) AND at least one
+    #  role that falls OUTSIDE their current department's birthright set — the textbook mover risk.
+    mover_scen = [
+        {"dept": "Procurement", "le": "US01", "roles": ["Z_MM_BUYER", "Z_SD_BILLING"], "force": "manager"},
+        {"dept": "Finance", "le": "UK01", "roles": ["Z_FI_AP_CLERK", "Z_MM_PO_APPROVER"], "force": "manager"},
+    ]
+    for ms in mover_scen:
+        idx += 1
+        name = _mkname()
+        le = LE_BY_CODE[ms["le"]]
+        hire_days = rnd.randint(500, 2000)
+        p = _build_person(org_id, idx, name, ms["dept"], "Active", "Employee", le, rnd, hire_days, force_conflict=ms["force"])
+        persons.append(p)
+        accounts.append(_build_account(org_id, p, "S4P", ms["roles"], rnd))
+
     # ---- Orphan / technical / service accounts (no person owner) ----
     tech = [
         {"user": "RFC_MDM", "type": "communication", "roles": ["Z_FI_VENDOR_MAINT", "Z_SD_CUST_MAINT"], "owner": None, "sys": "S4P"},
@@ -138,7 +154,7 @@ async def seed_sap_uac(org_id: str):
     await db.sap_meta.insert_one({"org_id": org_id, "seeded_at": _now().isoformat()})
 
 
-def _build_person(org_id, idx, name, dept, status, wt, le, rnd, hire_days, residual=False, priv=False):
+def _build_person(org_id, idx, name, dept, status, wt, le, rnd, hire_days, residual=False, priv=False, force_conflict=None):
     ref = f"P-{idx:04d}"
     first, last = (name.split(" ") + [""])[:2]
     email = f"{first.lower()}.{last.lower()}@acme-corp.com"
@@ -171,6 +187,13 @@ def _build_person(org_id, idx, name, dept, status, wt, le, rnd, hire_days, resid
     elif r < 0.18:
         iz8["worker_type"] = "Contractor" if wt == "Employee" else "Employee"
         conflict_kind = "worker_type"
+    if force_conflict:
+        if force_conflict == "manager":
+            newmgr = f"{rnd.choice(_FIRST)} {rnd.choice(_LAST)}"
+            iz8["manager"] = newmgr if newmgr != manager else f"{rnd.choice(_FIRST)} {rnd.choice(_LAST)}"
+        elif force_conflict == "job_title":
+            iz8["job_title"] = f"{rnd.choice(_JOBS.get(dept, ['Analyst']))} (prior role)"
+        conflict_kind = force_conflict
     return {
         "org_id": org_id, "ref": ref, "name": name, "email": email, "department": dept,
         "job_title": job, "worker_type": wt, "status": status, "legal_entity": le["code"],

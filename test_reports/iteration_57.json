@@ -1,0 +1,43 @@
+{
+  "summary": "Iter57 verified all 4 approved features end-to-end. Backend pytest (test_iter57_export_jml_digest.py): 12 passed, 1 skipped (strip_flow skipped in one rerun because the fixture had already stripped the only mover with carried_over>0; that same test PASSED in the first run — response 200 with ticket.number and stripped_count>=1). Verified: (a) GET /api/sap/workflow/activity/export?format=csv 200 text/csv with header row, ?format=pdf 200 application/pdf starting %PDF, ?format=xml 400, ?format=csv&days=1 200. (b) POST /api/sap/jml/{ref}/strip-carried-over on a P-004x mover returned ok:true, stripped_count>=1, ticket.number set, systems_touched present. Second call on a mover with 0 carried-over returned 400 'No carried-over roles to strip'. Unknown ref returned 404. Requires JSON body {reason}. (c) POST /api/sap/governance-digest/send returned 200 with ok:true, recipients:[jblan2026@gmail.com], sent>=0 and data containing open_sod/sev/autorem_24h/residual_count/top. In UI flow the same call returned sent:1 (real Emergent-managed Resend delivery). (d) POST /api/cron/daily-drift-digest without auth returns 401; with Bearer WEBHOOK_CRON_SECRET returns 200 {status:accepted}. Regression pass: GET/POST /api/sap/autoremediation and /run 200, /api/sap/workflow/activity 200 with tickets. \n\nFrontend Playwright (cookie login via data-testid=auth-submit): /app/workflow — wf-export-csv & wf-export-pdf visible, both trigger real file downloads (sap-workflow-evidence.csv / .pdf) and show sonner toasts 'Workflow CSV/PDF evidence pack exported'. wf-row-* click opens wf-detail with wf-stages timeline. /app/lifecycle — jml-movers-panel + 4 mover rows (P-0014, P-0039, P-0045, P-0046) render, jml-mover-open-* opens jml-mover-dialog with side-by-side mover-role-current + mover-role-birthright showing CARRIED OVER (red) vs BIRTHRIGHT (green) tags; jml-mover-strip-btn and mover-ai-review present. Strip button correctly disables when carried_over_count==0 (label switches to 'No carried-over access'). /app/sod — after fix, autorem-toggle / autorem-action / autorem-run / autorem-digest all render; clicking autorem-digest fires POST /sap/governance-digest/send → 200 and shows toast 'SAP Governance Digest emailed to 1 recipient(s) — jblan2026@gmail.com'.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/sap/governance-digest/send", "issue": "Under heavy repeated calls (esp. after the folded cron kicks the same digest as a background task), Emergent-managed Resend upstream returns 429 Too Many Requests and 'sent' drops to 0 while the endpoint still returns ok:true. Consider a per-org 60s dedupe/backoff so on-demand sends don't collide with the folded cron's background dispatch, or surface a friendlier 'digest is being generated / try again in a minute' toast when sent<len(recipients)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "SodCommandCenter.jsx", "issue": "ReferenceError: digestBusy is not defined — the new 'Email governance digest' button referenced digestBusy but the useState hook was never declared. This crashed the entire /app/sod page (Uncaught runtime error banner, no autorem-* controls rendered). Fixed here by adding const [digestBusy, setDigestBusy] = useState(false); on line 39. Please double-check main agent's original intent.", "selector": "[data-testid=\"autorem-digest\"]", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "JML mover dialog", "issues": ["Radix a11y warning still fires ('DialogContent requires a DialogTitle') from iter56 — cosmetic only."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter57_export_jml_digest.py",
+    "/app/test_reports/pytest/iter57.xml"
+  ],
+  "action_items": [
+    "Review the SodCommandCenter.jsx digestBusy hook I added (state declaration was missing entirely — very small fix but you should confirm intent).",
+    "Consider a small dedupe/backoff on POST /sap/governance-digest/send so the folded cron's background dispatch doesn't 429 the on-demand endpoint (leaves sent:0)."
+  ],
+  "critical_code_review_comments": [
+    "SodCommandCenter.jsx introduced 'digestBusy' usage without declaring the useState hook — this crashes the whole page and should have been caught by a smoke render before ship. Added the missing hook.",
+    "sap_uac.py is 2236 lines (up from 2088 in iter55). Split into modules (workflow.py, jml.py, digest.py, autoremediation.py) is overdue.",
+    "MoverStripBody requires reason (default '') but the endpoint returns 422 (not 400) when the body is entirely absent; UI always sends a body so it's a non-issue, but a Body(None) fallback would make the endpoint more forgiving for CLI/curl callers.",
+    "governance_digest_send silently swallows Resend 429 and returns sent:0 with ok:true — the response shape is correct but callers/tests naturally read sent>=1 as success. Consider returning {ok:false, throttled:true} or at least a delivered/skipped breakdown."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/SodCommandCenter.jsx (added missing useState for digestBusy)",
+    "/app/backend/tests/test_iter57_export_jml_digest.py"
+  ],
+  "success_rate": {"backend": "12/12 executed pass (1 skipped when no carried-over mover remained)", "frontend": "4/4 flows verified — Workflow CSV+PDF export with toasts + row-detail modal, Lifecycle Movers panel + deep-dive dialog with CARRIED OVER vs BIRTHRIGHT tags + strip button state, SoD governance digest (after fixing crash) with 200 response and 'emailed to 1 recipient(s)' toast, Cron folded auth check"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (cookie-based login via data-testid=auth-submit). WEBHOOK_CRON_SECRET read from /app/backend/.env.",
+  "seed_data_creation": "During backend tests: 1 CHG ticket via strip_carried_over on a Procurement/Finance mover carrying Z_SD_BILLING or Z_MM_PO_APPROVER (roles were removed from the account); 1 governance-digest email attempt (real Resend send, deliverable=1 in the UI run, throttled=0 in the pytest run due to prior cron/UI dispatch); 1 folded cron invocation which also fired run_sap_autoremediation_all + run_sap_governance_digest as background tasks. All state is consistent with iter56's baseline; no accounts left in a broken state.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "1) After iter57 both P-0045 and P-0046 mover accumulations have been stripped in this session; to re-test the strip flow the main agent needs to re-seed the sap_engine mover-accumulation scenarios (or re-run the seed script). 2) The Emergent Resend endpoint is aggressively rate-limited (429) when the folded cron + on-demand digest fire together; expect sent:0 occasionally — the endpoint still returns ok:true. 3) SodCommandCenter.jsx now has const [digestBusy, setDigestBusy] = useState(false) declared alongside aremBusy on line 39. 4) POST /api/sap/jml/{ref}/strip-carried-over requires JSON body {\"reason\": \"...\"} — returns 422 (not 400) if body is missing. 5) autorem-last-cron test-id only renders after the folded cron has recorded arem.config.last_cron_at — expect count 0 until first successful cron run in this fork.",
+  "rca of the issue": "SoD page crash RCA: /app/frontend/src/pages/SodCommandCenter.jsx line 175 references `digestBusy` (in the autorem-digest Button's disabled prop and label) but the useState hook `const [digestBusy, setDigestBusy] = useState(false)` was never declared. React threw a ReferenceError which the ErrorBoundary caught and rendered as an 'Uncaught runtime errors' overlay, unmounting the entire SoD command center including autorem-toggle/action/run. Repro: 1) login as admin, 2) navigate to /app/sod → red error banner appears, 3) DevTools console shows 'ReferenceError: digestBusy is not defined at SodCommandCenter'. Fix applied by adding the missing useState declaration next to aremBusy. Verified fix by reloading /app/sod — page renders, autorem-digest button visible and functional (POST /sap/governance-digest/send returns 200 and success toast fires)."
+}
