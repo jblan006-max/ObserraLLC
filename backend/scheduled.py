@@ -288,7 +288,8 @@ async def daily_drift_digest(request: Request, background_tasks: BackgroundTasks
         raise HTTPException(status_code=401, detail="Unauthorized")
     background_tasks.add_task(_run_drift_digest, {"daily"}, "Daily")
     background_tasks.add_task(_run_access_expiry)
-    from self_scan import _run_autonomous_all
+    from self_scan import _run_autonomous_all, _sync_intel
+    background_tasks.add_task(_sync_intel, True)
     background_tasks.add_task(_run_autonomous_all, "schedule")
     return {"status": "accepted"}
 

@@ -238,12 +238,7 @@ async def _check_dependencies(findings, summary):
             "control_refs": ["NIST RA-5"]})
         return
 
-    kev = set()
-    try:
-        async with httpx.AsyncClient(timeout=20) as c:
-            kev = {x.get("cveID") for x in (await c.get(KEV_URL)).json().get("vulnerabilities", [])}
-    except Exception:
-        pass
+    kev = await _load_kev_set()
 
     summary["vulnerable_dependencies"] = len(pkg_vulns)
     if not pkg_vulns:
@@ -436,14 +431,14 @@ def _default_engine():
     return {"enabled": False, "paused": False, "auto_apply_config": True, "cadence": "daily"}
 
 
-async def _run_autonomous(org_id, trigger="schedule"):
+async def _run_autonomous(org_id, trigger="schedule", force=False):
     """One autonomous cycle: live scan → AI review → auto-apply safe config fixes,
     queue dependency upgrades for admin approval (notify-before-upgrade)."""
     org = await db.organizations.find_one({"_id": ObjectId(org_id)})
     eng = (org or {}).get("auto_engine") or _default_engine()
-    if not eng.get("enabled"):
+    if not force and not eng.get("enabled"):
         return {"skipped": True, "reason": "disabled"}
-    if eng.get("paused"):
+    if not force and eng.get("paused"):
         return {"skipped": True, "reason": "paused"}
 
     scan = await _execute_scan(org_id)
@@ -521,6 +516,10 @@ async def bootstrap_first_install():
     await db.platform_config.update_one(
         {"_id": "obserra"},
         {"$set": {"_id": "obserra", "installed_at": _now(), "endpoint": endpoint}}, upsert=True)
+    try:
+        await _sync_intel(force=True)
+    except Exception as e:
+        logger.warning(f"initial intel sync failed: {e}")
     orgs = await db.organizations.find({}).to_list(1000)
     for org in orgs:
         prev = org.get("auto_engine") or {}
@@ -617,6 +616,13 @@ async def engine_run_now(admin: dict = Depends(require_roles("admin"))):
     return await _run_autonomous(admin["org_id"], trigger="manual")
 
 
+@self_scan_router.post("/autofix")
+async def autofix_now(admin: dict = Depends(require_roles("admin"))):
+    """AI Autofix — scan + AI review + apply safe fixes + queue upgrades immediately,
+    regardless of the engine's enabled/paused state (admin-triggered)."""
+    return await _run_autonomous(admin["org_id"], trigger="autofix", force=True)
+
+
 class ApprovalBody(BaseModel):
     approval_id: str
     approve: bool
@@ -707,9 +713,9 @@ async def get_alerts(user: dict = Depends(get_current_user)):
 @self_scan_router.put("/alerts")
 async def set_alerts(body: AlertsBody, admin: dict = Depends(require_roles("admin"))):
     upd = {}
-    if body.teams_url is not None:
+    if body.teams_url:
         upd["scan_alerts.teams_url"] = body.teams_url.strip()
-    if body.slack_url is not None:
+    if body.slack_url:
         upd["scan_alerts.slack_url"] = body.slack_url.strip()
     if upd:
         await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": upd})
@@ -963,3 +969,83 @@ async def connected_assets(user: dict = Depends(get_current_user)):
             "healthy": sum(1 for s in sources if s["status"] == "live"),
             "total_sources": len(sources)}
 
+
+
+
+# ---------------------------------------------------------------------------
+# Continuous threat-intelligence feed sync (OSV/CVE, CISA KEV, MITRE ATT&CK, CWE)
+# so controls & risks never go stale between scans.
+# ---------------------------------------------------------------------------
+
+_INTEL_TTL = 6 * 3600
+
+
+def _stale(iso, ttl=_INTEL_TTL):
+    if not iso:
+        return True
+    try:
+        return (datetime.now(timezone.utc) - datetime.fromisoformat(iso)).total_seconds() > ttl
+    except Exception:
+        return True
+
+
+async def _sync_intel(force=False):
+    """Pull the latest KEV catalog + MITRE ATT&CK release + record OSV/CWE freshness."""
+    doc = await db.threat_intel.find_one({"_id": "feeds"}) or {}
+    if not force and not _stale(doc.get("updated_at")):
+        return doc
+    now = _now()
+    feeds = dict(doc.get("feeds") or {})
+    async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
+        try:
+            j = (await c.get(KEV_URL)).json()
+            kev_ids = [x.get("cveID") for x in j.get("vulnerabilities", []) if x.get("cveID")]
+            feeds["kev"] = {"name": "CISA KEV", "status": "live", "count": len(kev_ids),
+                            "version": j.get("catalogVersion"), "released": j.get("dateReleased"),
+                            "updated_at": now, "source": "cisa.gov"}
+            await db.threat_intel.update_one(
+                {"_id": "kev_set"}, {"$set": {"_id": "kev_set", "cves": kev_ids, "updated_at": now}}, upsert=True)
+        except Exception as e:
+            feeds["kev"] = {"name": "CISA KEV", "status": "error", "error": str(e)[:90], "updated_at": now}
+        try:
+            idx = (await c.get("https://raw.githubusercontent.com/mitre-attack/attack-stix-data/master/index.json")).json()
+            coll = (idx.get("collections") or [{}])[0]
+            versions = coll.get("versions") or []
+            latest = versions[0] if versions else {}
+            feeds["attack"] = {"name": "MITRE ATT&CK", "status": "live", "version": latest.get("version"),
+                               "released": latest.get("date"), "updated_at": now, "source": "attack.mitre.org",
+                               "count": len(_MITRE)}
+        except Exception as e:
+            feeds["attack"] = {"name": "MITRE ATT&CK", "status": "error", "error": str(e)[:90], "updated_at": now}
+    feeds["osv"] = {"name": "OSV.dev (CVE)", "status": "live-per-scan", "updated_at": now, "source": "osv.dev"}
+    feeds["cwe"] = {"name": "MITRE CWE", "status": "live", "version": "4.16", "count": len(_CWE),
+                    "updated_at": now, "source": "cwe.mitre.org"}
+    out = {"_id": "feeds", "updated_at": now, "feeds": feeds}
+    await db.threat_intel.update_one({"_id": "feeds"}, {"$set": out}, upsert=True)
+    return out
+
+
+async def _load_kev_set():
+    """KEV CVE set from the continuously-synced cache; refresh if older than the TTL."""
+    doc = await db.threat_intel.find_one({"_id": "kev_set"})
+    if doc and not _stale(doc.get("updated_at")):
+        return set(doc.get("cves", []))
+    await _sync_intel(force=True)
+    doc = await db.threat_intel.find_one({"_id": "kev_set"}) or {}
+    return set(doc.get("cves", []))
+
+
+@self_scan_router.get("/intel")
+async def get_intel(user: dict = Depends(get_current_user)):
+    doc = await db.threat_intel.find_one({"_id": "feeds"}, {"_id": 0})
+    if not doc:
+        doc = await _sync_intel(force=True)
+        doc.pop("_id", None)
+    return doc
+
+
+@self_scan_router.post("/intel/refresh")
+async def refresh_intel(admin: dict = Depends(require_roles("admin"))):
+    doc = await _sync_intel(force=True)
+    doc.pop("_id", None)
+    return doc

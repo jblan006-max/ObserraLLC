@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
-import { ShieldCheck, Loader2, AlertTriangle, CheckCircle2, XCircle, Bug, RefreshCw, Bot, Play, Pause, Zap, Clock, ThumbsUp, ThumbsDown, Globe, MonitorSmartphone, Server, Activity, TrendingUp, Send, Wrench, X, Smartphone } from "lucide-react";
+import { ShieldCheck, Loader2, AlertTriangle, CheckCircle2, XCircle, Bug, RefreshCw, Bot, Play, Pause, Zap, Clock, ThumbsUp, ThumbsDown, Globe, MonitorSmartphone, Server, Activity, TrendingUp, Send, Wrench, X, Smartphone, Radar, Sparkles } from "lucide-react";
 import { AreaChart, Area, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
 const SEV = {
@@ -77,6 +77,9 @@ export default function SecurityScanner() {
   const [teamsUrl, setTeamsUrl] = useState("");
   const [slackUrl, setSlackUrl] = useState("");
   const [selDevice, setSelDevice] = useState(null);
+  const [intel, setIntel] = useState(null);
+  const [intelRefreshing, setIntelRefreshing] = useState(false);
+  const [autofixing, setAutofixing] = useState(false);
 
   const loadScan = () => api.get("/self-scan/latest").then((r) => setScan(r.data && r.data.id ? r.data : null)).catch(() => setScan(null));
   const loadEngine = () => api.get("/self-scan/engine").then((r) => { setEngine(r.data.engine); setPending(r.data.pending || []); setEndpoint(r.data.endpoint || ""); }).catch(() => {});
@@ -84,7 +87,8 @@ export default function SecurityScanner() {
   const loadTrend = () => api.get("/self-scan/trend").then((r) => setTrend(r.data.points || [])).catch(() => {});
   const loadAlerts = () => api.get("/self-scan/alerts").then((r) => setAlerts(r.data)).catch(() => {});
   const loadJobs = () => api.get("/self-scan/maintenance").then((r) => setJobs(r.data || [])).catch(() => {});
-  useEffect(() => { Promise.all([loadScan(), loadEngine(), loadAssets(), loadTrend(), loadAlerts(), loadJobs()]).finally(() => setLoading(false)); }, []);
+  const loadIntel = () => api.get("/self-scan/intel").then((r) => setIntel(r.data)).catch(() => {});
+  useEffect(() => { Promise.all([loadScan(), loadEngine(), loadAssets(), loadTrend(), loadAlerts(), loadJobs(), loadIntel()]).finally(() => setLoading(false)); }, []);
 
   // Auto-detect + live maintenance progress: poll so new sources/devices and running jobs update on their own.
   useEffect(() => {
@@ -155,8 +159,12 @@ export default function SecurityScanner() {
   };
 
   const saveAlerts = async () => {
+    const body = {};
+    if (teamsUrl.trim()) body.teams_url = teamsUrl.trim();
+    if (slackUrl.trim()) body.slack_url = slackUrl.trim();
+    if (!Object.keys(body).length) return;
     try {
-      await api.put("/self-scan/alerts", { teams_url: teamsUrl, slack_url: slackUrl });
+      await api.put("/self-scan/alerts", body);
       setTeamsUrl(""); setSlackUrl("");
       await loadAlerts();
       toast.success("Chat alert webhooks saved");
@@ -165,6 +173,22 @@ export default function SecurityScanner() {
   const testAlerts = async () => {
     try { await api.post("/self-scan/alerts/test"); toast.success("Test alert sent to your Teams/Slack"); }
     catch (e) { toast.error("Test alert failed — check the webhook URL"); }
+  };
+  const refreshIntel = async () => {
+    setIntelRefreshing(true);
+    try { const { data } = await api.post("/self-scan/intel/refresh"); setIntel(data); toast.success("Threat feeds updated"); }
+    catch (e) { toast.error("Feed refresh failed"); }
+    setIntelRefreshing(false);
+  };
+  const autofix = async () => {
+    setAutofixing(true);
+    toast.info("Obserrian Advisor is scanning & fixing now…");
+    try {
+      const { data } = await api.post("/self-scan/autofix");
+      await Promise.all([loadScan(), loadEngine(), loadAssets(), loadTrend(), loadJobs()]);
+      toast.success(`AI Autofix: ${data.applied?.length || 0} fixed automatically · ${data.queued?.length || 0} need approval`);
+    } catch (e) { toast.error("Autofix failed"); }
+    setAutofixing(false);
   };
 
   const toggleDeviceItem = async (item, done) => {
@@ -209,9 +233,14 @@ export default function SecurityScanner() {
           <p className="text-sm text-muted-foreground mt-1">Live, evidence-based security test of this platform — hardening headers, CORS, dependency CVEs (OSV.dev), CISA KEV cross-reference and MITRE ATT&CK mapping. Results auto-update the compliance crosswalk.</p>
           <div className="text-[11px] text-muted-foreground mt-1 flex items-center gap-1.5" data-testid="scan-endpoint"><Globe className="w-3.5 h-3.5" /> Scanning live endpoint: <span className="font-mono">{endpoint || "localhost"}</span></div>
         </div>
-        <button data-testid="run-scan-btn" onClick={run} disabled={running} className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50 flex items-center gap-2">
-          {running ? <><Loader2 className="w-4 h-4 animate-spin" /> Scanning…</> : <><RefreshCw className="w-4 h-4" /> Run live scan</>}
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button data-testid="ai-autofix-btn" onClick={autofix} disabled={autofixing} className="px-5 py-2.5 rounded-md bg-ai text-white font-head font-bold text-sm disabled:opacity-50 flex items-center gap-2">
+            {autofixing ? <><Loader2 className="w-4 h-4 animate-spin" /> Fixing…</> : <><Sparkles className="w-4 h-4" /> AI Autofix now</>}
+          </button>
+          <button data-testid="run-scan-btn" onClick={run} disabled={running} className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm disabled:opacity-50 flex items-center gap-2">
+            {running ? <><Loader2 className="w-4 h-4 animate-spin" /> Scanning…</> : <><RefreshCw className="w-4 h-4" /> Run live scan</>}
+          </button>
+        </div>
       </div>
 
       {/* Autonomous AI remediation engine */}
@@ -261,7 +290,9 @@ export default function SecurityScanner() {
         <div className="mt-4 border-t border-border pt-4" data-testid="chat-alerts">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs font-head font-bold">Chat alerts</span>
-            <span className="text-[10px] text-muted-foreground">Push "approval needed" alerts to {alerts?.teams_url_set ? "Teams ✓" : "Teams"} · {alerts?.slack_url_set ? "Slack ✓" : "Slack"}</span>
+            <span className="text-[10px] text-muted-foreground">Push "approval needed" alerts to chat:</span>
+            <span data-testid="alerts-teams-chip" className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full" style={{ background: alerts?.teams_url_set ? "hsl(142 70% 45% / 0.15)" : "hsl(0 0% 50% / 0.12)", color: alerts?.teams_url_set ? "hsl(142 70% 40%)" : "hsl(0 0% 45%)" }}>Teams {alerts?.teams_url_set ? "✓" : "—"}</span>
+            <span data-testid="alerts-slack-chip" className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full" style={{ background: alerts?.slack_url_set ? "hsl(142 70% 45% / 0.15)" : "hsl(0 0% 50% / 0.12)", color: alerts?.slack_url_set ? "hsl(142 70% 40%)" : "hsl(0 0% 45%)" }}>Slack {alerts?.slack_url_set ? "✓" : "—"}</span>
             {(alerts?.teams_url_set || alerts?.slack_url_set) && <button data-testid="alerts-test" onClick={testAlerts} className="text-[10px] px-2 py-0.5 rounded-md bg-secondary flex items-center gap-1"><Send className="w-3 h-3" /> Send test</button>}
           </div>
           <div className="flex flex-wrap gap-2 mt-2">
@@ -323,7 +354,7 @@ export default function SecurityScanner() {
       {trend.length > 1 && (
         <div className="bg-card fact-border rounded-xl p-6" data-testid="scan-trend">
           <div className="flex items-center gap-2 mb-3"><TrendingUp className="w-5 h-5 text-ai" /><h2 className="font-head font-bold text-lg">Security score trajectory</h2><span className="text-[11px] text-muted-foreground">{trend.length} scans</span></div>
-          <div style={{ width: "100%", height: 200 }}>
+          <div style={{ width: "100%", height: 200, minHeight: 200 }}>
             <ResponsiveContainer>
               <AreaChart data={trend} margin={{ top: 6, right: 12, left: -18, bottom: 0 }}>
                 <defs>
@@ -343,6 +374,39 @@ export default function SecurityScanner() {
           <div className="flex items-center gap-4 text-[11px] text-muted-foreground mt-1">
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-1.5 rounded-sm" style={{ background: "hsl(142 70% 45%)" }} /> Security score</span>
             <span className="flex items-center gap-1"><span className="inline-block w-3 h-1.5 rounded-sm" style={{ background: "hsl(0 84% 60%)" }} /> Open findings</span>
+          </div>
+        </div>
+      )}
+
+      {/* Threat intelligence feeds — continuously synced */}
+      {intel && (
+        <div className="bg-card fact-border rounded-xl p-6" data-testid="threat-intel">
+          <div className="flex flex-wrap items-start justify-between gap-3 mb-4">
+            <div>
+              <h2 className="font-head font-bold text-lg flex items-center gap-2"><Radar className="w-5 h-5 text-ai" /> Threat intelligence feeds</h2>
+              <p className="text-xs text-muted-foreground mt-1 max-w-2xl">Continuously synced so controls &amp; risks never go stale — live CVEs (OSV), CISA KEV, MITRE ATT&amp;CK &amp; CWE. Cross-referenced against this app &amp; its dependencies on every scan.</p>
+              <div className="text-[11px] text-muted-foreground mt-1 flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> Last feed sync {rel(intel.updated_at)}</div>
+            </div>
+            <button data-testid="intel-refresh" onClick={refreshIntel} disabled={intelRefreshing} className="px-4 py-2 rounded-md bg-secondary font-head font-bold text-sm disabled:opacity-50 flex items-center gap-2">
+              {intelRefreshing ? <><Loader2 className="w-4 h-4 animate-spin" /> Updating…</> : <><RefreshCw className="w-4 h-4" /> Force update</>}
+            </button>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            {Object.entries(intel.feeds || {}).map(([k, f]) => {
+              const ok = f.status && f.status !== "error";
+              const col = ok ? "142 70% 45%" : "0 84% 60%";
+              return (
+                <div key={k} data-testid={`feed-${k}`} className="rounded-lg p-3 border" style={{ borderColor: `hsl(${col} / 0.3)`, background: `hsl(${col} / 0.05)` }}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium truncate">{f.name}</span>
+                    <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full shrink-0" style={{ background: `hsl(${col} / 0.15)`, color: `hsl(${col})` }}>{f.status}</span>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground mt-1">{f.count != null ? `${f.count.toLocaleString()} entries` : ""}{f.version ? `${f.count != null ? " · " : ""}v${f.version}` : ""}</div>
+                  <div className="text-[10px] text-muted-foreground mt-0.5">updated {rel(f.updated_at)}</div>
+                  {f.error && <div className="text-[10px] text-crit mt-0.5 truncate" title={f.error}>{f.error}</div>}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
