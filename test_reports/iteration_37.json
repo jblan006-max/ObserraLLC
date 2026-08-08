@@ -1,0 +1,29 @@
+{
+  "summary": "Frontend-only final verification for Obserra EIOS. Login OK. Risk (FAIR) page NO LONGER white-screens: all required data-testids render (fair-dashboard, fair-formula, fair-kpis, fair-deductions, fair-by-area, fair-lec [SVG], fair-risk-table, fair-feeds, fair-kpi-refs, fair-references). fin-waterfall renders SVG. fin-trend renders SVG with peer band. LEFT NAV categories match spec exactly (Risk / Cyber / AI Governance / Third-Party Risk / Reporting + Audit/Admin/Account). No 'Cyber Risk' or 'Dashboards' categories. Spot-check navigations to Risk (FAIR), Control Monitoring (/app/controls), Remediations (/app/decisions), Benchmarking (/app/benchmark) all render their own pages (unique h1s: 'Risk', 'Continuous Control Monitoring', 'Recommendations & Decisions', 'Peer Benchmarking'). Connect-all-catalog flips 0/8 -> 8/8. Board report background job POST /advisor/board-report + polling GET rendered a complete report at ~t+45s with all 7 required sections (Executive Summary, Business Impact Analysis, Risk Analysis, Financial Exposure, Advanced FAIR, Unremediated Risk Acceptance, Recommendations). Board pack PDF downloads (obserra-board-pack.pdf, 227KB). fin-reminder-cadence changes and saves with 'Financial model updated' toast. Industry Auto-Detect flow: switching to Healthcare surfaces fin-industry-suggest, clicking it reverts to Technology; final reset to Technology confirmed. NOTE: request mentioned testid 'fair-waterfall' but actual code uses 'fin-waterfall' — treated as spec typo; the chart itself renders correctly.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "CyberRisk FinancialBasis (Per-risk uncertainty P10-P90 chart)", "issue": "ChartErrorBoundary triggers and shows 'Chart unavailable.' fallback for the horizontal BarChart at CyberRisk.jsx line ~325. Console still emits 'Expected ref to be a function... at markRef' (Recharts/React19 ref shape mismatch). Other charts (fair-lec, fin-waterfall, fin-trend) render fine via ChartBox. The ChartBox width-cloning fix works for most charts but this specific BarChart (layout=vertical with dynamic height) still throws. Users see a small 'Chart unavailable.' placeholder instead of the intended per-risk P10-P90 bar band.", "selector": "[data-testid='fin-scenario'] + Per-risk uncertainty ChartBox", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Investigate why the vertical BarChart in FinancialBasis 'Per-risk uncertainty · P10 → P90 band' still trips the Recharts markRef ref error inside ChartBox even though sibling charts (LineChart, ComposedChart, waterfall BarChart) render. Likely a child element within that specific BarChart (YAxis with type='category' or the layered Bar with a ref) — try replacing with the same recipe used for fair-waterfall, or memoize the children so cloneElement doesn't re-mount, or omit ResponsiveContainer descendants that pass string refs.",
+    "Fix spec/testid drift: main agent's task doc references 'fair-waterfall' but code uses data-testid='fin-waterfall' (CyberRisk.jsx L323). Either update spec or rename to fair-waterfall for consistency with fair-* group."
+  ],
+  "critical_code_review_comments": [
+    "ChartBox.jsx clones children with fixed width/height — works for most Recharts primitives but the vertical BarChart still fails; consider using a key on cloneElement or memoizing to avoid remount thrash, or wrap each chart individually.",
+    "Board Report modal auto-fires generation on open (no explicit 'Generate' button seen in modal DOM) — good UX but the request implied a manual 'Generate' action; keep in mind for future spec.",
+    "'Connect all' toast is emitted but visually the sonner toast container was empty by the time DOM was polled (5s wait) — count-change is authoritative; consider explicit aria-live region for testability."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "95% (1 chart falls back to 'Chart unavailable' placeholder; page itself renders and all other flows pass)"},
+  "test_credentials": "Admin: jblan2026@gmail.com / Obserra2026! (cookie auth, works).",
+  "seed_data_creation": "Catalog connectors were connected (0/8 -> 8/8) via one-click Connect all. Industry temporarily set to Healthcare then reset to Technology. fin-reminder-cadence toggled 60 <-> 90 (final value 90 or as-selected).",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iteration_37 confirms iteration_37-blocking white-screen crash is FIXED. FAIR page renders. Only residual issue: the 'Per-risk uncertainty' horizontal BarChart inside FinancialBasis still triggers ChartErrorBoundary (Chart unavailable placeholder). Correct route mapping: Control Monitoring => /app/controls; Remediations => /app/decisions; Benchmarking => /app/benchmark (not the labels lowercased). Board Report modal at /app auto-generates on open; report completes in ~40-50s. board-pack-btn lives on Risk (FAIR) page. Test tour: click 'Skip' after first login and after page navs (tour re-shows).",
+  "rca of the issue": "React 19's reconciler passes only function/object refs to markRef; Recharts children (especially the vertical BarChart YAxis/Bar) still forward string-ish refs somewhere internally. ChartBox bypasses ResponsiveContainer (which was the primary offender in iteration_37) and works for most charts, but this specific chart's internal component still hits markRef. ChartErrorBoundary correctly catches and renders 'Chart unavailable.' fallback — no white-screen but user-visible degraded rendering."
+}

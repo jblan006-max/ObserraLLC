@@ -38,6 +38,7 @@ PASSWORD = os.environ.get("SHOT_PASSWORD", "Obserra2026!")
 PAGES = [
     ("", "02_exec_overview"),
     ("risks", "04_risk_register"),
+    ("cyber-risk", "04b_risk_fair"),
     ("ai-governance", "05_ai_governance"),
     ("controls", "06_control_monitoring"),
     ("compliance", "07_compliance"),

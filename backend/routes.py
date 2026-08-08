@@ -432,36 +432,73 @@ async def _get_benchmarks():
 
 
 async def _maybe_refresh_benchmarks(force=False):
-    """Preloaded from IBM/DBIR; best-effort re-fetch at most once per year. Keeps the stored
-    figures on any failure so the board never sees a broken number."""
+    """Auto-updating board benchmark feeds (IBM Cost of a Data Breach, Verizon DBIR).
+    Best-effort weekly re-pull; records last-pull timestamp + source and flags when a figure
+    changes so the board sees new industry trends. Keeps prior figures on any failure."""
     import re as _re
     from datetime import datetime, timezone, timedelta
     import httpx
     doc = await _get_benchmarks()
+    now = datetime.now(timezone.utc)
     try:
         last = datetime.fromisoformat(doc.get("checked_at") or "1970-01-01T00:00:00+00:00")
     except Exception:
         last = datetime(1970, 1, 1, tzinfo=timezone.utc)
-    if not force and datetime.now(timezone.utc) - last < timedelta(days=365):
+    if not force and now - last < timedelta(days=7):
         return doc
-    updates = {"checked_at": datetime.now(timezone.utc).isoformat()}
+    updates = {"checked_at": now.isoformat()}
+    changed = []
     try:
         async with httpx.AsyncClient(timeout=8, follow_redirects=True) as c:
             r = await c.get("https://newsroom.ibm.com/2026-07-29-ibm-study-one-in-four-malicious-breaches-are-ai-enabled,-costing-companies-6-million-on-average")
             m = _re.search(r"\$([0-9]+(?:\.[0-9]+)?)\s*million", r.text)
             if m:
                 val = int(float(m.group(1)) * 1_000_000)
-                if 1_000_000 <= val <= 20_000_000:
+                if 1_000_000 <= val <= 20_000_000 and val != doc.get("global_avg"):
                     updates["global_avg"] = val
-                    updates["updated"] = datetime.now(timezone.utc).date().isoformat()
+                    changed.append(("Global average breach cost", doc.get("global_avg"), val))
     except Exception:
         pass
+    if changed:
+        updates["updated"] = now.date().isoformat()
+    hist = (doc.get("pull_history") or [])[-11:]
+    hist.append({"at": now.isoformat(), "source": "IBM Cost of a Data Breach", "changed": len(changed)})
+    updates["pull_history"] = hist
     await db.app_benchmarks.update_one({"_id": "global"}, {"$set": updates})
+    if changed:
+        await _notify_benchmark_change(changed, now)
     return await _get_benchmarks()
+
+
+async def _notify_benchmark_change(changed, now):
+    import notifications
+    lines = "; ".join(f"{name}: ${(old or 0) / 1e6:.2f}M \u2192 ${new / 1e6:.2f}M" for name, old, new in changed)
+    orgs = await db.organizations.find({}, {"_id": 1}).to_list(1000)
+    for o in orgs:
+        try:
+            await notifications.create(
+                str(o["_id"]), "report", "Board benchmarks updated (IBM/DBIR)",
+                f"Industry benchmark feed refreshed {now.date().isoformat()} — {lines}. "
+                "Your board financials now reflect the latest published figures.", ref="cyber-risk",
+                dedupe_key=f"benchmark-update:{now.date().isoformat()}")
+        except Exception:
+            pass
 
 
 async def _benchmark(industry):
     b = await _get_benchmarks()
+    feeds = [
+        {"metric": "Industry avg breach cost", "value": (b.get("industries") or {}).get(industry),
+         "source": "IBM Cost of a Data Breach 2025 (industry table)"},
+        {"metric": "Global avg breach cost", "value": b.get("global_avg"),
+         "source": "IBM Cost of a Data Breach 2026 (global avg)"},
+        {"metric": "AI-enabled breach avg", "value": b.get("ai_breach_avg"),
+         "source": "IBM Cost of a Data Breach 2026 (AI-enabled)"},
+        {"metric": "Shadow-AI cost premium", "value": b.get("shadow_ai_premium"),
+         "source": "IBM 2025 (shadow-AI premium)"},
+        {"metric": "Ransomware median loss", "value": b.get("dbir_ransomware_median"),
+         "source": "Verizon DBIR 2025 (incident-loss medians)"},
+    ]
     return {
         "industry": industry,
         "industry_avg": (b.get("industries") or {}).get(industry),
@@ -476,6 +513,7 @@ async def _benchmark(industry):
         "shadow_ai_premium": b.get("shadow_ai_premium"),
         "shadow_ai_source": "IBM 2025 (shadow-AI cost premium)",
         "source": b.get("source"), "updated": b.get("updated"), "checked_at": b.get("checked_at"),
+        "last_pulled_at": b.get("checked_at"), "feeds": feeds, "pull_history": b.get("pull_history") or [],
     }
 
 
@@ -702,6 +740,11 @@ async def put_financial_config(body: FinConfig, admin: dict = Depends(require_ro
     if body.per_record_cost is not None:
         cfg["per_record_cost"] = body.per_record_cost
     await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"financial_config": cfg}})
+    if body.industry is not None:
+        try:
+            await _maybe_refresh_benchmarks()
+        except Exception:
+            pass
     return await get_financial_config(admin)
 
 
@@ -971,7 +1014,8 @@ async def _fair_data(org_id):
             "kpis": kpis, "deductions": deductions, "kpi_references": KPI_REFERENCES,
             "benchmark": {"industry": cfg["industry"], "industry_avg": bench.get("industry_avg"),
                           "global_avg": bench.get("global_avg"), "source": bench.get("industry_avg_source"),
-                          "updated": bench.get("updated")},
+                          "updated": bench.get("updated"), "last_pulled_at": bench.get("last_pulled_at"),
+                          "feeds": bench.get("feeds")},
             "references": [s for s in [bench.get("industry_avg_source"), bench.get("global_avg_source"),
                                        bench.get("ai_breach_source"), bench.get("dbir_source")] if s],
             "industry": cfg["industry"]}

@@ -233,9 +233,28 @@ function Catalog() {
     catch (e) { toast.error(e.response?.data?.detail || "Failed"); }
     setBusy("");
   };
+  const connectAll = async () => {
+    const pending = list.filter((c) => c.status !== "connected");
+    if (!pending.length) { toast.info("All catalog connectors are already live"); return; }
+    setBusy("all");
+    let ok = 0;
+    for (const c of pending) {
+      try { await api.post(`/enterprise/connectors/${c.cid}/connect`); ok++; } catch { /* skip */ }
+    }
+    toast.success(`Connected ${ok} of ${pending.length} connectors`);
+    setBusy("");
+    load();
+  };
   if (!list) return null;
   return (
-    <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <>
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-[11px] text-muted-foreground" data-testid="catalog-connected-count">{list.filter((c) => c.status === "connected").length}/{list.length} connected</span>
+        <button data-testid="connect-all-catalog" disabled={!!busy} onClick={connectAll} className="text-xs px-3 py-1.5 rounded-md bg-primary text-primary-foreground font-bold flex items-center gap-1 disabled:opacity-50">
+          {busy === "all" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plug className="w-3.5 h-3.5" />} Connect all
+        </button>
+      </div>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
       {list.map((c) => (
         <div key={c.cid} data-testid={`catalog-connector-${c.cid}`} className="bg-card fact-border rounded-xl p-4">
           <div className="flex items-center justify-between mb-1">
@@ -259,6 +278,7 @@ function Catalog() {
         </div>
       ))}
     </div>
+    </>
   );
 }
 

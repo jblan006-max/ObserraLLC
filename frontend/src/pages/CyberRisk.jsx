@@ -3,7 +3,8 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { ShieldAlert, Loader2, Layers, PlayCircle, Gauge, ShieldCheck, TrendingDown, Calculator, BarChart3, Building2, RefreshCw, Sparkles, FileText, Clock, Target, Activity, BookOpen } from "lucide-react";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, ComposedChart, Area, BarChart, Bar } from "recharts";
+import { LineChart, Line, XAxis, YAxis, Tooltip, ComposedChart, Area, BarChart, Bar } from "recharts";
+import { ChartBox } from "@/components/ChartBox";
 
 const TIER = (residual) => residual >= 16 ? "0 84% 60%" : residual >= 9 ? "35 90% 55%" : "142 70% 45%";
 
@@ -183,14 +184,14 @@ function FairDashboard() {
       </div>
       <div className="rounded-lg border border-border p-3" data-testid="fair-lec">
         <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2 flex items-center gap-1"><Activity className="w-3.5 h-3.5" /> Loss exceedance curve · probability annual loss ≥ $X</div>
-        <ResponsiveContainer width="100%" height={190}>
+        <ChartBox height={190}>
           <ComposedChart data={d.loss_exceedance}>
             <XAxis dataKey="loss" type="number" tickFormatter={(v) => `$${(v / 1e6).toFixed(1)}M`} tick={{ fontSize: 10 }} stroke="hsl(215 15% 55%)" />
             <YAxis dataKey="exceedance_pct" tickFormatter={(v) => `${v}%`} tick={{ fontSize: 10 }} stroke="hsl(215 15% 55%)" width={40} domain={[0, 100]} />
             <Tooltip formatter={(v) => `${v}% chance`} labelFormatter={(v) => `Annual loss ≥ $${(v / 1e6).toFixed(2)}M`} contentStyle={{ background: "hsl(222 18% 12%)", border: "1px solid hsl(222 12% 22%)", fontSize: 11 }} />
             <Area type="monotone" dataKey="exceedance_pct" stroke="hsl(0 84% 60%)" fill="hsl(0 84% 60% / 0.15)" strokeWidth={2} name="Exceedance" />
           </ComposedChart>
-        </ResponsiveContainer>
+        </ChartBox>
         <div className="text-[10px] text-muted-foreground">Y-axis = probability the annual loss meets or exceeds the x-axis dollar amount (3,000-iteration Monte-Carlo over FAIR factors).</div>
       </div>
       <div className="rounded-lg border border-border overflow-x-auto" data-testid="fair-risk-table">
@@ -214,6 +215,20 @@ function FairDashboard() {
           </tbody>
         </table>
       </div>
+      {d.benchmark?.feeds?.length > 0 && (
+        <div className="rounded-lg border border-border p-3" data-testid="fair-feeds">
+          <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2 flex items-center gap-1"><RefreshCw className="w-3.5 h-3.5" /> Benchmark feeds — auto-updated{d.benchmark.last_pulled_at ? ` · last pull ${String(d.benchmark.last_pulled_at).slice(0, 16).replace("T", " ")} UTC` : ""}</div>
+          <div className="space-y-1">
+            {d.benchmark.feeds.map((f, i) => (
+              <div key={i} data-testid={`fair-feed-${i}`} className="flex items-center justify-between text-[11px] gap-2">
+                <span className="text-muted-foreground truncate">{f.metric} <span className="opacity-60">· {f.source}</span></span>
+                <span className="font-mono text-foreground shrink-0">{f.value ? fmt(f.value) : "—"}</span>
+              </div>
+            ))}
+          </div>
+          <div className="text-[10px] text-muted-foreground mt-1">Feeds re-pull weekly (IBM Cost of a Data Breach · Verizon DBIR) and when you change industry; the board is notified when a figure changes. Timestamp shows the last successful pull.</div>
+        </div>
+      )}
       <div className="space-y-1" data-testid="fair-references">
         <p className="text-[11px] text-muted-foreground">FAIR: ALE = Loss Magnitude × Loss Event Frequency (LEF); LEF = Threat Event Frequency (TEF) × Vulnerability (control weakness = residual/inherent). Decision-support estimates, benchmarked against IBM {d.benchmark.industry} avg {fmt(d.benchmark.industry_avg)}.</p>
         {d.references?.length > 0 && (
@@ -307,7 +322,7 @@ function FinancialBasis({ isAdmin }) {
       {basis.items?.length > 0 && (
         <div className="rounded-lg border border-border p-3" data-testid="fin-waterfall">
           <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2 flex items-center gap-1"><BarChart3 className="w-3.5 h-3.5" /> Per-risk uncertainty · P10 → P90 band</div>
-          <ResponsiveContainer width="100%" height={Math.max(170, basis.items.slice(0, 8).length * 34)}>
+          <ChartBox height={Math.max(170, basis.items.slice(0, 8).length * 34)}>
             <BarChart layout="vertical" data={basis.items.slice(0, 8).map((i) => ({ ref: i.ref, low: i.ale_low, span: Math.max(0, i.ale_high - i.ale_low), p10: i.ale_low, p50: i.ale_expected, p90: i.ale_high, title: i.title }))} margin={{ left: 4, right: 16 }}>
               <XAxis type="number" tickFormatter={(v) => `$${(v / 1e6).toFixed(1)}M`} tick={{ fontSize: 10 }} stroke="hsl(215 15% 55%)" />
               <YAxis type="category" dataKey="ref" tick={{ fontSize: 10 }} stroke="hsl(215 15% 55%)" width={64} />
@@ -320,7 +335,7 @@ function FinancialBasis({ isAdmin }) {
               <Bar dataKey="low" stackId="a" fill="transparent" />
               <Bar dataKey="span" stackId="a" fill="hsl(190 90% 50%)" radius={[3, 3, 3, 3]} />
             </BarChart>
-          </ResponsiveContainer>
+          </ChartBox>
           <div className="text-[10px] text-muted-foreground mt-1">Bar spans the Monte-Carlo P10–P90 range per risk — longer bars = more uncertainty. Source: modelled SLE × ARO with residual-control scaling (FAIR).</div>
         </div>
       )}
@@ -399,7 +414,7 @@ function FinancialBasis({ isAdmin }) {
       {trend?.points?.length > 1 && (
         <div className="rounded-lg border border-border p-3" data-testid="fin-trend">
           <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2 flex items-center gap-1"><TrendingDown className="w-3.5 h-3.5" /> Modelled exposure vs {trend.industry} benchmark (IBM) · peer band shaded</div>
-          <ResponsiveContainer width="100%" height={180}>
+          <ChartBox height={180}>
             <ComposedChart data={trend.points}>
               <XAxis dataKey="month" tick={{ fontSize: 10 }} stroke="hsl(215 15% 55%)" />
               <YAxis tickFormatter={(v) => `$${(v / 1e6).toFixed(1)}M`} tick={{ fontSize: 10 }} stroke="hsl(215 15% 55%)" width={48} />
@@ -409,7 +424,7 @@ function FinancialBasis({ isAdmin }) {
               <Line type="monotone" dataKey="modelled" stroke="hsl(190 90% 50%)" strokeWidth={2} dot={false} name="Modelled" />
               <Line type="monotone" dataKey="benchmark" stroke="hsl(35 90% 55%)" strokeDasharray="4 4" strokeWidth={2} dot={false} name="IBM avg" />
             </ComposedChart>
-          </ResponsiveContainer>
+          </ChartBox>
           {trend.peer_source && <div className="text-[10px] text-muted-foreground mt-1">Shaded band: {trend.peer_source} ({fmt(trend.peer_low)}–{fmt(trend.peer_high)}). Line source: {trend.source}.</div>}
         </div>
       )}

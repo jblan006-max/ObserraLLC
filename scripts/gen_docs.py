@@ -78,6 +78,16 @@ SECTIONS = [
         "exposure (FAIR-style annualized loss expectancy) and evidence links for board defensibility.",
     ], "04_risk_register.jpg"),
 
+    ("7b. Risk (FAIR) Quantification", 1, [
+        "The Risk workspace quantifies exposure using Factor Analysis of Information Risk (FAIR). "
+        "It surfaces board KPIs — $ at Risk (residual ALE), worst-case P90, remediation ROI and "
+        "accepted (unremediated) exposure — plus a per-area exposure breakdown showing the dominant "
+        "driver of each risk (loss magnitude, threat frequency or control weakness), a loss-exceedance "
+        "curve, and plain-English FAIR-based deductions. Auto-updating IBM/DBIR benchmark feeds carry "
+        "last-pull timestamps and sources, and a 'Why these KPIs' panel cites Gartner, NACD, the FAIR "
+        "Institute and the WEF so every board metric is defensible.",
+    ], "04b_risk_fair.jpg"),
+
     ("8. AI Governance Suite", 1, [
         "Inventory of AI systems with NIST AI RMF mapping, model cards (bias, safety, security, "
         "explainability), drift and hallucination indicators, shadow-AI discovery and incident "
