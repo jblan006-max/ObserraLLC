@@ -21,7 +21,7 @@ crons:
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     enabled: true
   - name: daily-drift-digest
-    description: "Emails 'daily' cadence owners/admins a digest of open control-drift alerts every day 08:00 UTC"
+    description: "Daily 08:00 UTC: drift digest, autonomous remediation, threat-intel sync, connector health re-probe + Slack/Teams alert on expiry, and zero-touch device/user asset mapping"
     cron: "0 8 * * *"
     endpoint: "{{BASE_URL}}/api/cron/daily-drift-digest"
     method: POST
@@ -31,30 +31,6 @@ crons:
     description: "Composes and emails each org's scheduled Studio report to admins/execs on the 1st at 09:00 UTC"
     cron: "0 9 1 * *"
     endpoint: "{{BASE_URL}}/api/cron/monthly-studio-report"
-    method: POST
-    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
-    enabled: true
-  # NOTE: The platform schedules only the FIRST FIVE enabled entries above.
-  # The entries below are kept for reference but are NOT scheduled until one of
-  # the first five is disabled/removed.
-  - name: weekly-studio-report
-    description: "Emails each org's 'weekly' cadence Studio report to admins/execs every Monday 09:00 UTC"
-    cron: "0 9 * * 1"
-    endpoint: "{{BASE_URL}}/api/cron/weekly-studio-report"
-    method: POST
-    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
-    enabled: true
-  - name: monthly-spend-report
-    description: "Emails admins/execs the full per-teammate AI advisor spend report on the 1st at 09:30 UTC"
-    cron: "30 9 1 * *"
-    endpoint: "{{BASE_URL}}/api/cron/monthly-spend-report"
-    method: POST
-    # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
-    enabled: true
-  - name: connector-health
-    description: "Daily re-verify of each org's LIVE Microsoft 365 connection; flips to degraded + alerts admins if creds expire (07:30 UTC)"
-    cron: "30 7 * * *"
-    endpoint: "{{BASE_URL}}/api/cron/connector-health"
     method: POST
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     enabled: true

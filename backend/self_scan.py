@@ -1171,8 +1171,9 @@ async def _m365_devices(d):
             access = tok.json()["access_token"]
             r = await c.get(
                 "https://graph.microsoft.com/v1.0/deviceManagement/managedDevices"
-                "?$select=id,deviceName,managedDeviceName,userDisplayName,model,manufacturer,"
-                "operatingSystem,osVersion,complianceState,lastSyncDateTime&$top=100",
+                "?$select=id,deviceName,managedDeviceName,userDisplayName,userPrincipalName,model,manufacturer,"
+                "operatingSystem,osVersion,complianceState,lastSyncDateTime,wiFiMacAddress,ethernetMacAddress,"
+                "managedDeviceOwnerType,azureADDeviceId&$top=100",
                 headers={"Authorization": f"Bearer {access}"})
             if r.status_code != 200:
                 return {"available": False,
@@ -1181,12 +1182,16 @@ async def _m365_devices(d):
             vals = r.json().get("value", [])
             comp = sum(1 for v in vals if v.get("complianceState") == "compliant")
             noncomp = sum(1 for v in vals if v.get("complianceState") == "noncompliant")
+            upn = lambda v: v.get("userPrincipalName") or ""
             items = [{"id": v.get("id"),
                       "name": v.get("deviceName") or v.get("managedDeviceName") or "device",
                       "owner": v.get("userDisplayName"),
                       "model": " ".join(x for x in [v.get("manufacturer"), v.get("model")] if x) or None,
                       "os": v.get("operatingSystem"), "os_version": v.get("osVersion"),
                       "compliance": v.get("complianceState"),
+                      "mac": v.get("ethernetMacAddress") or v.get("wiFiMacAddress"),
+                      "ip": None,
+                      "site": (upn(v).split("@", 1)[1] if "@" in upn(v) else v.get("managedDeviceOwnerType")),
                       "last_sync": v.get("lastSyncDateTime")} for v in vals[:25]]
             return {"available": True, "total": len(vals), "compliant": comp, "noncompliant": noncomp,
                     "unknown": len(vals) - comp - noncomp, "items": items}

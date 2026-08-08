@@ -6,6 +6,7 @@ import os
 import io
 import sys
 import csv
+import uuid
 import base64
 import hmac
 import logging
@@ -290,6 +291,7 @@ async def daily_drift_digest(request: Request, background_tasks: BackgroundTasks
         raise HTTPException(status_code=401, detail="Unauthorized")
     background_tasks.add_task(_run_drift_digest, {"daily"}, "Daily")
     background_tasks.add_task(_run_access_expiry)
+    background_tasks.add_task(_run_connector_health)
     from self_scan import _run_autonomous_all, _sync_intel, _run_kev_digest, _run_upgrade_digest
     background_tasks.add_task(_sync_intel, True)
     background_tasks.add_task(_run_autonomous_all, "schedule")
@@ -361,20 +363,50 @@ async def weekly_studio_report(request: Request, background_tasks: BackgroundTas
     return {"status": "accepted"}
 
 
-async def _run_connector_health():
-    """Daily best-effort re-verify of every LIVE credential connector (M365/Copilot/ChatGPT).
+def _degraded_email_html(label, detail):
+    return ("<div style=\"font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto\">"
+            f"<h2 style=\"color:#0f1e3d\">{label} connector degraded</h2>"
+            f"<p>The live {label} connection stopped responding on the daily health check — the "
+            "credential/secret may have expired or permissions changed. The connector is still "
+            "enabled but is no longer returning live data.</p>"
+            f"<p style=\"font-family:monospace;color:#b91c1c\">{detail}</p>"
+            "<p>Update the credentials in Available Connectors to restore the live sync.</p>"
+            "<p style=\"font-size:11px;color:#9ca3af\">Obserra — Executive Protection &amp; Intelligence LLC</p></div>")
 
-    Connectors stay live (auto-connect model); this only refreshes synced_at/metrics and
-    alerts admins once when a previously-synced source stops responding (silent creds expiry)."""
+
+async def _run_connector_health():
+    """Zero-touch daily connector health check + live asset discovery.
+
+    Re-verifies every LIVE credential connector (M365/Copilot/ChatGPT) AND re-probes every
+    catalog connector (36-provider) that has saved credentials. Connectors stay live (auto-connect
+    model); this refreshes state/metrics, flips a silently-expired connector to degraded, posts a
+    Slack/Teams alert (+ email + in-app) once, and re-maps live devices/users/connectors into the
+    Risk Engine as assets so their IP/MAC/site + compliance/role posture affect ALE."""
     from datetime import datetime, timezone
     from live_connectors import _verify_m365, _verify_copilot, _verify_openai
+    from self_scan import _post_chat_alert
+    from asset_discovery import discover_and_map_assets
+    from connectors_catalog import CATALOG, _probe, _persist
     now = datetime.now(timezone.utc).isoformat()
     today = datetime.now(timezone.utc).date().isoformat()
-    orgs = await db.organizations.find(
-        {"$or": [{"live_m365": {"$exists": True}}, {"live_copilot": {"$exists": True}},
-                 {"live_openai": {"$exists": True}}]}).to_list(1000)
+    cat_by_id = {e["id"]: e for e in CATALOG}
+    orgs = await db.organizations.find({}).to_list(1000)
+
+    async def _alert(org_id, label, detail, ref, dedupe):
+        recips = await db.users.find(
+            {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
+        for r in recips:
+            await notifications.send_email(r["email"], f"{label} connector degraded", _degraded_email_html(label, detail))
+        await notifications.create(org_id, "connector", f"{label} connector degraded",
+                                   detail, ref=ref, dedupe_key=dedupe)
+        await _post_chat_alert(org_id, f"⚠ {label} connector degraded",
+                               f"{detail} Update the credentials in Available Connectors to restore the live connection.")
+        logger.warning(f"{label} connector degraded for org {org_id}: {detail}")
+
     for org in orgs:
         org_id = str(org["_id"])
+        degraded = []
+        # ---- Legacy live credential connectors (M365 / Copilot / ChatGPT) ----
         for kind, label in (("m365", "Microsoft 365"), ("copilot", "Microsoft Copilot"), ("openai", "ChatGPT (OpenAI)")):
             d = org.get(f"live_{kind}")
             if not d:
@@ -406,22 +438,48 @@ async def _run_connector_health():
                 d["synced_at"] = now
             await db.organizations.update_one({"_id": org["_id"]}, {"$set": {f"live_{kind}": d}})
             if had_sync and not ok:
-                recips = await db.users.find(
-                    {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
-                html = ("<div style=\"font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto\">"
-                        f"<h2 style=\"color:#0f1e3d\">{label} connector degraded</h2>"
-                        f"<p>The live {label} connection stopped responding on re-check — the credential/secret "
-                        "may have expired or permissions changed. The connector is still enabled but is no longer syncing real data.</p>"
-                        f"<p style=\"font-family:monospace;color:#b91c1c\">{status}</p>"
-                        "<p>Update the credentials in Available Connectors to restore the live sync.</p>"
-                        "<p style=\"font-size:11px;color:#9ca3af\">Obserra — Executive Protection &amp; Intelligence LLC</p></div>")
-                for r in recips:
-                    await notifications.send_email(r["email"], f"{label} connector degraded", html)
-                await notifications.create(
-                    org_id, "connector", f"{label} connector degraded",
-                    f"Live {label} re-verification failed: {status}", ref=f"live-{kind}",
-                    dedupe_key=f"{kind}-degraded:{today}")
-                logger.warning(f"{label} connector degraded for org {org_id}: {status}")
+                degraded.append(label)
+                await _alert(org_id, label, f"Live {label} re-verification failed: {status}",
+                             ref=f"live-{kind}", dedupe=f"{kind}-degraded:{today}")
+
+        # ---- Catalog connectors (36-provider) — re-probe every provider with saved credentials ----
+        states = await db.connector_state.find({"org_id": org_id}).to_list(200)
+        for st in states:
+            cid = st.get("cid")
+            entry = cat_by_id.get(cid)
+            saved = st.get("creds")
+            if not entry or not saved:
+                continue
+            was_connected = st.get("state") == "connected"
+            try:
+                state, code, ep, detail, source = await _probe(entry, saved)
+            except Exception as e:
+                state, code, ep, detail, source = "unreachable", None, cid, f"Re-probe error: {str(e)[:120]}", "saved"
+            await _persist(org_id, entry, state, code, ep, detail, source or "saved", creds=saved)
+            if was_connected and state != "connected":
+                degraded.append(entry["name"])
+                await _alert(org_id, entry["name"], f"Daily re-probe returned '{state}': {detail}",
+                             ref=f"cx-{cid}", dedupe=f"cx-degraded:{cid}:{today}")
+
+        # ---- Zero-touch discovery: re-map live devices/users/connectors into the Risk Engine ----
+        try:
+            mapped = await discover_and_map_assets(org_id)
+            if any(mapped.get(k) for k in ("devices", "users", "connectors")):
+                logger.info(f"Zero-touch mapped assets for org {org_id}: {mapped}")
+        except Exception as e:
+            logger.error(f"Asset discovery failed for org {org_id}: {e}")
+
+        # ---- Defensibility Ledger record of the sweep ----
+        try:
+            await db.remediation_ledger.insert_one({
+                "org_id": org_id, "id": uuid.uuid4().hex, "action": "connector-health", "by": "cron:daily",
+                "provider": "catalog+live", "verified": not degraded,
+                "status": (f"{len(degraded)} degraded" if degraded else "all healthy"),
+                "message": ("Daily zero-touch health check re-probed connectors and re-mapped live assets. "
+                            + ("Degraded: " + ", ".join(degraded) if degraded else "All connectors healthy.")),
+                "started_at": now, "finished_at": datetime.now(timezone.utc).isoformat()})
+        except Exception as e:
+            logger.error(f"Health ledger write failed for org {org_id}: {e}")
 
 
 def _connector_digest_html(rows):

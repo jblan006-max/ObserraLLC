@@ -125,6 +125,10 @@ async def correlate(org_id: str, use_cache: bool = False) -> dict:
     cfg = await _get_fin_cfg(org_id)
     risks = await db.risks.find({"org_id": org_id}, {"_id": 0}).to_list(500)
     assets = await db.assets.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    # Map discovered live assets (connected-SaaS devices/users/connectors) into the engine so
+    # their compliance/role/health posture is priced as correlated risk (moves the portfolio ALE).
+    from asset_discovery import derive_asset_risks
+    risks = risks + derive_asset_risks(assets)
     await _ensure_controls(org_id)
     controls_raw = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
     controls = [_control_status(c) for c in controls_raw]
@@ -208,6 +212,7 @@ async def correlate(org_id: str, use_cache: bool = False) -> dict:
             "remediation_roi": _roi(f["residual_ale"], r.get("residual", 10)),
             "peer": _peer(f["sle"]),
             "remediation_pending": r.get("ref") in pending_recs,
+            "derived": bool(r.get("derived")), "source": r.get("source"),
         }
         risk_out.append(row)
         risks_by_asset.setdefault(row["asset_ref"], []).append(row)
@@ -442,6 +447,8 @@ async def correlate(org_id: str, use_cache: bool = False) -> dict:
             "p90": round(residual_total * 1.9), "p10": round(residual_total * 0.45),
             "ratings_dist": ratings_dist,
             "open_findings": len(open_findings), "open_tasks": len(tasks),
+            "discovered_ale": round(sum(r["residual_ale"] for r in risk_out if r.get("derived"))),
+            "discovered_assets": sum(1 for a in assets if a.get("discovered")),
         },
         "compliance": {"overall_pct": overall_pct,
                        "by_area": [{"area": k, "compliance_pct": v} for k, v in

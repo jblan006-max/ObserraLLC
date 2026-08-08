@@ -11,7 +11,7 @@ export function Footer({ compact = false }) {
         </div>
         <p className="text-[11px] leading-relaxed text-muted-foreground/80 max-w-4xl">
           <span className="font-mono uppercase tracking-wider text-muted-foreground">Disclaimer:</span>{" "}
-          Risk scores, AI evaluations, freshness indicators and recommendations are decision-support estimates derived from connected and seeded data sources and do <span className="text-foreground/90">not</span> constitute legal, financial, regulatory, or security guarantees. Automated remediation actions and connector syncs are simulated in this environment. Confidential — for authorized personnel of the licensed organization only.
+          Risk scores, AI evaluations, freshness indicators and recommendations are decision-support estimates derived from connected data sources and do <span className="text-foreground/90">not</span> constitute legal, financial, regulatory, or security guarantees. Automated remediation actions execute real, verified API calls and connector probes; every action is recorded to the Defensibility Ledger. Confidential — for authorized personnel of the licensed organization only.
         </p>
       </div>
     </footer>
