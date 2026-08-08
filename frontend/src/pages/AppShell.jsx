@@ -75,6 +75,7 @@ const NAV_SECTIONS = [
     { to: "/app/access-requests", label: "Access Requests", icon: ListChecks },
     { to: "/app/certifications", label: "Certifications", icon: ShieldCheck },
     { to: "/app/roles", label: "Role Intelligence", icon: Layers },
+    { to: "/app/workflow", label: "Workflow Activity", icon: Network },
   ]},
   { section: "Sources", cat: true, color: "primary", items: [
     { to: "/app/systems", label: "Connector Health", icon: Plug },

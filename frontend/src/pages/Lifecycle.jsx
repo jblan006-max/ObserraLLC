@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { UserPlus, UserX, GitBranch, Ban, PauseCircle, PlayCircle, Power } from "lucide-react";
+import { UserPlus, UserX, GitBranch, Ban, PauseCircle, PlayCircle, Power, ArrowLeftRight } from "lucide-react";
 
 const VERB = { activate: "reactivated", deactivate: "deactivated", suspend: "suspended" };
 const ACTION_META = {
@@ -32,6 +32,11 @@ export default function Lifecycle() {
   const [busy, setBusy] = useState(false);
   const load = useCallback(async () => { const { data } = await api.get("/sap/jml"); setD(data); }, []);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    const h = () => load();
+    window.addEventListener("sap-data-changed", h);
+    return () => window.removeEventListener("sap-data-changed", h);
+  }, [load]);
   if (!d) return <Spinner />;
 
   const askAction = (action, refs, names) => { setReason(""); setNotify(true); setConfirm({ action, refs, names }); };
@@ -56,6 +61,14 @@ export default function Lifecycle() {
     setBusy(false);
   };
 
+  const rowActions = (ref, name) => (
+    <div className="flex items-center gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
+      <button data-testid={`jml-deactivate-${ref}`} onClick={() => askAction("deactivate", [ref], name)} title="Deactivate (lock access)" className="text-crit hover:bg-crit/10 rounded-md p-1.5"><Ban className="w-4 h-4" /></button>
+      <button data-testid={`jml-suspend-${ref}`} onClick={() => askAction("suspend", [ref], name)} title="Suspend (temporary hold)" className="text-amber hover:bg-amber/10 rounded-md p-1.5"><PauseCircle className="w-4 h-4" /></button>
+      <button data-testid={`jml-reactivate-${ref}`} onClick={() => askAction("activate", [ref], name)} title="Reactivate access" className="text-low hover:bg-low/10 rounded-md p-1.5"><PlayCircle className="w-4 h-4" /></button>
+    </div>
+  );
+
   const openLeaver = (l) => openDeepDive({
     accent: "0 84% 60%", refLabel: l.ref, title: `${l.name} — residual access`, rating: "Critical", score: l.score,
     facets: [
@@ -70,21 +83,52 @@ export default function Lifecycle() {
     explainTitle: `${l.name} — terminated worker residual SAP access`, explainKind: "SAP leaver residual access remediation",
     explainContext: { leaver: l },
   });
+  const openMover = (m) => openDeepDive({
+    accent: "260 85% 66%", refLabel: m.ref, title: `${m.name} — in-flight transfer`, rating: m.rating, score: m.score,
+    facets: [
+      { label: "Current department", value: m.department },
+      ...m.changes.map((c) => ({ label: `Change · ${c.field}`, value: `${c.from ?? "—"} → ${c.to ?? "—"}` })),
+      { label: "SAP access", value: `${m.accounts} account(s) · ${m.roles} role(s)` },
+      { label: "HR authority", value: m.hr_authority },
+    ],
+    recommendedActions: [
+      "Re-evaluate this mover's SAP roles against their new position and strip access carried over from the previous role (avoid access accumulation).",
+      "Run an SoD pre-check and recertify remaining access after the transfer completes.",
+    ],
+    complianceRefs: ["SOX ITGC", "NIST AC-6", "ISO 27001 A.5.18"],
+    explainTitle: `${m.name} — mover / transfer access review`, explainKind: "SAP mover transfer access accumulation risk",
+    explainContext: { mover: m },
+  });
+  const openJoiner = (j) => openDeepDive({
+    accent: "142 70% 45%", refLabel: j.ref, title: `${j.name} — new joiner`, rating: j.provisioned ? "Low" : "Medium",
+    facets: [
+      { label: "Department", value: j.department }, { label: "Hire date", value: fmtDate(j.hire_date) },
+      { label: "HR authority", value: j.hr_authority }, { label: "SAP provisioning", value: j.provisioned ? `${j.accounts} account(s) provisioned` : "Not yet provisioned" },
+    ],
+    recommendedActions: [
+      j.provisioned ? "Confirm birthright roles match the joiner's job and run an SoD pre-check before granting extra access." : "Provision the joiner's SAP account with birthright roles via the automated ServiceNow workflow.",
+      "Recertify the joiner's access at day 30 to confirm least-privilege.",
+    ],
+    complianceRefs: ["SOX ITGC", "NIST AC-2", "ISO 27001 A.5.16"],
+    explainTitle: `${j.name} — new joiner provisioning`, explainKind: "SAP joiner provisioning and birthright access",
+    explainContext: { joiner: j },
+  });
 
   return (
     <div className="space-y-6" data-testid="lifecycle-page">
       <div>
         <h1 className="font-head font-black text-3xl lg:text-4xl tracking-tight" data-testid="lifecycle-title">Joiner / Mover / Leaver</h1>
-        <p className="text-sm text-muted-foreground mt-1">Workforce lifecycle correlated with SAP access — recent joiners, transfers and terminated workers still holding access.</p>
+        <p className="text-sm text-muted-foreground mt-1">Workforce lifecycle correlated with SAP access — click any worker for details and kick off a live ServiceNow access workflow.</p>
       </div>
 
-      <SapInsight dashboard="Joiner / Mover / Leaver" focus="leaver residual access and joiner provisioning gaps" accent="142 70% 45%" auto slug="lifecycle" />
+      <SapInsight dashboard="Joiner / Mover / Leaver" focus="leaver residual access, mover access accumulation and joiner provisioning gaps" accent="142 70% 45%" auto slug="lifecycle" />
       <div className="grid grid-cols-3 gap-4">
         <StatCard label="Joiners (21d)" value={d.counts.joiners} accent="142 70% 45%" icon={UserPlus} testid="jml-joiners" />
-        <StatCard label="Movers" value={d.counts.movers} accent="260 85% 66%" icon={GitBranch} testid="jml-movers" />
+        <StatCard label="Movers (in-flight transfers)" value={d.counts.movers} accent="260 85% 66%" icon={ArrowLeftRight} testid="jml-movers" />
         <StatCard label="Leavers w/ residual access" value={d.counts.leavers} accent="0 84% 60%" icon={UserX} testid="jml-leavers" />
       </div>
 
+      {/* Leavers */}
       <div className="bg-card fact-border rounded-xl p-5" data-testid="jml-leavers-panel">
         <div className="flex items-center justify-between gap-2 mb-3">
           <div className="flex items-center gap-2"><UserX className="w-4 h-4 text-crit" /><h2 className="font-head font-bold text-lg">Terminated — Residual Access (Critical)</h2></div>
@@ -101,27 +145,53 @@ export default function Lifecycle() {
                 <span className="font-head font-black text-xl text-crit w-10">{l.score}</span>
                 <div className="flex-1 min-w-0"><div className="text-sm font-medium">{l.name}</div><div className="text-[11px] text-muted-foreground">{l.department} · terminated {fmtDate(l.termination_date)} · {l.residual_accounts} active account(s){l.ad_enabled ? " · AD still enabled" : ""}</div></div>
               </button>
-              <div className="flex items-center gap-1 shrink-0">
-                <button data-testid={`jml-deactivate-${l.ref}`} onClick={() => askAction("deactivate", [l.ref], l.name)} title="Deactivate (lock residual access)" className="text-crit hover:bg-crit/10 rounded-md p-1.5"><Ban className="w-4 h-4" /></button>
-                <button data-testid={`jml-suspend-${l.ref}`} onClick={() => askAction("suspend", [l.ref], l.name)} title="Suspend (temporary hold)" className="text-amber hover:bg-amber/10 rounded-md p-1.5"><PauseCircle className="w-4 h-4" /></button>
-                <button data-testid={`jml-reactivate-${l.ref}`} onClick={() => askAction("activate", [l.ref], l.name)} title="Reactivate access" className="text-low hover:bg-low/10 rounded-md p-1.5"><PlayCircle className="w-4 h-4" /></button>
-              </div>
+              {rowActions(l.ref, l.name)}
             </div>
           ))}
           {d.leavers.length === 0 && <p className="text-sm text-low py-3">No terminated workers with residual SAP access. ✓</p>}
         </div>
       </div>
 
+      {/* Movers */}
+      <div className="bg-card fact-border rounded-xl p-5" data-testid="jml-movers-panel">
+        <div className="flex items-center gap-2 mb-3"><ArrowLeftRight className="w-4 h-4 text-purple" /><h2 className="font-head font-bold text-lg">Movers — In-Flight Transfers</h2></div>
+        <p className="text-[11px] text-muted-foreground mb-3">Workers whose ADP and IZ8 HR records disagree on org attributes (legal entity, manager, job title) — a transfer in progress. Review for access carried over from the previous role.</p>
+        <div className="space-y-2">
+          {d.movers.map((m) => (
+            <div key={m.ref} data-testid={`jml-mover-${m.ref}`} className="flex items-center gap-3 p-3 rounded-lg bg-purple/5 border border-purple/20">
+              <button onClick={() => openMover(m)} data-testid={`jml-mover-open-${m.ref}`} className="flex items-center gap-3 flex-1 min-w-0 text-left hover:opacity-80 transition-opacity">
+                <span className="font-head font-black text-xl text-purple w-10">{m.score}</span>
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium">{m.name}</div>
+                  <div className="text-[11px] text-muted-foreground">{m.department} · {m.accounts} account(s) · {m.roles} role(s) · {m.changes.map((c) => c.field).join(", ")} changed</div>
+                </div>
+                <div className="hidden md:flex flex-wrap gap-1 justify-end max-w-[280px]">{m.changes.slice(0, 3).map((c, i) => <span key={i} className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">{c.field}: {c.from ?? "—"}→{c.to ?? "—"}</span>)}</div>
+              </button>
+              {rowActions(m.ref, m.name)}
+            </div>
+          ))}
+          {d.movers.length === 0 && <p className="text-sm text-muted-foreground py-3">No in-flight transfers detected — ADP and IZ8 records are aligned. ✓</p>}
+        </div>
+      </div>
+
+      {/* Joiners */}
       <div className="bg-card fact-border rounded-xl p-5" data-testid="jml-joiners-panel">
         <div className="flex items-center gap-2 mb-3"><UserPlus className="w-4 h-4 text-low" /><h2 className="font-head font-bold text-lg">Recent Joiners</h2></div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="text-left text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border"><th className="p-2">Name</th><th className="p-2">Dept</th><th className="p-2">Hire Date</th><th className="p-2">HR Source</th><th className="p-2">Provisioned</th></tr></thead>
+            <thead><tr className="text-left text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border"><th className="p-2">Name</th><th className="p-2">Dept</th><th className="p-2">Hire Date</th><th className="p-2">HR Source</th><th className="p-2">Provisioned</th><th className="p-2 text-right">Actions</th></tr></thead>
             <tbody>
               {d.joiners.map((j) => (
-                <tr key={j.ref} className="border-b border-border/50"><td className="p-2 font-medium">{j.name}</td><td className="p-2 text-xs">{j.department}</td><td className="p-2 text-xs">{fmtDate(j.hire_date)}</td><td className="p-2 text-xs font-mono">{j.hr_authority}</td><td className="p-2 text-xs">{j.provisioned ? <span className="text-low">✓ {j.accounts} account(s)</span> : <span className="text-amber">Pending</span>}</td></tr>
+                <tr key={j.ref} className="border-b border-border/50 hover:bg-secondary/30 cursor-pointer" data-testid={`jml-joiner-${j.ref}`} onClick={() => openJoiner(j)}>
+                  <td className="p-2 font-medium"><button data-testid={`jml-joiner-open-${j.ref}`} className="hover:text-primary text-left">{j.name}</button></td>
+                  <td className="p-2 text-xs">{j.department}</td>
+                  <td className="p-2 text-xs">{fmtDate(j.hire_date)}</td>
+                  <td className="p-2 text-xs font-mono">{j.hr_authority}</td>
+                  <td className="p-2 text-xs">{j.provisioned ? <span className="text-low">✓ {j.accounts} account(s)</span> : <span className="text-amber">Pending</span>}</td>
+                  <td className="p-2 text-right">{rowActions(j.ref, j.name)}</td>
+                </tr>
               ))}
-              {d.joiners.length === 0 && <tr><td colSpan={5} className="p-4 text-center text-muted-foreground">No recent joiners.</td></tr>}
+              {d.joiners.length === 0 && <tr><td colSpan={6} className="p-4 text-center text-muted-foreground">No recent joiners.</td></tr>}
             </tbody>
           </table>
         </div>

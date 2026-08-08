@@ -7,11 +7,13 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench } from "lucide-react";
+import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot } from "lucide-react";
 
 const SEV = { Critical: "0 84% 60%", High: "35 90% 55%", Medium: "190 90% 50%", Low: "142 70% 45%" };
 const Chip = ({ v, map = SEV }) => <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full" style={{ background: `hsl(${map[v] || "220 10% 55%"} / 0.15)`, color: `hsl(${map[v] || "220 10% 55%"})` }}>{v}</span>;
+const ACTION_LABEL = { recertify: "Open recertification", revoke_all: "Revoke all roles", deactivate: "De-provision account", lock: "Emergency lock" };
 
 export default function SodCommandCenter() {
   const { openDeepDive } = useDeepDive();
@@ -31,6 +33,9 @@ export default function SodCommandCenter() {
   const [simRole, setSimRole] = useState("");
   const [simRoles, setSimRoles] = useState([]);
   const [simResult, setSimResult] = useState(null);
+  // auto-remediation engine
+  const [arem, setArem] = useState(null);
+  const [aremBusy, setAremBusy] = useState(false);
 
   const loadConflicts = useCallback(async () => {
     const p = new URLSearchParams();
@@ -40,7 +45,9 @@ export default function SodCommandCenter() {
     const { data } = await api.get(`/sap/sod/conflicts?${p.toString()}`);
     setData(data);
   }, [sev, area, status]);
+  const loadArem = useCallback(async () => { const { data } = await api.get("/sap/autoremediation"); setArem(data); }, []);
   useEffect(() => { loadConflicts(); }, [loadConflicts]);
+  useEffect(() => { loadArem(); }, [loadArem]);
   useEffect(() => {
     api.get("/sap/sod/rules").then((r) => setRules(r.data.rules));
     api.get("/sap/identities").then((r) => setPeople(r.data.identities));
@@ -48,6 +55,25 @@ export default function SodCommandCenter() {
   }, []);
 
   if (!data) return <Spinner />;
+
+  const saveArem = async (patch) => {
+    if (!arem) return;
+    setAremBusy(true);
+    try {
+      const { data: res } = await api.put("/sap/autoremediation", { ...arem.config, ...patch });
+      if (res.remediated) toast.success(`Auto-remediation engine — ${res.remediated} workflow(s) opened`, { description: "ServiceNow tickets opened & auto-closed" });
+      else toast.success("Auto-remediation rule updated");
+      await loadArem(); await loadConflicts();
+    } catch (e) { toast.error("Could not update rule"); }
+    setAremBusy(false);
+  };
+  const runArem = async () => {
+    setAremBusy(true);
+    try { const { data: res } = await api.post("/sap/autoremediation/run"); toast.success(`${res.remediated} auto-remediation workflow(s) opened`); await loadArem(); await loadConflicts(); }
+    catch { toast.error("Run failed"); }
+    setAremBusy(false);
+  };
+  const toggleSev = (s) => { const cur = arem.config.severities; const next = cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]; saveArem({ severities: next.length ? next : ["Critical"] }); };
 
   const openRule = async (r) => {
     try {
@@ -113,7 +139,7 @@ export default function SodCommandCenter() {
     <div className="space-y-6" data-testid="sod-command-center">
       <div>
         <h1 className="font-head font-black text-3xl lg:text-4xl tracking-tight" data-testid="sod-title">SoD Command Center</h1>
-        <p className="text-sm text-muted-foreground mt-1">Live Segregation-of-Duties detection across users and roles, mitigating controls, and pre-assignment risk simulation.</p>
+        <p className="text-sm text-muted-foreground mt-1">Live Segregation-of-Duties detection across users and roles, mitigating controls, pre-assignment risk simulation, and hands-free auto-remediation.</p>
       </div>
 
       <SapInsight dashboard="SoD Command Center" focus="segregation-of-duties toxic combinations and mitigation" accent="0 84% 60%" auto slug="sod-command" />
@@ -124,6 +150,55 @@ export default function SodCommandCenter() {
         <StatCard label="Medium conflicts" value={data.summary.Medium} accent="190 90% 50%" icon={GitCompare} testid="sod-medium" />
         <StatCard label="Total rows" value={data.total} sub={`${rules.length} rules in library`} accent="142 70% 45%" icon={ShieldCheck} testid="sod-total" />
       </div>
+
+      {/* SoD → ServiceNow Auto-Remediation Rule Engine */}
+      {arem && (
+        <div className="bg-card fact-border rounded-xl p-5" data-testid="sod-autorem">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2"><Bot className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-base">SoD → ServiceNow Auto-Remediation</h2></div>
+            <span data-testid="autorem-state" className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${arem.config.enabled ? "bg-low/15 text-low" : "bg-secondary text-muted-foreground"}`}>{arem.config.enabled ? "ACTIVE" : "OFF"}</span>
+            <div className="flex-1" />
+            <div className="flex items-center gap-2"><span className="text-xs text-muted-foreground">Enable engine</span><Switch data-testid="autorem-toggle" checked={arem.config.enabled} disabled={aremBusy} onCheckedChange={(v) => saveArem({ enabled: v })} /></div>
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-1">When enabled, the platform automatically opens a ServiceNow workflow for every account carrying an open SoD conflict of a watched severity — closing risk without a human click.</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-4">
+            <div>
+              <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1.5">Trigger severities</div>
+              <div className="flex gap-1.5">{["Critical", "High", "Medium"].map((s) => {
+                const on = arem.config.severities.includes(s);
+                return <button key={s} data-testid={`autorem-sev-${s}`} onClick={() => toggleSev(s)} disabled={aremBusy} className="text-[10px] font-mono uppercase px-2.5 py-1 rounded-full border transition-opacity" style={{ borderColor: `hsl(${SEV[s]} / ${on ? 0.6 : 0.25})`, background: `hsl(${SEV[s]} / ${on ? 0.15 : 0})`, color: `hsl(${SEV[s]})`, opacity: on ? 1 : 0.45 }}>{s}</button>;
+              })}</div>
+            </div>
+            <div>
+              <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1.5">Remediation action</div>
+              <Select value={arem.config.action} onValueChange={(v) => saveArem({ action: v })}><SelectTrigger data-testid="autorem-action" className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>{Object.entries(ACTION_LABEL).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent></Select>
+            </div>
+            <div>
+              <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1.5">Pending candidates</div>
+              <div className="flex items-center gap-3">
+                <span className="font-head font-black text-2xl" style={{ color: `hsl(${arem.candidates > 0 ? "0 84% 60%" : "142 70% 45%"})` }} data-testid="autorem-candidates">{arem.candidates}</span>
+                <Button size="sm" className="h-8" data-testid="autorem-run" onClick={runArem} disabled={aremBusy || arem.candidates === 0}>{aremBusy ? "Running…" : "Run now"}</Button>
+              </div>
+            </div>
+          </div>
+          {arem.log.length > 0 && (
+            <div className="mt-4 border-t border-border pt-3">
+              <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2">Recent auto-remediations · {arem.remediated_total}</div>
+              <div className="space-y-1 max-h-[160px] overflow-y-auto pr-1" data-testid="autorem-log">
+                {arem.log.slice(0, 12).map((l, i) => (
+                  <div key={i} className="flex items-center gap-2 text-xs">
+                    <Chip v={l.severity} />
+                    <span className="font-mono text-muted-foreground">{l.ticket_number}</span>
+                    <span className="font-medium whitespace-nowrap">{l.sap_user}</span>
+                    <span className="text-muted-foreground truncate">{l.rules.join(", ")}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Simulator */}

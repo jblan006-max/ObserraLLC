@@ -17,7 +17,7 @@ import {
   PieChart, Pie, Cell, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
 } from "recharts";
 import {
-  UserCheck, UserX, RefreshCw, Search, Ticket, Ban, ToggleRight, Users, Gauge, TriangleAlert, CheckCircle2, Mail, Workflow, Power, UserPlus, Zap, PauseCircle, PlayCircle, Sparkles,
+  UserCheck, UserX, RefreshCw, Search, Ticket, Ban, ToggleRight, Users, Gauge, TriangleAlert, CheckCircle2, Mail, Workflow, Power, UserPlus, Zap, PauseCircle, PlayCircle, Sparkles, KeyRound, ShieldAlert,
 } from "lucide-react";
 
 const CHART_TT = { background: "hsl(215 38% 10%)", border: "1px solid hsl(215 30% 18%)", borderRadius: 8, fontSize: 12 };
@@ -35,6 +35,8 @@ const ACTION_META = {
   resume: { label: "Resume", Icon: PlayCircle, btn: "bg-low hover:bg-low/90", tone: "text-low",
     desc: "Restores access for a suspended user (re-enables sign-in). A ServiceNow resume workflow is opened and auto-closed across HR (ADP/IZ8) → AD/Entra → SAP." },
 };
+const DETAIL_ACTIONS = { Activated: ["suspend", "deactivate"], Suspended: ["resume", "deactivate"], Deactivated: ["activate"] };
+const RATE = { Critical: "0 84% 60%", High: "35 90% 55%", Medium: "190 90% 50%", Low: "142 70% 45%" };
 
 export default function UserActivation() {
   const [d, setD] = useState(null);
@@ -51,6 +53,7 @@ export default function UserActivation() {
   const [ticketView, setTicketView] = useState(null);
   const [bulk, setBulk] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [detail, setDetail] = useState(null);
   const [suggesting, setSuggesting] = useState(false);
   const [roleList, setRoleList] = useState([]);
   const [cf, setCf] = useState({ first_name: "", last_name: "", email: "", department: "Finance", legal_entity: "US01", role: "", roles: [] });
@@ -124,6 +127,12 @@ export default function UserActivation() {
       setCreateOpen(false); setCf({ first_name: "", last_name: "", email: "", department: "Finance", legal_entity: "US01", role: "", roles: [] }); await load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Create failed"); }
     setBusy(false);
+  };
+
+  const openUser = async (u) => {
+    setDetail({ loading: true, u });
+    try { const { data } = await api.get(`/sap/identities/${u.user_id}`); setDetail({ ...data, u }); }
+    catch { setDetail(null); toast.error("Could not load user detail"); }
   };
 
   const S = d.summary;
@@ -257,11 +266,11 @@ export default function UserActivation() {
                   <td className="p-3"><Checkbox checked={sel.has(u.user_id)} onCheckedChange={() => toggle(u.user_id)} data-testid={`ua-check-${u.user_id}`} /></td>
                   <td className="p-3 font-mono text-xs">{u.user_name}</td>
                   <td className="p-3 font-medium whitespace-nowrap">
-                    <span className="inline-flex items-center gap-1.5">
+                    <button data-testid={`ua-open-${u.user_id}`} onClick={() => openUser(u)} className="inline-flex items-center gap-1.5 text-left hover:text-primary transition-colors">
                       {u.status === "Deactivated" && <Ban className="w-3.5 h-3.5 text-crit shrink-0" title="Deactivated" />}
                       {u.status === "Suspended" && <PauseCircle className="w-3.5 h-3.5 text-amber shrink-0" title="Suspended" />}
                       {u.name}
-                    </span>
+                    </button>
                   </td>
                   <td className="p-3 text-xs">{u.display_name}</td>
                   <td className="p-3 text-muted-foreground text-xs">{u.email}</td>
@@ -417,6 +426,57 @@ export default function UserActivation() {
             <label className="flex items-center gap-2 text-sm cursor-pointer"><Checkbox checked={notify} onCheckedChange={(v) => setNotify(!!v)} /> <Mail className="w-3.5 h-3.5 text-muted-foreground" /> Email welcome to the user</label>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button><Button data-testid="cf-submit" disabled={busy} onClick={runCreate}>{busy ? "Provisioning…" : "Create & Provision"}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Per-user detail (Obserra standard: clickable identity detail + live workflow actions) */}
+      <Dialog open={!!detail} onOpenChange={(o) => !o && setDetail(null)}>
+        <DialogContent className="max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="ua-detail-dialog">
+          {detail?.loading ? <div className="py-16"><Spinner /></div> : detail && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-3">
+                  <span className="font-head font-black text-2xl" style={{ color: `hsl(${RATE[detail.risk.rating]})` }}>{detail.risk.score}</span>
+                  {detail.person.name}
+                  <span data-testid="ua-detail-status" className={`text-[10px] font-mono font-semibold px-2 py-0.5 rounded ${detail.activation_status === "Deactivated" ? "bg-crit/15 text-crit" : detail.activation_status === "Suspended" ? "bg-amber/15 text-amber" : "bg-low/15 text-low"}`}>{detail.activation_status}</span>
+                </DialogTitle>
+                <DialogDescription>{detail.person.job_title} · {detail.person.department} · {detail.u.license_type} license</DialogDescription>
+              </DialogHeader>
+              <div className="flex flex-wrap items-center gap-2 mb-3 p-3 rounded-lg bg-secondary/30 border border-border" data-testid="ua-detail-actions">
+                <span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground inline-flex items-center gap-1.5 mr-1"><Workflow className="w-3.5 h-3.5 text-ai" /> ServiceNow workflow</span>
+                {(DETAIL_ACTIONS[detail.activation_status] || []).map((a) => { const M = ACTION_META[a]; const I = M.Icon; return (
+                  <Button key={a} size="sm" data-testid={`ua-detail-${a}`} className={`h-8 gap-1.5 ${M.btn}`} onClick={() => { const u = detail.u; setDetail(null); askAction(a, [u.user_id], u.name); }}><I className="w-3.5 h-3.5" /> {M.label}</Button>
+                ); })}
+              </div>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm mb-3">
+                <div><span className="text-muted-foreground text-xs">Manager</span><div>{detail.u.manager || "—"} · HR {detail.person.hr_authority}</div></div>
+                <div><span className="text-muted-foreground text-xs">Legal entity</span><div>{detail.person.legal_entity_name} ({detail.person.country})</div></div>
+                <div><span className="text-muted-foreground text-xs">Last login</span><div>{fmtDate(detail.u.last_login)}{detail.u.inactivity_flag ? ` · inactive ${detail.u.inactive_days}d` : ""}</div></div>
+                <div><span className="text-muted-foreground text-xs">Worker type</span><div>{detail.person.worker_type}</div></div>
+              </div>
+              <div className="border-t border-border pt-3 mb-3">
+                <div className="flex items-center gap-2 mb-2"><KeyRound className="w-4 h-4 text-primary" /><h3 className="font-head font-bold text-sm">SAP Accounts ({detail.accounts.length})</h3></div>
+                {detail.accounts.map((a) => (
+                  <div key={a.ref} className="p-2.5 rounded-lg bg-secondary/30 mb-2">
+                    <div className="font-mono text-sm">{a.sap_user} <span className="text-muted-foreground">· {a.system}/{a.client} · {a.lock_state}</span></div>
+                    <div className="flex flex-wrap gap-1 mt-1.5">{a.roles.map((r) => <span key={r.ref} className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-secondary" title={r.functions.join(", ")}>{r.name}</span>)}</div>
+                  </div>
+                ))}
+                {detail.accounts.length === 0 && <p className="text-xs text-muted-foreground">No SAP accounts linked.</p>}
+              </div>
+              {detail.sod_conflicts.length > 0 && (
+                <div className="border-t border-border pt-3">
+                  <div className="flex items-center gap-2 mb-2"><ShieldAlert className="w-4 h-4 text-crit" /><h3 className="font-head font-bold text-sm">SoD Conflicts ({detail.sod_conflicts.length})</h3></div>
+                  {detail.sod_conflicts.map((c) => (
+                    <div key={c.conflict_ref} className="flex items-center gap-2 text-sm mb-1">
+                      <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full" style={{ background: `hsl(${RATE[c.severity]} / 0.15)`, color: `hsl(${RATE[c.severity]})` }}>{c.severity}</span>
+                      {c.rule_name}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
         </DialogContent>
       </Dialog>
     </div>

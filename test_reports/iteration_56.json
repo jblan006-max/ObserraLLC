@@ -1,0 +1,32 @@
+{
+  "summary": "Iter56 verified all 6 new capabilities requested for this session end-to-end (backend pytest 7/7 + Playwright UI). Backend (test_iter56_workflow_autorem.py): (1) uniform ticket shape systems_touched present (and legacy 'systems' key absent) on POST /sap/accounts/{ref}/action, POST /sap/accounts/bulk-action tickets[], and POST /sap/activation/set tickets[] — all 3 endpoints exercised with a real ticket created and asserted; (2) POST /sap/accounts/bulk-action with 2 refs returns 2 tickets, both properly shaped; (3) GET /sap/workflow/activity returns non-empty tickets with system filter honored; (4) SoD auto-remediation: GET returned enabled=false / candidates=16 / empty log at start; PUT enabled=true created remediations; POST /autoremediation/run is idempotent (0 new); GET /sod/conflicts live-hook doesn't create dupes; log populated; PUT disabled at end (clean demo state); (5) GET /sap/jml returns movers array with length>=1 (2 movers observed); (6) GET /sap/identities/{ref} returns activation_status. Frontend (Playwright, cookie login via data-testid=auth-submit): /app/workflow renders SapInsight AI card, 4 StatCards (wf-total/autoclosed/last24/duration), filter bar and wf-table with 400 wf-row-<NUM>; clicking a row opens wf-detail with wf-stages timeline. /app/monitoring: 7 mon-select-* checkboxes present, selecting 2 triggers mon-bulk-bar with 'mon-bulk-count: 2 accounts selected', mon-bulk-recertify opens mon-bulk-dialog, filling mon-bulk-reason and clicking mon-bulk-confirm-btn dispatched POST /sap/accounts/bulk-action (verified via backend test too). /app/sod: sod-autorem card + autorem-toggle/candidates/log/action/run + all three severity chips (Critical/High/Medium) render. /app/lifecycle: jml-movers-panel visible, 2 jml-mover-open-*, 4 jml-joiner-open-*, 6 jml-leaver-open-* rows; clicking jml-mover-open-P-0014 opens a Radix modal deep-dive showing ADP → IZ8 change fields (manager Lena Ali → Nadia Braun, Finance dept, 1 acct/2 roles, AI insight, compliance alignment, recommended actions). 13 jml-deactivate-*, 12 jml-suspend-*, 12 jml-reactivate-* per-row action buttons present across joiners+movers+leavers. /app/activation: 44 ua-open-<USER_ID> rows; clicking opens ua-detail-dialog with ua-detail-status='Activated', ua-detail-actions bar visible, clicking ua-detail-suspend closes detail and opens ua-confirm-dialog (which calls POST /sap/activation/set). Auto-remediation engine was disabled at end of run (final state: enabled=false, candidates=0, log=16 — 16 Critical accounts had been remediated during the enable test).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "JML mover deep-dive & other modals", "issues": ["Radix a11y warning still fires: 'DialogContent requires a DialogTitle for the component to be accessible for screen reader users.' — cosmetic only. Recommend wrapping the mover deep-dive header inside DialogTitle (or VisuallyHidden DialogTitle) in Lifecycle.jsx and any other custom modals."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter56_workflow_autorem.py",
+    "/app/test_reports/pytest/iter56.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "sap_uac.py is now 2472 lines — still well beyond the 700-line guideline. Splitting into modules (accounts.py, activation.py, autoremediation.py, workflow.py, jml.py, tickets.py) is overdue.",
+    "Field-name inconsistency observed in iter55 has been resolved: _ticket_public() now uniformly emits systems_touched on every action endpoint (accounts/action, accounts/bulk-action, activation/set tickets[]). Legacy 'systems' key is fully gone from these responses — verified by an explicit assert.",
+    "Auto-remediation candidates counter goes from 16 → 0 after enable, but the log-based de-dup means once the log is populated, the candidates gauge cannot recover unless conflicts churn. For demo/reset flows this is fine (state is per-org); documenting the reset endpoint (if any) would help operators.",
+    "Radix DialogTitle a11y warning persists in JML mover deep-dive modal and 1-2 other secondary modals — cheap wrap fix in Lifecycle.jsx."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter56_workflow_autorem.py"
+  ],
+  "success_rate": {"backend": "7/7 (100%)", "frontend": "5/5 flows (100%) — Workflow feed + detail, Monitoring bulk, SoD auto-rem card, JML movers deep-dive, User Activation detail modal"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (cookie-based, submit via data-testid=auth-submit)",
+  "seed_data_creation": "During this run: 1 recertify ticket on 1 monitoring account (test_account_action_ticket_shape), 2 recertify tickets via bulk-action (test_bulk_action + a second bulk-recertify from UI), 1 suspend + 1 resume ticket on the first Activated person (state restored to Activated). Auto-remediation enable produced ~16 Critical remediation ServiceNow tickets (already recorded in autorem log). Engine was DISABLED at end. No persons or accounts left in a deactivated state.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Auto-remediation state after this run: enabled=false, candidates=0, log=16 (all 16 originally-Critical accounts already have live remediation ticket rows in autorem log). To reset for a fresh 'engine OFF with 16 Critical candidates and empty log' baseline, the main agent needs to clear sap_autoremediation_log for the org. Account list is fetched from GET /api/sap/access-monitoring (dormant+orphan+service), NOT a /accounts list endpoint. Activation set payload is {person_refs, action(activate|suspend|resume|deactivate), reason, notify, work_note} — NOT {refs,state}. Bulk-action payload is {refs, action(lock|deactivate|revoke_all|recertify), reason}. Autoremediation config key is 'severities' not 'trigger_severities'. jml-mover deep-dive modal does not use role='dialog' (Radix warning about missing DialogTitle) — query by other selectors, not [role=dialog].",
+  "rca of the issue": "N/A — all 6 requested new capabilities verified working end-to-end."
+}

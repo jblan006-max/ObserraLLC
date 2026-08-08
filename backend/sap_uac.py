@@ -752,6 +752,11 @@ async def sod_conflicts(severity: str = "", area: str = "", status: str = "",
     org_id = user["org_id"]
     await _ensure(org_id)
     persons, accounts, conflicts, pmap = await _correlate(org_id)
+    _arcfg = await _get_autoremediation(org_id)
+    if _arcfg.get("enabled"):
+        _created = await _run_autoremediation(org_id, "auto-engine", conflicts)
+        if _created and _arcfg.get("action") in ("deactivate", "revoke_all"):
+            persons, accounts, conflicts, pmap = await _correlate(org_id)
     rows = []
     for c in conflicts:
         if severity and c["severity"] != severity:
@@ -896,35 +901,29 @@ async def access_monitoring(user: dict = Depends(get_current_user)):
             "counts": {"dormant": len(dormant), "orphan": len(orphan), "service": len(service)}}
 
 
-class AccountActionBody(BaseModel):
-    action: str  # lock | recertify | deactivate | revoke_all
-    reason: str = ""
+def _ticket_public(ticket):
+    """Uniform ServiceNow ticket shape returned by every SAP UAC action endpoint."""
+    return {"number": ticket["number"], "type": ticket["type"], "state": ticket["state"],
+            "systems_touched": ticket.get("systems_touched", [])}
 
 
-@sap_router.post("/accounts/{account_ref}/action")
-async def account_action(account_ref: str, body: AccountActionBody, user: dict = Depends(get_current_user)):
-    """ServiceNow-orchestrated action from any account row (dormant / orphan / service / technical):
-    emergency-lock, de-provision, revoke all roles, or open a recertification."""
-    org_id = user["org_id"]
-    await _ensure(org_id)
-    acc = await db.sap_accounts.find_one({"org_id": org_id, "ref": account_ref})
-    if not acc:
-        raise HTTPException(status_code=404, detail="Account not found")
-    by = user["email"]
+async def _run_account_action(org_id, acc, action, by, work_note=""):
+    """Shared ServiceNow-orchestrated account workflow (lock | deactivate | revoke_all | recertify).
+    Used by the single-account action, the bulk action and the SoD auto-remediation engine."""
     person = await db.sap_persons.find_one({"org_id": org_id, "ref": acc.get("person_ref")}, {"_id": 0}) if acc.get("person_ref") else None
     hr = (person or {}).get("hr_authority", "ADP")
     pr, pn, em = acc.get("person_ref"), (person or {}).get("name") or "(technical / shared)", (person or {}).get("email")
-    if body.action == "lock":
+    if action == "lock":
         await db.sap_accounts.update_one({"_id": acc["_id"]}, {"$set": {"lock_state": "locked"}})
         steps = [("ServiceNow", f"Account lock opened for {acc['sap_user']}"),
                  (hr, "Recording access change against worker record"),
                  ("SAP", f"Locking {acc['sap_user']} on {acc['system']} and terminating sessions"),
                  ("AD/Entra", "Disabling directory sign-in"),
                  ("ServiceNow", "Account locked; change closed")]
-        ttype, action, prefix, reason = "SAP Account Lock", "acct_lock", "CHG", f"Lock {acc['sap_user']}"
-    elif body.action == "deactivate":
+        ttype, act, prefix, reason = "SAP Account Lock", "acct_lock", "CHG", f"Lock {acc['sap_user']}"
+    elif action == "deactivate":
         if pr:
-            await _apply_activation(org_id, [pr], "deactivate", body.reason or "Dormant/orphan de-provisioning", False, by, "Access-monitoring de-provisioning")
+            await _apply_activation(org_id, [pr], "deactivate", work_note or "Dormant/orphan de-provisioning", False, by, "Access-monitoring de-provisioning")
         else:
             await db.sap_accounts.update_one({"_id": acc["_id"]}, {"$set": {"lock_state": "locked", "roles": []}})
         steps = [("ServiceNow", f"De-provisioning opened for {acc['sap_user']}"),
@@ -932,24 +931,169 @@ async def account_action(account_ref: str, body: AccountActionBody, user: dict =
                  ("SAP", f"Locking {acc['sap_user']}, revoking roles, freeing license"),
                  ("AD/Entra", "Disabling directory sign-in"),
                  ("ServiceNow", "Access removed; change closed")]
-        ttype, action, prefix, reason = "SAP Account De-provisioning", "acct_deactivate", "CHG", f"Deactivate {acc['sap_user']}"
-    elif body.action == "revoke_all":
+        ttype, act, prefix, reason = "SAP Account De-provisioning", "acct_deactivate", "CHG", f"Deactivate {acc['sap_user']}"
+    elif action == "revoke_all":
         await db.sap_accounts.update_one({"_id": acc["_id"]}, {"$set": {"roles": []}})
         steps = [("ServiceNow", f"Full role revocation opened for {acc['sap_user']}"),
                  (hr, "Recording access change"),
                  ("SAP", f"Removing all roles from {acc['sap_user']} on {acc['system']}"),
                  ("ServiceNow", "Roles removed; change closed")]
-        ttype, action, prefix, reason = "SAP Account Role Revocation", "acct_revoke_all", "CHG", f"Revoke all roles from {acc['sap_user']}"
+        ttype, act, prefix, reason = "SAP Account Role Revocation", "acct_revoke_all", "CHG", f"Revoke all roles from {acc['sap_user']}"
     else:
         steps = [("ServiceNow", f"Access recertification opened for {acc['sap_user']}"),
                  ("SAP", "Snapshotting entitlements & last-use evidence"),
                  ("ServiceNow", "Reviewer (account owner) assigned; certification task created")]
-        ttype, action, prefix, reason = "SAP Access Recertification", "acct_recertify", "REQ", f"Recertify {acc['sap_user']}"
-    ticket = await _snow_generic(org_id, ttype, action, steps, by, prefix=prefix,
-                                 person_ref=pr, person_name=pn, email=em, reason=reason, work_note=body.reason)
-    await _audit(org_id, by, f"sap.account.{body.action}", f"{account_ref} · {ticket['number']}")
-    return {"ok": True, "ticket": {"number": ticket["number"], "type": ticket["type"],
-                                   "state": ticket["state"], "systems": ticket["systems_touched"]}}
+        ttype, act, prefix, reason = "SAP Access Recertification", "acct_recertify", "REQ", f"Recertify {acc['sap_user']}"
+    ticket = await _snow_generic(org_id, ttype, act, steps, by, prefix=prefix,
+                                 person_ref=pr, person_name=pn, email=em, reason=reason, work_note=work_note)
+    await _audit(org_id, by, f"sap.account.{action}", f"{acc['ref']} · {ticket['number']}")
+    return ticket
+
+
+class AccountActionBody(BaseModel):
+    action: str  # lock | recertify | deactivate | revoke_all
+    reason: str = ""
+
+
+@sap_router.post("/accounts/{account_ref}/action")
+async def account_action(account_ref: str, body: AccountActionBody, user: dict = Depends(get_current_user)):
+    """ServiceNow-orchestrated action from any account row (dormant / orphan / service / technical)."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    if body.action not in ("lock", "deactivate", "revoke_all", "recertify"):
+        raise HTTPException(status_code=400, detail="action must be lock, deactivate, revoke_all or recertify")
+    acc = await db.sap_accounts.find_one({"org_id": org_id, "ref": account_ref})
+    if not acc:
+        raise HTTPException(status_code=404, detail="Account not found")
+    ticket = await _run_account_action(org_id, acc, body.action, user["email"], body.reason)
+    return {"ok": True, "ticket": _ticket_public(ticket)}
+
+
+class AccountBulkBody(BaseModel):
+    refs: list[str]
+    action: str  # lock | deactivate | revoke_all | recertify
+    reason: str = ""
+
+
+@sap_router.post("/accounts/bulk-action")
+async def account_bulk_action(body: AccountBulkBody, user: dict = Depends(get_current_user)):
+    """Multi-select ServiceNow batch across dormant / orphan / service accounts — one live workflow per account."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    if body.action not in ("lock", "deactivate", "revoke_all", "recertify"):
+        raise HTTPException(status_code=400, detail="action must be lock, deactivate, revoke_all or recertify")
+    if not body.refs:
+        raise HTTPException(status_code=400, detail="No accounts selected")
+    by = user["email"]
+    tickets, failed = [], []
+    for ref in body.refs:
+        acc = await db.sap_accounts.find_one({"org_id": org_id, "ref": ref})
+        if not acc:
+            failed.append(ref)
+            continue
+        ticket = await _run_account_action(org_id, acc, body.action, by, body.reason)
+        tickets.append({"account_ref": ref, "sap_user": acc["sap_user"], **_ticket_public(ticket)})
+    return {"ok": True, "changed": len(tickets), "tickets": tickets, "failed": failed}
+
+
+# ── SoD → ServiceNow Auto-Remediation Rule Engine ─────────────────────────────
+_AUTOREM_DEFAULT = {"enabled": False, "severities": ["Critical"], "action": "recertify"}
+
+
+async def _get_autoremediation(org_id):
+    cfg = await db.sap_autoremediation.find_one({"org_id": org_id}, {"_id": 0})
+    if not cfg:
+        cfg = {"org_id": org_id, **_AUTOREM_DEFAULT}
+    for k, v in _AUTOREM_DEFAULT.items():
+        cfg.setdefault(k, v)
+    return cfg
+
+
+async def _autorem_candidates(org_id, conflicts, severities):
+    """Accounts carrying an OPEN SoD conflict of a watched severity that haven't been auto-remediated yet."""
+    done = {r["account_ref"] for r in await db.sap_autoremediation_log.find(
+        {"org_id": org_id}, {"_id": 0, "account_ref": 1}).to_list(5000)}
+    by_acc = {}
+    for c in conflicts:
+        if c.get("status") == "Open" and c["severity"] in severities and c.get("account_ref"):
+            by_acc.setdefault(c["account_ref"], []).append(c)
+    return {ref: cs for ref, cs in by_acc.items() if ref not in done}
+
+
+async def _run_autoremediation(org_id, by, conflicts=None):
+    """Open one ServiceNow workflow per account with a watched OPEN SoD conflict (deduped, idempotent)."""
+    cfg = await _get_autoremediation(org_id)
+    if conflicts is None:
+        _, _, conflicts, _ = await _correlate(org_id)
+    cand = await _autorem_candidates(org_id, conflicts, cfg.get("severities", ["Critical"]))
+    action = cfg.get("action", "recertify")
+    created = []
+    for account_ref, cs in cand.items():
+        acc = await db.sap_accounts.find_one({"org_id": org_id, "ref": account_ref})
+        if not acc:
+            continue
+        rules = sorted({c["rule_name"] for c in cs})
+        note = f"Auto-remediation rule engine: {len(cs)} open SoD conflict(s) — {', '.join(rules)}"
+        ticket = await _run_account_action(org_id, acc, action, by, note)
+        entry = {"org_id": org_id, "account_ref": account_ref, "sap_user": acc["sap_user"],
+                 "system": acc["system"], "person_ref": acc.get("person_ref"),
+                 "conflict_refs": [c["conflict_ref"] for c in cs], "rules": rules,
+                 "severity": max((c["severity"] for c in cs), key=lambda s: SEV_WEIGHT.get(s, 0)),
+                 "action": action, "ticket_number": ticket["number"], "ticket_type": ticket["type"],
+                 "by": by, "at": _now().isoformat()}
+        await db.sap_autoremediation_log.insert_one(entry)
+        entry.pop("_id", None)
+        created.append(entry)
+    return created
+
+
+class AutoRemConfig(BaseModel):
+    enabled: bool
+    severities: list[str] = ["Critical"]
+    action: str = "recertify"
+
+
+@sap_router.get("/autoremediation")
+async def get_autoremediation(user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    cfg = await _get_autoremediation(org_id)
+    _, _, conflicts, _ = await _correlate(org_id)
+    cand = await _autorem_candidates(org_id, conflicts, cfg.get("severities", ["Critical"]))
+    log = await db.sap_autoremediation_log.find({"org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(100)
+    open_by_sev = {}
+    for c in conflicts:
+        if c.get("status") == "Open":
+            open_by_sev[c["severity"]] = open_by_sev.get(c["severity"], 0) + 1
+    return {"config": {k: cfg[k] for k in ("enabled", "severities", "action")},
+            "candidates": len(cand),
+            "candidate_accounts": [{"account_ref": r, "rules": sorted({c["rule_name"] for c in cs}), "count": len(cs)}
+                                   for r, cs in list(cand.items())[:25]],
+            "log": log, "remediated_total": len(log), "open_by_severity": open_by_sev}
+
+
+@sap_router.put("/autoremediation")
+async def put_autoremediation(body: AutoRemConfig, user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    if body.action not in ("recertify", "deactivate", "revoke_all", "lock"):
+        raise HTTPException(status_code=400, detail="invalid action")
+    sev = [s for s in body.severities if s in ("Critical", "High", "Medium")] or ["Critical"]
+    await db.sap_autoremediation.update_one({"org_id": org_id},
+        {"$set": {"org_id": org_id, "enabled": body.enabled, "severities": sev, "action": body.action}}, upsert=True)
+    await _audit(org_id, user["email"], "sap.autoremediation.config",
+                 f"enabled={body.enabled} severities={sev} action={body.action}")
+    created = await _run_autoremediation(org_id, user["email"]) if body.enabled else []
+    return {"ok": True, "config": {"enabled": body.enabled, "severities": sev, "action": body.action},
+            "remediated": len(created)}
+
+
+@sap_router.post("/autoremediation/run")
+async def run_autoremediation(user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    created = await _run_autoremediation(org_id, user["email"])
+    return {"ok": True, "remediated": len(created), "created": created}
 
 
 @sap_router.get("/jml")
@@ -974,7 +1118,18 @@ async def jml(user: dict = Depends(get_current_user)):
                             "residual_accounts": len(unlocked), "ad_enabled": p.get("ad_enabled"),
                             "score": p["risk"]["score"], "rating": p["risk"]["rating"],
                             "severity": "Critical"})
+        if p["status"] == "Active":
+            transfers = [c for c in _hr_conflicts_for(p)
+                         if c["field"] in ("legal_entity", "manager", "job_title", "worker_type")]
+            if transfers:
+                movers.append({"ref": p["ref"], "name": p["name"], "department": p["department"],
+                               "hr_authority": p["hr_authority"], "accounts": len(p["accounts"]),
+                               "roles": sum(len(a.get("roles", [])) for a in p["accounts"]),
+                               "score": p["risk"]["score"], "rating": p["risk"]["rating"],
+                               "changes": [{"field": c["field"], "from": c["adp_value"], "to": c["iz8_value"],
+                                            "authoritative": c["authoritative_value"]} for c in transfers]})
     leavers.sort(key=lambda x: -x["score"])
+    movers.sort(key=lambda x: -x["score"])
     return {"joiners": joiners, "movers": movers, "leavers": leavers,
             "counts": {"joiners": len(joiners), "movers": len(movers), "leavers": len(leavers)}}
 
@@ -1031,8 +1186,7 @@ async def privileged_action(account_ref: str, body: PrivActionBody, user: dict =
     ticket = await _snow_generic(org_id, ttype, action, steps, by, prefix=prefix,
                                  person_ref=pr, person_name=pn, email=em, reason=reason, work_note=body.reason)
     await _audit(org_id, by, f"sap.privileged.{body.action}", f"{account_ref} · {ticket['number']}")
-    return {"ok": True, "ticket": {"number": ticket["number"], "type": ticket["type"],
-                                   "state": ticket["state"], "systems": ticket["systems_touched"]}}
+    return {"ok": True, "ticket": _ticket_public(ticket)}
 
 
 @sap_router.get("/roles")
@@ -1142,8 +1296,7 @@ async def role_action(ref: str, body: RoleActionBody, user: dict = Depends(get_c
     ticket = await _snow_generic(org_id, ttype, action, steps, by, prefix=prefix,
                                  person_ref=pr, person_name=pn, email=em, reason=reason, work_note=body.reason)
     await _audit(org_id, by, f"sap.role.{body.action}", f"{ref} · {ticket['number']}")
-    return {"ok": True, "ticket": {"number": ticket["number"], "type": ticket["type"],
-                                   "state": ticket["state"], "systems": ticket["systems_touched"]}}
+    return {"ok": True, "ticket": _ticket_public(ticket)}
 
 
 @sap_router.get("/hr/reconciliation")
@@ -1284,7 +1437,7 @@ async def reconcile(body: ReconcileBody, user: dict = Depends(get_current_user))
                  f"{body.person_ref} · {body.field} → {val} · {ticket['number']}"
                  + (" · access auto-deactivated" if deactivation and deactivation["changed"] else ""))
     return {"ok": True,
-            "ticket": {"number": ticket["number"], "type": ticket["type"], "state": ticket["state"], "systems": ticket["systems_touched"]},
+            "ticket": _ticket_public(ticket),
             "deactivation": deactivation}
 
 
@@ -1384,7 +1537,7 @@ async def decide_request(ref: str, body: RequestDecision, user: dict = Depends(g
     await _audit(org_id, user["email"], "sap.access.decide",
                  f"{ref} → {status}" + (f" · {ticket['number']}" if ticket else ""))
     return {"ok": True, "status": status,
-            "ticket": ({"number": ticket["number"], "type": ticket["type"], "state": ticket["state"], "systems": ticket["systems_touched"]} if ticket else None)}
+            "ticket": (_ticket_public(ticket) if ticket else None)}
 
 
 @sap_router.post("/access-requests/{ref}/provision")
@@ -1421,7 +1574,7 @@ async def provision_request(ref: str, user: dict = Depends(get_current_user)):
                                                       "provision_ticket": ticket["number"], "provisioned_roles": role_refs}})
     await _audit(org_id, user["email"], "sap.access.provision", f"{ref} provisioned {', '.join(role_refs)} · {ticket['number']}")
     return {"ok": True, "status": "Provisioned",
-            "ticket": {"number": ticket["number"], "type": ticket["type"], "state": ticket["state"], "systems": ticket["systems_touched"]}}
+            "ticket": _ticket_public(ticket)}
 
 
 class RequestRolesBody(BaseModel):
@@ -1786,8 +1939,7 @@ async def _apply_activation(org_id, refs, action, reason, notify, by, work_note=
             {"org_id": org_id, "person_ref": ref, "action": action,
              "by": by, "at": now, "reason": reason, "work_note": work_note, "notify": notify})
         ticket = await _snow_workflow(org_id, p, action, by, reason, notify, work_note)
-        tickets.append({"person_ref": ref, "person_name": p.get("name"), "number": ticket["number"],
-                        "type": ticket["type"], "state": ticket["state"], "systems": ticket["systems_touched"]})
+        tickets.append({"person_ref": ref, "person_name": p.get("name"), **_ticket_public(ticket)})
         await _audit(org_id, by, f"sap.activation.{action}",
                      f"{p.get('name', ref)} ({ref}) → {status} · {ticket['number']} auto-closed"
                      + (f" · {work_note or reason}" if (work_note or reason) else ""))
@@ -1982,6 +2134,56 @@ async def activation_tickets(user: dict = Depends(get_current_user)):
             "open": sum(1 for t in tickets if t["state"] != "Closed"),
             "closed": sum(1 for t in tickets if t["state"] == "Closed"),
             "total": len(tickets)}
+
+
+@sap_router.get("/workflow/activity")
+async def workflow_activity(q: str = "", prefix: str = "", system: str = "",
+                            action: str = "", days: int = 0, user: dict = Depends(get_current_user)):
+    """Live, filterable stream of every ServiceNow ticket the platform opened & auto-closed."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    tickets = await db.sap_snow_tickets.find({"org_id": org_id}, {"_id": 0}).sort("opened_at", -1).to_list(1000)
+    by_prefix, by_system, by_type = {}, {}, {}
+    for t in tickets:
+        pf = (t.get("number") or "REQ")[:3]
+        by_prefix[pf] = by_prefix.get(pf, 0) + 1
+        by_type[t["type"]] = by_type.get(t["type"], 0) + 1
+        for s in t.get("systems_touched", []):
+            by_system[s] = by_system.get(s, 0) + 1
+    ql = q.lower().strip()
+    cutoff = (_now() - timedelta(days=days)).isoformat() if days and days > 0 else None
+    day_ago = (_now() - timedelta(days=1)).isoformat()
+    rows = []
+    for t in tickets:
+        if prefix and (t.get("number") or "")[:3] != prefix:
+            continue
+        if system and system not in t.get("systems_touched", []):
+            continue
+        if action and t.get("action") != action:
+            continue
+        if cutoff and (t.get("opened_at") or "") < cutoff:
+            continue
+        if ql and ql not in (f"{t.get('number','')} {t.get('type','')} {t.get('person_name') or ''} "
+                             f"{t.get('requested_by') or ''} {t.get('reason') or ''}").lower():
+            continue
+        rows.append(t)
+    return {
+        "tickets": rows[:400], "total": len(rows), "all_total": len(tickets),
+        "summary": {
+            "total": len(tickets),
+            "closed": sum(1 for t in tickets if t.get("state") == "Closed"),
+            "open": sum(1 for t in tickets if t.get("state") != "Closed"),
+            "last_24h": sum(1 for t in tickets if (t.get("opened_at") or "") >= day_ago),
+            "auto_closed": sum(1 for t in tickets if t.get("auto_closed")),
+            "avg_duration_sec": round(sum(t.get("duration_sec", 0) for t in tickets) / len(tickets), 1) if tickets else 0,
+        },
+        "by_prefix": by_prefix,
+        "by_system": sorted(({"name": k, "value": v} for k, v in by_system.items()), key=lambda x: -x["value"]),
+        "by_type": sorted(({"name": k, "value": v} for k, v in by_type.items()), key=lambda x: -x["value"])[:12],
+        "systems": sorted(by_system.keys()),
+        "actions": sorted({t.get("action") for t in tickets if t.get("action")}),
+        "generated_at": _now().isoformat(),
+    }
 
 
 @sap_router.get("/analytics")
