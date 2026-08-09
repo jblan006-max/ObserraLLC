@@ -1,0 +1,26 @@
+{
+  "summary": "Frontend-only regression + 4 new SoD features (Leaderboard, Board Pack, Ticket Live Refresh, Deep-Link Highlight) all pass at 100%. Login via auth-email/auth-password/auth-submit; navigated to /app/sod and validated every referenced data-testid. Board Pack Send NOT clicked to preserve 'Not yet sent this month' demo state for follow-up runs.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "SodWatchlist (watchlist-add native select)", "issues": ["React hydration warning: <span> rendered inside <option> at SodWatchlist.jsx:176 (option value=\"Basis / Security\"). Non-blocking but produces console noise on every /app/sod render. Wrap addable area text in plain string, not a component that emits <span>."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional: fix hydration warning caused by <span> child inside native <option> in SodWatchlist.jsx line ~176 (addable area render). Non-blocking."
+  ],
+  "critical_code_review_comments": [
+    "SodWatchlist watchlist-add native <select> renders children that expand into <span> (visual editor wrapper) inside <option>, causing repeated React hydration warnings in console. Rendering-only issue, does not break functionality."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "skipped", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin, cookie-based)",
+  "seed_data_creation": "None. Preserved existing Finance pin (owner=admin, ticket CHG100577) and did not click board-pack Send to keep 'Not yet sent this month' state.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 4 new features verified end-to-end: Leaderboard shows 1 owner (12C/18O) + 16 unassigned Critical + Finance area with CHG100577 on expand; Board Pack preview modal renders body (2188 chars), recipients contain jblan2026@gmail.com, status='Not yet sent this month · monthly auto-send is OFF', both boardpack-send-btn (card) and boardpack-send-confirm (modal) visible for admin; Ticket modal shows watchlist-ticket-live chip 'auto-refreshing', 6/6 stages, persists after 5s (4s poll cycle) and closes cleanly on Escape; Deep-link /app/sod?wl=Finance applies border-primary + ring-2 + ring-primary to watchlist-item-0, no highlight without ?wl; Assigned-to-me toggle shows '(1)' and preserves Finance in both states. Regression: all sod-* cards render. Only console noise: pre-existing <span>-in-<option> hydration warning in SodWatchlist:176.",
+  "rca of the issue": "N/A — no defects observed."
+}

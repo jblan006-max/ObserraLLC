@@ -18,6 +18,8 @@ import { SodToolsRow } from "@/components/sod/SodToolsRow";
 import { SodConflictsTable } from "@/components/sod/SodConflictsTable";
 
 import { SodWatchlist } from "@/components/SodWatchlist";
+import { SodOwnerLeaderboard } from "@/components/sod/SodOwnerLeaderboard";
+import { SodBoardPackCard } from "@/components/sod/SodBoardPackCard";
 import { GovernanceDigestCard } from "@/components/sod/GovernanceDigestCard";
 import { SEV, Chip, ScoreTile, ACTION_LABEL, TrendTip } from "@/components/sod/sodPrimitives";
 import { SodProvider } from "@/context/SodContext";
@@ -479,6 +481,8 @@ export default function SodCommandCenter() {
 
       <SodWatchlist />
 
+      <SodOwnerLeaderboard />
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Critical conflicts" value={data.summary.Critical} accent="0 84% 60%" icon={ShieldAlert} testid="sod-critical" />
         <StatCard label="High conflicts" value={data.summary.High} accent="35 90% 55%" icon={ShieldAlert} testid="sod-high" />
@@ -489,7 +493,10 @@ export default function SodCommandCenter() {
       {scorecard && <SodScorecardCard />}
 
       {/* SoD → ServiceNow Auto-Remediation Rule Engine */}
-      {arem && <SodAutoRemCard {...{ arem, aremBusy, data, digestBusy, rules, runArem, saveArem, sendDigest, sev, toggleSev }} />}
+      {arem && <SodAutoRemCard />}
+
+      {/* Board Pack — on-demand preview & send */}
+      <SodBoardPackCard />
 
       {/* Governance Digest schedule */}
       {dcfgLocal && <GovernanceDigestCard />}

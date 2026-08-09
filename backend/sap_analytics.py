@@ -5,6 +5,7 @@ Owns: /analytics (+ region/department slice filters), /analytics/export (branded
 current slice), and the per-auditor SoD Risk Watchlist (pin/unpin, Critical-threshold nudge alerts,
 and one-tap "assign owner + open ServiceNow remediation ticket")."""
 import io
+import os
 import csv
 import logging
 
@@ -13,7 +14,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 
 from db import db
-from auth import get_current_user
+from auth import get_current_user, require_roles
 from sap_data import SOD_RULES, ROLE_BY_REF
 from sap_engine import _now, _correlate, _ensure, _account_flags
 from sap_uac import (sap_router, _audit, _ticket_public, _snow_generic,
@@ -411,10 +412,53 @@ async def get_ticket(number: str, user: dict = Depends(get_current_user)):
     return t
 
 
+# ── Owner Accountability Leaderboard (who owns the most open Critical SoD) ─────
+@sap_router.get("/watchlist/leaderboard")
+async def watchlist_leaderboard(user: dict = Depends(get_current_user)):
+    """Ranked accountability board across every assigned SoD-area owner in the org — who carries the
+    most open Critical conflicts — so leadership can balance remediation workload at a glance."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    stats = await _area_stats(org_id)
+    docs = await db.sap_watchlist.find({"org_id": org_id, "owner": {"$nin": [None, ""]}}, {"_id": 0}).to_list(5000)
+    by_owner = {}
+    for d in docs:
+        owner = (d.get("owner") or "").strip()
+        if "@" not in owner:
+            continue
+        area = d["area"]
+        e = by_owner.setdefault(owner.lower(), {"owner": owner, "areas": {}})
+        if area not in e["areas"]:
+            s = stats.get(area, {"area": area, "open": 0, "Critical": 0, "High": 0})
+            e["areas"][area] = {"area": area, "open": s.get("open", 0), "Critical": s.get("Critical", 0),
+                                "High": s.get("High", 0), "ticket": (d.get("ticket") or {}).get("number")}
+    owners, assigned = [], set()
+    for e in by_owner.values():
+        areas = sorted(e["areas"].values(), key=lambda a: (-a["Critical"], -a["open"], a["area"]))
+        assigned |= set(e["areas"].keys())
+        owners.append({"owner": e["owner"], "areas": areas, "area_count": len(areas),
+                       "open": sum(a["open"] for a in areas),
+                       "Critical": sum(a["Critical"] for a in areas),
+                       "High": sum(a["High"] for a in areas),
+                       "with_ticket": sum(1 for a in areas if a["ticket"])})
+    owners.sort(key=lambda o: (-o["Critical"], -o["open"], o["owner"].lower()))
+    totals = {"owners": len(owners), "assigned_areas": len(assigned), "total_areas": len(stats),
+              "total_open": sum(s["open"] for s in stats.values()),
+              "total_critical": sum(s["Critical"] for s in stats.values()),
+              "unassigned_critical": sum(s["Critical"] for a, s in stats.items() if a not in assigned)}
+    return {"owners": owners, "totals": totals}
+
+
 # ── Owner Digest (weekly: each owner gets just the SoD areas assigned to them) ─
-def _owner_digest_html(owner, rows, total_open, total_crit):
+def _owner_digest_html(owner, rows, total_open, total_crit, frontend=""):
+    from urllib.parse import quote
+
+    def _area_cell(area):
+        if frontend:
+            return f'<a href="{frontend}/app/sod?wl={quote(area)}" style="color:#0369a1;text-decoration:none;font-weight:600">{area}</a>'
+        return area
     body = "".join(
-        f'<tr><td style="padding:7px 10px;border-bottom:1px solid #eef0f4">{r["area"]}</td>'
+        f'<tr><td style="padding:7px 10px;border-bottom:1px solid #eef0f4">{_area_cell(r["area"])}</td>'
         f'<td style="padding:7px 10px;border-bottom:1px solid #eef0f4;text-align:center;color:#b91c1c;font-weight:700">{r["Critical"]}</td>'
         f'<td style="padding:7px 10px;border-bottom:1px solid #eef0f4;text-align:center">{r["open"]}</td>'
         f'<td style="padding:7px 10px;border-bottom:1px solid #eef0f4;font:600 11px monospace;color:#0369a1">{(r.get("ticket") or {}).get("number", "—")}</td></tr>'
@@ -458,7 +502,7 @@ async def run_sap_owner_digest():
                 to = sum(r["open"] for r in rows)
                 tc = sum(r["Critical"] for r in rows)
                 await notifications.send_email(owner, f"Your SAP SoD areas — {tc} Critical, {to} open",
-                                               _owner_digest_html(owner, rows, to, tc))
+                                               _owner_digest_html(owner, rows, to, tc, os.environ.get("FRONTEND_URL", "").rstrip("/")))
             await notifications.create(org_id, "sap", "SoD owner digest sent",
                                        f"Weekly SoD owner digest emailed to {len(by_owner)} owner(s).", ref="sap-owner-digest")
             logger.info(f"Owner digest sent for org {org_id}: {len(by_owner)} owner(s)")
@@ -488,11 +532,43 @@ def _board_pack_html(d, wins, month):
         '</td></tr></table>')
 
 
+async def _board_pack_recipients(org_id, cfg=None, override=None):
+    """Resolve board-pack recipients: explicit override → digest recipients → org admins/execs."""
+    if override:
+        recips = [e.strip() for e in override if e and "@" in e]
+        if recips:
+            return recips
+    if cfg is None:
+        from sap_digest import _get_digest_config
+        cfg = await _get_digest_config(org_id)
+    recips = [e.strip() for e in (cfg.get("recipients") or []) if e and "@" in e]
+    if recips:
+        return recips
+    users = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
+                                {"_id": 0, "email": 1}).to_list(200)
+    return [u["email"] for u in users if u.get("email")]
+
+
+async def _board_pack_build(org_id):
+    """Build THIS month's board pack: branded HTML + analytics PDF bytes + month label."""
+    from datetime import timedelta
+    await _ensure(org_id)
+    d = await _analytics_data(org_id)
+    _, _, conflicts, _ = await _correlate(org_id)
+    since = (_now() - timedelta(days=30)).isoformat()
+    wins = {
+        "remediation_tickets": await db.sap_snow_tickets.count_documents(
+            {"org_id": org_id, "type": {"$regex": "SoD|Remediation|Role", "$options": "i"}, "opened_at": {"$gte": since}}),
+        "mitigated": sum(1 for c in conflicts if c.get("status") == "Mitigated"),
+    }
+    month = _now().strftime("%Y-%m")
+    return _board_pack_html(d, wins, month), _analytics_pdf(d, "All regions & departments", "Board Pack"), month
+
+
 async def run_sap_board_pack():
     """Monthly (1st): email the SAP access-governance board pack to the digest recipients (opt-in via
     digest config `board_pack`), with the analytics PDF attached. Sent once per calendar month."""
     import base64
-    from datetime import timedelta
     from kernel import notifications
     from sap_digest import _get_digest_config
     month = _now().strftime("%Y-%m")
@@ -506,18 +582,8 @@ async def run_sap_board_pack():
                 continue
             if await db.sap_board_pack_log.find_one({"org_id": org_id, "month": month}):
                 continue
-            await _ensure(org_id)
-            d = await _analytics_data(org_id)
-            _, _, conflicts, _ = await _correlate(org_id)
-            since = (_now() - timedelta(days=30)).isoformat()
-            wins = {
-                "remediation_tickets": await db.sap_snow_tickets.count_documents(
-                    {"org_id": org_id, "type": {"$regex": "SoD|Remediation|Role", "$options": "i"}, "opened_at": {"$gte": since}}),
-                "mitigated": sum(1 for c in conflicts if c.get("status") == "Mitigated"),
-            }
-            html = _board_pack_html(d, wins, month)
-            att = [{"filename": f"sap-board-pack-{month}.pdf",
-                    "content": base64.b64encode(_analytics_pdf(d, "All regions & departments", "Board Pack")).decode()}]
+            html, pdf, _ = await _board_pack_build(org_id)
+            att = [{"filename": f"sap-board-pack-{month}.pdf", "content": base64.b64encode(pdf).decode()}]
             for to in recips:
                 await notifications.send_email(to, f"SAP Access Governance — Board Pack {month}", html, attachments=att)
             await db.sap_board_pack_log.insert_one({"org_id": org_id, "month": month, "at": _now().isoformat(), "recipients": recips})
@@ -526,3 +592,48 @@ async def run_sap_board_pack():
             logger.info(f"Board pack sent for org {org_id} to {len(recips)}")
         except Exception as e:
             logger.error(f"Board pack failed for org {org_id}: {e}")
+
+
+@sap_router.get("/board-pack/preview")
+async def board_pack_preview(user: dict = Depends(get_current_user)):
+    """On-demand preview of THIS month's SAP board pack — branded HTML + resolved recipients + whether
+    it has already been sent this calendar month."""
+    from sap_digest import _get_digest_config
+    org_id = user["org_id"]
+    cfg = await _get_digest_config(org_id)
+    recips = await _board_pack_recipients(org_id, cfg)
+    html, _, month = await _board_pack_build(org_id)
+    sent = await db.sap_board_pack_log.find_one({"org_id": org_id, "month": month}, {"_id": 0})
+    return {"html": html, "month": month, "recipients": recips,
+            "already_sent": bool(sent), "sent_at": (sent or {}).get("at"),
+            "board_pack_enabled": bool(cfg.get("board_pack"))}
+
+
+class BoardPackSendBody(BaseModel):
+    recipients: list[str] = []
+
+
+@sap_router.post("/board-pack/send")
+async def board_pack_send(body: BoardPackSendBody, user: dict = Depends(require_roles("admin"))):
+    """Admin one-tap: email THIS month's board pack now (PDF attached) instead of waiting for the
+    1st-of-month cron. Records the monthly log so the scheduled run won't double-send."""
+    import base64
+    from kernel import notifications
+    from sap_digest import _get_digest_config
+    org_id = user["org_id"]
+    cfg = await _get_digest_config(org_id)
+    recips = await _board_pack_recipients(org_id, cfg, override=body.recipients)
+    if not recips:
+        raise HTTPException(status_code=400, detail="No recipients — add board-pack recipients in the digest schedule first.")
+    html, pdf, month = await _board_pack_build(org_id)
+    att = [{"filename": f"sap-board-pack-{month}.pdf", "content": base64.b64encode(pdf).decode()}]
+    for to in recips:
+        await notifications.send_email(to, f"SAP Access Governance — Board Pack {month}", html, attachments=att)
+    await db.sap_board_pack_log.update_one(
+        {"org_id": org_id, "month": month},
+        {"$set": {"org_id": org_id, "month": month, "at": _now().isoformat(),
+                  "recipients": recips, "manual": True, "sent_by": user["email"]}}, upsert=True)
+    await notifications.create(org_id, "sap", "Board pack sent (on-demand)",
+                               f"SAP board pack emailed on demand to {len(recips)} recipient(s).", ref="sap-board-pack")
+    await _audit(org_id, user["email"], "sap.board-pack.send", f"{month} · {len(recips)} recipient(s)")
+    return {"sent": len(recips), "recipients": recips, "month": month}

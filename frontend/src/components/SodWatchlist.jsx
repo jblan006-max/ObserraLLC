@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { api } from "@/lib/api";
 import { useDeepDive } from "@/context/DeepDiveContext";
 import { useAuth } from "@/context/AuthContext";
@@ -10,11 +10,15 @@ const SEV = { Critical: "0 84% 60%", High: "35 90% 55%", Medium: "199 89% 48%", 
 
 // One pinned SoD area: hot-spot count + severity, a Critical-threshold nudge toggle, and a one-tap
 // "assign owner + open ServiceNow remediation ticket". Holds its own owner-input/threshold state.
-function WatchlistCard({ s, idx, onOpen, onUnpin, onAlert, onRemediate, onTicket }) {
+function WatchlistCard({ s, idx, onOpen, onUnpin, onAlert, onRemediate, onTicket, highlighted }) {
   const [thr, setThr] = useState(s.threshold || 1);
   const [showAssign, setShowAssign] = useState(false);
   const [owner, setOwner] = useState(s.owner || "");
   const [busy, setBusy] = useState(false);
+  const cardRef = useRef(null);
+  useEffect(() => {
+    if (highlighted && cardRef.current) cardRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [highlighted]);
   const stop = (e) => e.stopPropagation();
 
   const doRemediate = async (e) => {
@@ -32,7 +36,7 @@ function WatchlistCard({ s, idx, onOpen, onUnpin, onAlert, onRemediate, onTicket
   };
 
   return (
-    <div data-testid={`watchlist-item-${idx}`} className="rounded-lg border border-border/70 bg-secondary/20 p-3 cursor-pointer hover:border-primary/50 transition-colors" onClick={() => onOpen(s)}>
+    <div ref={cardRef} data-testid={`watchlist-item-${idx}`} className={`rounded-lg border bg-secondary/20 p-3 cursor-pointer transition-colors ${highlighted ? "border-primary ring-2 ring-primary/60" : "border-border/70 hover:border-primary/50"}`} onClick={() => onOpen(s)}>
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
@@ -125,6 +129,19 @@ export function SodWatchlist() {
     catch { toast.error("Could not load the ticket timeline"); setTicket(null); }
     setTicketBusy(false);
   };
+  // Keep the open ticket modal live — re-fetch the timeline every 4s so an in-flight ServiceNow
+  // change advances its stages without the user reopening it.
+  useEffect(() => {
+    if (!ticket?.number) return;
+    const num = ticket.number;
+    const id = setInterval(async () => {
+      try { const { data } = await api.get(`/sap/ticket/${encodeURIComponent(num)}`); setTicket((cur) => (cur && cur.number === num ? data : cur)); }
+      catch { /* keep last snapshot */ }
+    }, 4000);
+    return () => clearInterval(id);
+  }, [ticket?.number]);
+  // Digest deep-link: /app/sod?wl=<area> highlights + scrolls to that pinned watchlist card.
+  const wlParam = (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("wl") : "") || "";
 
   const totalOpen = wl ? wl.available.reduce((s, a) => s + a.open, 0) : 0;
   const openArea = (s) => openDeepDive({
@@ -178,7 +195,7 @@ export function SodWatchlist() {
       {wl && shownPinned.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" data-testid="watchlist-pinned">
           {shownPinned.map((s, idx) => (
-            <WatchlistCard key={s.area} s={s} idx={idx} onOpen={openArea} onUnpin={unpin} onAlert={setAlert} onRemediate={remediate} onTicket={openTicket} />
+            <WatchlistCard key={s.area} s={s} idx={idx} onOpen={openArea} onUnpin={unpin} onAlert={setAlert} onRemediate={remediate} onTicket={openTicket} highlighted={!!wlParam && s.area === wlParam} />
           ))}
         </div>
       )}
@@ -186,7 +203,9 @@ export function SodWatchlist() {
       <Dialog open={!!ticket} onOpenChange={(o) => !o && setTicket(null)}>
         <DialogContent className="max-w-lg" data-testid="watchlist-ticket-dialog">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2"><Ticket className="w-4 h-4 text-primary" /> {ticket?.number} — ServiceNow change</DialogTitle>
+            <DialogTitle className="flex items-center gap-2"><Ticket className="w-4 h-4 text-primary" /> {ticket?.number} — ServiceNow change
+              {ticket?.stages && <span data-testid="watchlist-ticket-live" className="inline-flex items-center gap-1 text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full bg-low/15 text-low ml-1"><span className="w-1.5 h-1.5 rounded-full bg-low animate-pulse" />auto-refreshing</span>}
+            </DialogTitle>
           </DialogHeader>
           {ticketBusy ? (
             <div className="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center" data-testid="watchlist-ticket-loading"><Loader2 className="w-4 h-4 animate-spin" /> Loading timeline…</div>
