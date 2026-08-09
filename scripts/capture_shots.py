@@ -103,7 +103,8 @@ def run():
         page.get_by_test_id("auth-submit").click()
         page.wait_for_timeout(4000)
         _dismiss_overlays(page)
-        for route, name, scroll_y in PAGES:
+        pages = [p for p in PAGES if p[1] in TOUR_MAP] if os.environ.get("SHOT_TOUR_ONLY") else PAGES
+        for route, name, scroll_y in pages:
             try:
                 page.goto(f"{BASE}/app/{route}", wait_until="domcontentloaded", timeout=45000)
                 page.wait_for_timeout(2200)

@@ -105,3 +105,10 @@
 - Fix: mounted `<OnboardingTour />` in `AppShell.jsx` (beside `<SapAdvisor />`). Restores auto-show on first login, Settings → Replay tour, and the SAP UAC dashboard preview image on every step.
 - Verified via screenshot: tour opens on both paths; `tour-preview` image loads (naturalWidth 1440) on step 1 (Welcome) and step 2 (Executive Mode, spotlight on mode toggle).
 
+## Feature — One-click "Regenerate tour images" (Jun 2026, curl + screenshot-verified)
+- Admins can recapture the in-app onboarding tour previews (`/tour/{overview,sod,watchlist,monitoring}.jpg`) so they always match the current UI after a redesign.
+- `scripts/capture_shots.py`: added `SHOT_TOUR_ONLY=1` mode → captures only the 4 tour-mapped screens then copies to `frontend/public/tour/`.
+- `backend/deploy.py`: `regenerate_tour_images()` + `POST /api/deploy/regenerate-tour` (admin-only, runs capture in a threadpool so it doesn't block the event loop; returns the refreshed image list).
+- `Settings.jsx`: "Regenerate tour images" button beside "Regenerate guides" (180s client timeout).
+- Note: this forked pod had Playwright browser build 1208 but the Python package expects 1234 — reinstalled chromium 1234 to `/pw-browsers`. Endpoint verified: 200, all 4 images refreshed in ~19s.
+

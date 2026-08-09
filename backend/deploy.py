@@ -136,6 +136,37 @@ async def regenerate(capture: bool = False, user: dict = Depends(get_current_use
         raise HTTPException(500, f"Could not regenerate guides: {e}")
 
 
+_TOUR_DIR = os.path.join(_ROOT, "frontend", "public", "tour")
+_TOUR_IMAGES = ["overview.jpg", "sod.jpg", "watchlist.jpg", "monitoring.jpg"]
+
+
+def regenerate_tour_images():
+    """Recapture only the in-app onboarding tour preview screenshots so they match the current UI."""
+    import subprocess
+    env = {**os.environ,
+           "PLAYWRIGHT_BROWSERS_PATH": os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/pw-browsers"),
+           "SHOT_TOUR_ONLY": "1"}
+    subprocess.run([sys.executable, os.path.join(_ROOT, "scripts", "capture_shots.py")],
+                   env=env, timeout=150, check=False)
+    return [n for n in _TOUR_IMAGES if os.path.exists(os.path.join(_TOUR_DIR, n))]
+
+
+@deploy_router.post("/regenerate-tour")
+async def regenerate_tour(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can regenerate the tour images")
+    from starlette.concurrency import run_in_threadpool
+    try:
+        images = await run_in_threadpool(regenerate_tour_images)
+        if not images:
+            raise HTTPException(500, "Capture produced no tour images")
+        return {"ok": True, "images": images}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"Could not regenerate tour images: {e}")
+
+
 class EmailDocsBody(BaseModel):
     to: str
 

@@ -90,6 +90,16 @@ export default function Settings() {
     setRegenBusy(false);
   };
 
+  const [tourBusy, setTourBusy] = useState(false);
+  const regenTourImages = async () => {
+    setTourBusy(true);
+    try {
+      const { data } = await api.post("/deploy/regenerate-tour", {}, { timeout: 180000 });
+      toast.success(`Tour images refreshed to match the current UI (${data.images?.length || 0} screens)`);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not regenerate tour images"); }
+    setTourBusy(false);
+  };
+
   const [emailTo, setEmailTo] = useState("");
   const [emailBusy, setEmailBusy] = useState(false);
   const [book, setBook] = useState([]);
@@ -475,6 +485,10 @@ export default function Settings() {
             <button data-testid="regenerate-guides" disabled={regenBusy} onClick={regenGuides}
               className="px-4 py-2.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-primary/40 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
               {regenBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />} Regenerate guides
+            </button>
+            <button data-testid="regenerate-tour" disabled={tourBusy} onClick={regenTourImages} title="Recapture the in-app tour preview screenshots from the live dashboards"
+              className="px-4 py-2.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-primary/40 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
+              {tourBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4" />} Regenerate tour images
             </button>
           </div>
           <div className="flex items-center gap-2 flex-wrap pt-1" data-testid="email-docs-row">
