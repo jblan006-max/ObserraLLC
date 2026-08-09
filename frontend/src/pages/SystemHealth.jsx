@@ -8,7 +8,7 @@ import {
   Activity, Database, Plug, Clock, ServerCog, ArrowUpCircle, DownloadCloud, Loader2,
   HardDriveDownload, RotateCcw, ShieldCheck, AlertTriangle, RefreshCw, Building2, Terminal, CheckCircle2,
   Save, Mail, MessageSquare, Slack, Zap, Archive, Lock, Send, FileText, KeyRound, Eye, History, FileCheck2,
-  Share2, Copy, X, Trash2, DoorOpen, Link2,
+  Share2, Copy, X, Trash2, DoorOpen, Link2, Palette, MessageCircle, Ban,
 } from "lucide-react";
 
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
@@ -136,6 +136,12 @@ export default function SystemHealth() {
   const [creatingRoom, setCreatingRoom] = useState(false);
   const [digestTestEmail, setDigestTestEmail] = useState("");
   const [sendingTestEmail, setSendingTestEmail] = useState(false);
+  const [comments, setComments] = useState([]);
+  const [brandModal, setBrandModal] = useState(false);
+  const [brand, setBrand] = useState({ welcome: "", use_org_logo: true, has_logo: false, org_logo_available: false });
+  const [brandLogo, setBrandLogo] = useState(null);
+  const [savingBrand, setSavingBrand] = useState(false);
+  const [revokingAll, setRevokingAll] = useState(false);
 
   const loadHealth = useCallback(async () => {
     try { const { data } = await api.get("/health"); setHealth(data); } catch { setHealth((h) => h || { status: "degraded", checks: {} }); }
@@ -173,6 +179,10 @@ export default function SystemHealth() {
     if (!isAdmin) return;
     try { const { data } = await api.get("/deploy/audit-rooms"); setRooms(data.rooms || []); } catch { /* ignore */ }
   }, [isAdmin]);
+  const loadComments = useCallback(async () => {
+    if (!isAdmin) return;
+    try { const { data } = await api.get("/deploy/audit-room-comments"); setComments(data.comments || []); } catch { /* ignore */ }
+  }, [isAdmin]);
   const loadCfg = useCallback(async () => {
     if (!isAdmin) return;
     try {
@@ -183,9 +193,9 @@ export default function SystemHealth() {
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([loadHealth(), loadDetail(), loadVer(), loadHistory(), loadBackups(), loadUpgrade(), loadCfg(), loadEvidence(), loadPreviews(), loadShares(), loadRooms()]);
+    await Promise.all([loadHealth(), loadDetail(), loadVer(), loadHistory(), loadBackups(), loadUpgrade(), loadCfg(), loadEvidence(), loadPreviews(), loadShares(), loadRooms(), loadComments()]);
     setRefreshing(false);
-  }, [loadHealth, loadDetail, loadVer, loadHistory, loadBackups, loadUpgrade, loadCfg, loadEvidence, loadPreviews, loadShares, loadRooms]);
+  }, [loadHealth, loadDetail, loadVer, loadHistory, loadBackups, loadUpgrade, loadCfg, loadEvidence, loadPreviews, loadShares, loadRooms, loadComments]);
 
   useEffect(() => { refreshAll(); }, [refreshAll]);
 
@@ -352,6 +362,40 @@ export default function SystemHealth() {
   const revokeRoom = async (token) => {
     try { await api.post("/deploy/audit-room/revoke", { token }); toast.success("Audit room revoked"); await loadRooms(); }
     catch (e) { toast.error(e.response?.data?.detail || "Couldn't revoke"); }
+  };
+  const revokeAllShares = async () => {
+    if (!window.confirm("Revoke ALL auditor share links and audit rooms? External auditors will immediately lose access.")) return;
+    setRevokingAll(true);
+    try {
+      const { data } = await api.post("/deploy/shares/revoke-all");
+      toast.success("All access revoked", { description: `${data.shares_revoked} link(s) and ${data.rooms_revoked} room(s) revoked.` });
+      await Promise.all([loadShares(), loadRooms()]);
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't revoke all"); }
+    setRevokingAll(false);
+  };
+  const openBrandModal = async () => {
+    try { const { data } = await api.get("/deploy/audit-room-branding"); setBrand(data); } catch { /* ignore */ }
+    setBrandLogo(null);
+    setBrandModal(true);
+  };
+  const onBrandLogo = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 1400000) { toast.error("Logo too large (max ~1.4MB)"); return; }
+    const reader = new FileReader();
+    reader.onload = () => setBrandLogo(reader.result);
+    reader.readAsDataURL(file);
+  };
+  const saveRoomBranding = async () => {
+    setSavingBrand(true);
+    try {
+      const payload = { welcome: brand.welcome || "", use_org_logo: !!brand.use_org_logo };
+      if (brandLogo !== null) payload.logo = brandLogo;
+      await api.put("/deploy/audit-room-branding", payload);
+      toast.success("Audit Room branding saved");
+      setBrandModal(false);
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't save branding"); }
+    setSavingBrand(false);
   };
   const sendTestDigest = async () => {
     const email = digestTestEmail.trim();
@@ -664,6 +708,9 @@ export default function SystemHealth() {
               <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-audit-room-create" onClick={createAuditRoom} disabled={creatingRoom}>
                 {creatingRoom ? <Loader2 className="w-4 h-4 animate-spin" /> : <DoorOpen className="w-4 h-4" />} Audit Room
               </Button>
+              <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-room-branding-btn" onClick={openBrandModal}>
+                <Palette className="w-4 h-4" /> Room Branding
+              </Button>
               <Button size="sm" className="gap-1.5" data-testid="sh-evidence-generate" onClick={generateEvidence} disabled={genEvidence}>
                 {genEvidence ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}{genEvidence ? "Generating…" : "Generate & archive"}
               </Button>
@@ -727,10 +774,15 @@ export default function SystemHealth() {
 
       {isAdmin && (shares.length > 0 || rooms.length > 0) && (
         <div className="bg-card fact-border rounded-xl p-5" data-testid="sh-links-panel">
-          <div className="flex items-center gap-2 mb-3">
-            <Link2 className="w-4 h-4 text-primary" />
-            <h2 className="font-head font-bold text-lg">Shared Access Links</h2>
-            <span className="text-[11px] text-muted-foreground">Active auditor links &amp; rooms — open counts and one-tap revoke</span>
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2">
+              <Link2 className="w-4 h-4 text-primary" />
+              <h2 className="font-head font-bold text-lg">Shared Access Links</h2>
+              <span className="text-[11px] text-muted-foreground">Active auditor links &amp; rooms — open counts and one-tap revoke</span>
+            </div>
+            <Button size="sm" variant="outline" className="gap-1.5 text-crit border-crit/40 hover:bg-crit/10" data-testid="sh-revoke-all" onClick={revokeAllShares} disabled={revokingAll}>
+              {revokingAll ? <Loader2 className="w-4 h-4 animate-spin" /> : <Ban className="w-4 h-4" />} Revoke all
+            </Button>
           </div>
           <div className="space-y-2">
             {rooms.map((r) => (
@@ -758,6 +810,27 @@ export default function SystemHealth() {
                   </div>
                 </div>
                 <button data-testid={`sh-share-revoke-${s.token}`} onClick={() => revokeShare(s.token)} className="p-1.5 rounded-md text-muted-foreground hover:text-crit hover:bg-secondary/60 shrink-0" title="Revoke link"><Trash2 className="w-4 h-4" /></button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {isAdmin && comments.length > 0 && (
+        <div className="bg-card fact-border rounded-xl p-5" data-testid="sh-comments-panel">
+          <div className="flex items-center gap-2 mb-3">
+            <MessageCircle className="w-4 h-4 text-primary" />
+            <h2 className="font-head font-bold text-lg">Auditor Comments</h2>
+            <span className="text-[11px] text-muted-foreground">Notes left by external auditors on your Audit Room portal</span>
+          </div>
+          <div className="space-y-2">
+            {comments.map((c, i) => (
+              <div key={i} className="bg-secondary/25 rounded-lg px-3 py-2" data-testid={`sh-comment-${i}`}>
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold">{c.author}</span>
+                  <span className="text-[11px] text-muted-foreground">{fmtDT(c.at)}</span>
+                </div>
+                <p className="text-sm text-foreground/90 mt-1 whitespace-pre-wrap break-words">{c.comment}</p>
               </div>
             ))}
           </div>
@@ -882,6 +955,38 @@ export default function SystemHealth() {
             <div className="flex items-center gap-2">
               <input readOnly data-testid="sh-share-url" value={shareModal.url} className="flex-1 h-9 rounded-md border border-border bg-secondary/40 px-2 text-xs font-mono" onFocus={(e) => e.target.select()} />
               <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-share-copy" onClick={async () => { try { await navigator.clipboard.writeText(shareModal.url); toast.success("Copied"); } catch { toast.error("Copy failed"); } }}><Copy className="w-3.5 h-3.5" /> Copy</Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {brandModal && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" data-testid="sh-brand-modal" onClick={() => !savingBrand && setBrandModal(false)}>
+          <div className="bg-card fact-border rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-head font-bold text-lg flex items-center gap-2"><Palette className="w-5 h-5 text-primary" /> Audit Room branding</h3>
+              <button data-testid="sh-brand-close" onClick={() => setBrandModal(false)} className="p-1 rounded-md text-muted-foreground hover:bg-secondary/60"><X className="w-4 h-4" /></button>
+            </div>
+            <p className="text-sm text-muted-foreground mb-4">Personalize the public auditor portal with your logo and a welcome note.</p>
+            <label className="text-xs font-medium">Logo</label>
+            <div className="flex items-center gap-2 mt-1 mb-3">
+              <input type="file" accept="image/png,image/jpeg,image/svg+xml" onChange={onBrandLogo} data-testid="sh-brand-logo-input" className="text-xs" />
+              {(brandLogo || (brand.has_logo && brandLogo === null)) && (
+                <button data-testid="sh-brand-logo-clear" onClick={() => setBrandLogo("")} className="text-[11px] text-crit hover:underline">Remove</button>
+              )}
+            </div>
+            {brandLogo && brandLogo !== "" && <img src={brandLogo} alt="preview" className="max-h-12 mb-3 rounded" />}
+            <label className="flex items-center gap-2 text-sm mb-3 cursor-pointer select-none">
+              <input type="checkbox" data-testid="sh-brand-use-org" checked={!!brand.use_org_logo} onChange={(e) => setBrand({ ...brand, use_org_logo: e.target.checked })} className="w-4 h-4 accent-primary" />
+              <span>Fall back to my report-branding logo {!brand.org_logo_available && <span className="text-[11px] text-muted-foreground">(none set)</span>}</span>
+            </label>
+            <label className="text-xs font-medium">Welcome note</label>
+            <textarea data-testid="sh-brand-welcome" rows={3} value={brand.welcome || ""} onChange={(e) => setBrand({ ...brand, welcome: e.target.value })} placeholder="e.g. Welcome — this portal contains our latest SAP access governance evidence for your audit." className="w-full mt-1 mb-4 rounded-md border border-border bg-secondary/40 px-3 py-2 text-sm" />
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="outline" onClick={() => setBrandModal(false)} disabled={savingBrand}>Cancel</Button>
+              <Button size="sm" className="gap-1.5" data-testid="sh-brand-save" onClick={saveRoomBranding} disabled={savingBrand}>
+                {savingBrand ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
+              </Button>
             </div>
           </div>
         </div>

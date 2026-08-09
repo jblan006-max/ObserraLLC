@@ -1650,14 +1650,60 @@ async def _audit_findings(org_id: str):
     from datetime import datetime, timezone, timedelta
     now = datetime.now(timezone.utc)
     h = await evaluate_org_health(org_id)
+    # Live SoD conflicts via the correlation engine (top open, ordered by severity).
+    top_conflicts, sod_open = [], 0
+    try:
+        from sap_engine import _correlate
+        _persons, _accounts, conflicts, pmap = await _correlate(org_id)
+        open_conf = [c for c in conflicts if c.get("status") == "Open"]
+        sod_open = len(open_conf)
+        sev_w = {"Critical": 3, "High": 2, "Medium": 1}
+        open_conf.sort(key=lambda c: (-sev_w.get(c.get("severity"), 0), c.get("rule_ref", "")))
+        for c in open_conf[:8]:
+            person = pmap.get(c.get("person_ref"))
+            top_conflicts.append({
+                "rule": c.get("rule_name") or c.get("rule_ref"),
+                "area": c.get("area", "—"), "severity": c.get("severity", "—"),
+                "who": person["name"] if person else (str(c.get("sap_user", "")) + " (technical)")})
+    except Exception:
+        sod_open = await db.risks.count_documents({"org_id": org_id})
+    # Overdue access certification campaigns (Active + past due).
+    overdue_certs = []
+    try:
+        nowiso = now.isoformat()
+        camps = await db.sap_certifications.find({"org_id": org_id, "status": "Active"}, {"_id": 0, "items": 0}).to_list(200)
+        for c in camps:
+            due = c.get("due_date") or ""
+            if due and due < nowiso:
+                overdue_certs.append({"name": c.get("name") or c.get("ref"), "type": c.get("type", "—"), "due_date": due[:10]})
+    except Exception:
+        pass
     return {
         "healthy": h["healthy"],
         "uptime_30d": await _period_uptime(org_id, (now - timedelta(days=30)).isoformat(), now.isoformat()),
         "degraded_connectors": len(h.get("degraded_connectors") or []),
-        "sod_violations": await db.risks.count_documents({"org_id": org_id}),
+        "sod_violations": sod_open,
         "servicenow_tickets": await db.sap_snow_tickets.count_documents({"org_id": org_id}),
         "certifications": await db.sap_certifications.count_documents({"org_id": org_id}),
+        "top_conflicts": top_conflicts,
+        "overdue_certs": overdue_certs[:8],
     }
+
+
+def _room_branding_cfg(org):
+    c = ((org or {}).get("system_health") or {}).get("audit_room") or {}
+    return {"logo": c.get("logo") or "", "welcome": c.get("welcome") or "",
+            "use_org_logo": bool(c.get("use_org_logo", True))}
+
+
+def _resolve_room_logo(org, cfg):
+    if cfg.get("logo"):
+        return cfg["logo"]
+    if cfg.get("use_org_logo"):
+        rb = (org or {}).get("report_branding") or {}
+        if rb.get("logo"):
+            return rb["logo"]
+    return ""
 
 
 def _audit_wrap(inner, badge):
@@ -1672,19 +1718,33 @@ def _audit_wrap(inner, badge):
             '.tv{font-size:22px;font-weight:700;color:#0f1e3d}.tl{font-size:11px;color:#6b7280;margin-top:2px}'
             '.btn{display:inline-block;background:#2f6df6;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-size:14px;font-weight:600}'
             '.hint{font-size:12px;color:#6b7280}'
+            '.rlogo{max-height:46px;max-width:220px;margin-bottom:12px;display:block}'
+            '.welcome{background:#f4f6fb;border-radius:10px;padding:12px 14px;margin:14px 0;font-size:14px;color:#374151;white-space:pre-wrap}'
+            '.ftab{width:100%;border-collapse:collapse;font-size:12px;margin:8px 0}'
+            '.ftab th{text-align:left;color:#6b7280;font-size:10px;text-transform:uppercase;letter-spacing:.05em;padding:6px 8px;border-bottom:1px solid #e5e7eb}'
+            '.ftab td{padding:7px 8px;border-bottom:1px solid #f1f5f9;vertical-align:top}'
+            '.sev{display:inline-block;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px}'
+            '.clist{margin:8px 0;padding-left:18px}.clist li{margin:4px 0;font-size:13px}'
+            '#cbox input,#cbox textarea{width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:8px;padding:9px 11px;font-size:14px;margin:6px 0;font-family:inherit}'
+            '#csend{border:none;cursor:pointer;margin-top:4px}'
             '.brand{max-width:720px;margin:14px auto 0;text-align:center;color:#94a3b8;font-size:12px}</style></head>'
             f'<body><div class="card">{inner}</div><div class="brand">Obserra SAP UAC · Enterprise SAP Access Governance</div></body></html>')
 
 
-def _audit_room_html(org_name, room, findings, latest):
+def _esc_html(s):
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _audit_room_html(org_name, room, findings, latest, branding=None):
     if org_name is None:
         return _audit_wrap("<h1>Audit room not found</h1><p>This link is invalid or has been revoked.</p>", "#c2410c")
     if org_name == "expired":
         return _audit_wrap("<h1>Audit room expired</h1><p>Ask your Obserra administrator for a fresh link.</p>", "#b45309")
+    branding = branding or {}
     up = findings.get("uptime_30d")
     tiles = [("Uptime (30d)", f"{up}%" if up is not None else "—"),
              ("Degraded connectors", findings["degraded_connectors"]),
-             ("SoD violations", findings["sod_violations"]),
+             ("Open SoD violations", findings["sod_violations"]),
              ("ServiceNow tickets", findings["servicenow_tickets"]),
              ("Certifications", findings["certifications"])]
     status = "Healthy" if findings["healthy"] else "Degraded"
@@ -1693,11 +1753,61 @@ def _audit_room_html(org_name, room, findings, latest):
     evidence_btn = (f'<a class="btn" href="/api/deploy/audit-room/{room["token"]}/evidence" target="_blank" rel="noreferrer">Download latest signed evidence (PDF)</a>'
                     if latest else '<p class="hint">No signed evidence report has been generated yet.</p>')
     period = latest.get("period_label") if latest else "—"
-    inner = (f'<div class="pill" style="background:{scolor}">{status}</div>'
-             f'<h1>SAP Access Compliance — {org_name}</h1>'
+    # Findings depth — top open SoD violations
+    conflicts = findings.get("top_conflicts") or []
+    sev_bg = {"Critical": "#b91c1c", "High": "#c2410c", "Medium": "#b45309"}
+    if conflicts:
+        crows = "".join(
+            f'<tr><td><span class="sev" style="background:{sev_bg.get(c["severity"], "#6b7280")}">{_esc_html(c["severity"])}</span></td>'
+            f'<td>{_esc_html(c["rule"])}</td><td>{_esc_html(c["area"])}</td><td>{_esc_html(c["who"])}</td></tr>'
+            for c in conflicts)
+        conflicts_html = ('<h2>Top open Segregation-of-Duties violations</h2>'
+                          '<table class="ftab"><thead><tr><th>Severity</th><th>Rule</th><th>Area</th><th>Holder</th></tr></thead>'
+                          f'<tbody>{crows}</tbody></table>')
+    else:
+        conflicts_html = '<h2>Segregation-of-Duties</h2><p class="hint">No open SoD violations — access is clean.</p>'
+    # Overdue certifications
+    certs = findings.get("overdue_certs") or []
+    if certs:
+        rows = "".join(f'<li>{_esc_html(c["name"])} <span class="hint">· {_esc_html(c["type"])} · due {_esc_html(c["due_date"])}</span></li>' for c in certs)
+        certs_html = f'<h2>Overdue access certifications</h2><ul class="clist">{rows}</ul>'
+    else:
+        certs_html = ""
+    # Branding
+    logo = branding.get("logo") or ""
+    logo_html = f'<img src="{logo}" alt="logo" class="rlogo"/>' if logo else ""
+    welcome = branding.get("welcome") or ""
+    welcome_html = f'<div class="welcome">{_esc_html(welcome)}</div>' if welcome else ""
+    # Auditor comment box (posts back to the room comment endpoint)
+    comment_html = (
+        '<h2>Leave a comment</h2>'
+        '<p class="hint">Auditors can leave notes or questions for the SAP access governance team.</p>'
+        '<div id="cbox">'
+        '<input id="cauth" placeholder="Your name (optional)" />'
+        '<textarea id="ctext" placeholder="Your comment or question…" rows="3"></textarea>'
+        '<button class="btn" id="csend" onclick="sendComment()">Submit comment</button>'
+        '<div id="cmsg" class="hint" style="margin-top:6px"></div></div>'
+        '<script>'
+        'async function sendComment(){'
+        'var t=document.getElementById("ctext").value.trim();'
+        'var a=document.getElementById("cauth").value.trim();'
+        'var m=document.getElementById("cmsg");'
+        'if(!t){m.textContent="Please enter a comment.";return;}'
+        'document.getElementById("csend").disabled=true;'
+        f'try{{var r=await fetch("/api/deploy/audit-room/{room["token"]}/comment",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{author:a,comment:t}})}});'
+        'if(r.ok){document.getElementById("cbox").innerHTML="<p style=\\"color:#12805c;font-weight:600\\">Thank you — your comment was sent to the governance team.</p>";}'
+        'else{m.textContent="Could not submit — the link may have expired.";document.getElementById("csend").disabled=false;}'
+        '}catch(e){m.textContent="Network error, please try again.";document.getElementById("csend").disabled=false;}'
+        '}</script>')
+    inner = (f'{logo_html}'
+             f'<div class="pill" style="background:{scolor}">{status}</div>'
+             f'<h1>SAP Access Compliance — {_esc_html(org_name)}</h1>'
              f'<p>Read-only audit portal · expires {room.get("expires_at", "")[:10]}</p>'
+             f'{welcome_html}'
              f'<div class="tiles">{tile_html}</div>'
-             f'<h2>Latest signed evidence</h2><p class="hint">Reporting period: {period}</p>{evidence_btn}')
+             f'{conflicts_html}{certs_html}'
+             f'<h2>Latest signed evidence</h2><p class="hint">Reporting period: {period}</p>{evidence_btn}'
+             f'{comment_html}')
     return _audit_wrap(inner, "#2f6df6")
 
 
@@ -1758,7 +1868,9 @@ async def view_audit_room(token: str):
     org = await db.organizations.find_one({"_id": ObjectId(room["org_id"])}) or {}
     findings = await _audit_findings(room["org_id"])
     latest = (_list_evidence_files(room["org_id"]) or [None])[0]
-    return HTMLResponse(_audit_room_html(org.get("name") or "Organization", room, findings, latest))
+    cfg = _room_branding_cfg(org)
+    branding = {"logo": _resolve_room_logo(org, cfg), "welcome": cfg["welcome"]}
+    return HTMLResponse(_audit_room_html(org.get("name") or "Organization", room, findings, latest, branding))
 
 
 @deploy_router.get("/audit-room/{token}/evidence")
@@ -1779,6 +1891,109 @@ async def audit_room_evidence(token: str):
     content = _watermark_pdf(content, "AUDIT ROOM COPY", f"Audit room · expires {room.get('expires_at', '')[:10]}")
     return StreamingResponse(io.BytesIO(content), media_type=_PDF_MT,
                              headers={"Content-Disposition": f'inline; filename="{os.path.basename(fp)}"'})
+
+
+class RoomBrandingBody(BaseModel):
+    logo: str | None = None
+    welcome: str = ""
+    use_org_logo: bool = True
+
+
+@deploy_router.get("/audit-room-branding")
+async def get_audit_room_branding(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    cfg = _room_branding_cfg(org)
+    rb = org.get("report_branding") or {}
+    return {"welcome": cfg["welcome"], "use_org_logo": cfg["use_org_logo"],
+            "has_logo": bool(cfg["logo"]), "org_logo_available": bool(rb.get("logo"))}
+
+
+@deploy_router.put("/audit-room-branding")
+async def set_audit_room_branding(body: RoomBrandingBody, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from bson import ObjectId
+    update = {"system_health.audit_room.welcome": (body.welcome or "").strip()[:600],
+              "system_health.audit_room.use_org_logo": bool(body.use_org_logo)}
+    unset = {}
+    if body.logo is not None:
+        if body.logo.strip():
+            if len(body.logo) > 2_000_000:
+                raise HTTPException(400, "Logo is too large (max ~1.5MB).")
+            update["system_health.audit_room.logo"] = body.logo.strip()
+        else:
+            unset["system_health.audit_room.logo"] = ""
+    ops = {"$set": update}
+    if unset:
+        ops["$unset"] = unset
+    await db.organizations.update_one({"_id": ObjectId(user["org_id"])}, ops)
+    return {"ok": True}
+
+
+@deploy_router.post("/shares/revoke-all")
+async def revoke_all_shares(user: dict = Depends(get_current_user)):
+    """One-tap revoke of every auditor share link AND audit room for the org."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    s = await db.evidence_shares.delete_many({"org_id": user["org_id"]})
+    r = await db.audit_rooms.delete_many({"org_id": user["org_id"]})
+    return {"shares_revoked": s.deleted_count, "rooms_revoked": r.deleted_count}
+
+
+class RoomCommentBody(BaseModel):
+    author: str = ""
+    comment: str
+
+
+@deploy_router.post("/audit-room/{token}/comment")
+async def audit_room_comment(token: str, body: RoomCommentBody):
+    """Public — external auditors leave a comment on the portal; notifies admins."""
+    from datetime import datetime, timezone
+    room = await db.audit_rooms.find_one({"token": token})
+    if not room:
+        raise HTTPException(404, "Audit room not found.")
+    if room.get("expires_at") and datetime.now(timezone.utc).isoformat() > room["expires_at"]:
+        raise HTTPException(410, "This audit room has expired.")
+    text = (body.comment or "").strip()
+    if not text:
+        raise HTTPException(400, "A comment is required.")
+    author = (body.author or "").strip()[:120] or "Anonymous auditor"
+    org_id = room["org_id"]
+    await db.audit_room_comments.insert_one({
+        "token": token, "org_id": org_id, "author": author,
+        "comment": text[:2000], "at": _now_iso()})
+    await db.audit_rooms.update_one({"token": token}, {"$inc": {"comments": 1}})
+    try:
+        from kernel import notifications
+        await notifications.create(org_id, "system", "New Audit Room comment",
+                                   f"{author}: {text[:200]}", ref="system-health")
+        recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
+                                     {"_id": 0, "email": 1}).to_list(200)
+        html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
+                f"<h2 style='color:#0f1e3d'>New Audit Room comment</h2>"
+                f"<p><strong>{_esc_html(author)}</strong> left a comment on your SAP Access Compliance audit portal:</p>"
+                f"<blockquote style='border-left:3px solid #2f6df6;margin:0;padding:6px 14px;color:#374151'>{_esc_html(text[:1000])}</blockquote>"
+                f"<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — System Health · Audit Room</p></div>")
+        for rr in recips:
+            try:
+                await notifications.send_email(rr["email"], "New Audit Room comment — Obserra SAP UAC", html)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return {"ok": True}
+
+
+@deploy_router.get("/audit-room-comments")
+async def list_audit_room_comments(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    rows = await db.audit_room_comments.find({"org_id": user["org_id"]}, {"_id": 0}).sort("at", -1).to_list(200)
+    return {"comments": rows}
+
 
 
 _TOUR_DIR = os.path.join(_ROOT, "frontend", "public", "tour")
