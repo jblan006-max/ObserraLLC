@@ -1,0 +1,38 @@
+{
+  "summary": "Frontend-only verification of 5 SoD Command Center add-ons (Voice Preview, Weekly Recap config, Share Briefing, Thread Rename, History Resume). All wiring confirmed present and functional in /app/sod. No uncaught runtime errors; only cosmetic Radix DialogContent aria warnings (ignorable per request).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_flows": [
+    "Login admin + navigate /app/sod renders cleanly (no page errors)",
+    "Voice Preview: change voice-name -> Nova triggered GET /api/sap/digest/voice/sample?voice=nova -> 200 audio/mpeg, no error toast, autoplay attempted",
+    "Recap Config: recap-toggle unchecked->checked reveals recap-day; picked Wednesdays; digest-save -> PUT /api/sap/digest/config 200; after reload recap-toggle data-state=checked (persisted)",
+    "Share Briefing: digest-share-briefing prompt accepted default recipient; POST /api/sap/digest/share-briefing 200; toast 'Briefing emailed to 1 recipient(s)' with 'Audio .mp3 attached · live snapshot link included' description shown",
+    "Thread Rename: digest-ask-open -> digest-ask-history-toggle showed history list with rename buttons; digest-ask-rename-0 opened window.prompt; POST /api/sap/digest/ask/rename 200; history reloaded (GET ask/history 200)",
+    "History Resume: digest-ask-history-0 -> GET ask/thread 200 loaded messages into digest-ask-messages; follow-up via digest-ask-input+digest-ask-send -> POST ask 200 appended AI reply (message children grew to 6)"
+  ],
+  "network_evidence": {
+    "voice_sample": "GET /sap/digest/voice/sample -> 200 audio/mpeg",
+    "put_config": "PUT /sap/digest/config -> 200 (recap persisted after reload)",
+    "share_briefing": "POST /sap/digest/share-briefing -> 200 application/json",
+    "ask_rename": "POST /sap/digest/ask/rename -> 200",
+    "ask_thread": "GET /sap/digest/ask/thread -> 200",
+    "ask_followup": "POST /sap/digest/ask -> 200"
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "SodCommandCenter.jsx is >1000 lines — consider splitting Voice/Recap/Share/Ask blocks into subcomponents for maintainability (non-blocking)",
+    "DialogContent inside Ask modal is missing aria-describedby (cosmetic, but noted in Radix a11y warnings)"
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a (skipped)", "frontend": "100%" },
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "One new read-only share link created via Share Briefing test. One Q&A thread renamed. Recap config toggled ON with recap_day=wed (persists in digest config).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 5 new add-ons wired and functioning end-to-end on /app/sod. Recap config now persists with recap_enabled=true, recap_day='wed' in the demo org — if the daily cron is triggered on a Wednesday it will fire the weekly recap. Radix Select interactions confirmed with 200-400ms wait + get_by_role('option', name=...) click."
+}

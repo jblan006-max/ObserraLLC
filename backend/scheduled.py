@@ -294,7 +294,7 @@ async def daily_drift_digest(request: Request, background_tasks: BackgroundTasks
     background_tasks.add_task(_run_connector_health)
     from sap_uac import (run_sap_autoremediation_all, run_sap_governance_digest,
                          run_sap_mover_autostrip_all, record_sap_scorecard_all, run_sap_weekly_scorecard,
-                         run_sap_scorecard_alerts, run_sap_sod_evidence_export)
+                         run_sap_scorecard_alerts, run_sap_sod_evidence_export, run_sap_weekly_recap)
     background_tasks.add_task(run_sap_autoremediation_all)
     background_tasks.add_task(run_sap_mover_autostrip_all)
     background_tasks.add_task(record_sap_scorecard_all)
@@ -302,6 +302,7 @@ async def daily_drift_digest(request: Request, background_tasks: BackgroundTasks
     background_tasks.add_task(run_sap_sod_evidence_export)
     background_tasks.add_task(run_sap_weekly_scorecard)
     background_tasks.add_task(run_sap_governance_digest)
+    background_tasks.add_task(run_sap_weekly_recap)
     from self_scan import _run_autonomous_all, _sync_intel, _run_kev_digest, _run_upgrade_digest
     background_tasks.add_task(_sync_intel, True)
     background_tasks.add_task(_run_autonomous_all, "schedule")

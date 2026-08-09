@@ -87,7 +87,8 @@ _DIGEST_DEFAULT = {"enabled": True, "recipients": [], "days": "everyday", "chat_
                    "evidence_export": False, "evidence_recipients": [], "evidence_day": "mon",
                    "evidence_prepared_by": "", "evidence_approved_by": "", "evidence_approved_at": "",
                    "auditor_scopes": [],
-                   "voice_name": "onyx", "voice_speed": 1.0, "voice_attach": False}
+                   "voice_name": "onyx", "voice_speed": 1.0, "voice_attach": False,
+                   "recap_enabled": False, "recap_day": "mon"}
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 _TTS_VOICES = {"onyx", "alloy", "nova", "shimmer", "echo", "ash", "coral", "fable", "sage"}
 
@@ -151,6 +152,8 @@ class DigestConfigBody(BaseModel):
     voice_name: str = "onyx"
     voice_speed: float = 1.0
     voice_attach: bool = False
+    recap_enabled: bool = False
+    recap_day: str = "mon"
 
 
 @sap_router.get("/digest/config")
@@ -209,7 +212,9 @@ async def put_digest_config(body: DigestConfigBody, user: dict = Depends(require
            "evidence_export": body.evidence_export, "evidence_recipients": evid_recips,
            "evidence_day": body.evidence_day if body.evidence_day in _WEEKDAYS else "mon",
            "evidence_prepared_by": prepared, "auditor_scopes": scopes,
-           "voice_name": vname, "voice_speed": vspeed, "voice_attach": bool(body.voice_attach)}
+           "voice_name": vname, "voice_speed": vspeed, "voice_attach": bool(body.voice_attach),
+           "recap_enabled": bool(body.recap_enabled),
+           "recap_day": body.recap_day if body.recap_day in _WEEKDAYS else "mon"}
     if existing.get("evidence_prepared_by", "") != prepared:
         doc["evidence_approved_by"] = ""
         doc["evidence_approved_at"] = ""
@@ -1434,9 +1439,17 @@ async def public_digest_share(token: str, request: Request):
     if doc.get("expires_at") and _now().isoformat() > doc["expires_at"]:
         raise HTTPException(status_code=410, detail="This shared digest link has expired.")
     ua = (request.headers.get("user-agent") or "")[:160]
+    first_open = int(doc.get("opens", 0) or 0) == 0
     await db.sap_digest_shares.update_one({"token": token},
         {"$inc": {"opens": 1}, "$set": {"last_opened_at": _now().isoformat()},
          "$push": {"opened_events": {"$each": [{"at": _now().isoformat(), "ua": ua}], "$slice": -50}}})
+    if first_open and doc.get("org_id"):
+        try:
+            cfg = await _get_digest_config(doc["org_id"])
+            await _sap_post_chat(doc["org_id"], cfg, "👁 Shared governance digest opened",
+                                 f"A read-only SAP governance snapshot link (…{token[-6:]}) was just opened for the first time.")
+        except Exception:
+            pass
     return {"snapshot": doc["snapshot"], "created_at": doc.get("created_at"), "expires_at": doc.get("expires_at")}
 
 
@@ -1463,7 +1476,7 @@ async def digest_ask_history(user: dict = Depends(get_current_user)):
     org_id = user["org_id"]
     await _ensure(org_id)
     docs = await db.sap_digest_chat.find({"org_id": org_id},
-        {"_id": 0, "session_id": 1, "messages": 1, "updated_at": 1}).sort("updated_at", -1).to_list(30)
+        {"_id": 0, "session_id": 1, "messages": 1, "updated_at": 1, "title": 1}).sort("updated_at", -1).to_list(30)
     out = []
     for d in docs:
         msgs = d.get("messages") or []
@@ -1471,8 +1484,8 @@ async def digest_ask_history(user: dict = Depends(get_current_user)):
         if not qn:
             continue
         first_q = next((m["text"] for m in msgs if m.get("role") == "user"), "")
-        out.append({"session_id": d["session_id"], "title": (first_q[:90] or "Untitled thread"),
-                    "questions": qn, "updated_at": d.get("updated_at")})
+        out.append({"session_id": d["session_id"], "title": (d.get("title") or first_q[:90] or "Untitled thread"),
+                    "custom": bool(d.get("title")), "questions": qn, "updated_at": d.get("updated_at")})
     return {"threads": out}
 
 
@@ -1558,4 +1571,155 @@ async def digest_voice(voice: str = "", speed: float = 0, user: dict = Depends(g
     await _audit(org_id, user["email"], "sap.digest.voice", f"voice briefing generated ({v} @ {sp}x)")
     return Response(content=audio, media_type="audio/mpeg",
                     headers={"Content-Disposition": 'inline; filename="sap-governance-digest.mp3"'})
+
+
+# ── Voice preview sample (short fixed phrase in the selected voice) ────────────
+_VOICE_SAMPLE_TEXT = "This is your S A P access governance briefing from Obserra."
+
+
+@sap_router.get("/digest/voice/sample")
+async def digest_voice_sample(voice: str = "onyx", user: dict = Depends(get_current_user)):
+    """A short spoken sample so leaders can hear a narrator voice before saving."""
+    import hashlib
+    import base64
+    voice = (voice or "onyx").lower()
+    if voice not in _TTS_VOICES:
+        voice = "onyx"
+    h = "sample-" + hashlib.sha256(f"{_VOICE_SAMPLE_TEXT}|{voice}".encode()).hexdigest()[:12]
+    cached = await db.sap_digest_voice.find_one({"org_id": "_sample", "hash": h}, {"_id": 0, "audio_b64": 1})
+    if cached and cached.get("audio_b64"):
+        audio = base64.b64decode(cached["audio_b64"])
+    else:
+        try:
+            from emergentintegrations.llm.openai import OpenAITextToSpeech
+            tts = OpenAITextToSpeech(api_key=os.environ["EMERGENT_LLM_KEY"])
+            audio = await tts.generate_speech(text=_VOICE_SAMPLE_TEXT, model="tts-1", voice=voice)
+        except Exception:
+            raise HTTPException(status_code=503, detail="Voice preview is unavailable right now.")
+        await db.sap_digest_voice.update_one({"org_id": "_sample", "hash": h},
+            {"$set": {"org_id": "_sample", "hash": h, "audio_b64": base64.b64encode(audio).decode(),
+                      "voice": voice, "at": _now().isoformat()}}, upsert=True)
+    return Response(content=audio, media_type="audio/mpeg",
+                    headers={"Cache-Control": "public, max-age=86400"})
+
+
+# ── Share this briefing (one email: read-only snapshot link + spoken .mp3) ─────
+class ShareBriefingBody(BaseModel):
+    recipients: list[str] = []
+
+
+@sap_router.post("/digest/share-briefing")
+async def share_briefing(body: ShareBriefingBody, user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    from kernel import notifications
+    import base64
+    cfg = await _get_digest_config(org_id)
+    data = await _governance_digest_data(org_id)
+    share = await _create_digest_share(org_id)
+    html = _governance_digest_html(data, share["url"])
+    emails = [e.strip() for e in body.recipients if e.strip()] or [user["email"]]
+    att = []
+    try:
+        audio, _s = await _generate_voice_audio(org_id, cfg.get("voice_name", "onyx"), cfg.get("voice_speed", 1.0))
+        att = [{"filename": "sap-governance-briefing.mp3", "content": base64.b64encode(audio).decode()}]
+    except Exception:
+        pass
+    sent = 0
+    for e in emails:
+        if await notifications.send_email(e, "SAP Governance Briefing — audio + live snapshot — Obserra UAC", html, attachments=att):
+            sent += 1
+    await _audit(org_id, user["email"], "sap.digest.share-briefing",
+                 f"briefing (audio+link) emailed to {len(emails)} recipient(s), {sent} sent")
+    return {"ok": True, "sent": sent, "recipients": emails, "share_url": share["url"], "has_audio": bool(att)}
+
+
+# ── Rename a saved AI Q&A thread ──────────────────────────────────────────────
+class AskRenameBody(BaseModel):
+    session_id: str
+    title: str
+
+
+@sap_router.post("/digest/ask/rename")
+async def digest_ask_rename(body: AskRenameBody, user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    title = (body.title or "").strip()[:90]
+    res = await db.sap_digest_chat.update_one({"org_id": org_id, "session_id": body.session_id},
+                                              {"$set": {"title": title}})
+    if not res.matched_count:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    return {"ok": True, "session_id": body.session_id, "title": title}
+
+
+# ── Weekly AI Q&A recap (opt-in, on the configured weekday) ───────────────────
+def _weekly_recap_html(rc):
+    import html as _h
+    rows = ""
+    for i, item in enumerate(rc["top"], 1):
+        rows += (f'<div style="display:flex;gap:10px;padding:8px 0;border-bottom:1px solid #eef2f7">'
+                 f'<div style="font-weight:800;color:#0f1e3d;min-width:20px">{i}</div>'
+                 f'<div style="flex:1;color:#334155;font-size:13px">{_h.escape(item["q"])}</div>'
+                 f'<div style="font-family:monospace;color:#0ea5e9;font-weight:700;white-space:nowrap">{item["count"]}&times;</div></div>')
+    return ('<div style="font:400 14px Arial,Helvetica,sans-serif;color:#1f2937;max-width:640px;margin:auto">'
+            '<div style="background:#0f1e3d;color:#fff;padding:18px 22px;border-radius:12px 12px 0 0">'
+            '<div style="font-size:11px;letter-spacing:2px;opacity:.7">OBSERRA SAP UAC</div>'
+            '<h2 style="margin:4px 0 0;font-size:20px">Weekly AI Q&amp;A Recap</h2>'
+            f'<div style="font-size:12px;opacity:.75;margin-top:2px">{rc["total"]} question(s) in the last 7 days · {rc["unique"]} distinct</div></div>'
+            '<div style="border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;padding:14px 18px">'
+            '<div style="font-size:12px;color:#64748b;margin-bottom:6px">Most-asked questions of leadership about SAP access governance</div>'
+            + (rows or '<div style="color:#94a3b8">No questions this week.</div>') +
+            '<p style="font-size:11px;color:#9ca3af;margin-top:16px">Obserra — Executive Protection &amp; Intelligence LLC · Confidential · '
+            'Open the SoD Command Center to ask new questions.</p></div></div>')
+
+
+async def _weekly_recap_data(org_id):
+    since_iso = (_now() - timedelta(days=7)).isoformat()
+    docs = await db.sap_digest_chat.find({"org_id": org_id}, {"_id": 0, "messages": 1}).to_list(500)
+    counts, total = {}, 0
+    for d in docs:
+        for m in (d.get("messages") or []):
+            if m.get("role") == "user" and (m.get("at") or "") >= since_iso:
+                total += 1
+                key = " ".join((m.get("text") or "").split())[:120]
+                if key:
+                    counts[key] = counts.get(key, 0) + 1
+    top = sorted(counts.items(), key=lambda x: -x[1])[:6]
+    return {"total": total, "unique": len(counts), "since": since_iso,
+            "top": [{"q": q, "count": c} for q, c in top]}
+
+
+async def run_sap_weekly_recap():
+    """Weekly 'most-asked AI questions' recap email — opt-in per org, on the configured weekday."""
+    from kernel import notifications
+    now = _now()
+    today = now.date().isoformat()
+    orgs = await db.organizations.find({}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        if not await db.sap_persons.find_one({"org_id": org_id}):
+            continue
+        cfg = await _get_digest_config(org_id)
+        if not cfg.get("recap_enabled"):
+            continue
+        if now.weekday() != _WEEKDAYS.get(cfg.get("recap_day", "mon"), 0):
+            continue
+        try:
+            rc = await _weekly_recap_data(org_id)
+            if rc["total"] == 0:
+                continue
+            html = _weekly_recap_html(rc)
+            if cfg.get("recipients"):
+                emails = cfg["recipients"]
+            else:
+                recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
+                                             {"_id": 0, "email": 1}).to_list(200)
+                emails = [r["email"] for r in recips]
+            for e in emails:
+                await notifications.send_email(e, "SAP Governance — Weekly AI Q&A Recap — Obserra UAC", html)
+            await notifications.create(org_id, "report", "Weekly AI Q&A recap sent",
+                f"{rc['total']} question(s) this week; top {len(rc['top'])} shared with {len(emails)} recipient(s).",
+                ref="sap-ai-recap", dedupe_key=f"sap-recap:{today}")
+        except Exception:
+            pass
 
