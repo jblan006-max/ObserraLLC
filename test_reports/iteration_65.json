@@ -1,0 +1,26 @@
+{
+  "summary": "Frontend-only verification of SoD Command Center Governance Digest for the 4 new features (Voice controls, Voice-on-Send, Chat History, Share Analytics). One critical runtime bug found and fixed: the `History` lucide-react icon used in the Ask-AI dialog was not imported in SodCommandCenter.jsx, causing an 'Illegal constructor' TypeError (React resolved <History> to window.History) which crashed the Ask-AI dialog with the Uncaught runtime errors overlay as soon as the dialog rendered. After adding History to the lucide-react import, all four features work end-to-end. Voice config (voice_name=alloy, voice_speed=1.25, voice_attach=true) persists via PUT /api/sap/digest/config and is returned by GET. Listen-to-digest produces digest-voice-player with audio + download. Shares block lists links with summary + per-row opens, and Copy share link increments total (3 → 4 links). Ask-AI History toggle lists past threads (4 present), clicking a thread loads prior Q/A into digest-ask-messages, and sending a follow-up appends a fresh AI answer.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "SodCommandCenter Ask-AI dialog", "issue": "FIXED: `History` icon used but not imported from lucide-react → 'Illegal constructor' TypeError crashed the Ask-AI dialog (React rendered global window.History). Added History to the lucide-react import in SodCommandCenter.jsx.", "selector": "[data-testid=\"digest-ask-history-toggle\"]", "priority": "CRITICAL (FIXED)"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Review the History import fix applied by testing agent (line 13 of /app/frontend/src/pages/SodCommandCenter.jsx). No further action required for the 4 features."
+  ],
+  "critical_code_review_comments": [
+    "SodCommandCenter.jsx is very large (>900 lines) and prone to silent search_replace non-persists / missing-import regressions — consider splitting the digest card into its own component (DigestCard.jsx). The missing `History` import in this iteration would have been caught earlier by TS/ESLint no-undef; enabling `eslint-plugin-react` no-undef or migrating to TS would prevent recurrence."
+  ],
+  "updated_files": ["/app/frontend/src/pages/SodCommandCenter.jsx"],
+  "success_rate": {"backend": "not tested (frontend-only run per request)", "frontend": "100% after fix"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None. Reused existing 3 shares (now 4 after Copy share link) and 4 existing Ask-AI history threads.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 4 digest features verified working after History import fix. Voice config persists correctly (voice_name/voice_speed/voice_attach on /api/sap/digest/config). Shares summary format: '· N link(s) · X total open(s)'. History threads: 4 present, openThread loads prior messages, follow-up sendAsk appends new AI answer. Note: my first test iteration falsely reported config as None because the JS eval read the response body without unwrapping the top-level {\"config\": {...}} envelope — the values were in fact persisted; second test confirmed with raw text dump.",
+  "rca of the issue": "Uncaught 'Illegal constructor' TypeError originated from JSX `<History className=\"w-3.5 h-3.5\" />` at SodCommandCenter.jsx:919. `History` was not present in the lucide-react named-import list on line 13. When JSX references an undefined identifier in a React 19 dev build with no-undef disabled, Babel/webpack still emits `React.createElement(History, ...)`, and at runtime `History` resolves to the browser global `window.History` constructor. React 19 then attempts to invoke it as a function component, which throws 'Illegal constructor' because the History Web API can't be called without `new`. Fix: added `History` to the lucide-react named imports on line 13. Verified dialog now renders without overlay, history list populates, and openThread flow works."
+}

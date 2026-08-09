@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send, Eye, Download, TrendingUp, FileText, BellRing, FileWarning, Sparkles, MessagesSquare, Share2, Volume2 } from "lucide-react";
+import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send, Eye, Download, TrendingUp, FileText, BellRing, FileWarning, Sparkles, MessagesSquare, Share2, Volume2, History } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 
 const SEV = { Critical: "0 84% 60%", High: "35 90% 55%", Medium: "190 90% 50%", Low: "142 70% 45%" };
@@ -84,6 +84,9 @@ export default function SodCommandCenter() {
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [voiceUrl, setVoiceUrl] = useState("");
   const [shareBusy, setShareBusy] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [askHistory, setAskHistory] = useState([]);
+  const [shares, setShares] = useState(null);
 
   const loadConflicts = useCallback(async () => {
     const p = new URLSearchParams();
@@ -98,8 +101,10 @@ export default function SodCommandCenter() {
   const loadScorecard = useCallback(async () => { const { data } = await api.get("/sap/scorecard"); setScorecard(data); }, []);
   const loadAlerts = useCallback(async () => { try { const { data } = await api.get("/sap/scorecard/alerts"); setScoreAlerts(data.log || []); setScoreMute({ muted: data.muted, mute_until: data.mute_until, mute_reason: data.mute_reason }); } catch { /* noop */ } }, []);
   const loadWhy = useCallback(async () => { setWhyBusy(true); try { const { data } = await api.get("/sap/scorecard/why"); setWhy(data); } catch { /* noop */ } setWhyBusy(false); }, []);
+  const loadShares = useCallback(async () => { try { const { data } = await api.get("/sap/digest/shares"); setShares(data); } catch { /* noop */ } }, []);
   useEffect(() => { loadConflicts(); }, [loadConflicts]);
   useEffect(() => { loadArem(); }, [loadArem]);
+  useEffect(() => { loadShares(); }, [loadShares]);
   useEffect(() => { loadDcfg(); }, [loadDcfg]);
   useEffect(() => { loadScorecard(); }, [loadScorecard]);
   useEffect(() => { loadAlerts(); }, [loadAlerts]);
@@ -176,7 +181,8 @@ export default function SodCommandCenter() {
   };
   const openAsk = async () => {
     const sid = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `s-${Date.now()}`;
-    setAskSession(sid); setAskMsgs([]); setAskInput(""); setAskSuggestions([]); setAskOpen(true);
+    setAskSession(sid); setAskMsgs([]); setAskInput(""); setAskSuggestions([]); setHistoryOpen(false); setAskOpen(true);
+    loadAskHistory();
     try {
       const { data } = await api.get("/sap/digest/ask/intro");
       setAskMsgs([{ role: "assistant", text: data.greeting }]);
@@ -229,19 +235,30 @@ export default function SodCommandCenter() {
       const { data } = await api.post("/sap/digest/share");
       try { await navigator.clipboard.writeText(data.url); } catch { /* clipboard blocked */ }
       toast.success("Read-only share link copied", { description: data.url });
+      loadShares();
     } catch (e) { toast.error(e?.response?.data?.detail || "Could not create share link"); }
     setShareBusy(false);
   };
   const playVoice = async () => {
     setVoiceBusy(true);
     try {
-      const res = await api.get("/sap/digest/voice", { responseType: "blob" });
+      const res = await api.get(`/sap/digest/voice?voice=${encodeURIComponent(dcfgLocal?.voice_name || "onyx")}&speed=${dcfgLocal?.voice_speed || 1}`, { responseType: "blob" });
       if (voiceUrl) URL.revokeObjectURL(voiceUrl);
       const url = URL.createObjectURL(res.data);
       setVoiceUrl(url);
       toast.success("Voice briefing ready");
     } catch (e) { toast.error(e?.response?.data?.detail || "Voice generation unavailable right now"); }
     setVoiceBusy(false);
+  };
+  const loadAskHistory = async () => {
+    try { const { data } = await api.get("/sap/digest/ask/history"); setAskHistory(data.threads || []); }
+    catch { setAskHistory([]); }
+  };
+  const openThread = async (sid) => {
+    try {
+      const { data } = await api.get(`/sap/digest/ask/thread?session_id=${encodeURIComponent(sid)}`);
+      setAskSession(data.session_id); setAskMsgs(data.messages || []); setAskSuggestions([]); setHistoryOpen(false);
+    } catch { toast.error("Could not load that thread"); }
   };
   const exportScorecard = async (fmt = "csv") => {
     try {
@@ -681,6 +698,28 @@ export default function SodCommandCenter() {
             </div>
           </div>
 
+          <div className="mt-4 border-t border-border pt-3" data-testid="voice-config">
+            <div className="flex flex-wrap items-center gap-2">
+              <Volume2 className="w-4 h-4 text-primary" />
+              <span className="text-sm font-medium">Voice briefing</span>
+              <div className="flex-1" />
+              <span className="text-[11px] text-muted-foreground">Attach spoken .mp3 to the daily digest email</span>
+              <Switch data-testid="voice-attach-toggle" checked={!!dcfgLocal.voice_attach} onCheckedChange={(v) => setDcfgLocal({ ...dcfgLocal, voice_attach: v })} />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+              <div>
+                <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Narrator voice</div>
+                <Select value={dcfgLocal.voice_name || "onyx"} onValueChange={(v) => setDcfgLocal({ ...dcfgLocal, voice_name: v })}><SelectTrigger data-testid="voice-name" className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>{[["onyx", "Onyx — deep, authoritative"], ["alloy", "Alloy — neutral"], ["nova", "Nova — energetic"], ["shimmer", "Shimmer — bright"], ["echo", "Echo — smooth"]].map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent></Select>
+              </div>
+              <div>
+                <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Speed</div>
+                <Select value={String(dcfgLocal.voice_speed || 1)} onValueChange={(v) => setDcfgLocal({ ...dcfgLocal, voice_speed: Number(v) })}><SelectTrigger data-testid="voice-speed" className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>{[["1", "1× (normal)"], ["1.25", "1.25× (brisk)"], ["1.5", "1.5× (fast)"]].map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent></Select>
+              </div>
+            </div>
+            <p className="text-[10px] text-muted-foreground mt-1.5">Save the schedule to apply this to the emailed briefing. "Listen to digest" below previews your current selection.</p>
+          </div>
           <div className="flex flex-wrap items-center gap-2 mt-4">
             <Button size="sm" data-testid="digest-save" onClick={saveDcfg} disabled={dcfgBusy}>{dcfgBusy ? "Saving…" : "Save schedule"}</Button>
             <Button size="sm" variant="outline" className="gap-1.5" data-testid="digest-preview" onClick={openPreview} disabled={previewBusy}><Eye className="w-3.5 h-3.5" />{previewBusy ? "Loading…" : "Preview email"}</Button>
@@ -695,6 +734,27 @@ export default function SodCommandCenter() {
               <Volume2 className="w-4 h-4 text-primary shrink-0" />
               <audio controls src={voiceUrl} className="h-9 flex-1 min-w-[220px]" data-testid="digest-voice-audio" />
               <a href={voiceUrl} download="sap-governance-digest.mp3" data-testid="digest-voice-download" className="text-[11px] text-primary hover:underline">Download .mp3</a>
+            </div>
+          )}
+          {shares && shares.total > 0 && (
+            <div className="mt-4 border-t border-border pt-3" data-testid="digest-shares">
+              <div className="flex items-center gap-2 mb-2">
+                <Share2 className="w-4 h-4 text-primary" />
+                <span className="text-sm font-medium">Read-only share links</span>
+                <span className="text-[11px] text-muted-foreground" data-testid="digest-shares-summary">· {shares.total} link(s) · {shares.total_opens} total open(s)</span>
+              </div>
+              <div className="space-y-1.5 max-h-[160px] overflow-y-auto pr-1">
+                {shares.shares.map((s, i) => (
+                  <div key={s.token} data-testid={`digest-share-row-${i}`} className="flex flex-wrap items-center gap-2 text-[11px]">
+                    <span className={`px-1.5 py-0.5 rounded-full font-mono ${s.expired ? "bg-secondary text-muted-foreground" : "bg-primary/15 text-primary"}`}>{s.expired ? "expired" : "active"}</span>
+                    <span className="font-mono text-muted-foreground">…{s.token.slice(-6)}</span>
+                    <span className="font-bold" data-testid={`digest-share-opens-${i}`}>{s.opens} open{s.opens === 1 ? "" : "s"}</span>
+                    <span className="text-muted-foreground">{s.last_opened_at ? `· last ${new Date(s.last_opened_at).toLocaleString()}` : "· not opened yet"}</span>
+                    <div className="flex-1" />
+                    <button data-testid={`digest-share-copy-${i}`} onClick={() => { navigator.clipboard?.writeText(s.url); toast.success("Link copied"); }} className="text-primary hover:underline">Copy</button>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -852,7 +912,25 @@ export default function SodCommandCenter() {
 
       <Dialog open={askOpen} onOpenChange={setAskOpen}>
         <DialogContent className="max-w-lg" data-testid="digest-ask-dialog">
-          <DialogHeader><DialogTitle className="flex items-center gap-2"><MessagesSquare className="w-4 h-4 text-primary" /> Ask AI about this digest</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <div className="flex items-center gap-2">
+              <DialogTitle className="flex items-center gap-2"><MessagesSquare className="w-4 h-4 text-primary" /> Ask AI about this digest</DialogTitle>
+              <div className="flex-1" />
+              <Button size="sm" variant="ghost" className="h-7 text-[11px] gap-1" data-testid="digest-ask-history-toggle" onClick={() => { const n = !historyOpen; setHistoryOpen(n); if (n) loadAskHistory(); }}><History className="w-3.5 h-3.5" /> History</Button>
+            </div>
+          </DialogHeader>
+          {historyOpen && (
+            <div className="rounded-lg border border-border bg-secondary/30 p-2 max-h-[180px] overflow-y-auto -mt-1" data-testid="digest-ask-history">
+              {(askHistory || []).length === 0 ? (
+                <div className="text-[11px] text-muted-foreground px-1 py-2" data-testid="digest-ask-history-empty">No past threads yet.</div>
+              ) : (askHistory || []).map((t, i) => (
+                <button key={t.session_id} data-testid={`digest-ask-history-${i}`} onClick={() => openThread(t.session_id)} className="w-full text-left px-2 py-1.5 rounded hover:bg-secondary/70 transition-colors">
+                  <div className="text-[12px] truncate">{t.title}</div>
+                  <div className="text-[10px] text-muted-foreground">{t.questions} question(s){t.updated_at ? ` · ${new Date(t.updated_at).toLocaleString()}` : ""}</div>
+                </button>
+              ))}
+            </div>
+          )}
           <p className="text-[11px] text-muted-foreground -mt-2">Grounded in your live SAP access snapshot — open conflicts, score trend, residual leavers, auto-remediation. Follow-ups keep context.</p>
           <div className="space-y-3">
             <div className="max-h-[46vh] min-h-[160px] overflow-y-auto space-y-3 pr-1" data-testid="digest-ask-messages">

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 import httpx
 from bson import ObjectId
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -86,8 +86,10 @@ _DIGEST_DEFAULT = {"enabled": True, "recipients": [], "days": "everyday", "chat_
                    "score_alert": True, "score_threshold": 60, "sev_thresholds": {"Critical": 25, "High": 50},
                    "evidence_export": False, "evidence_recipients": [], "evidence_day": "mon",
                    "evidence_prepared_by": "", "evidence_approved_by": "", "evidence_approved_at": "",
-                   "auditor_scopes": []}
+                   "auditor_scopes": [],
+                   "voice_name": "onyx", "voice_speed": 1.0, "voice_attach": False}
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
+_TTS_VOICES = {"onyx", "alloy", "nova", "shimmer", "echo", "ash", "coral", "fable", "sage"}
 
 
 async def _get_digest_config(org_id):
@@ -146,6 +148,9 @@ class DigestConfigBody(BaseModel):
     evidence_day: str = "mon"
     evidence_prepared_by: str = ""
     auditor_scopes: list = []
+    voice_name: str = "onyx"
+    voice_speed: float = 1.0
+    voice_attach: bool = False
 
 
 @sap_router.get("/digest/config")
@@ -189,6 +194,13 @@ async def put_digest_config(body: DigestConfigBody, user: dict = Depends(require
         systems = [str(sy).strip() for sy in (s.get("systems") or []) if str(sy).strip()]
         scopes.append({"email": email, "areas": areas, "systems": systems})
     prepared = (body.evidence_prepared_by or "").strip()[:120]
+    vname = (body.voice_name or "onyx").strip().lower()
+    if vname not in _TTS_VOICES:
+        vname = "onyx"
+    try:
+        vspeed = max(0.5, min(2.0, round(float(body.voice_speed or 1.0), 2)))
+    except Exception:
+        vspeed = 1.0
     existing = await db.sap_digest_config.find_one({"org_id": org_id}, {"_id": 0, "evidence_prepared_by": 1}) or {}
     doc = {"org_id": org_id, "enabled": body.enabled, "recipients": recips, "days": days,
            "chat_alert": body.chat_alert, "teams_url": body.teams_url.strip(), "slack_url": body.slack_url.strip(),
@@ -196,7 +208,8 @@ async def put_digest_config(body: DigestConfigBody, user: dict = Depends(require
            "sev_thresholds": sevt or _DIGEST_DEFAULT["sev_thresholds"],
            "evidence_export": body.evidence_export, "evidence_recipients": evid_recips,
            "evidence_day": body.evidence_day if body.evidence_day in _WEEKDAYS else "mon",
-           "evidence_prepared_by": prepared, "auditor_scopes": scopes}
+           "evidence_prepared_by": prepared, "auditor_scopes": scopes,
+           "voice_name": vname, "voice_speed": vspeed, "voice_attach": bool(body.voice_attach)}
     if existing.get("evidence_prepared_by", "") != prepared:
         doc["evidence_approved_by"] = ""
         doc["evidence_approved_at"] = ""
@@ -285,6 +298,13 @@ async def governance_digest_send(user: dict = Depends(get_current_user)):
     share = await _create_digest_share(org_id)
     html = _governance_digest_html(data, share["url"])
     att = _digest_attachment(await _scorecard_payload(org_id, record=False))
+    if cfg.get("voice_attach"):
+        try:
+            import base64 as _b64
+            audio, _sc = await _generate_voice_audio(org_id, cfg.get("voice_name", "onyx"), cfg.get("voice_speed", 1.0))
+            att = list(att) + [{"filename": "sap-governance-briefing.mp3", "content": _b64.b64encode(audio).decode()}]
+        except Exception:
+            pass
     if cfg.get("recipients"):
         emails = cfg["recipients"]
     else:
@@ -1406,14 +1426,65 @@ async def digest_share(user: dict = Depends(get_current_user)):
 
 
 @sap_router.get("/public/digest-share/{token}")
-async def public_digest_share(token: str):
+async def public_digest_share(token: str, request: Request):
     """Public, unauthenticated read-only governance snapshot opened from the digest email."""
     doc = await db.sap_digest_shares.find_one({"token": token}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="This shared digest link is invalid.")
     if doc.get("expires_at") and _now().isoformat() > doc["expires_at"]:
         raise HTTPException(status_code=410, detail="This shared digest link has expired.")
+    ua = (request.headers.get("user-agent") or "")[:160]
+    await db.sap_digest_shares.update_one({"token": token},
+        {"$inc": {"opens": 1}, "$set": {"last_opened_at": _now().isoformat()},
+         "$push": {"opened_events": {"$each": [{"at": _now().isoformat(), "ua": ua}], "$slice": -50}}})
     return {"snapshot": doc["snapshot"], "created_at": doc.get("created_at"), "expires_at": doc.get("expires_at")}
+
+
+@sap_router.get("/digest/shares")
+async def digest_shares(user: dict = Depends(get_current_user)):
+    """Analytics for the org's read-only share links — created/expiry + open counts."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    docs = await db.sap_digest_shares.find({"org_id": org_id},
+        {"_id": 0, "token": 1, "created_at": 1, "expires_at": 1, "opens": 1, "last_opened_at": 1}
+        ).sort("created_at", -1).to_list(50)
+    now_iso = _now().isoformat()
+    out = [{"token": d["token"], "url": f"{frontend}/share/digest/{d['token']}",
+            "created_at": d.get("created_at"), "expires_at": d.get("expires_at"),
+            "opens": d.get("opens", 0), "last_opened_at": d.get("last_opened_at"),
+            "expired": bool(d.get("expires_at") and now_iso > d["expires_at"])} for d in docs]
+    return {"shares": out, "total": len(out), "total_opens": sum(x["opens"] for x in out)}
+
+
+@sap_router.get("/digest/ask/history")
+async def digest_ask_history(user: dict = Depends(get_current_user)):
+    """Recent AI Q&A threads for the org, newest first (for the Ask-AI dialog history)."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    docs = await db.sap_digest_chat.find({"org_id": org_id},
+        {"_id": 0, "session_id": 1, "messages": 1, "updated_at": 1}).sort("updated_at", -1).to_list(30)
+    out = []
+    for d in docs:
+        msgs = d.get("messages") or []
+        qn = len([m for m in msgs if m.get("role") == "user"])
+        if not qn:
+            continue
+        first_q = next((m["text"] for m in msgs if m.get("role") == "user"), "")
+        out.append({"session_id": d["session_id"], "title": (first_q[:90] or "Untitled thread"),
+                    "questions": qn, "updated_at": d.get("updated_at")})
+    return {"threads": out}
+
+
+@sap_router.get("/digest/ask/thread")
+async def digest_ask_thread(session_id: str, user: dict = Depends(get_current_user)):
+    """Full messages of a past AI Q&A thread so leaders can reopen and continue it."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    msgs = await _get_ask_thread(org_id, session_id)
+    if not msgs:
+        raise HTTPException(status_code=404, detail="Thread not found")
+    return {"session_id": session_id, "messages": [{"role": m["role"], "text": m["text"]} for m in msgs]}
 
 
 # ── Voice Digest (spoken briefing via OpenAI TTS through the Emergent LLM key) ─
@@ -1446,30 +1517,45 @@ async def digest_voice_script(user: dict = Depends(get_current_user)):
     return {"script": _digest_voice_script(ctx)}
 
 
-@sap_router.get("/digest/voice")
-async def digest_voice(user: dict = Depends(get_current_user)):
-    """Spoken governance briefing (mp3) — cached per script hash to avoid regenerating unchanged audio."""
-    org_id = user["org_id"]
-    await _ensure(org_id)
+async def _generate_voice_audio(org_id, voice="onyx", speed=1.0):
+    """Return (mp3 bytes, script) for the current governance briefing, cached per (script, voice, speed)."""
     import hashlib
     import base64
     ctx = await _digest_ai_context(org_id)
     script = _digest_voice_script(ctx)
-    h = hashlib.sha256(script.encode()).hexdigest()[:16]
+    voice = (voice or "onyx").lower()
+    if voice not in _TTS_VOICES:
+        voice = "onyx"
+    try:
+        speed = max(0.5, min(2.0, float(speed or 1.0)))
+    except Exception:
+        speed = 1.0
+    h = hashlib.sha256(f"{script}|{voice}|{speed}".encode()).hexdigest()[:16]
     cached = await db.sap_digest_voice.find_one({"org_id": org_id, "hash": h}, {"_id": 0, "audio_b64": 1})
     if cached and cached.get("audio_b64"):
-        audio = base64.b64decode(cached["audio_b64"])
-    else:
-        try:
-            from emergentintegrations.llm.openai import OpenAITextToSpeech
-            tts = OpenAITextToSpeech(api_key=os.environ["EMERGENT_LLM_KEY"])
-            audio = await tts.generate_speech(text=script[:4000], model="tts-1-hd", voice="onyx")
-        except Exception:
-            raise HTTPException(status_code=503, detail="Voice generation is unavailable right now — please try again shortly.")
-        await db.sap_digest_voice.update_one({"org_id": org_id, "hash": h},
-            {"$set": {"org_id": org_id, "hash": h, "audio_b64": base64.b64encode(audio).decode(),
-                      "script": script, "at": _now().isoformat()}}, upsert=True)
-    await _audit(org_id, user["email"], "sap.digest.voice", "voice briefing generated")
+        return base64.b64decode(cached["audio_b64"]), script
+    from emergentintegrations.llm.openai import OpenAITextToSpeech
+    tts = OpenAITextToSpeech(api_key=os.environ["EMERGENT_LLM_KEY"])
+    audio = await tts.generate_speech(text=script[:4000], model="tts-1-hd", voice=voice, speed=speed)
+    await db.sap_digest_voice.update_one({"org_id": org_id, "hash": h},
+        {"$set": {"org_id": org_id, "hash": h, "audio_b64": base64.b64encode(audio).decode(),
+                  "script": script, "voice": voice, "speed": speed, "at": _now().isoformat()}}, upsert=True)
+    return audio, script
+
+
+@sap_router.get("/digest/voice")
+async def digest_voice(voice: str = "", speed: float = 0, user: dict = Depends(get_current_user)):
+    """Spoken governance briefing (mp3). Honors ?voice=&speed= or the saved digest config; cached."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    cfg = await _get_digest_config(org_id)
+    v = voice or cfg.get("voice_name") or "onyx"
+    sp = speed or cfg.get("voice_speed") or 1.0
+    try:
+        audio, _script = await _generate_voice_audio(org_id, v, sp)
+    except Exception:
+        raise HTTPException(status_code=503, detail="Voice generation is unavailable right now — please try again shortly.")
+    await _audit(org_id, user["email"], "sap.digest.voice", f"voice briefing generated ({v} @ {sp}x)")
     return Response(content=audio, media_type="audio/mpeg",
                     headers={"Content-Disposition": 'inline; filename="sap-governance-digest.mp3"'})
 
