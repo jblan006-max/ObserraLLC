@@ -230,6 +230,21 @@ export default function Lifecycle() {
           <div className="flex flex-wrap items-center gap-2 mb-3">
             <Scissors className="w-4 h-4 text-amber" /><h2 className="font-head font-bold text-lg">Auto-Strip Activity Log</h2>
             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-secondary text-muted-foreground" data-testid="mover-rule-total">{moverRule.stripped_total} mover(s) cleaned total</span>
+            {moverRule.stripped_total > 0 && (
+              <>
+                <div className="flex-1" />
+                <Input data-testid="mover-log-search" value={logQ} onChange={(e) => setLogQ(e.target.value)} placeholder="Search name / dept / role…" className="h-8 w-full sm:w-56 text-xs" />
+                <Select value={String(logDays)} onValueChange={(v) => setLogDays(Number(v))}>
+                  <SelectTrigger data-testid="mover-log-days" className="h-8 w-[130px] text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">All time</SelectItem>
+                    <SelectItem value="7">Last 7 days</SelectItem>
+                    <SelectItem value="30">Last 30 days</SelectItem>
+                    <SelectItem value="90">Last 90 days</SelectItem>
+                  </SelectContent>
+                </Select>
+              </>
+            )}
           </div>
           {moverRule.log?.length ? (
             <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">

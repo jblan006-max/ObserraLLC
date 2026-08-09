@@ -286,5 +286,13 @@ Delivered the approved 4-feature functional batch (Task 1). All connections are 
 - Pattern: domain modules import the shared `sap_router` + core helpers from `sap_uac`; `sap_uac` imports the domain modules at the END (routes register + background jobs re-exported so `scheduled.py` still imports them from `sap_uac` unchanged). Kept `sod/conflicts` uses a function-local import of the auto-remediation helpers to avoid a circular import.
 - Verified: 56 SAP routes register, all endpoints return 200 live, both pytest suites (27 tests) pass, `server`/`scheduled` import cleanly.
 
+## SAP UAC — Reporting batch: Scorecard PDF + real trend + digest attach + weekly scorecard + Mover Rule Report filters (Jun 2026, iteration_60→61)
+- **Scorecard PDF** (`GET /api/sap/scorecard/export?format=pdf`) — branded one-page governance scorecard (reportlab); CSV export also available. SoD Command Center card exposes both download buttons (LIVE TREND chip).
+- **History backfill** — seeded 8 weeks of real scorecard snapshots so `/api/sap/scorecard` returns `trend_source='real'` with ascending points instantly.
+- **Digest attachment** — the daily governance digest email now attaches the latest scorecard CSV (`notifications.send_email`).
+- **Weekly Scorecard email** — Monday leadership email with inline trend, folded into `sap_digest` (`run_sap_weekly_scorecard`, re-exported from `sap_uac`); still at the 5-cron platform limit so scheduled via existing background system.
+- **Mover Rule Report filters (iter61 fix)** — `GET /api/sap/mover-rule?q=&days=` filters the auto-strip activity log by search text (name/dept/ticket/role) and time window. `Lifecycle.jsx` now renders the two controls in the Auto-Strip Activity Log header (shown when `stripped_total>0`): `mover-log-search` Input + `mover-log-days` Select (All time / 7 / 30 / 90). State (`logQ`/`logDays`) + `loadRule()` query-param wiring already existed; iter60 testing caught the JSX was never rendered — now added and verified E2E (typing "Vikram" narrows 2 rows → 1; backend q/days confirmed via curl).
+- Backend all green (iter60 16/16 pytest). Demo state after this fix: mover-rule OFF, log empty, P-0045 `Z_SD_BILLING` + P-0046 `Z_MM_PO_APPROVER` re-injected (strip demo replayable; filters appear after first auto-strip).
+
 
 
