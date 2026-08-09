@@ -3,24 +3,24 @@ import { useAuth } from "@/context/AuthContext";
 import { ArrowRight, ArrowLeft } from "lucide-react";
 
 const EXEC_STEPS = [
-  { title: "Welcome to Obserra SAP UAC",
+  { title: "Welcome to Obserra SAP UAC", img: "/tour/overview.jpg",
     body: "Your live SAP access-control plane. Every number — open SoD, privileged exposure, risk scores — recomputes from the underlying records on every request, and each metric carries its source and freshness. Switch altitude anytime from the toggle in the top bar." },
-  { title: "Executive Mode", spotlight: true,
+  { title: "Executive Mode", spotlight: true, img: "/tour/overview.jpg",
     body: "The boardroom view — highlighted above. SAP access risk framed as posture and business impact: identities, open Segregation-of-Duties conflicts, privileged exposure and average risk, so leadership sees what matters without the noise." },
-  { title: "Operational Mode", spotlight: true,
+  { title: "Operational Mode", spotlight: true, img: "/tour/sod.jpg",
     body: "Flip the same toggle to Operational for the working view — live SoD counts, privileged access, HR reconciliation and connector health — so your team can act on specifics in real time." },
-  { title: "Start at the SoD Command Center", spotlight: true, target: "nav-sod-command-center",
+  { title: "Start at the SoD Command Center", spotlight: true, target: "nav-sod-command-center", img: "/tour/watchlist.jpg",
     body: "Highlighted in the sidebar — the SoD Command Center is where you pin risk areas to the watchlist, see the owner leaderboard, and open one-tap ServiceNow remediation. Come back here anytime." },
 ];
 
 const OPS_STEPS = [
-  { title: "Welcome to Obserra SAP UAC",
+  { title: "Welcome to Obserra SAP UAC", img: "/tour/overview.jpg",
     body: "This is your operational cockpit for SAP access. Every metric is evidence-grounded and carries its source and freshness, so you always know exactly what you're acting on." },
-  { title: "Operational Mode", spotlight: true,
+  { title: "Operational Mode", spotlight: true, img: "/tour/monitoring.jpg",
     body: "The toggle above keeps you in Operational view — live SoD counts, privileged access, HR reconciliation and connector health. This is your day-to-day working surface." },
-  { title: "Where you'll work",
+  { title: "Where you'll work", img: "/tour/sod.jpg",
     body: "Jump into the SoD Command Center, Privileged Access and Access Monitoring from the sidebar to triage, investigate and remediate. The Advisor can execute remediations for you too." },
-  { title: "Start at the SoD Command Center", spotlight: true, target: "nav-sod-command-center",
+  { title: "Start at the SoD Command Center", spotlight: true, target: "nav-sod-command-center", img: "/tour/watchlist.jpg",
     body: "Highlighted in the sidebar — the SoD Command Center is your triage home base: risk watchlist, owner leaderboard and one-tap ServiceNow remediation, with the Advisor one click away." },
 ];
 
@@ -104,6 +104,7 @@ export const OnboardingTour = () => {
           <div className="h-1 w-full bg-secondary/60">
             <div className="h-full bg-ai transition-all duration-300" style={{ width: `${((step + 1) / steps.length) * 100}%` }} />
           </div>
+          {s.img && <img src={s.img} alt="" data-testid="tour-preview" className="w-full h-40 object-cover object-top border-b border-border" />}
           <div className="p-7">
             <div className="inline-flex items-center justify-center w-14 h-14 rounded-xl bg-secondary/60 mb-5 p-2">
               <img src="/brand-mark.png" alt="Obserra" className="w-full h-full object-contain" />

@@ -8,12 +8,28 @@ any page that fails is skipped so a partial refresh still succeeds.
 Env overrides: SHOT_BASE_URL, SHOT_EMAIL, SHOT_PASSWORD.
 """
 import os
+import shutil
 
 os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/pw-browsers")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SHOTS = os.path.join(HERE, "shots")
 os.makedirs(SHOTS, exist_ok=True)
+PUBLIC_TOUR = os.path.join(os.path.dirname(HERE), "frontend", "public", "tour")
+# in-app onboarding tour previews (served from /tour/*.jpg)
+TOUR_MAP = {"02_exec_overview": "overview", "04_sod_command_center": "sod",
+            "05_sod_watchlist_leaderboard": "watchlist", "07_access_monitoring": "monitoring"}
+
+
+def _copy_tour_shots():
+    os.makedirs(PUBLIC_TOUR, exist_ok=True)
+    for src, dst in TOUR_MAP.items():
+        sp = os.path.join(SHOTS, f"{src}.jpg")
+        if os.path.exists(sp):
+            try:
+                shutil.copyfile(sp, os.path.join(PUBLIC_TOUR, f"{dst}.jpg"))
+            except Exception:
+                pass
 
 
 def _backend_url():
@@ -103,6 +119,7 @@ def run():
             except Exception as e:
                 print("skip", name, e)
         browser.close()
+    _copy_tour_shots()
 
 
 if __name__ == "__main__":

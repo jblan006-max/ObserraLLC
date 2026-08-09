@@ -16,6 +16,18 @@ _ONPREM = os.path.join(_ROOT, "deploy", "onprem")
 _DOCS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "docs")
 _GUIDE_PDF = os.path.join(_DOCS, "Obserra-Install-and-User-Guide.pdf")
 _GUIDE_DOCX = os.path.join(_DOCS, "Obserra-Install-and-User-Guide.docx")
+_GUIDE_EXEC_PDF = os.path.join(_DOCS, "Obserra-SAP-UAC-Executive-Guide.pdf")
+_GUIDE_EXEC_DOCX = os.path.join(_DOCS, "Obserra-SAP-UAC-Executive-Guide.docx")
+_GUIDE_ADMIN_PDF = os.path.join(_DOCS, "Obserra-SAP-UAC-Admin-Operator-Guide.pdf")
+_GUIDE_ADMIN_DOCX = os.path.join(_DOCS, "Obserra-SAP-UAC-Admin-Operator-Guide.docx")
+_PDF_MT = "application/pdf"
+_DOCX_MT = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _serve_guide(path, media, fname):
+    if not os.path.exists(path):
+        raise HTTPException(404, "Guide not generated yet")
+    return FileResponse(path, media_type=media, filename=fname)
 
 
 @deploy_router.get("/onprem-package")
@@ -52,6 +64,34 @@ async def guide_docx(user: dict = Depends(get_current_user)):
         _GUIDE_DOCX,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         filename="Obserra-SAP-UAC-Install-and-User-Guide.docx")
+
+
+@deploy_router.get("/guide-exec.pdf")
+async def guide_exec_pdf(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can download the guide")
+    return _serve_guide(_GUIDE_EXEC_PDF, _PDF_MT, "Obserra-SAP-UAC-Executive-Guide.pdf")
+
+
+@deploy_router.get("/guide-exec.docx")
+async def guide_exec_docx(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can download the guide")
+    return _serve_guide(_GUIDE_EXEC_DOCX, _DOCX_MT, "Obserra-SAP-UAC-Executive-Guide.docx")
+
+
+@deploy_router.get("/guide-admin.pdf")
+async def guide_admin_pdf(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can download the guide")
+    return _serve_guide(_GUIDE_ADMIN_PDF, _PDF_MT, "Obserra-SAP-UAC-Admin-Operator-Guide.pdf")
+
+
+@deploy_router.get("/guide-admin.docx")
+async def guide_admin_docx(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can download the guide")
+    return _serve_guide(_GUIDE_ADMIN_DOCX, _DOCX_MT, "Obserra-SAP-UAC-Admin-Operator-Guide.docx")
 
 
 def _build_onprem_zip() -> bytes:
