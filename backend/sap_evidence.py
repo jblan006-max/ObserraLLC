@@ -15,7 +15,7 @@ from db import db
 from auth import get_current_user, require_roles
 from sap_engine import _now, _correlate, _ensure
 from sap_uac import sap_router, _audit
-from sap_digest import _get_digest_config
+from sap_digest import _get_digest_config, _WEEKDAYS
 
 
 # ── SoD Evidence Pack (auditor CSV/PDF + scheduled weekly auto-email) ─────────────────────────
