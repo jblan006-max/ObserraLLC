@@ -95,7 +95,17 @@ async def security_headers(request, call_next):
     resp.headers["Referrer-Policy"] = "no-referrer"
     resp.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
     resp.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
-    resp.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+    # Backend-rendered public HTML pages (the auditor Audit Room portal, verification page) carry their
+    # own inline scripts/styles and data:/https logos, so they need a scoped CSP. Every JSON/PDF API
+    # response keeps the strictest 'default-src none'. (The React admin app HTML is served by the frontend.)
+    if resp.headers.get("content-type", "").startswith("text/html"):
+        resp.headers["Content-Security-Policy"] = (
+            "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+            "img-src 'self' data: https:; connect-src 'self'; form-action 'self'; "
+            "base-uri 'none'; frame-ancestors 'none'"
+        )
+    else:
+        resp.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'; base-uri 'none'"
     resp.headers["Cross-Origin-Opener-Policy"] = "same-origin"
     resp.headers["Cache-Control"] = resp.headers.get("Cache-Control", "no-store")
     return resp
