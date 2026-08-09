@@ -484,3 +484,12 @@ Follow-up batch complete. Auditor/System-Health workstream is fully delivered.
 - **Code split**: `deploy.py` → `deploy.py` (core) + `deploy_audit.py` (auditor governance); `SystemHealth.jsx` presentational pieces + `SlaHeatmap` → `src/components/systemhealth/panels.jsx`.
 - Backlog / P2 (optional): deeper `SystemHealth.jsx` state-level split (deferred — audit & evidence share panels/modals); clean pre-existing span-in-option hydration warning in SodWatchlist; add per-hour digest scheduling if a cron slot is freed.
 
+
+## SAP UAC — Heatmap drilldown + escalation rollup + per-hour digest + Exec banner (Jun 2026, iteration_87 — backend 16/16, frontend 100%)
+Final follow-up batch complete; user asked to package + finish (no more features).
+- **Heatmap Drilldown**: clickable per-room heatmap rows jump to that room's overdue requests (analytics now returns room `token`).
+- **Escalation Weekly Rollup** (`weekly-drift-digest` cron): owners get a 7-day summary of escalations + median escalation→resolution time; `resolved_at` now stamped on all resolve paths.
+- **Per-Hour Digest**: `digest_schedule.hour` (0-23 UTC) via new `hourly-overdue-digest` cron; freed a slot by folding monthly Studio report into `monthly-board-report` (still 5 crons max).
+- **Exec Overview SLA banner**: `audit-sla-banner` endpoint + `sap-sla-banner` on /app (shown when open-overdue/breached-7d/escalated-7d > 0).
+- Backlog / P2 (optional, none requested): split `deploy_audit.py` (~1300 lines) into submodules; clear the pre-existing dev-overlay span-in-option console warning.
+
