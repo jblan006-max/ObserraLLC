@@ -6,8 +6,9 @@ import { useDeepDive } from "@/context/DeepDiveContext";
 import {
   PieChart, Pie, Cell, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
 } from "recharts";
-import { Users, Gauge, ShieldAlert, KeyRound, Activity, BarChart3, Globe, Layers, Star, Filter } from "lucide-react";
+import { Users, Gauge, ShieldAlert, KeyRound, Activity, BarChart3, Globe, Layers, Star, Filter, Download, FileText } from "lucide-react";
 import { SodWatchlist } from "@/components/SodWatchlist";
+import { toast } from "sonner";
 
 const CHART_TT = { background: "hsl(215 38% 10%)", border: "1px solid hsl(215 30% 18%)", borderRadius: 8, fontSize: 12 };
 const REGION_COLORS = ["#3b6ef5", "#42c98e", "#f5a623", "#a06cf0", "#e0574a"];
@@ -87,6 +88,24 @@ export default function SapAnalytics() {
     else await api.post("/sap/watchlist", { area });
     window.dispatchEvent(new Event("sap-watchlist-changed"));
   };
+  const exportSlice = async (fmt) => {
+    const params = new URLSearchParams();
+    if (region) params.set("region", region);
+    if (department) params.set("department", department);
+    params.set("format", fmt);
+    try {
+      const res = await api.get(`/sap/analytics/export?${params.toString()}`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `sap-analytics${region || department ? "-" + [region, department].filter(Boolean).join("-") : ""}.${fmt === "pdf" ? "pdf" : "csv"}`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Analytics ${fmt.toUpperCase()} downloaded`);
+    } catch {
+      toast.error("Export failed");
+    }
+  };
   if (!d) return <Spinner />;
   const k = d.kpis;
   const riskPie = ["Critical", "High", "Medium", "Low"].map((r) => ({ name: r, value: d.risk_distribution[r] || 0 }));
@@ -145,6 +164,9 @@ export default function SapAnalytics() {
         ) : (
           <span className="text-xs text-muted-foreground">Filter every chart to a region or department slice.</span>
         )}
+        <div className="flex-1" />
+        <button data-testid="an-export-csv" onClick={() => exportSlice("csv")} className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md bg-secondary/60 hover:bg-secondary transition-colors"><Download className="w-3.5 h-3.5" /> CSV</button>
+        <button data-testid="an-export-pdf" onClick={() => exportSlice("pdf")} className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-md bg-primary/15 text-primary hover:bg-primary/25 transition-colors"><FileText className="w-3.5 h-3.5" /> PDF</button>
       </div>
 
       <SodWatchlist />

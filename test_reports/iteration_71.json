@@ -1,0 +1,34 @@
+{
+  "summary": "Iter 71 regression + new-feature verification. Backend 18/18 pytest pass covering: (a) Analytics Split regression — /api/sap/analytics + region=EMEA + department=Finance return 200 with correct 'filters' echo and scoped identity counts; (b) adjacent sap_uac endpoints (overview, access-monitoring, advisor, sod/conflicts) all 200; (c) NEW Analytics Export — GET /api/sap/analytics/export?format=csv returns text/csv w/ attachment filename + real KPI rows + honors region filter (slice label 'EMEA' in body); format=pdf returns application/pdf starting with %PDF; (d) NEW Watchlist Alerts — POST /watchlist/alert {area:'Finance',alert:true,threshold:2} enables + pins (persists on GET), alert:false disables, unknown area 404; (e) NEW Watchlist Remediate — POST /watchlist/remediate returns {ok,ticket:{number,state,type},owner}, ticket + owner persist in watchlist GET, unknown area 404; (f) prior refactor endpoints (ask-analytics, digest/ask/intro, sod-evidence/preview, scorecard, digest/ask multiturn, digest/share) all 200. Frontend end-to-end via Playwright on /app/analytics + /app/sod: region 'EMEA' -> 'Viewing EMEA — 23 identities' summary; an-filter-clear appears + resets; an-export-csv triggers sap-analytics.csv download; an-export-pdf triggers sap-analytics.pdf download; chart pin star pins area -> watchlist-item-0 appears; watchlist-alert-0 toggles reveals watchlist-threshold-0 (set to 2, persists); watchlist-assign-0 reveals watchlist-owner-input-0 + watchlist-remediate-0; remediation returns ticket badge CHG100575 with watchlist-reassign-0 link visible. Cleanup: 0 pins remaining after unpin. /app/sod: sod-command-center + all 4 extracted children (sod-scorecard, sod-autorem, sod-simulator, sod-rules) + sod-table + sod-watchlist + sod-digest-schedule all render; 72 sod-open + 72 sod-mitigate buttons in Detected Conflicts; sod-mitigate-<ref> opens sod-mitigate-dialog cleanly; digest-enable/score-alert-toggle/evidence-export-toggle all present. ZERO non-cosmetic console errors (only known <span>-in-<option> hydration warning, which is dev-only). Missing-prop risk in the four extracted SoD child components: NOT triggered — no runtime errors.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verified_flows": [
+    "Backend Analytics Split regression: /api/sap/analytics 200 with filters.regions/departments/region/department; ?region=EMEA scopes identities and echoes filter; ?department=Finance scopes identities.",
+    "Backend adjacent sap_uac endpoints: /overview, /access-monitoring, /advisor (POST), /sod/conflicts all 200.",
+    "Backend Analytics Export CSV: Content-Type text/csv, attachment CD, real body ('Obserra SAP UAC', KPI, Identities); ?region=EMEA embeds 'EMEA' slice label in CSV.",
+    "Backend Analytics Export PDF: Content-Type application/pdf, body starts %PDF, >1KB; ?department=Finance also valid PDF.",
+    "Backend Watchlist Alerts: POST /watchlist/alert {Finance,true,2} -> pinned with alert=true threshold=2 (persists on GET); POST {Finance,false} disables; POST {NoSuchArea,...} -> 404.",
+    "Backend Watchlist Remediate: POST /watchlist/remediate {Finance,jane@x.com} -> ok true, ticket {number,state,type} present, owner persisted on GET; unknown area -> 404.",
+    "Backend prior-refactor endpoints all 200: ask-analytics, digest/ask/intro, sod-evidence/preview, scorecard, digest/ask multi-turn (session_id 'iter71-a'), digest/share.",
+    "Frontend /app/analytics: an-filter-bar/region/dept/summary/clear all work; region=EMEA -> 'Viewing EMEA — 23 identities'; an-export-csv & an-export-pdf both trigger file downloads (sap-analytics.csv/.pdf).",
+    "Frontend Watchlist (both /app/analytics and /app/sod render sod-watchlist): pin via an-sod-area-pin-0 -> watchlist-item-0; watchlist-alert-0 -> reveals watchlist-threshold-0 (set to 2); watchlist-assign-0 -> reveals watchlist-owner-input-0 + watchlist-remediate-0; after remediate: watchlist-ticket-0 shows 'CHG100575' and watchlist-reassign-0 present.",
+    "Frontend Card Slimming regression on /app/sod: sod-command-center + sod-scorecard + sod-autorem + sod-simulator + sod-rules + sod-table + sod-watchlist + sod-digest-schedule all mount; 72 sod-open + 72 sod-mitigate action buttons in table; sod-mitigate-<ref> opens sod-mitigate-dialog. digest-enable / score-alert-toggle / evidence-export-toggle intact. ZERO non-cosmetic console errors; NO missing-prop runtime error in extracted child components."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iter71_analytics_split_export_watchlist.py",
+    "/app/test_reports/pytest/iter71.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "sap_analytics.py is a clean 402-line module — good split. sap_uac.py is still large; carrying-over comment from iter 70: continue peeling ownership-domain slices out to keep modules <700 lines.",
+    "SodCommandCenter.jsx went 836 -> 640 lines with 4 child extractions — good. As with GovernanceDigestCard in iter 70, the new child cards are auto-computed prop pass-through; consider consolidating parent state into a single object + setter to reduce brittle prop drilling.",
+    "SodWatchlist.jsx still syncs via window CustomEvent 'sap-watchlist-changed' (flagged in iter 70). Same recommendation: shared context / lightweight store."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter71_analytics_split_export_watchlist.py"],
+  "success_rate": {"backend": "100% (18/18)", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md). Login uses [data-testid=auth-submit]; cookie-based (access_token/refresh_token).",
+  "seed_data_creation": "Pinned Finance area transiently during backend + frontend tests. Backend session-scope fixture teardown unpins any remaining pinned areas. Frontend: 6 watchlist-unpin-N clicks confirmed 0 pins remaining. Backend remediation created ServiceNow CHG ticket (auto-closes end-to-end per app convention). Multi-turn ask created 1 log entry under session_id 'iter71-a' (normal accumulation).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend regression file /app/backend/tests/test_iter71_analytics_split_export_watchlist.py covers Analytics Split moved endpoints + Export CSV/PDF (branded, filter-honoring) + Watchlist Alerts + Watchlist Remediate + prior refactor endpoints (18 tests, ~9s). Includes session-scope teardown that auto-unpins any pinned areas so it's re-runnable and idempotent. Both new features (analytics/export, watchlist/alert, watchlist/remediate) confirmed working end-to-end. All 4 extracted SoD child components on /app/sod verified — no missing-prop runtime errors."
+}
