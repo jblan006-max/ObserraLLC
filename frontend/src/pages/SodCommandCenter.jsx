@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send, Eye, Download, TrendingUp, FileText, BellRing, FileWarning, Sparkles } from "lucide-react";
+import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send, Eye, Download, TrendingUp, FileText, BellRing, FileWarning, Sparkles, MessagesSquare } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 
 const SEV = { Critical: "0 84% 60%", High: "35 90% 55%", Medium: "190 90% 50%", Low: "142 70% 45%" };
@@ -73,6 +73,12 @@ export default function SodCommandCenter() {
   const [evidPreview, setEvidPreview] = useState(null);
   const [evidPreviewBusy, setEvidPreviewBusy] = useState(false);
   const [nowTs, setNowTs] = useState(Date.now());
+  const [askOpen, setAskOpen] = useState(false);
+  const [askSession, setAskSession] = useState("");
+  const [askMsgs, setAskMsgs] = useState([]);
+  const [askInput, setAskInput] = useState("");
+  const [askBusy, setAskBusy] = useState(false);
+  const [askSuggestions, setAskSuggestions] = useState([]);
 
   const loadConflicts = useCallback(async () => {
     const p = new URLSearchParams();
@@ -161,6 +167,30 @@ export default function SodCommandCenter() {
     try { const { data } = await api.get("/sap/sod-evidence/preview"); setEvidPreview(data); }
     catch { toast.error("Could not load preview"); }
     setEvidPreviewBusy(false);
+  };
+  const openAsk = async () => {
+    const sid = (typeof crypto !== "undefined" && crypto.randomUUID) ? crypto.randomUUID() : `s-${Date.now()}`;
+    setAskSession(sid); setAskMsgs([]); setAskInput(""); setAskSuggestions([]); setAskOpen(true);
+    try {
+      const { data } = await api.get("/sap/digest/ask/intro");
+      setAskMsgs([{ role: "assistant", text: data.greeting }]);
+      setAskSuggestions(data.suggestions || []);
+    } catch { setAskMsgs([{ role: "assistant", text: "Ask me anything about this governance digest." }]); }
+  };
+  const sendAsk = async (q) => {
+    const question = (q ?? askInput).trim();
+    if (!question || askBusy) return;
+    setAskMsgs((m) => [...m, { role: "user", text: question }]);
+    setAskInput(""); setAskBusy(true);
+    try {
+      const { data } = await api.post("/sap/digest/ask", { session_id: askSession, question });
+      if (data.session_id) setAskSession(data.session_id);
+      setAskMsgs((m) => [...m, { role: "assistant", text: data.answer, model: data.model }]);
+      if (data.suggestions) setAskSuggestions(data.suggestions);
+    } catch {
+      setAskMsgs((m) => [...m, { role: "assistant", text: "Sorry — I couldn't analyze that just now. Please try again." }]);
+    }
+    setAskBusy(false);
   };
   const exportScorecard = async (fmt = "csv") => {
     try {
@@ -604,6 +634,7 @@ export default function SodCommandCenter() {
             <Button size="sm" data-testid="digest-save" onClick={saveDcfg} disabled={dcfgBusy}>{dcfgBusy ? "Saving…" : "Save schedule"}</Button>
             <Button size="sm" variant="outline" className="gap-1.5" data-testid="digest-preview" onClick={openPreview} disabled={previewBusy}><Eye className="w-3.5 h-3.5" />{previewBusy ? "Loading…" : "Preview email"}</Button>
             <Button size="sm" variant="outline" className="gap-1.5" data-testid="digest-test-chat" onClick={testChat}><Send className="w-3.5 h-3.5" /> Test chat alert</Button>
+            <Button size="sm" variant="outline" className="gap-1.5 border-primary/40 text-primary hover:bg-primary/[0.06]" data-testid="digest-ask-open" onClick={openAsk}><MessagesSquare className="w-3.5 h-3.5" /> Ask AI about this digest</Button>
             <Button size="sm" variant="outline" className="gap-1.5" data-testid="digest-send-now" onClick={sendDigest} disabled={digestBusy || cooldownRemain > 0}><Mail className="w-3.5 h-3.5" />{digestBusy ? "Sending…" : cooldownRemain > 0 ? `Send again in ${cooldownRemain}s` : "Send digest now"}</Button>
           </div>
         </div>
@@ -756,6 +787,37 @@ export default function SodCommandCenter() {
               </div>
             </div>
           )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={askOpen} onOpenChange={setAskOpen}>
+        <DialogContent className="max-w-lg" data-testid="digest-ask-dialog">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><MessagesSquare className="w-4 h-4 text-primary" /> Ask AI about this digest</DialogTitle></DialogHeader>
+          <p className="text-[11px] text-muted-foreground -mt-2">Grounded in your live SAP access snapshot — open conflicts, score trend, residual leavers, auto-remediation. Follow-ups keep context.</p>
+          <div className="space-y-3">
+            <div className="max-h-[46vh] min-h-[160px] overflow-y-auto space-y-3 pr-1" data-testid="digest-ask-messages">
+              {askMsgs.map((m, i) => (
+                <div key={i} className={`flex ${m.role === "user" ? "justify-end" : "justify-start"}`} data-testid={`digest-ask-msg-${i}`}>
+                  <div className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${m.role === "user" ? "bg-primary text-primary-foreground" : "bg-secondary/60 text-foreground"}`}>
+                    {m.text}
+                    {m.model === "deterministic-fallback" && <div className="text-[9px] font-mono opacity-60 mt-1">offline summary</div>}
+                  </div>
+                </div>
+              ))}
+              {askBusy && <div className="flex justify-start"><div className="rounded-2xl px-3.5 py-2 text-sm bg-secondary/60 text-muted-foreground" data-testid="digest-ask-typing">Analyzing the live snapshot…</div></div>}
+            </div>
+            {askSuggestions.length > 0 && !askBusy && (
+              <div className="flex flex-wrap gap-1.5" data-testid="digest-ask-suggestions">
+                {askSuggestions.map((s, i) => (
+                  <button key={i} data-testid={`digest-ask-suggestion-${i}`} onClick={() => sendAsk(s)} className="text-[11px] px-2.5 py-1 rounded-full border border-border hover:border-primary/50 hover:bg-primary/[0.05] transition-colors text-muted-foreground">{s}</button>
+                ))}
+              </div>
+            )}
+            <div className="flex items-center gap-2">
+              <Input data-testid="digest-ask-input" value={askInput} onChange={(e) => setAskInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") sendAsk(); }} placeholder="e.g. Which area needs attention first?" />
+              <Button size="sm" data-testid="digest-ask-send" onClick={() => sendAsk()} disabled={askBusy || !askInput.trim()}><Send className="w-3.5 h-3.5" /></Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>

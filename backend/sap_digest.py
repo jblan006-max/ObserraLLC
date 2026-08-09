@@ -1140,3 +1140,117 @@ async def scorecard_why(user: dict = Depends(get_current_user)):
         return {"summary": text[:400], "model": "openai/gpt-5.4", "generated_at": _now().isoformat()}
     except Exception:
         return {"summary": _score_why_fallback(sc), "model": "deterministic-fallback", "generated_at": _now().isoformat()}
+
+
+
+# ── Ask-AI-about-this-digest (in-app leadership Q&A, multi-turn) ───────────────
+class DigestAskBody(BaseModel):
+    session_id: str = ""
+    question: str
+
+
+async def _digest_ai_context(org_id):
+    """Compact, grounded live snapshot the AI answers strictly from (no mock)."""
+    d = await _governance_digest_data(org_id)
+    sc = await _scorecard_payload(org_id, record=False)
+    persons, accounts, conflicts, pmap = await _correlate(org_id)
+    open_conf = [c for c in conflicts if c.get("status") == "Open"]
+    by_area, by_system, by_rule = {}, {}, {}
+    for c in open_conf:
+        by_area[c.get("area", "—")] = by_area.get(c.get("area", "—"), 0) + 1
+        by_system[c.get("system", "—")] = by_system.get(c.get("system", "—"), 0) + 1
+        by_rule[c.get("rule_name", "—")] = by_rule.get(c.get("rule_name", "—"), 0) + 1
+    return {
+        "digest": d,
+        "scorecard": {"current": sc.get("current"), "forecast": sc.get("forecast"),
+                      "trend_source": sc.get("trend_source"), "trend": sc.get("trend")},
+        "open_conflicts_by_area": dict(sorted(by_area.items(), key=lambda x: -x[1])),
+        "open_conflicts_by_system": dict(sorted(by_system.items(), key=lambda x: -x[1])),
+        "top_open_rules": dict(sorted(by_rule.items(), key=lambda x: -x[1])[:8]),
+    }
+
+
+def _digest_ask_suggestions(ctx):
+    areas = list(ctx.get("open_conflicts_by_area", {}).keys())
+    top_area = areas[0] if areas else "Finance"
+    return ["What are the top risks in this digest right now?",
+            f"Why is {top_area} the biggest area of open conflicts?",
+            "What should we prioritise remediating this week?",
+            "Is the governance score expected to improve next week?"]
+
+
+def _digest_ask_fallback(ctx):
+    d, sc = ctx["digest"], ctx["scorecard"]["current"]
+    return (f"Right now there are {d['open_sod']} open SoD conflicts (Critical {d['sev']['Critical']}, "
+            f"High {d['sev']['High']}, Medium {d['sev']['Medium']}), a governance score of {sc['governance_score']}/100, "
+            f"{d['residual_count']} terminated identities with residual access, and {d['autorem_24h']} auto-remediations "
+            "in the last 24h. Ask about a specific risk area, system, or the score trend for more detail.")
+
+
+@sap_router.get("/digest/ask/intro")
+async def digest_ask_intro(user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    ctx = await _digest_ai_context(org_id)
+    d, cur = ctx["digest"], ctx["scorecard"]["current"]
+    greeting = (f"I'm your SAP Access Governance analyst. This digest shows {d['open_sod']} open SoD conflicts "
+                f"({d['sev']['Critical']} critical) and a governance score of {cur['governance_score']}/100. "
+                "Ask me anything about it.")
+    return {"greeting": greeting, "suggestions": _digest_ask_suggestions(ctx)}
+
+
+@sap_router.post("/digest/ask")
+async def digest_ask(body: DigestAskBody, user: dict = Depends(get_current_user)):
+    """Answer a leader's follow-up question about the governance digest, grounded in the live snapshot (multi-turn)."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    q = (body.question or "").strip()[:500]
+    if not q:
+        raise HTTPException(400, "Ask a question about the digest")
+    session_id = (body.session_id or "").strip() or f"{org_id}-{int(_now().timestamp())}"
+    ctx = await _digest_ai_context(org_id)
+    convo = await db.sap_digest_chat.find_one({"org_id": org_id, "session_id": session_id},
+                                              {"_id": 0, "messages": 1}) or {}
+    history = (convo.get("messages") or [])[-6:]
+    answer, model = None, "deterministic-fallback"
+    try:
+        import asyncio
+        import json as _json
+        from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
+        system = ("You are the Obserra SAP UAC AI Analyst answering a leader's follow-up question about the SAP "
+                  "Access Governance Digest. Ground EVERY answer strictly in the provided live snapshot JSON "
+                  "(open SoD conflicts, severities, per-area/system breakdown, governance score, forecast, residual "
+                  "leavers, auto-remediation). Be concise and executive (2-4 sentences), cite the numbers, and if the "
+                  "data does not contain the answer, say what connector or report would provide it. No markdown headers.")
+        chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"sap-ask-{session_id}",
+                       system_message=system).with_model("openai", "gpt-5.4")
+        hist_txt = "\n".join(f"{m['role'].upper()}: {m['text']}" for m in history)
+        prompt = (f"LIVE DIGEST SNAPSHOT (JSON):\n{_json.dumps(ctx, default=str)[:8000]}\n\n"
+                  + (f"PRIOR CONVERSATION:\n{hist_txt}\n\n" if hist_txt else "")
+                  + f"LEADER'S QUESTION: {q}")
+        collected = []
+
+        async def _run():
+            async for ev in chat.stream_message(UserMessage(text=prompt)):
+                if isinstance(ev, TextDelta):
+                    collected.append(ev.content)
+                elif isinstance(ev, StreamDone):
+                    break
+        await asyncio.wait_for(_run(), timeout=20)
+        answer = "".join(collected).strip()
+        if answer:
+            model = "openai/gpt-5.4"
+    except Exception:
+        answer = None
+    if not answer:
+        answer = _digest_ask_fallback(ctx)
+    now = _now().isoformat()
+    await db.sap_digest_chat.update_one(
+        {"org_id": org_id, "session_id": session_id},
+        {"$push": {"messages": {"$each": [{"role": "user", "text": q, "at": now},
+                                          {"role": "assistant", "text": answer, "at": now}]}},
+         "$set": {"org_id": org_id, "session_id": session_id, "updated_at": now}},
+        upsert=True)
+    await _audit(org_id, user["email"], "sap.digest.ask", q[:120])
+    return {"session_id": session_id, "answer": answer[:1200], "model": model,
+            "suggestions": _digest_ask_suggestions(ctx)}
