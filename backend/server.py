@@ -114,14 +114,34 @@ def _app_version():
 
 @app.get("/api/health")
 async def health():
-    """Liveness/readiness probe for install.sh, load balancers and uptime checks."""
+    """Liveness/readiness + deep checks for install.sh, load balancers and uptime dashboards."""
+    import time
+    checks = {}
+    t0 = time.perf_counter()
     db_ok = True
     try:
         await client.admin.command("ping")
     except Exception:
         db_ok = False
+    checks["db"] = {"ok": db_ok, "latency_ms": round((time.perf_counter() - t0) * 1000, 1)}
+    try:
+        checks["organizations"] = await db.organizations.count_documents({})
+    except Exception:
+        checks["organizations"] = None
+    try:
+        total = await db.sap_connectors.count_documents({})
+        connected = await db.sap_connectors.count_documents({"status": "connected"})
+        checks["connectors"] = {"connected": connected, "total": total}
+    except Exception:
+        checks["connectors"] = None
+    try:
+        last = await db.audit_logs.find_one(sort=[("ts", -1)])
+        checks["scheduler"] = {"cron_configured": bool(os.environ.get("WEBHOOK_CRON_SECRET")),
+                               "last_activity": (last or {}).get("ts")}
+    except Exception:
+        checks["scheduler"] = None
     return {"status": "ok" if db_ok else "degraded", "service": "obserra-sap-uac",
-            "version": _app_version(), "db": db_ok}
+            "version": _app_version(), "db": db_ok, "checks": checks}
 
 
 @app.on_event("startup")

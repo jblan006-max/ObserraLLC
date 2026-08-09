@@ -455,4 +455,5 @@ Continued from the docs work; all curl + screenshot verified on the live app.
 - **Health endpoint**: `GET /api/health` (`{status,service,version,db}`), used by `install.sh`.
 - **Update notifier**: `GET /api/deploy/version` (+ `UPDATE_MANIFEST_URL`, UA header to avoid 403) drives an admin-only dismissible `UpdateBanner.jsx`.
 - **CI/release**: `scripts/assemble_onprem.py` + `Makefile` + `.github/workflows/onprem-verify.yml` (docker build on push) and `release.yml` (tag → stamp, GHCR image push, versioned `.zip` release asset); `docker-compose.ghcr.yml` runs prebuilt images. Test creds unchanged (`jblan2026@gmail.com`); see `test_credentials.md`.
+- **Ops follow-ups**: release-notes modal in `UpdateBanner`; one-click `POST /api/deploy/upgrade` (opt-in `ONPREM_UPGRADE=1`, else 400); deep `GET /api/health` (db latency, orgs, connectors, scheduler); `POST /api/deploy/reset-demo` + Settings "Reset to demo dataset"; `release.yml` also publishes a GitHub Pages `manifest.json` and pre-fills `UPDATE_MANIFEST_URL` so update banners work out-of-the-box. All curl + screenshot verified.
 

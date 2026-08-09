@@ -2,8 +2,11 @@ name: Release
 
 # On a version tag (e.g. v1.1.0):
 #   • stamps VERSION from the tag (traceability)
+#   • points the installer at the public releases manifest (GitHub Pages) so self-hosted
+#     instances get "update available" banners out-of-the-box
 #   • builds & pushes prebuilt backend/frontend images to GHCR (customers can pull, no local build)
 #   • attaches the versioned self-contained .zip as a GitHub Release asset
+#   • publishes a manifest.json to GitHub Pages
 on:
   push:
     tags: ["v*"]
@@ -12,10 +15,15 @@ on:
 permissions:
   contents: write
   packages: write
+  pages: write
+  id-token: write
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.pages.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,6 +38,20 @@ jobs:
         env:
           OBSERRA_VERSION: ${{ github.ref_name }}
         run: python scripts/stamp_version.py
+
+      - name: Compute Pages manifest URL and point the installer at it
+        id: manifest
+        run: |
+          OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')
+          REPO=$(echo '${{ github.event.repository.name }}' | tr '[:upper:]' '[:lower:]')
+          URL="https://${OWNER}.github.io/${REPO}/manifest.json"
+          echo "url=${URL}" >> "$GITHUB_OUTPUT"
+          # Ship the package with UPDATE_MANIFEST_URL pre-filled so banners work OOTB.
+          if grep -q '^UPDATE_MANIFEST_URL=' deploy/onprem/.env.example; then
+            sed -i "s|^UPDATE_MANIFEST_URL=.*|UPDATE_MANIFEST_URL=${URL}|" deploy/onprem/.env.example
+          else
+            echo "UPDATE_MANIFEST_URL=${URL}" >> deploy/onprem/.env.example
+          fi
 
       - name: Assemble self-contained package
         run: python scripts/assemble_onprem.py dist
@@ -74,6 +96,24 @@ jobs:
           tags: |
             ${{ steps.img.outputs.prefix }}/frontend:${{ github.ref_name }}
             ${{ steps.img.outputs.prefix }}/frontend:latest
+
+      - name: Build the public releases manifest (GitHub Pages)
+        run: |
+          mkdir -p site
+          VER="${{ github.ref_name }}"
+          cat > site/manifest.json <<EOF
+          {"version": "${VER#v}", "url": "https://github.com/${{ github.repository }}/releases/tag/${VER}", "notes": "Latest Obserra SAP UAC release. See the linked GitHub release for full notes."}
+          EOF
+          cp site/manifest.json "site/index.json"
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        id: pages
+        uses: actions/deploy-pages@v4
 
       - name: Create GitHub Release with the .zip asset
         uses: softprops/action-gh-release@v2

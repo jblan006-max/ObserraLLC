@@ -110,6 +110,17 @@ export default function Settings() {
     setAllVisualsBusy(false);
   };
 
+  const [resetBusy, setResetBusy] = useState(false);
+  const resetDemo = async () => {
+    if (!window.confirm("Reset to the demo dataset? This clears this organization's SAP data and reloads the sample dataset.")) return;
+    setResetBusy(true);
+    try {
+      const { data } = await api.post("/deploy/reset-demo");
+      toast.success(`Demo dataset restored — ${data.persons} identities, ${data.accounts} accounts.`);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not reset demo data"); }
+    setResetBusy(false);
+  };
+
   const [emailTo, setEmailTo] = useState("");
   const [emailBusy, setEmailBusy] = useState(false);
   const [book, setBook] = useState([]);
@@ -503,6 +514,10 @@ export default function Settings() {
             <button data-testid="refresh-all-visuals" disabled={allVisualsBusy} onClick={refreshAllVisuals} title="Recapture every dashboard screenshot once, then rebuild the in-app tour previews and the PDF/Word guides in one pass"
               className="px-4 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 hover:opacity-90 transition-opacity">
               {allVisualsBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Refresh all visuals
+            </button>
+            <button data-testid="reset-demo" disabled={resetBusy} onClick={resetDemo} title="Clear this organization's SAP data and reload the realistic sample dataset (demo / trial)"
+              className="px-4 py-2.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-crit/50 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
+              {resetBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />} Reset to demo dataset
             </button>
           </div>
           <div className="flex items-center gap-2 flex-wrap pt-1" data-testid="email-docs-row">

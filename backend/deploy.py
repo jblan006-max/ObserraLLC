@@ -234,6 +234,55 @@ async def seed_demo(user: dict = Depends(get_current_user)):
     return {"ok": True, "persons": persons, "accounts": accounts}
 
 
+@deploy_router.post("/reset-demo")
+async def reset_demo(user: dict = Depends(get_current_user)):
+    """Wipe this org's SAP + demo collections and reseed a clean populated instance
+    (admin) — handy for restoring a pristine demo/trial environment."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can reset the demo data")
+    from db import db
+    from seed_data import seed_org
+    from sap_engine import seed_sap_uac
+    org_id = user["org_id"]
+    names = await db.list_collection_names()
+    targets = {n for n in names if n.startswith("sap_")}
+    targets.update(["risks", "health_index", "ai_systems", "ai_incidents",
+                    "recommendations", "decisions", "connectors"])
+    for n in targets:
+        await db[n].delete_many({"org_id": org_id})
+    await seed_org(org_id)
+    await seed_sap_uac(org_id)
+    persons = await db.sap_persons.count_documents({"org_id": org_id})
+    accounts = await db.sap_accounts.count_documents({"org_id": org_id})
+    return {"ok": True, "reset": True, "persons": persons, "accounts": accounts}
+
+
+async def _upgrade_job(compose: str):
+    import asyncio
+    import subprocess
+    await asyncio.sleep(1.5)  # let the 202 flush before containers are recreated
+    for args in (["docker", "compose", "-f", compose, "pull"],
+                 ["docker", "compose", "-f", compose, "up", "-d"]):
+        subprocess.run(args, timeout=600, check=False)
+
+
+@deploy_router.post("/upgrade")
+async def upgrade(background_tasks: BackgroundTasks, user: dict = Depends(get_current_user)):
+    """One-click 'pull latest & restart' for GHCR/compose self-hosted deployments.
+    Opt-in via ONPREM_UPGRADE=1 and requires the Docker socket + compose file mounted into
+    the backend container. Inert (400) in the hosted deployment."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can trigger an upgrade")
+    import shutil
+    if os.environ.get("ONPREM_UPGRADE") != "1" or not shutil.which("docker"):
+        raise HTTPException(400, "Automatic upgrade isn't enabled on this deployment. Enable it with "
+                                 "ONPREM_UPGRADE=1 and mount the Docker socket + compose file, or run "
+                                 "'docker compose -f deploy/docker-compose.ghcr.yml pull && up -d'.")
+    compose = os.environ.get("ONPREM_COMPOSE", "/deploy/docker-compose.ghcr.yml")
+    background_tasks.add_task(_upgrade_job, compose)
+    return {"ok": True, "status": "upgrading", "compose": compose}
+
+
 _TOUR_DIR = os.path.join(_ROOT, "frontend", "public", "tour")
 _TOUR_IMAGES = ["overview.jpg", "sod.jpg", "watchlist.jpg", "monitoring.jpg"]
 
