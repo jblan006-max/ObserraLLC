@@ -1731,13 +1731,21 @@ def _sap_insight_fallback(ctx):
             "model": "deterministic-fallback", "generated_at": _now().isoformat()}
 
 
+_SAP_INSIGHT_CACHE = {}
+
+
 @sap_router.get("/insight")
 async def sap_insight(focus: str = "", user: dict = Depends(get_current_user)):
-    """Obserra-standard AI analyst summary of the live SAP access posture (optionally focused per dashboard)."""
+    """Obserra-standard AI analyst summary of the live SAP access posture (optionally focused per dashboard).
+    Cached 180s per org+focus so revisiting a dashboard is instant (matches the Obserra insight card)."""
     org_id = user["org_id"]
     await _ensure(org_id)
-    ctx = await overview_context(org_id)
     focus = (focus or "").strip()[:80]
+    ck = (org_id, focus)
+    hit = _SAP_INSIGHT_CACHE.get(ck)
+    if hit and (_now() - hit["ts"]).total_seconds() < 180:
+        return hit["data"]
+    ctx = await overview_context(org_id)
     try:
         import asyncio, re
         from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
@@ -1768,6 +1776,7 @@ async def sap_insight(focus: str = "", user: dict = Depends(get_current_user)):
         parsed.setdefault("actions", [])
         parsed["model"] = "openai/gpt-5.4"
         parsed["generated_at"] = _now().isoformat()
+        _SAP_INSIGHT_CACHE[ck] = {"ts": _now(), "data": parsed}
         return parsed
     except Exception:
         return _sap_insight_fallback(ctx)

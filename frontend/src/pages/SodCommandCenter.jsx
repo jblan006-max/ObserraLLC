@@ -104,6 +104,9 @@ export default function SodCommandCenter() {
   const loadArem = useCallback(async () => { const { data } = await api.get("/sap/autoremediation"); setArem(data); }, []);
   const loadDcfg = useCallback(async () => { const { data } = await api.get("/sap/digest/config"); setDcfg(data); setDcfgLocal({ ...data.config, recipients: (data.config.recipients || []).join(", "), evidence_recipients: (data.config.evidence_recipients || []).join(", "), auditor_scopes: (data.config.auditor_scopes || []).map((s) => ({ email: s.email, areas: (s.areas || []).join(", "), systems: (s.systems || []).join(", ") })) }); }, []);
   const slackAskUrl = `${process.env.REACT_APP_BACKEND_URL || ""}/api/sap/slack/ask`;
+  const teamsAskUrl = `${process.env.REACT_APP_BACKEND_URL || ""}/api/sap/teams/ask`;
+  const [slackTest, setSlackTest] = useState(null);
+  const [slackTestBusy, setSlackTestBusy] = useState(false);
   const loadScorecard = useCallback(async () => { const { data } = await api.get("/sap/scorecard"); setScorecard(data); }, []);
   const loadAlerts = useCallback(async () => { try { const { data } = await api.get("/sap/scorecard/alerts"); setScoreAlerts(data.log || []); setScoreMute({ muted: data.muted, mute_until: data.mute_until, mute_reason: data.mute_reason }); } catch { /* noop */ } }, []);
   const loadWhy = useCallback(async () => { setWhyBusy(true); try { const { data } = await api.get("/sap/scorecard/why"); setWhy(data); } catch { /* noop */ } setWhyBusy(false); }, []);
@@ -165,6 +168,17 @@ export default function SodCommandCenter() {
       await loadDcfg();
     } catch (e) { toast.error(e?.response?.data?.detail || (e?.response?.status === 403 ? "Admin access required" : "Could not save schedule")); }
     setDcfgBusy(false);
+  };
+  const runSlackTest = async () => {
+    setSlackTestBusy(true); setSlackTest(null);
+    try {
+      const { data } = await api.post("/sap/slack/test", { question: "top risks" });
+      setSlackTest(data);
+      if (!data.signing_secret_set) toast.warning("Answer generated — but save a signing secret so inbound Slack verifies.");
+      else if (data.webhook_posted) toast.success("Test answer posted to your Slack webhook");
+      else toast.success("Slack Ask is working — sample answer generated");
+    } catch (e) { toast.error(e?.response?.data?.detail || (e?.response?.status === 403 ? "Admin access required" : "Test failed")); }
+    setSlackTestBusy(false);
   };
   const testChat = async () => {
     try {
@@ -817,6 +831,53 @@ export default function SodCommandCenter() {
                   </div>
                   <p className="text-[11px] text-muted-foreground leading-relaxed">
                     In your Slack app, create a Slash Command (e.g. <span className="font-mono">/askdigest</span>) pointing at the Request URL above, paste the app's Signing Secret here, then Save. Ask e.g. <span className="font-mono">/askdigest what are the top risks right now?</span> — the AI answers in-channel, grounded in the live SAP access snapshot.
+                  </p>
+                  <div>
+                    <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1.5">One-tap command shortcuts</div>
+                    <div className="flex flex-wrap gap-1.5" data-testid="slack-ask-shortcuts">
+                      {["top risks", "score trend", "critical", "residual access", "priorities"].map((k) => (
+                        <span key={k} className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-secondary/60 border border-border">/askdigest {k}</span>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-1">Leaders can type just the keyword — it expands to a full grounded question.</p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button type="button" size="sm" variant="outline" className="gap-1.5" data-testid="slack-ask-test" onClick={runSlackTest} disabled={slackTestBusy}><Send className="w-3.5 h-3.5" />{slackTestBusy ? "Testing…" : "Send a test question"}</Button>
+                    <span className="text-[11px] text-muted-foreground">Runs the full round-trip; if a Slack webhook is set, posts the answer to Slack.</span>
+                  </div>
+                  {slackTest && (
+                    <div className="rounded-lg border border-primary/25 bg-primary/[0.04] p-3 text-xs" data-testid="slack-ask-test-result">
+                      <div className="font-mono text-[10px] uppercase text-muted-foreground mb-1">Test answer · {slackTest.model}{slackTest.webhook_posted ? " · posted to Slack" : slackTest.webhook_configured ? " · webhook post failed" : " · no Slack webhook set"}</div>
+                      <div className="text-foreground/90 leading-relaxed">{slackTest.answer}</div>
+                      {!slackTest.signing_secret_set && <div className="text-amber mt-1.5">Save a signing secret above so inbound Slack requests verify.</div>}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="mt-3 pt-3 border-t border-border/60" data-testid="teams-ask-config">
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <MessagesSquare className="w-4 h-4 text-primary" />
+                <span className="text-sm font-medium">Teams Ask</span>
+                <span className="text-[11px] text-muted-foreground">Ask the digest from Microsoft Teams via an Outgoing Webhook</span>
+                <div className="flex-1" />
+                <Switch data-testid="teams-ask-toggle" checked={!!dcfgLocal.teams_ask} onCheckedChange={(v) => setDcfgLocal({ ...dcfgLocal, teams_ask: v })} />
+              </div>
+              {dcfgLocal.teams_ask && (
+                <div className="space-y-3" data-testid="teams-ask-setup">
+                  <div>
+                    <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Outgoing-webhook callback URL (paste into Teams)</div>
+                    <div className="flex items-center gap-2">
+                      <Input data-testid="teams-ask-url" readOnly value={teamsAskUrl} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
+                      <Button type="button" size="sm" variant="outline" className="gap-1.5 shrink-0" data-testid="teams-ask-copy" onClick={() => { navigator.clipboard?.writeText(teamsAskUrl); toast.success("Callback URL copied"); }}><Copy className="w-3.5 h-3.5" /> Copy</Button>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Teams outgoing-webhook HMAC secret {dcfg?.teams_ask_secret_set && <span className="text-emerald-500 normal-case">· configured</span>}</div>
+                    <Input data-testid="teams-ask-secret" type="password" autoComplete="off" value={dcfgLocal.teams_ask_secret || ""} onChange={(e) => setDcfgLocal({ ...dcfgLocal, teams_ask_secret: e.target.value })} placeholder={dcfg?.teams_ask_secret_set ? "•••••••• (leave blank to keep current)" : "Teams → Manage team → Apps → Create an Outgoing Webhook → copy the security token"} />
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    In Teams, create an Outgoing Webhook pointing at the callback URL above, paste the security token here, then Save. @mention the webhook with a question (e.g. <span className="font-mono">@Governance top risks</span>) — the AI replies in the channel, grounded in the live SAP access snapshot.
                   </p>
                 </div>
               )}

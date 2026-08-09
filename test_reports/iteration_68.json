@@ -1,0 +1,32 @@
+{
+  "summary": "Independent re-verification (iter 68) of Slack Ask, Teams Ask, /slack/test, /ask-log, digest config secret masking, and SAP insight cache. Full backend pytest (15 tests) + Playwright e2e covering SoD Command Center Slack/Teams Ask setup blocks, Workflow Activity ask-log, and 14-route regression. All pass. Demo org reset (slack_ask=false, teams_ask=false) post-test.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verified_flows": [
+    "Slack /api/sap/slack/ask PUBLIC: valid HMAC + response_url -> 200 ephemeral 'Analyzing...'; no response_url -> 200 in_channel grounded answer; empty text -> 200 ephemeral usage help with shortcut chips (`top risks` `score` `score trend` `critical` `residual`); shortcut 'top risks' -> grounded answer (not literal text); wrong secret -> 200 ephemeral 'isn't linked'; stale ts (>5 min) -> HTTP 401.",
+    "Teams /api/sap/teams/ask PUBLIC: valid base64 HMAC -> 200 {type:message, text: grounded}; '<at>Bot</at> critical' -> shortcut expanded, <at> stripped; wrong secret -> 200 message 'isn't linked'.",
+    "Admin /api/sap/slack/test -> 200 {ok, question, answer(grounded), signing_secret_set, webhook_configured, webhook_posted}; unauthenticated -> 401/403.",
+    "/api/sap/ask-log -> 200 {entries[{source,user_name,question,answer,at}], total, by_source:{slack,teams,test}}; entries accumulate after slack/teams/test calls (observed 11 entries in workflow UI, by_source populated).",
+    "/api/sap/digest/config GET always masks slack_signing_secret & teams_ask_secret to '' with slack_signing_secret_set/teams_ask_secret_set booleans; PUT with blank secret preserves the previously stored one (verified: subsequent HMAC-signed slack request still validated).",
+    "/api/sap/insight?focus=SoD: 1st call ~few seconds (LLM), immediate 2nd identical call <1s (0.15s in test) with byte-identical JSON (180s cache confirmed).",
+    "FRONTEND /app/sod: slack-ask-toggle ON reveals slack-ask-setup with url ending /api/sap/slack/ask, copy, secret input, shortcuts chips, test button. slack-ask-test click surfaces slack-ask-test-result with a grounded answer ('The top risks are the 71 open SoD conflicts...'). teams-ask-toggle ON reveals teams-ask-setup with url ending /api/sap/teams/ask + copy + secret. digest-save PUT 200, and after reload both toggles remain aria-checked=true (persistence confirmed).",
+    "FRONTEND /app/workflow: ask-log-card and ask-log-list render with 11 entries after our test invocations.",
+    "REGRESSION 14 routes (/app, /app/sod, /app/identities, /app/privileged, /app/monitoring, /app/lifecycle, /app/analytics, /app/workflow, /app/requests, /app/certifications, /app/roles, /app/activation, /app/reconciliation, /app/systems): every route rendered a [data-testid^=sap-insight-] AI Analyst card, zero pageerrors captured, no 'X is not defined' runtime errors."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iter68_ask_channels.py",
+    "/app/test_reports/pytest/iter68.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "SodCommandCenter.jsx continues to grow; still worth splitting Slack/Teams Ask blocks into a dedicated ChannelAskConfig subcomponent (non-blocking, previously flagged).",
+    "Consider adding rate-limit / abuse guard on public /api/sap/slack/ask and /api/sap/teams/ask beyond HMAC and 5-minute freshness (e.g., per-org QPS)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter68_ask_channels.py"],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Temporarily set slack_signing_secret / teams_ask_secret to known HMAC-testable values on demo org; ask-log gained ~5 new entries from test invocations. Post-test: RESET performed — slack_ask=false, teams_ask=false, both secrets cleared, digest-save confirmed via toast 'Governance digest schedule saved'. Demo org pristine.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All ask-channel features live and verified. Backend regression file /app/backend/tests/test_iter68_ask_channels.py is idempotent (enables secrets in fixture, resets in teardown) and safe to re-run. SAP insight cache is confirmed 180s; if you need a fresh LLM call, change focus param."
+}

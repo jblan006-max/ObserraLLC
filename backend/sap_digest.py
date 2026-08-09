@@ -94,7 +94,8 @@ _DIGEST_DEFAULT = {"enabled": True, "recipients": [], "days": "everyday", "chat_
                    "voice_name": "onyx", "voice_speed": 1.0, "voice_attach": False,
                    "recap_enabled": False, "recap_day": "mon",
                    "voice_intro": "", "brand_logo_url": "", "brand_accent": "",
-                   "slack_ask": False, "slack_signing_secret": "", "slack_team_id": ""}
+                   "slack_ask": False, "slack_signing_secret": "", "slack_team_id": "",
+                   "teams_ask": False, "teams_ask_secret": "", "teams_ask_id": ""}
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 _TTS_VOICES = {"onyx", "alloy", "nova", "shimmer", "echo", "ash", "coral", "fable", "sage"}
 
@@ -171,6 +172,8 @@ class DigestConfigBody(BaseModel):
     brand_accent: str = ""
     slack_ask: bool = False
     slack_signing_secret: str = ""
+    teams_ask: bool = False
+    teams_ask_secret: str = ""
 
 
 @sap_router.get("/digest/config")
@@ -186,11 +189,13 @@ async def get_digest_config(user: dict = Depends(get_current_user)):
                                          {"_id": 0, "email": 1}).to_list(200)
     pub = {k: cfg[k] for k in _DIGEST_DEFAULT}
     pub["slack_signing_secret"] = ""  # never expose the raw secret to the client
+    pub["teams_ask_secret"] = ""
     return {"config": pub,
             "last_at": (state or {}).get("last_at"),
             "default_recipients": [r["email"] for r in default_recips],
             "fallback_chat_configured": fallback_chat,
             "slack_signing_secret_set": bool((cfg.get("slack_signing_secret") or "").strip()),
+            "teams_ask_secret_set": bool((cfg.get("teams_ask_secret") or "").strip()),
             "next_window": "Daily 08:00 UTC · platform scheduler"}
 
 
@@ -226,9 +231,12 @@ async def put_digest_config(body: DigestConfigBody, user: dict = Depends(require
         vspeed = 1.0
     existing = await db.sap_digest_config.find_one(
         {"org_id": org_id},
-        {"_id": 0, "evidence_prepared_by": 1, "slack_signing_secret": 1, "slack_team_id": 1}) or {}
+        {"_id": 0, "evidence_prepared_by": 1, "slack_signing_secret": 1, "slack_team_id": 1,
+         "teams_ask_secret": 1, "teams_ask_id": 1}) or {}
     incoming_secret = (body.slack_signing_secret or "").strip()
     new_secret = incoming_secret if incoming_secret else (existing.get("slack_signing_secret", "") or "")
+    incoming_teams = (body.teams_ask_secret or "").strip()
+    new_teams_secret = incoming_teams if incoming_teams else (existing.get("teams_ask_secret", "") or "")
     doc = {"org_id": org_id, "enabled": body.enabled, "recipients": recips, "days": days,
            "chat_alert": body.chat_alert, "teams_url": body.teams_url.strip(), "slack_url": body.slack_url.strip(),
            "score_alert": body.score_alert, "score_threshold": max(0, min(100, int(body.score_threshold or 60))),
@@ -243,7 +251,9 @@ async def put_digest_config(body: DigestConfigBody, user: dict = Depends(require
            "brand_logo_url": (body.brand_logo_url or "").strip()[:500],
            "brand_accent": _valid_hex(body.brand_accent),
            "slack_ask": bool(body.slack_ask), "slack_signing_secret": new_secret,
-           "slack_team_id": existing.get("slack_team_id", "")}
+           "slack_team_id": existing.get("slack_team_id", ""),
+           "teams_ask": bool(body.teams_ask), "teams_ask_secret": new_teams_secret,
+           "teams_ask_id": existing.get("teams_ask_id", "")}
     if existing.get("evidence_prepared_by", "") != prepared:
         doc["evidence_approved_by"] = ""
         doc["evidence_approved_at"] = ""
@@ -1261,8 +1271,32 @@ async def digest_ask_intro(user: dict = Depends(get_current_user)):
     return {"greeting": greeting, "suggestions": _digest_ask_suggestions(ctx)}
 
 
-async def _run_digest_ask(org_id, question, session_id=None, actor="", channel="app"):
-    """Core grounded Q&A used by the in-app endpoint AND the Slack slash command (multi-turn)."""
+_ASK_SHORTCUTS = {
+    "top risks": "What are the top risks in this digest right now?",
+    "score": "What is the current governance score and is it expected to improve next week?",
+    "score trend": "What is the current governance score and is it expected to improve next week?",
+    "critical": "How many open Critical SoD conflicts are there and in which areas?",
+    "residual": "Which terminated identities still have residual SAP access?",
+    "residual access": "Which terminated identities still have residual SAP access?",
+    "priorities": "What should we prioritise remediating this week?",
+    "auto": "How many auto-remediations happened in the last 24 hours?",
+}
+
+
+def _expand_shortcut(text):
+    """Map a one-tap shortcut keyword to a full grounded question (else return text unchanged)."""
+    return _ASK_SHORTCUTS.get((text or "").strip().lower(), text)
+
+
+async def _log_ask(org_id, source, user_name, question, answer, model):
+    """Record a Slack/Teams 'ask the digest' Q&A for the in-app answer log (No-Mock — real questions)."""
+    await db.sap_ask_log.insert_one({
+        "org_id": org_id, "source": source, "user_name": user_name or "leader",
+        "question": question, "answer": answer, "model": model, "at": _now().isoformat()})
+
+
+async def _run_digest_ask(org_id, question, session_id=None, actor="", channel="app", timeout=20):
+    """Core grounded Q&A used by the in-app endpoint AND the Slack/Teams commands (multi-turn)."""
     await _ensure(org_id)
     q = (question or "").strip()[:500]
     if not q:
@@ -1297,7 +1331,7 @@ async def _run_digest_ask(org_id, question, session_id=None, actor="", channel="
                     collected.append(ev.content)
                 elif isinstance(ev, StreamDone):
                     break
-        await asyncio.wait_for(_run(), timeout=20)
+        await asyncio.wait_for(_run(), timeout=timeout)
         answer = "".join(collected).strip()
         if answer:
             model = "openai/gpt-5.4"
@@ -1398,23 +1432,128 @@ async def slack_ask(request: Request, background: BackgroundTasks):
                         "Ask an admin to enable Slack Ask on the SoD Command Center and paste the app's signing secret."}
     from urllib.parse import parse_qs
     form = {k: v[0] for k, v in parse_qs(raw.decode()).items()}
-    question = (form.get("text") or "").strip()
+    question = _expand_shortcut((form.get("text") or "").strip())
     response_url = form.get("response_url", "")
     user_name = form.get("user_name", "leader")
     team_id = form.get("team_id", "")
     if team_id:
         await db.sap_digest_config.update_one({"org_id": org_id}, {"$set": {"slack_team_id": team_id}})
     if not question:
+        shortcuts = " · ".join(f"`{k}`" for k in list(_ASK_SHORTCUTS)[:5])
         ctx = await _digest_ai_context(org_id)
         sugg = "\n".join(f"• {s}" for s in _digest_ask_suggestions(ctx))
         return {"response_type": "ephemeral",
-                "text": f"Ask me about the SAP Access Governance digest. For example:\n{sugg}"}
+                "text": f"Ask me about the SAP Access Governance digest. One-tap shortcuts: {shortcuts}\n{sugg}"}
     if response_url:
         background.add_task(_slack_answer_and_respond, org_id, question, response_url, user_name)
         return {"response_type": "ephemeral",
                 "text": ":hourglass_flowing_sand: Analyzing the live SAP access governance digest…"}
     res = await _run_digest_ask(org_id, question, actor=f"slack:{user_name}", channel="slack")
+    await _log_ask(org_id, "slack", user_name, question, res["answer"], res["model"])
     return {"response_type": "in_channel", "text": res["answer"]}
+
+
+class SlackTestBody(BaseModel):
+    question: str = "What are the top risks in this digest right now?"
+
+
+@sap_router.post("/slack/test")
+async def slack_ask_test(body: SlackTestBody, user: dict = Depends(require_roles("admin"))):
+    """Admin round-trip check: runs the grounded ask and (if a dedicated Slack webhook is set)
+    posts the answer to Slack so the admin can confirm the whole pipeline right after setup."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    cfg = await _get_digest_config(org_id)
+    q = _expand_shortcut((body.question or "").strip() or "What are the top risks in this digest right now?")
+    res = await _run_digest_ask(org_id, q, actor=f"slack-test:{user['email']}", channel="slack-test")
+    await _log_ask(org_id, "test", user["email"], q, res["answer"], res["model"])
+    slack_url = (cfg.get("slack_url") or "").strip()
+    posted = False
+    if slack_url:
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.post(slack_url, json={"text": f"*SAP Access Governance — Slack Ask test*\n>{q}\n{res['answer']}"})
+                posted = r.status_code < 400
+        except Exception:
+            posted = False
+    return {"ok": True, "question": q, "answer": res["answer"], "model": res["model"],
+            "signing_secret_set": bool((cfg.get("slack_signing_secret") or "").strip()),
+            "webhook_configured": bool(slack_url), "webhook_posted": posted}
+
+
+@sap_router.get("/ask-log")
+async def sap_ask_log(source: str = "", limit: int = 50, user: dict = Depends(get_current_user)):
+    """Recent Slack/Teams 'ask the digest' questions + answers — a leadership self-service log."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    q = {"org_id": org_id}
+    if source in ("slack", "teams", "test"):
+        q["source"] = source
+    rows = await db.sap_ask_log.find(q, {"_id": 0}).sort("at", -1).to_list(max(1, min(200, limit)))
+    total = await db.sap_ask_log.count_documents({"org_id": org_id})
+    agg = await db.sap_ask_log.aggregate([
+        {"$match": {"org_id": org_id}},
+        {"$group": {"_id": "$source", "n": {"$sum": 1}}}]).to_list(20)
+    by_source = {(a["_id"] or "?"): a["n"] for a in agg}
+    return {"entries": rows, "total": total, "by_source": by_source}
+
+
+# ── Teams Ask — inbound Microsoft Teams Outgoing Webhook (HMAC) grounded in the digest ──
+def _verify_teams_sig(secret_b64, body_bytes, auth_header):
+    """Verify a Microsoft Teams Outgoing Webhook HMAC signature (Authorization: HMAC <base64>)."""
+    import hmac
+    import hashlib
+    import base64
+    if not (secret_b64 and auth_header):
+        return False
+    provided = auth_header.strip()
+    if provided.upper().startswith("HMAC "):
+        provided = provided[5:].strip()
+    try:
+        key = base64.b64decode(secret_b64)
+        digest = base64.b64encode(hmac.new(key, body_bytes, hashlib.sha256).digest()).decode()
+        return hmac.compare_digest(digest, provided)
+    except Exception:
+        return False
+
+
+async def _resolve_teams_org(body_bytes, auth_header):
+    """Find the org whose configured Teams HMAC secret validates this request (No-Mock)."""
+    cursor = db.sap_digest_config.find(
+        {"teams_ask": True, "teams_ask_secret": {"$nin": ["", None]}},
+        {"_id": 0, "org_id": 1, "teams_ask_secret": 1})
+    async for c in cursor:
+        if _verify_teams_sig(c.get("teams_ask_secret", ""), body_bytes, auth_header):
+            return c["org_id"]
+    return None
+
+
+@sap_router.post("/teams/ask")
+async def teams_ask(request: Request):
+    """Microsoft Teams Outgoing Webhook endpoint. Authenticity is verified via the org's Teams HMAC
+    secret; answers synchronously (Teams requires an immediate reply) grounded in the live snapshot."""
+    import json as _json
+    import re as _re
+    raw = await request.body()
+    auth = request.headers.get("Authorization", "")
+    org_id = await _resolve_teams_org(raw, auth)
+    if not org_id:
+        return {"type": "message",
+                "text": "This Teams webhook isn't linked to a SAP UAC workspace yet, or the HMAC secret doesn't match. "
+                        "Ask an admin to enable Teams Ask on the SoD Command Center and paste the outgoing-webhook secret."}
+    try:
+        payload = _json.loads(raw.decode() or "{}")
+    except Exception:
+        payload = {}
+    text = _expand_shortcut(_re.sub(r"<at>.*?</at>", "", (payload.get("text") or "")).strip())
+    user_name = ((payload.get("from") or {}).get("name")) or "leader"
+    if not text:
+        ctx = await _digest_ai_context(org_id)
+        sugg = "\n".join(f"- {s}" for s in _digest_ask_suggestions(ctx))
+        return {"type": "message", "text": f"Ask me about the SAP Access Governance digest. For example:\n{sugg}"}
+    res = await _run_digest_ask(org_id, text, actor=f"teams:{user_name}", channel="teams", timeout=8)
+    await _log_ask(org_id, "teams", user_name, text, res["answer"], res["model"])
+    return {"type": "message", "text": res["answer"]}
 
 
 # ── Chat Export (PDF + email the AI Q&A thread, stamped to the audit trail) ────

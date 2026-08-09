@@ -4,12 +4,13 @@ import { StatCard, Spinner } from "@/components/dash";
 import { SapInsight } from "@/components/SapInsight";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Workflow, CheckCircle2, Timer, Zap, ArrowRight, Download, FileText } from "lucide-react";
+import { Search, Workflow, CheckCircle2, Timer, Zap, ArrowRight, Download, FileText, MessagesSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
 const SYS_COLOR = { ServiceNow: "150 60% 50%", ADP: "330 82% 60%", IZ8: "265 80% 66%", SAP: "210 92% 62%", "AD/Entra": "35 90% 55%" };
 const PFX = { REQ: "142 70% 45%", INC: "0 84% 60%", CHG: "35 90% 55%" };
+const SRC = { slack: "265 80% 66%", teams: "210 92% 62%", test: "142 70% 45%", app: "220 10% 55%" };
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
 const Sys = ({ s }) => <span className="text-[9px] font-mono px-1.5 py-0.5 rounded" style={{ background: `hsl(${SYS_COLOR[s] || "220 10% 55%"} / 0.15)`, color: `hsl(${SYS_COLOR[s] || "220 10% 55%"})` }}>{s}</span>;
 
@@ -20,6 +21,7 @@ export default function WorkflowActivity() {
   const [system, setSystem] = useState("all");
   const [days, setDays] = useState("0");
   const [detail, setDetail] = useState(null);
+  const [askLog, setAskLog] = useState(null);
 
   const load = useCallback(async () => {
     const p = new URLSearchParams();
@@ -31,6 +33,7 @@ export default function WorkflowActivity() {
     setD(data);
   }, [q, prefix, system, days]);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { api.get("/sap/ask-log?limit=25").then((r) => setAskLog(r.data)).catch(() => {}); }, []);
   useEffect(() => {
     const h = () => load();
     window.addEventListener("sap-data-changed", h);
@@ -80,6 +83,31 @@ export default function WorkflowActivity() {
         <StatCard label="Last 24 hours" value={s.last_24h} sub="Workflows opened" accent="210 92% 62%" icon={Zap} testid="wf-last24" />
         <StatCard label="Avg fulfilment" value={`${s.avg_duration_sec}s`} sub="Open → auto-close" accent="35 90% 55%" icon={Timer} testid="wf-duration" />
       </div>
+
+      {askLog && askLog.total > 0 && (
+        <div className="bg-card fact-border rounded-xl p-4" data-testid="ask-log-card">
+          <div className="flex items-center gap-2 mb-1 flex-wrap">
+            <MessagesSquare className="w-4 h-4 text-primary" />
+            <h2 className="font-head font-bold text-sm">Ask the Digest — Slack / Teams answers</h2>
+            <span className="text-[10px] font-mono text-muted-foreground">{askLog.total} asked · {Object.entries(askLog.by_source || {}).map(([k, v]) => `${v} ${k}`).join(" · ")}</span>
+          </div>
+          <p className="text-[11px] text-muted-foreground mb-3">Every governance question leaders asked from Slack or Microsoft Teams, answered live from the SAP access snapshot.</p>
+          <div className="space-y-2 max-h-[360px] overflow-y-auto" data-testid="ask-log-list">
+            {askLog.entries.map((e, i) => (
+              <div key={i} className="rounded-lg border border-border/60 bg-background/40 p-2.5" data-testid={`ask-log-${i}`}>
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full" style={{ background: `hsl(${SRC[e.source] || "220 10% 55%"} / 0.15)`, color: `hsl(${SRC[e.source] || "220 10% 55%"})` }}>{e.source}</span>
+                  <span className="text-xs font-medium">{e.user_name}</span>
+                  <div className="flex-1" />
+                  <span className="text-[10px] text-muted-foreground">{fmtDT(e.at)}</span>
+                </div>
+                <div className="text-xs text-foreground/90"><span className="text-muted-foreground">Q · </span>{e.question}</div>
+                <div className="text-xs text-foreground/80 mt-0.5"><span className="text-muted-foreground">A · </span>{e.answer}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="bg-card fact-border rounded-xl">
         <div className="flex flex-wrap items-center gap-2 p-3 border-b border-border">
