@@ -370,6 +370,15 @@ Follow-up batch after Slack Ask. All No-Mock (real HMAC, real LLM grounded answe
 - **Performance (Obserra parity)**: `GET /api/sap/insight` now cached 180s per (org, focus) in `_SAP_INSIGHT_CACHE` — cold ~5s LLM → cached ~0.13s (40×). The AI card streams async and never blocks page render; `_correlate`-backed endpoints already ~0.11s. Mobile (390px) verified: shortcuts stack, cards fit, inputs truncate, no horizontal overflow.
 - VERIFIED iteration_68: backend 15/15 pytest (`tests/test_ask_channels.py` + tester's `test_iter68_ask_channels.py`), frontend e2e (Slack+Teams setup + test-result + Workflow ask-log + persistence), 14-route regression 0 pageerrors, insight cache confirmed. Demo org reset: slack_ask & teams_ask OFF, both secrets cleared.
 
+## SAP UAC — Multi-turn ask, rate-limit, Teams test, Ask Analytics + Obserra-parity AI Fix (Jun 2026)
+User directives: "make everything like Obserra — cards open with action buttons + AI recommends how to fix", "brand must be consistent", "save this format for the next app" (see `/app/memory/OBSERRA_PATTERN.md`).
+- **Multi-turn conversation (no new credentials)**: Slack keys the session by `team+channel+user`, Teams by `conversation.id` — consecutive `/askdigest` (or @mention) questions continue the thread via `_run_digest_ask` history. `reset`/`new`/`clear` starts a fresh thread. (Full threaded bot replies would need Slack Events API + bot token / Teams Bot Framework — deferred.)
+- **Abuse guard**: `_rate_limited` in-memory sliding window (20 req / 60s per org) on the public `/slack/ask` + `/teams/ask` AFTER HMAC verification; returns a friendly throttle message. Verified 9/26 throttled.
+- **Teams test button**: `POST /api/sap/teams/test` (admin) mirrors slack/test — grounded answer + posts to `teams_url` (MessageCard) if set; UI `teams-ask-test` + `teams-ask-test-result` on the Teams Ask card.
+- **Ask Analytics**: `GET /api/sap/ask-analytics` → `{total, by_source, top_questions[], top_askers[]}` (Mongo aggregation); shown on Workflow Activity (`ask-analytics`, `ask-top-q-*`, `ask-top-user-*`). Also fixed a dropped `_log_ask` in the Slack background responder so real (response_url) Slack answers are logged.
+- **Obserra-parity AI Fix (the big one)**: NEW `POST /api/sap/fix {entity, ref}` (entity ∈ identity|conflict|role|account) → grounded `{rating, score, rationale[], recommendation, steps[], model}`, cached 180s per entity, deterministic fallback. Reusable `components/SapAIFix.jsx` (mirrors `AIFix.jsx`). Wired into the bespoke detail modals that lacked it: **Identities** (`entity=identity`) and **RoleIntelligence** (`entity=role`). Pages using the shared app-wide `RiskDetailModal`/DeepDive (SodCommandCenter, PrivilegedAccess, AccessMonitoring, Lifecycle, SapOverview) already show AI brief + grounded recommendations + action hub — confirmed at parity. Every SAP page already has the top `SapInsight` AI card.
+- Test harness: `tests/test_ask_multiturn.py` (multi-turn, reset, rate-limit, teams-test, analytics). `/api/sap/fix` verified via curl (identity P-0008 Critical 87 grounded; conflict Critical 92; cache 0.09s; bad ref 404).
+
 
 
 
