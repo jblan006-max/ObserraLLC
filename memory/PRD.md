@@ -304,5 +304,15 @@ Delivered the 4 user-requested governance-reporting features (all live, no mocks
 - iter61 fix: `DigestConfigBody` Pydantic model had silently NOT persisted the 5 new fields on first edit → PUT `/digest/config` 500. Re-applied; PUT now 200 and config persists (verified via curl). Frontend `digest-save` error toast no longer misreports 500 as "admin only".
 - Testing: frontend testing agent verified all 22 new data-testids present/interactive, downloads + filtered export + annotations + tooltip working, chat webhooks not regressed (iteration_61.json). Backend curl-verified 100%.
 
+## SAP UAC — Alert History + Custom Thresholds + Evidence Signoff + Evidence Preview + "Why did the score move?" AI + Audit-Log AI box (Jun 2026, iteration_62)
+Delivered 5 user-requested governance features + extended the AI box to Audit Log (all live, no mocks; frontend agent 100% pass, iteration_62.json):
+- **Custom per-severity thresholds** — `sev_thresholds` {Critical:25, High:50} on the digest config alongside `score_threshold`. `_check_score_alert` now returns a `reasons[]` list and fires when the governance score is below target OR any severity's open-conflict count exceeds its limit. UI: `sev-threshold-Critical`/`sev-threshold-High` inputs in the score-alert card.
+- **Alert History** — every fired alert is written to `sap_score_alert_log` (score, date, reasons, posted). `GET /api/sap/scorecard/alerts`. UI: `score-alert-history` "Recent alerts" list; `score-alert-check` toast now lists the exact reasons that tripped.
+- **Evidence Signoff** — `_sod_evidence_pdf(rows, summary, signed_by)` stamps a green "REVIEWED & SIGNED — <name> · <date>" box (or a blank wet-sign line when unsigned) on the last PDF page. `evidence_signed_by` config field + `evidence-signed-by` input; flows into `GET /sod-evidence/export?signed_by=`, `POST /sod-evidence/send` (SodEvidenceBody), and the weekly cron. PDF stamp visually verified.
+- **Evidence Preview** — `GET /api/sap/sod-evidence/preview` returns the email HTML + summary + first 25 conflicts + recipients + send-day + signed_by. UI: `evidence-preview` button → `evidence-preview-dialog` with email body, meta line, and `evidence-preview-table`.
+- **"Why did the score move?" AI summary** — `GET /api/sap/scorecard/why` returns a one-sentence LLM (openai/gpt-5.4) explanation grounded in the 8-week deltas, with `_score_why_fallback` deterministic fallback. UI: `scorecard-why` box above the trend + `scorecard-why-refresh`.
+- **Audit Log AI box** — added `<SapInsight dashboard="Audit Log" slug="audit-log" />` so the Obserra-standard AI analyst box now appears on the Audit Log page too (chosen scope: the one remaining SAP-data page; Team/Settings/Marketplace/Billing intentionally left without it as non-dashboard admin pages).
+- iter62 fixes: two silent `search_replace` non-persists caught & re-applied (the `/scorecard/alerts` route and the `scorecard-why` JSX box); one orphaned-garbage cleanup after an append. All verified via curl + PDF render + frontend agent.
+
 
 
