@@ -77,3 +77,11 @@
 - "Assigned to me" watchlist lens: `watchlist-mine-toggle` filters pinned areas to owner == logged-in email (`useAuth`).
 - State consolidation refactor: new `context/SodContext.jsx` (`SodProvider`/`useSod`) replaces 50+ prop pass-throughs to the 5 SoD cards. Regression clean (iteration_72 frontend 100%).
 
+
+## Jun 2026 — Owner Leaderboard + Board-Pack on-demand + Ticket live-refresh + Digest deep-links (iteration_73)
+- Owner Accountability Leaderboard: `GET /api/sap/watchlist/leaderboard` + `SodOwnerLeaderboard.jsx` — ranked owners by open Critical SoD, unowned-Critical tile, expandable per-area breakdown.
+- Board Pack on-demand: `GET /api/sap/board-pack/preview` + admin `POST /api/sap/board-pack/send` + `SodBoardPackCard.jsx` (preview modal + one-tap send; records monthly log).
+- Ticket timeline Live Refresh: watchlist ticket modal polls `/sap/ticket/{number}` every 4s while open ("auto-refreshing" chip).
+- Owner Digest Deep-Links: `_owner_digest_html` area rows link to `/app/sod?wl=<area>`; watchlist scrolls to + ring-highlights that card.
+- Verified frontend 100% (iteration_73). Fixed a transient `cardRef` runtime error from a silent partial edit.
+
