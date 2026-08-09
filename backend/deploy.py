@@ -338,16 +338,23 @@ def _safe_backup_path(filename: str) -> str:
     return os.path.join(_BACKUP_DIR, name)
 
 
+def _meta_path(fname: str) -> str:
+    return os.path.join(_BACKUP_DIR, os.path.basename(fname) + ".meta.json")
+
+
 def _iso_from_mtime(fp):
     from datetime import datetime, timezone
     return datetime.fromtimestamp(os.path.getmtime(fp), tz=timezone.utc).isoformat()
 
 
-async def backup_org(org_id: str) -> dict:
+async def backup_org(org_id: str, tag: str = "manual") -> dict:
     import gzip
-    from bson import json_util
+    import json
+    from bson import json_util, ObjectId
     from db import db
     os.makedirs(_BACKUP_DIR, exist_ok=True)
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    org_name = org.get("name") or org_id
     names = [n for n in await db.list_collection_names() if not n.startswith("system.")]
     data, total = {}, 0
     for n in names:
@@ -355,29 +362,45 @@ async def backup_org(org_id: str) -> dict:
         if docs:
             data[n] = docs
             total += len(docs)
-    ts = _now_iso().replace(":", "").replace("-", "").replace("T", "")[:14]
-    fname = f"obserra-backup-{org_id}-{ts}.json.gz"
-    payload = {"_meta": {"org_id": org_id, "created_at": _now_iso(), "collections": len(data), "docs": total},
-               "collections": data}
+    import uuid
+    stamp = _now_iso().replace(":", "").replace("-", "").replace("T", "").replace(".", "").replace("+", "")[:20]
+    fname = f"obserra-backup-{org_id}-{stamp}-{uuid.uuid4().hex[:6]}.json.gz"
+    meta = {"org_id": org_id, "org_name": org_name, "created_at": _now_iso(),
+            "collections": len(data), "docs": total, "tag": tag}
+    payload = {"_meta": meta, "collections": data}
     fp = os.path.join(_BACKUP_DIR, fname)
     with gzip.open(fp, "wt", encoding="utf-8") as f:
         f.write(json_util.dumps(payload))
+    with open(_meta_path(fname), "w", encoding="utf-8") as f:
+        json.dump({**meta, "size": os.path.getsize(fp), "file": fname}, f)
     return {"file": fname, "size": os.path.getsize(fp), "collections": len(data),
-            "docs": total, "created_at": payload["_meta"]["created_at"]}
+            "docs": total, "org_name": org_name, "tag": tag, "created_at": meta["created_at"]}
 
 
 def _list_backup_files(org_id: str):
+    import json
     if not os.path.isdir(_BACKUP_DIR):
         return []
     out = []
     for fn in os.listdir(_BACKUP_DIR):
         if fn.startswith(f"obserra-backup-{org_id}-") and fn.endswith(".json.gz"):
             fp = os.path.join(_BACKUP_DIR, fn)
-            out.append({"file": fn, "size": os.path.getsize(fp), "created_at": _iso_from_mtime(fp)})
+            info = {"file": fn, "size": os.path.getsize(fp), "created_at": _iso_from_mtime(fp),
+                    "collections": None, "docs": None, "org_name": None, "tag": None}
+            mp = _meta_path(fn)
+            if os.path.exists(mp):
+                try:
+                    with open(mp, encoding="utf-8") as f:
+                        m = json.load(f)
+                    info.update(collections=m.get("collections"), docs=m.get("docs"),
+                                org_name=m.get("org_name"), tag=m.get("tag"))
+                except Exception:
+                    pass
+            out.append(info)
     return sorted(out, key=lambda x: x["file"], reverse=True)
 
 
-async def restore_org(org_id: str, filename: str) -> dict:
+async def restore_org(org_id: str, filename: str, auto_backup: bool = True) -> dict:
     import gzip
     from bson import json_util
     from db import db
@@ -388,6 +411,11 @@ async def restore_org(org_id: str, filename: str) -> dict:
         payload = json_util.loads(f.read())
     if payload.get("_meta", {}).get("org_id") != org_id:
         raise HTTPException(400, "Backup belongs to a different organization")
+    # Snapshot the CURRENT state first so a restore can never lose live data.
+    pre = None
+    if auto_backup:
+        pre = await backup_org(org_id, tag="pre-restore")
+        _prune_backups(org_id)
     cols = payload.get("collections", {})
     restored = 0
     for name, docs in cols.items():
@@ -395,15 +423,17 @@ async def restore_org(org_id: str, filename: str) -> dict:
         if docs:
             await db[name].insert_many(docs)
             restored += len(docs)
-    return {"ok": True, "restored_docs": restored, "collections": len(cols)}
+    return {"ok": True, "restored_docs": restored, "collections": len(cols),
+            "pre_restore_backup": (pre or {}).get("file")}
 
 
 def _prune_backups(org_id: str, keep: int = 14):
     for old in _list_backup_files(org_id)[keep:]:
-        try:
-            os.remove(os.path.join(_BACKUP_DIR, old["file"]))
-        except Exception:
-            pass
+        for p in (os.path.join(_BACKUP_DIR, old["file"]), _meta_path(old["file"])):
+            try:
+                os.remove(p)
+            except Exception:
+                pass
 
 
 async def backup_all_orgs():
@@ -440,6 +470,9 @@ async def list_backups(user: dict = Depends(get_current_user)):
 async def restore_backup(body: dict, user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(403, "Only admins can restore backups")
+    if (body.get("confirm") or "").strip().upper() != "RESTORE":
+        raise HTTPException(400, "Type RESTORE to confirm — restoring replaces the current data "
+                                 "(a pre-restore backup is taken automatically first).")
     return await restore_org(user["org_id"], body.get("file", ""))
 
 
@@ -454,6 +487,89 @@ async def download_backup(file: str, user: dict = Depends(get_current_user)):
         content = f.read()
     return StreamingResponse(io.BytesIO(content), media_type="application/gzip",
                              headers={"Content-Disposition": f'attachment; filename="{os.path.basename(fp)}"'})
+
+
+# --- Deep system-health evaluation + Slack/Teams degraded alerts ---
+async def evaluate_org_health(org_id: str) -> dict:
+    """Per-org system-health snapshot (DB, scheduler, connectors) for the header pill + alerts."""
+    import time
+    from db import db
+    issues = []
+    t0 = time.perf_counter()
+    db_ok = True
+    try:
+        await db.command("ping")
+    except Exception:
+        db_ok = False
+    latency = round((time.perf_counter() - t0) * 1000, 1)
+    if not db_ok:
+        issues.append("Database is not responding")
+    cron_ok = bool(os.environ.get("WEBHOOK_CRON_SECRET"))
+    if not cron_ok:
+        issues.append("Scheduler is not armed")
+    degraded = []
+    try:
+        states = await db.connector_state.find({"org_id": org_id}).to_list(500)
+        for st in states:
+            if st.get("state") in ("degraded", "unreachable", "error", "auth_failed"):
+                degraded.append(st.get("cid") or "connector")
+    except Exception:
+        pass
+    if degraded:
+        issues.append(f"{len(degraded)} connector(s) degraded: {', '.join(degraded[:5])}")
+    status = "down" if not db_ok else ("degraded" if issues else "ok")
+    return {"status": status, "db": db_ok, "db_latency_ms": latency, "scheduler_armed": cron_ok,
+            "degraded_connectors": degraded, "issues": issues, "healthy": not issues}
+
+
+async def run_health_alerts():
+    """Folded into the daily cron: alert Slack/Teams + in-app when an org's DB, a connector,
+    or the scheduler is degraded (deduped once per day)."""
+    import logging
+    from datetime import datetime, timezone
+    from db import db
+    from self_scan import _post_chat_alert
+    from kernel import notifications
+    today = datetime.now(timezone.utc).date().isoformat()
+    orgs = await db.organizations.find({}, {"_id": 1}).to_list(1000)
+    for o in orgs:
+        oid = str(o["_id"])
+        try:
+            h = await evaluate_org_health(oid)
+            if h["healthy"]:
+                continue
+            body = " · ".join(h["issues"])
+            await notifications.create(oid, "system", "System health degraded", body,
+                                       ref="system-health", dedupe_key=f"health-degraded:{today}")
+            await _post_chat_alert(oid, "⚠ System health degraded",
+                                   body + "\n\nOpen System Health in Obserra SAP UAC to review and remediate.")
+        except Exception as e:
+            logging.getLogger("deploy").warning(f"health alert failed for org {oid}: {e}")
+
+
+@deploy_router.get("/health-detail")
+async def health_detail(user: dict = Depends(get_current_user)):
+    """Per-org deep health snapshot for the header status pill."""
+    return await evaluate_org_health(user["org_id"])
+
+
+@deploy_router.post("/health-alert-run")
+async def health_alert_run(user: dict = Depends(get_current_user)):
+    """Admin: evaluate this org's health now and push a Slack/Teams alert if degraded."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from bson import ObjectId
+    from self_scan import _post_chat_alert
+    h = await evaluate_org_health(user["org_id"])
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    alerts = org.get("scan_alerts") or {}
+    has_webhook = bool(alerts.get("teams_url") or alerts.get("slack_url")
+                       or (org.get("live_teams") or {}).get("webhook_url"))
+    alerted = False
+    if not h["healthy"] and has_webhook:
+        await _post_chat_alert(user["org_id"], "⚠ System health degraded", " · ".join(h["issues"]))
+        alerted = True
+    return {**h, "webhook_configured": has_webhook, "alerted": alerted}
 
 
 _TOUR_DIR = os.path.join(_ROOT, "frontend", "public", "tour")

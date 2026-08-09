@@ -41,6 +41,9 @@ export default function SystemHealth() {
   const [backingUp, setBackingUp] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
   const logRef = useRef(null);
+  const [restoreTarget, setRestoreTarget] = useState(null);
+  const [confirmText, setConfirmText] = useState("");
+  const [restoring, setRestoring] = useState(false);
 
   const loadHealth = useCallback(async () => {
     try { const { data } = await api.get("/health"); setHealth(data); } catch { setHealth((h) => h || { status: "degraded", checks: {} }); }
@@ -91,13 +94,17 @@ export default function SystemHealth() {
     setBackingUp(false);
   };
 
-  const restore = async (file) => {
-    if (!window.confirm(`Restore from ${file}? This replaces this organization's current data with the snapshot.`)) return;
+  const openRestore = (b) => { setRestoreTarget(b); setConfirmText(""); };
+  const doRestore = async () => {
+    if (confirmText.trim().toUpperCase() !== "RESTORE" || !restoreTarget) return;
+    setRestoring(true);
     try {
-      const { data } = await api.post("/deploy/restore", { file });
-      toast.success("Restore complete", { description: `${data.restored_docs} document(s) across ${data.collections} collection(s) restored.` });
-      await loadHealth();
+      const { data } = await api.post("/deploy/restore", { file: restoreTarget.file, confirm: "RESTORE" });
+      toast.success("Restore complete", { description: `${data.restored_docs} document(s) restored · current data was snapshotted to ${data.pre_restore_backup || "a pre-restore backup"}.` });
+      setRestoreTarget(null);
+      await Promise.all([loadHealth(), loadBackups()]);
     } catch (e) { toast.error(e.response?.data?.detail || "Restore failed"); }
+    setRestoring(false);
   };
 
   const download = async (file) => {
@@ -218,17 +225,22 @@ export default function SystemHealth() {
           {backups.length ? (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
-                <thead><tr className="text-left text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border"><th className="p-2">Snapshot</th><th className="p-2">Size</th><th className="p-2">Created</th><th className="p-2 text-right">Actions</th></tr></thead>
+                <thead><tr className="text-left text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border"><th className="p-2">Snapshot</th><th className="p-2">Organization</th><th className="p-2">Contents</th><th className="p-2">Size</th><th className="p-2">Created</th><th className="p-2 text-right">Actions</th></tr></thead>
                 <tbody>
                   {backups.map((b) => (
                     <tr key={b.file} className="border-b border-border/50" data-testid={`sh-backup-row-${b.file}`}>
-                      <td className="p-2 font-mono text-xs truncate max-w-[280px]">{b.file}</td>
+                      <td className="p-2 font-mono text-xs truncate max-w-[240px]">
+                        {b.file}
+                        {b.tag && <span className={`ml-2 text-[9px] font-mono px-1.5 py-0.5 rounded ${b.tag === "pre-restore" ? "bg-high/15 text-high" : b.tag === "nightly" ? "bg-ai/15 text-ai" : "bg-secondary text-muted-foreground"}`} data-testid={`sh-backup-tag-${b.file}`}>{b.tag}</span>}
+                      </td>
+                      <td className="p-2 text-xs" data-testid={`sh-backup-org-${b.file}`}>{b.org_name || "—"}</td>
+                      <td className="p-2 text-xs text-muted-foreground font-mono" data-testid={`sh-backup-contents-${b.file}`}>{b.docs != null ? `${b.docs} docs · ${b.collections} cols` : "—"}</td>
                       <td className="p-2 font-mono text-xs">{fmtBytes(b.size)}</td>
                       <td className="p-2 text-xs text-muted-foreground">{fmtDT(b.created_at)}</td>
                       <td className="p-2">
                         <div className="flex items-center justify-end gap-1.5">
-                          <button data-testid={`sh-backup-download-${b.file}`} onClick={() => download(b.file)} className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-secondary/60 transition-colors" title="Download"><DownloadCloud className="w-4 h-4" /></button>
-                          <button data-testid={`sh-backup-restore-${b.file}`} onClick={() => restore(b.file)} className="p-1.5 rounded-md text-muted-foreground hover:text-high hover:bg-secondary/60 transition-colors" title="Restore"><RotateCcw className="w-4 h-4" /></button>
+                          <button data-testid={`sh-backup-download-${b.file}`} onClick={() => download(b.file)} className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-secondary/60 transition-colors" title={`Download ${b.org_name || ""}${b.docs != null ? ` · ${b.docs} docs` : ""}`}><DownloadCloud className="w-4 h-4" /></button>
+                          <button data-testid={`sh-backup-restore-${b.file}`} onClick={() => openRestore(b)} className="p-1.5 rounded-md text-muted-foreground hover:text-high hover:bg-secondary/60 transition-colors" title="Restore"><RotateCcw className="w-4 h-4" /></button>
                         </div>
                       </td>
                     </tr>
@@ -242,6 +254,37 @@ export default function SystemHealth() {
               <p className="text-xs text-muted-foreground max-w-xs">No backups yet — the nightly job runs with the daily maintenance cron, or click "Back up now" to create one immediately.</p>
             </div>
           )}
+        </div>
+      )}
+
+      {restoreTarget && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" data-testid="sh-restore-modal" onClick={() => !restoring && setRestoreTarget(null)}>
+          <div className="bg-card fact-border rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-2">
+              <AlertTriangle className="w-5 h-5 text-high" />
+              <h3 className="font-head font-bold text-lg">Restore this snapshot?</h3>
+            </div>
+            <p className="text-sm text-muted-foreground mb-3">
+              This replaces the current data for <b className="text-foreground">{restoreTarget.org_name || "this organization"}</b> with
+              <span className="font-mono text-xs"> {restoreTarget.file}</span>
+              {restoreTarget.docs != null && <> ({restoreTarget.docs} docs · {restoreTarget.collections} collections)</>}.
+            </p>
+            <div className="rounded-md border border-ai/30 bg-ai/5 px-3 py-2 text-xs text-ai mb-4 flex items-start gap-2" data-testid="sh-restore-autobackup-note">
+              <HardDriveDownload className="w-4 h-4 mt-0.5 shrink-0" />
+              <span>A <b>pre-restore backup</b> of the current data is taken automatically first, so you can always roll back.</span>
+            </div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1.5">Type <span className="font-mono text-foreground">RESTORE</span> to confirm</label>
+            <input data-testid="sh-restore-confirm-input" autoFocus value={confirmText} onChange={(e) => setConfirmText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") doRestore(); }}
+              className="w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-high transition-shadow mb-4" placeholder="RESTORE" />
+            <div className="flex items-center justify-end gap-2">
+              <button data-testid="sh-restore-cancel" onClick={() => setRestoreTarget(null)} disabled={restoring} className="px-3 py-2 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50">Cancel</button>
+              <button data-testid="sh-restore-confirm" onClick={doRestore} disabled={restoring || confirmText.trim().toUpperCase() !== "RESTORE"}
+                className="px-4 py-2 rounded-md bg-high text-white font-head font-bold text-sm flex items-center gap-2 disabled:opacity-40">
+                {restoring ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />} Restore now
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

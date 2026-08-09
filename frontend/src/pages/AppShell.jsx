@@ -12,7 +12,7 @@ import { DeepDiveProvider } from "@/context/DeepDiveContext";
 import { InstallButton } from "@/components/InstallButton";
 import {
   LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
-  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp, ToggleRight, Activity,
+  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp, ToggleRight, Activity, AlertTriangle, CheckCircle2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 
@@ -135,6 +135,32 @@ function VersionBadge({ user, onNav }) {
     return <NavLink to="/app/system-health" onClick={onNav} data-testid="version-badge-link" className="block mb-2 hover:opacity-80 transition-opacity">{inner}</NavLink>;
   }
   return <div className="mb-2">{inner}</div>;
+}
+
+function HealthPill() {
+  const { user } = useAuth();
+  const [h, setH] = useState(null);
+  useEffect(() => {
+    if (user?.role !== "admin") return;
+    let alive = true;
+    const load = () => api.get("/deploy/health-detail").then(({ data }) => { if (alive) setH(data); }).catch(() => {});
+    load();
+    const t = setInterval(load, 30000);
+    return () => { alive = false; clearInterval(t); };
+  }, [user]);
+  if (user?.role !== "admin" || !h) return null;
+  const healthy = h.healthy;
+  const color = healthy ? "142 70% 45%" : h.status === "down" ? "0 84% 60%" : "35 90% 55%";
+  const Icon = healthy ? CheckCircle2 : AlertTriangle;
+  return (
+    <NavLink to="/app/system-health" data-testid="header-health-pill"
+      title={healthy ? "All systems healthy" : (h.issues || []).join(" · ")}
+      className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[11px] font-mono border transition-opacity hover:opacity-80"
+      style={{ background: `hsl(${color} / 0.12)`, borderColor: `hsl(${color} / 0.35)`, color: `hsl(${color})` }}>
+      <Icon className="w-3.5 h-3.5" />
+      <span>{healthy ? "Systems healthy" : "Degraded"}</span>
+    </NavLink>
+  );
 }
 
 function SidebarInner({ user, sub, owns, doLogout, onNav, onClose }) {
@@ -305,6 +331,7 @@ export default function AppShell() {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            <HealthPill />
             <InstallButton className="hidden sm:inline-flex" />
             <NotificationBell />
             <DualModeToggle />

@@ -386,8 +386,9 @@ async def daily_drift_digest(request: Request, background_tasks: BackgroundTasks
     background_tasks.add_task(_maybe_refresh_benchmarks)
     background_tasks.add_task(_signoff_reminders)
     background_tasks.add_task(_record_all_snapshots)
-    from deploy import backup_all_orgs
+    from deploy import backup_all_orgs, run_health_alerts
     background_tasks.add_task(backup_all_orgs)
+    background_tasks.add_task(run_health_alerts)
     return {"status": "accepted"}
 
 
