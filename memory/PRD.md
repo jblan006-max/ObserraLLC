@@ -342,7 +342,16 @@ Four user-approved add-ons (backend curl-verified; frontend testing_agent iterat
 - iter65 fix (QA agent): `History` lucide icon was used but not imported → 'Illegal constructor' crash of the Ask-AI dialog; added `History` to the lucide-react import.
 
 ## P2 Component Cleanup — DECLINED by user (Jun 2026)
-User chose to **skip** splitting `SodCommandCenter.jsx` (~970 lines) and `sap_digest.py` (~1540 lines) into sub-modules. Rationale: internal-only maintainability with real regression risk — the digest card is tightly coupled to `scorecard`/`dcfg` + ~15 shared handlers, the backend render builders are scattered (not contiguous), and the edit tool silently failed to persist on these two files 4× this session. App is stable and 100% green; revisit only if these files actively block future work.
+User chose to **skip** splitting `SodCommandCenter.jsx` (~1000 lines) and `sap_digest.py` (~1720 lines) into sub-modules. Rationale: internal-only maintainability with real regression risk — the digest card is tightly coupled to `scorecard`/`dcfg` + ~15 shared handlers, the backend render builders are scattered (not contiguous), and the edit tool silently failed to persist on these two files 4× this session. App is stable and 100% green; revisit only if these files actively block future work.
+
+## SAP UAC — Voice Preview + Thread Titles + Open Alerts + Share Briefing + Weekly Recap (Jun 2026, iteration_66)
+Five user-approved add-ons (backend curl-verified; frontend testing_agent iteration_66 = 100%, zero issues). All defaults per user choice.
+- **Voice Preview** — `GET /api/sap/digest/voice/sample?voice=` returns a short spoken sample (fixed phrase, `tts-1`, cached globally under org_id `_sample`). Frontend auto-plays it (via `new Audio()` + `previewAudioRef`) the moment a leader changes the `voice-name` Select.
+- **Thread Titles** — `POST /api/sap/digest/ask/rename {session_id, title}` stores `title` on `sap_digest_chat`; `digest_ask_history` now returns the stored title (+`custom` flag). UI: per-row rename button (`digest-ask-rename-i`) in the Ask-AI History list (window.prompt).
+- **Open Alerts** — `public_digest_share` detects the FIRST open (opens 0→1) and posts to the org's existing digest chat webhook via `_sap_post_chat` ("👁 Shared governance digest opened …token"). Backend-only; best-effort (no-op if no webhook).
+- **Share Briefing** — `POST /api/sap/digest/share-briefing {recipients[]}` creates a share, generates the voice mp3 (cfg voice/speed), and emails ONE message = `_governance_digest_html(data, share_url)` body + `.mp3` attachment. UI: `digest-share-briefing` button (recipients prompt prefilled from digest recipients); refreshes the shares list.
+- **Weekly Recap** — opt-in `recap_enabled` + `recap_day` in the digest config (validated against `_WEEKDAYS`). `run_sap_weekly_recap()` (registered in `scheduled.py` daily cron, gated by `weekday==recap_day`) aggregates the last 7 days of `sap_digest_chat` user questions (`_weekly_recap_data`), emails the top-6 most-asked to digest recipients (`_weekly_recap_html`). UI: `recap-config` block (`recap-toggle` + `recap-day`).
+- iter66 fix: the insert_text end-of-file append landed mid-`digest_voice` (earlier same-batch edits had shifted the line count); reconnected the function head to its body and removed the orphaned tail. Lesson: after same-batch edits shift line numbers, append to the true EOF (re-grep) rather than a stale line number.
 
 
 
