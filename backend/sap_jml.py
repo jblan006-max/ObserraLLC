@@ -1,5 +1,5 @@
 """Obserra SAP UAC — Joiner/Mover/Leaver lifecycle + Mover Auto-Strip rule (attached to the shared sap_router)."""
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import Depends, HTTPException
 from pydantic import BaseModel
@@ -155,7 +155,7 @@ class MoverRuleBody(BaseModel):
 
 
 @sap_router.get("/mover-rule")
-async def get_mover_rule(user: dict = Depends(get_current_user)):
+async def get_mover_rule(q: str = "", days: int = 0, user: dict = Depends(get_current_user)):
     org_id = user["org_id"]
     await _ensure(org_id)
     cfg = await _get_mover_rule(org_id)
@@ -166,9 +166,17 @@ async def get_mover_rule(user: dict = Depends(get_current_user)):
         birthright = {rc["ref"] for rc in ROLE_CATALOG if rc.get("dept") == p["department"]}
         if any(r not in birthright for a in p["accounts"] for r in a.get("roles", [])):
             candidates += 1
-    log = await db.sap_mover_autostrip_log.find({"org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(50)
+    query = {"org_id": org_id}
+    if days and days > 0:
+        query["at"] = {"$gte": (_now() - timedelta(days=days)).isoformat()}
+    log = await db.sap_mover_autostrip_log.find(query, {"_id": 0}).sort("at", -1).to_list(500)
+    if q:
+        ql = q.lower()
+        log = [l for l in log if ql in (f"{l.get('name','')} {l.get('department','')} {l.get('ticket_number','')} "
+                                        f"{' '.join(l.get('stripped_names', []))}").lower()]
     return {"config": cfg, "movers": len(movers), "candidates": candidates,
-            "log": log, "stripped_total": await db.sap_mover_autostrip_log.count_documents({"org_id": org_id})}
+            "log": log[:200], "filtered": len(log),
+            "stripped_total": await db.sap_mover_autostrip_log.count_documents({"org_id": org_id})}
 
 
 @sap_router.put("/mover-rule")

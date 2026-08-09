@@ -6,6 +6,8 @@ import { useDeepDive } from "@/context/DeepDiveContext";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -35,8 +37,18 @@ export default function Lifecycle() {
   const [stripBusy, setStripBusy] = useState(false);
   const [moverRule, setMoverRule] = useState(null);
   const [ruleBusy, setRuleBusy] = useState(false);
+  const [logQ, setLogQ] = useState("");
+  const [logDays, setLogDays] = useState(0);
   const load = useCallback(async () => { const { data } = await api.get("/sap/jml"); setD(data); }, []);
-  const loadRule = useCallback(async () => { try { const { data } = await api.get("/sap/mover-rule"); setMoverRule(data); } catch { /* ignore */ } }, []);
+  const loadRule = useCallback(async () => {
+    try {
+      const p = new URLSearchParams();
+      if (logQ) p.set("q", logQ);
+      if (logDays) p.set("days", String(logDays));
+      const { data } = await api.get(`/sap/mover-rule?${p.toString()}`);
+      setMoverRule(data);
+    } catch { /* ignore */ }
+  }, [logQ, logDays]);
   useEffect(() => { load(); }, [load]);
   useEffect(() => { loadRule(); }, [loadRule]);
   useEffect(() => {

@@ -1,0 +1,37 @@
+{
+  "summary": "Iteration 60 (SAP UAC — scorecard PDF, real trend, digest attach, mover-rule filters, weekly scorecard, backend modularization regression). Backend: all 16 pytest tests pass — PDF export returns 200 application/pdf with %PDF magic bytes, CSV export returns 200 text/csv, /api/sap/scorecard now returns trend_source='real' with 8 ascending governance_score points (32→53), governance-digest send returns 200, mover-rule accepts q/days filter params, and every endpoint across the split modules (sap_autoremediation, sap_jml, sap_workflow, sap_digest, sod/conflicts) returns 200. run_sap_weekly_scorecard is importable from both sap_digest and sap_uac. Frontend: SoD /app/sod scorecard card renders LIVE TREND chip, 8-week recharts trend, both CSV and PDF export buttons trigger real downloads (sap-governance-scorecard.pdf / .csv) with success toasts. Lifecycle /app/lifecycle mover-rule-toggle successfully enables auto-strip (2 movers cleaned, ServiceNow toast), and log rows mover-log-0/1 render. HOWEVER the two new filter controls promised for this iteration — data-testid=mover-log-search and data-testid=mover-log-days — are ENTIRELY MISSING from Lifecycle.jsx. The state hooks (logQ, logDays) and the loadRule() query-param wiring already exist, but the Input and Select JSX were never rendered in the mover-rule-report card header.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "Lifecycle.jsx / mover-rule-report",
+        "issue": "Rule Report filter controls not rendered. State (logQ/logDays) and API wiring (q/days query params in loadRule) exist, but the Input search box (data-testid=mover-log-search) and days Select (data-testid=mover-log-days) UI elements are absent from JSX. As a result, the promised filter feature is invisible to the user even when stripped_total>0 and log rows are showing.",
+        "selector": "[data-testid=mover-rule-report] header row (around Lifecycle.jsx line 230-233)",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter60_scorecard_pdf.py",
+    "/app/test_reports/pytest/iter60.xml"
+  ],
+  "action_items": [
+    "Add the filter row inside <div data-testid=mover-rule-report> in Lifecycle.jsx (around line 232). Suggested placement in the header flex-wrap: an <Input data-testid=mover-log-search value={logQ} onChange={e=>setLogQ(e.target.value)} placeholder='Search name / dept / role…'/> and a <Select value={String(logDays)} onValueChange={v=>setLogDays(Number(v))}><SelectTrigger data-testid=mover-log-days>…</SelectTrigger><SelectContent><SelectItem value='0'>All time</SelectItem><SelectItem value='7'>Last 7 days</SelectItem><SelectItem value='30'>Last 30 days</SelectItem><SelectItem value='90'>Last 90 days</SelectItem></SelectContent></Select>. Show these controls when moverRule.stripped_total>0 (matching req). Backend q/days filtering already works — verified via API.",
+    "Optionally re-inject the two carried-over roles (P-0045 Z_SD_BILLING, P-0046 Z_MM_PO_APPROVER) after iteration 60 verification so the mover-strip demo remains re-playable."
+  ],
+  "critical_code_review_comments": [
+    "sap_digest.py has a circular import when imported standalone (from sap_uac import sap_router, _audit) — only safe when the FastAPI app boots via server.py. Non-blocking today, but modules that own routes should ideally not need to reach back into sap_uac for _audit/sap_router. Consider moving those primitives to a shared module (e.g., sap_core) to eliminate the partial-init risk.",
+    "Lifecycle.jsx (363 lines) is close to the 700-line threshold but not over; keep an eye on it as more mover-rule controls land — split the mover-rule-report card into its own component when filters are added.",
+    "GET /api/sap/mover-rule?days=<non-int> returns 422 (FastAPI Query validation). Frontend already passes ints so this is fine, but consider accepting 'all' as a synonym for 0 for URL friendliness."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter60_scorecard_pdf.py"],
+  "success_rate": {"backend": "100%", "frontend": "80%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md) — verified working, cookie-based auth.",
+  "seed_data_creation": "Enabling mover-rule-toggle during testing strips carried-over roles from P-0045 (Vikram Okafor) and P-0046 (James Fischer). Per test_credentials.md, main agent may want to re-inject Z_SD_BILLING / Z_MM_PO_APPROVER after this iteration so the mover-strip demo remains re-playable.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend PDF/CSV export, real 8-week trend, digest attach, weekly scorecard job, and modular endpoints all confirmed 200 via /app/backend/tests/test_iter60_scorecard_pdf.py (16/16 pass). SoD /app/sod scorecard UI fully verified with real PDF+CSV downloads and LIVE TREND chip. ONLY outstanding gap: mover-log-search + mover-log-days filter controls are not rendered in Lifecycle.jsx — state and API wiring exist. After main agent lands the JSX, re-verify by toggling mover-rule-toggle (strips 2 movers), then confirm search/days controls appear, typing 'Vikram' narrows rows to mover-log-0 only, and days=7 refetches. Auto-strip toggle is currently ENABLED and history contains 2 log entries.",
+  "rca_of_the_issue": "Filter UI missing — root cause: implementer added logQ/logDays state + query params to loadRule() but skipped the JSX render step in the mover-rule-report card header. No functional impact on backend; purely a rendering gap in Lifecycle.jsx around line 230-233. Reproduction: login → /app/lifecycle → toggle mover-rule-toggle ON → inspect header of card with data-testid=mover-rule-report → observe absence of Input#mover-log-search and Select#mover-log-days. Mitigation: add the two components as described in action_items."
+}

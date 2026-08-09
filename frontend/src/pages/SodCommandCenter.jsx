@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send, Eye, Download, TrendingUp } from "lucide-react";
+import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send, Eye, Download, TrendingUp, FileText } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 
 const SEV = { Critical: "0 84% 60%", High: "35 90% 55%", Medium: "190 90% 50%", Low: "142 70% 45%" };
@@ -129,13 +129,13 @@ export default function SodCommandCenter() {
     catch { toast.error("Could not load preview"); }
     setPreviewBusy(false);
   };
-  const exportScorecard = async () => {
+  const exportScorecard = async (fmt = "csv") => {
     try {
-      const res = await api.get("/sap/scorecard/export?format=csv", { responseType: "blob" });
+      const res = await api.get(`/sap/scorecard/export?format=${fmt}`, { responseType: "blob" });
       const url = URL.createObjectURL(res.data);
-      const a = document.createElement("a"); a.href = url; a.download = "sap-governance-scorecard.csv"; a.click();
+      const a = document.createElement("a"); a.href = url; a.download = `sap-governance-scorecard.${fmt}`; a.click();
       URL.revokeObjectURL(url);
-      toast.success("Governance scorecard exported");
+      toast.success(`Governance scorecard exported (${fmt.toUpperCase()})`);
     } catch { toast.error("Export failed"); }
   };
   const toggleSev = (s) => { const cur = arem.config.severities; const next = cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]; saveArem({ severities: next.length ? next : ["Critical"] }); };
@@ -222,7 +222,8 @@ export default function SodCommandCenter() {
             <div className="flex items-center gap-2"><TrendingUp className="w-4 h-4 text-primary" /><h2 className="font-head font-bold text-base">Access Governance Scorecard</h2></div>
             <span data-testid="scorecard-source" className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-secondary text-muted-foreground">{scorecard.trend_source === "real" ? "LIVE TREND" : "DERIVED TREND"}</span>
             <div className="flex-1" />
-            <Button size="sm" variant="outline" className="gap-1.5" data-testid="scorecard-export" onClick={exportScorecard}><Download className="w-3.5 h-3.5" /> Export CSV</Button>
+            <Button size="sm" variant="outline" className="gap-1.5" data-testid="scorecard-export" onClick={() => exportScorecard("csv")}><Download className="w-3.5 h-3.5" /> CSV</Button>
+            <Button size="sm" variant="outline" className="gap-1.5" data-testid="scorecard-export-pdf" onClick={() => exportScorecard("pdf")}><FileText className="w-3.5 h-3.5" /> PDF</Button>
           </div>
           <p className="text-[11px] text-muted-foreground mb-3">A leadership- and auditor-ready snapshot of SAP access posture, trended over the last 8 weeks. {scorecard.trend_source === "derived" ? "Trajectory derived from current posture until weekly snapshots accrue." : "Trend built from recorded weekly snapshots."}</p>
           <div className="grid grid-cols-3 md:grid-cols-6 gap-3 mb-4">
