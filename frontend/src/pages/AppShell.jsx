@@ -2,6 +2,7 @@ import { Suspense, useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate, useLocation, Navigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import { SapAdvisor } from "@/components/SapAdvisor";
+import { OnboardingTour } from "@/components/OnboardingTour";
 import { LockedGate } from "@/components/LockedGate";
 import { NotificationBell } from "@/components/NotificationBell";
 import ForcePasswordReset from "@/pages/ForcePasswordReset";
@@ -298,6 +299,7 @@ export default function AppShell() {
       </div>
 
       <SapAdvisor />
+      <OnboardingTour />
     </div>
     </DeepDiveProvider>
   );

@@ -100,3 +100,8 @@
 - `deploy.py` + `Settings.jsx`: SAP UAC download filenames + email/section copy; auto-refresh pipeline unchanged.
 - `OnboardingTour.jsx`: EXEC/OPS steps rewritten for SAP UAC (SoD Command Center focus).
 
+## Fix — In-App Tour never mounted (Jun 2026, screenshot-verified)
+- Root cause: `OnboardingTour` was defined but never imported/rendered anywhere, so first-login auto-show and the Settings "Replay tour" event had no listener, and the step preview screenshots never appeared.
+- Fix: mounted `<OnboardingTour />` in `AppShell.jsx` (beside `<SapAdvisor />`). Restores auto-show on first login, Settings → Replay tour, and the SAP UAC dashboard preview image on every step.
+- Verified via screenshot: tour opens on both paths; `tour-preview` image loads (naturalWidth 1440) on step 1 (Welcome) and step 2 (Executive Mode, spotlight on mode toggle).
+
