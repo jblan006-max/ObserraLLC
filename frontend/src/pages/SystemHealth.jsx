@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import {
   Activity, Database, Plug, Clock, ServerCog, ArrowUpCircle, DownloadCloud, Loader2,
   HardDriveDownload, RotateCcw, ShieldCheck, AlertTriangle, RefreshCw, Building2, Terminal, CheckCircle2,
-  Save, Mail, MessageSquare, Slack, Zap, Archive, Lock, Send, FileText, KeyRound, Eye,
+  Save, Mail, MessageSquare, Slack, Zap, Archive, Lock, Send, FileText, KeyRound, Eye, History, FileCheck2,
 } from "lucide-react";
 
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
@@ -120,6 +120,12 @@ export default function SystemHealth() {
   const [encPass, setEncPass] = useState("");
   const [encNewPass, setEncNewPass] = useState("");
   const [encBusy, setEncBusy] = useState(false);
+  const [evidence, setEvidence] = useState([]);
+  const [genEvidence, setGenEvidence] = useState(false);
+  const [evCfg, setEvCfg] = useState(null);
+  const [previews, setPreviews] = useState([]);
+  const [digest, setDigest] = useState(null);
+  const [digesting, setDigesting] = useState(false);
 
   const loadHealth = useCallback(async () => {
     try { const { data } = await api.get("/health"); setHealth(data); } catch { setHealth((h) => h || { status: "degraded", checks: {} }); }
@@ -141,19 +147,27 @@ export default function SystemHealth() {
     if (!isAdmin) return;
     try { const { data } = await api.get("/deploy/upgrade/status"); setUpgrade(data); } catch { /* ignore */ }
   }, [isAdmin]);
+  const loadEvidence = useCallback(async () => {
+    if (!isAdmin) return;
+    try { const { data } = await api.get("/deploy/evidence/list"); setEvidence(data.evidence || []); } catch { /* ignore */ }
+  }, [isAdmin]);
+  const loadPreviews = useCallback(async () => {
+    if (!isAdmin) return;
+    try { const { data } = await api.get("/deploy/restore-previews"); setPreviews(data.previews || []); } catch { /* ignore */ }
+  }, [isAdmin]);
   const loadCfg = useCallback(async () => {
     if (!isAdmin) return;
     try {
-      const [b, a, e] = await Promise.all([api.get("/deploy/backup-config"), api.get("/deploy/health-config"), api.get("/deploy/backup-encryption")]);
-      setBcfg(b.data); setAcfg(a.data.alerts); setEncEnabled(!!e.data.enabled);
+      const [b, a, e, ev] = await Promise.all([api.get("/deploy/backup-config"), api.get("/deploy/health-config"), api.get("/deploy/backup-encryption"), api.get("/deploy/evidence-config")]);
+      setBcfg(b.data); setAcfg(a.data.alerts); setEncEnabled(!!e.data.enabled); setEvCfg(ev.data);
     } catch { /* ignore */ }
   }, [isAdmin]);
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([loadHealth(), loadDetail(), loadVer(), loadHistory(), loadBackups(), loadUpgrade(), loadCfg()]);
+    await Promise.all([loadHealth(), loadDetail(), loadVer(), loadHistory(), loadBackups(), loadUpgrade(), loadCfg(), loadEvidence(), loadPreviews()]);
     setRefreshing(false);
-  }, [loadHealth, loadDetail, loadVer, loadHistory, loadBackups, loadUpgrade, loadCfg]);
+  }, [loadHealth, loadDetail, loadVer, loadHistory, loadBackups, loadUpgrade, loadCfg, loadEvidence, loadPreviews]);
 
   useEffect(() => { refreshAll(); }, [refreshAll]);
 
@@ -245,6 +259,36 @@ export default function SystemHealth() {
     setDownloadingPdf(false);
   };
 
+  const generateEvidence = async () => {
+    setGenEvidence(true);
+    try {
+      const { data } = await api.post("/deploy/evidence/generate");
+      toast.success("Evidence archived to locker", { description: `Signed PDF added (${fmtBytes(data.size)}).` });
+      await loadEvidence();
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't archive evidence"); }
+    setGenEvidence(false);
+  };
+  const downloadEvidence = async (file) => {
+    try {
+      const res = await api.get(`/deploy/evidence/download?file=${encodeURIComponent(file)}`, { responseType: "blob" });
+      blobDownload(res.data, file);
+    } catch { toast.error("Download failed"); }
+  };
+  const toggleMonthlyEvidence = async () => {
+    const next = !(evCfg?.monthly_email);
+    try {
+      const { data } = await api.put("/deploy/evidence-config", { monthly_email: next });
+      setEvCfg(data);
+      toast.success(next ? "Monthly evidence email on" : "Monthly evidence email paused", { description: next ? "Auditors & admins receive the signed PDF on the 1st of each month." : "The scheduled evidence email is paused." });
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't update"); }
+  };
+  const previewDigest = async () => {
+    setDigesting(true);
+    try { const { data } = await api.get("/deploy/health-digest-preview"); setDigest(data); }
+    catch (e) { toast.error(e.response?.data?.detail || "Couldn't build digest preview"); }
+    setDigesting(false);
+  };
+
   const reprobe = async (cid) => {
     setReprobing(cid);
     try {
@@ -266,6 +310,7 @@ export default function SystemHealth() {
       if (restoreTarget.encrypted) body.passphrase = restorePass;
       const { data } = await api.post("/deploy/restore-preview", body);
       setPreview(data);
+      loadPreviews();
     } catch (e) { toast.error(e.response?.data?.detail || "Couldn't build preview"); }
     setPreviewing(false);
   };
@@ -515,6 +560,78 @@ export default function SystemHealth() {
         </div>
       )}
 
+      {isAdmin && (
+        <div className="bg-card fact-border rounded-xl p-5" data-testid="sh-evidence-panel">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <div className="flex items-center gap-2">
+              <FileCheck2 className="w-4 h-4 text-primary" />
+              <h2 className="font-head font-bold text-lg">Evidence Locker</h2>
+              <span className="text-[11px] text-muted-foreground">Signed compliance PDFs, archived by date for auditor self-serve</span>
+            </div>
+            <Button size="sm" className="gap-1.5" data-testid="sh-evidence-generate" onClick={generateEvidence} disabled={genEvidence}>
+              {genEvidence ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}{genEvidence ? "Generating…" : "Generate & archive"}
+            </Button>
+          </div>
+
+          {evCfg && (
+            <label className="flex flex-wrap items-center gap-2.5 mb-4 p-3 rounded-lg bg-secondary/30 border border-border/50 cursor-pointer select-none" data-testid="sh-evidence-monthly-row">
+              <input type="checkbox" data-testid="sh-evidence-monthly" checked={!!evCfg.monthly_email} onChange={toggleMonthlyEvidence} className="w-4 h-4 accent-primary" />
+              <span className="text-sm font-medium">Email monthly evidence</span>
+              <span className="text-[11px] text-muted-foreground flex-1 min-w-[160px]">On the 1st of each month the signed PDF is archived here and emailed to admins, executives and your saved IT/audit recipients.</span>
+            </label>
+          )}
+
+          {evidence.length ? (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="text-left text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border"><th className="p-2">Report</th><th className="p-2">Generated by</th><th className="p-2">Source</th><th className="p-2">Size</th><th className="p-2">Created</th><th className="p-2 text-right">Actions</th></tr></thead>
+                <tbody>
+                  {evidence.map((ev) => (
+                    <tr key={ev.file} className="border-b border-border/50" data-testid={`sh-evidence-row-${ev.file}`}>
+                      <td className="p-2 font-mono text-xs"><span className="truncate max-w-[190px] inline-block align-middle">{ev.file}</span></td>
+                      <td className="p-2 text-xs text-muted-foreground">{ev.generated_by || "—"}</td>
+                      <td className="p-2"><span className={`text-[9px] font-mono uppercase px-1.5 py-0.5 rounded ${ev.source === "monthly-cron" ? "bg-ai/15 text-ai" : "bg-secondary text-muted-foreground"}`}>{ev.source === "monthly-cron" ? "monthly" : "manual"}</span></td>
+                      <td className="p-2 font-mono text-xs">{fmtBytes(ev.size)}</td>
+                      <td className="p-2 text-xs text-muted-foreground">{fmtDT(ev.created_at)}</td>
+                      <td className="p-2 text-right"><button data-testid={`sh-evidence-download-${ev.file}`} onClick={() => downloadEvidence(ev.file)} className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-secondary/60 transition-colors" title="Download signed PDF"><DownloadCloud className="w-4 h-4" /></button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center justify-center text-center gap-2 py-8 px-4 rounded-lg border border-dashed border-muted-foreground/25" data-testid="sh-evidence-empty">
+              <Archive className="w-6 h-6 text-muted-foreground/50" />
+              <p className="text-xs text-muted-foreground max-w-xs">No archived evidence yet — click "Generate &amp; archive" to capture a signed snapshot, or leave the monthly email on for automatic records.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {isAdmin && previews.length > 0 && (
+        <div className="bg-card fact-border rounded-xl p-5" data-testid="sh-restore-log-panel">
+          <div className="flex items-center gap-2 mb-3">
+            <History className="w-4 h-4 text-primary" />
+            <h2 className="font-head font-bold text-lg">Restore Preview Log</h2>
+            <span className="text-[11px] text-muted-foreground">Dry-run checks admins ran before restoring — an audit trail</span>
+          </div>
+          <div className="space-y-2 max-h-72 overflow-y-auto">
+            {previews.map((p, i) => (
+              <div key={i} className="flex flex-wrap items-center justify-between gap-2 bg-secondary/25 rounded-lg px-3 py-2" data-testid={`sh-restore-log-${i}`}>
+                <div className="min-w-0">
+                  <div className="text-xs font-mono truncate max-w-[280px] flex items-center gap-1.5">{p.encrypted && <Lock className="w-3 h-3 text-low shrink-0" />}{p.file}</div>
+                  <div className="text-[11px] text-muted-foreground">{p.by || "admin"} · {fmtDT(p.at)} · {p.collections} collection(s)</div>
+                </div>
+                <div className="text-xs font-mono shrink-0" title="Current → Backup record count">
+                  {p.total_current} → {p.total_backup}
+                  <span className={`ml-2 ${p.net_delta > 0 ? "text-low" : p.net_delta < 0 ? "text-crit" : "text-muted-foreground"}`}>{p.net_delta > 0 ? `+${p.net_delta}` : p.net_delta}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {isAdmin && acfg && (
         <div className="bg-card fact-border rounded-xl p-5" data-testid="sh-alert-routing-panel">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -524,6 +641,9 @@ export default function SystemHealth() {
               <span className="text-[11px] text-muted-foreground">Choose where each degraded event pages</span>
             </div>
             <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-digest-preview" onClick={previewDigest} disabled={digesting}>
+                {digesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />} Preview digest
+              </Button>
               <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-alerts-test" onClick={testAlert} disabled={testingAlert}>
                 {testingAlert ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Send test alert
               </Button>
@@ -557,6 +677,31 @@ export default function SystemHealth() {
             </table>
           </div>
           <p className="text-[11px] text-muted-foreground mt-3">Degraded events are bundled into <b>one daily digest per channel</b> (no repeat pings). Slack/Teams use this org's webhooks; email notifies admins &amp; executives; in-app is always recorded.</p>
+          {digest && (
+            <div className="mt-3 rounded-lg border border-border bg-secondary/25 p-3" data-testid="sh-digest-preview-result">
+              {digest.healthy ? (
+                <div className="text-sm text-low flex items-center gap-1.5"><CheckCircle2 className="w-4 h-4" /> All systems healthy — no digest would be sent today.</div>
+              ) : (
+                <>
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">
+                    {digest.already_sent_today ? "Today's digest already sent — preview of its contents" : digest.would_send ? "This digest would be sent today" : "Degraded, but nothing routed to a channel yet"}
+                  </div>
+                  <div className="space-y-1.5">
+                    {["slack", "teams", "email"].map((ch) => (
+                      <div key={ch} data-testid={`sh-digest-${ch}`} className="text-xs flex gap-2">
+                        <span className="inline-block w-14 font-mono uppercase text-muted-foreground shrink-0">{ch}</span>
+                        {digest.per_channel[ch]?.length ? (
+                          <span className="text-foreground">{digest.per_channel[ch].join(" · ")}</span>
+                        ) : (
+                          <span className="text-muted-foreground/60">— not routed here</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
 

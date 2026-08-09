@@ -113,6 +113,8 @@ async def monthly_board_report(request: Request, background_tasks: BackgroundTas
         raise HTTPException(status_code=401, detail="Unauthorized")
     background_tasks.add_task(_run_monthly_board_reports)
     background_tasks.add_task(_run_access_review)
+    from deploy import _run_monthly_evidence_email
+    background_tasks.add_task(_run_monthly_evidence_email)
     from sap_uac import run_sap_board_pack
     background_tasks.add_task(run_sap_board_pack)
     return {"status": "accepted"}

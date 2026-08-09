@@ -727,7 +727,9 @@ async def restore_preview(body: dict, user: dict = Depends(get_current_user)):
     impact before restoring. Reads (and decrypts if needed) the snapshot but writes nothing."""
     if user.get("role") != "admin":
         raise HTTPException(403, "Admins only")
-    payload = _read_backup(user["org_id"], body.get("file", ""), passphrase=body.get("passphrase"))
+    from datetime import datetime, timezone
+    file = body.get("file", "")
+    payload = _read_backup(user["org_id"], file, passphrase=body.get("passphrase"))
     cols = payload.get("collections", {})
     rows, total_backup, total_current = [], 0, 0
     for name, docs in cols.items():
@@ -737,8 +739,24 @@ async def restore_preview(body: dict, user: dict = Depends(get_current_user)):
         total_backup += bcount
         total_current += ccount
     rows.sort(key=lambda r: (abs(r["delta"]), r["backup"]), reverse=True)
+    encrypted = bool(next((b for b in _list_backup_files(user["org_id"]) if b["file"] == file), {}).get("encrypted"))
+    await db.restore_previews.insert_one({
+        "org_id": user["org_id"], "at": datetime.now(timezone.utc).isoformat(), "by": user.get("email"),
+        "file": file, "encrypted": encrypted, "collections": len(cols),
+        "total_backup": total_backup, "total_current": total_current,
+        "net_delta": total_backup - total_current,
+        "top": [{"collection": r["collection"], "delta": r["delta"]} for r in rows[:5]]})
     return {"rows": rows, "collections": len(cols),
             "total_backup": total_backup, "total_current": total_current}
+
+
+@deploy_router.get("/restore-previews")
+async def restore_preview_log(user: dict = Depends(get_current_user)):
+    """Dry-run audit trail: who previewed which snapshot, when, and the net record delta."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    rows = await db.restore_previews.find({"org_id": user["org_id"]}, {"_id": 0}).sort("at", -1).to_list(25)
+    return {"previews": rows}
 
 
 @deploy_router.get("/backup/download")
@@ -971,6 +989,25 @@ async def health_alert_test(user: dict = Depends(get_current_user)):
     return {"slack_configured": slack_cfg, "teams_configured": teams_cfg, "email_attempted": True}
 
 
+@deploy_router.get("/health-digest-preview")
+async def health_digest_preview(user: dict = Depends(get_current_user)):
+    """Show what today's bundled health digest WOULD send per channel, without sending it."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from datetime import datetime, timezone
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    h = await evaluate_org_health(user["org_id"])
+    routing = _alert_cfg(org)
+    today = datetime.now(timezone.utc).date().isoformat()
+    per_channel = {ch: [msg for etype, msg in h.get("issue_types", []) if routing.get(etype, {}).get(ch)]
+                   for ch in ("slack", "teams", "email")}
+    already_sent = ((org.get("system_health") or {}).get("last_digest_date") == today)
+    return {"healthy": h["healthy"], "issues": h.get("issues", []), "per_channel": per_channel,
+            "already_sent_today": already_sent,
+            "would_send": (not h["healthy"]) and not already_sent and any(per_channel.values())}
+
+
 def _build_compliance_pdf(org_name, generated_by, version, health, enc, bcfg, backup_count, latest_backup, stats):
     """Render a signed, auditor-ready compliance evidence PDF from the live control-plane state."""
     import hashlib
@@ -1071,20 +1108,17 @@ def _build_compliance_pdf(org_name, generated_by, version, health, enc, bcfg, ba
     return buf.getvalue()
 
 
-@deploy_router.get("/compliance-evidence")
-async def compliance_evidence(user: dict = Depends(get_current_user)):
-    """Downloadable, signed compliance-evidence PDF for auditors (admins only)."""
-    if user.get("role") != "admin":
-        raise HTTPException(403, "Only admins can export compliance evidence")
-    from datetime import datetime, timezone
+async def _generate_compliance_pdf(org_id: str, generated_by: str) -> bytes:
+    """Gather live control-plane state for one org and render the compliance PDF (shared by the
+    ad-hoc download, the Evidence Locker and the monthly cron)."""
     from bson import ObjectId
     from starlette.concurrency import run_in_threadpool
-    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
     org_name = org.get("name") or "Organization"
-    health = await evaluate_org_health(user["org_id"])
+    health = await evaluate_org_health(org_id)
     enc = _enc_cfg(org)
     bcfg = _backup_cfg(org)
-    backups = _list_backup_files(user["org_id"])
+    backups = _list_backup_files(org_id)
     latest_backup = backups[0]["created_at"] if backups else None
     stats = {}
     for label, coll in [("Identities (HR persons)", "sap_persons"),
@@ -1094,13 +1128,176 @@ async def compliance_evidence(user: dict = Depends(get_current_user)):
                         ("ServiceNow tickets", "sap_snow_tickets"),
                         ("Watchlist items", "sap_watchlist"),
                         ("Auto-remediation actions", "sap_autoremediation_log")]:
-        stats[label] = await db[coll].count_documents({"org_id": user["org_id"]})
-    pdf = await run_in_threadpool(_build_compliance_pdf, org_name, user["email"],
-                                  onprem_pack.read_version(), health, enc, bcfg,
-                                  len(backups), latest_backup, stats)
+        stats[label] = await db[coll].count_documents({"org_id": org_id})
+    return await run_in_threadpool(_build_compliance_pdf, org_name, generated_by,
+                                   onprem_pack.read_version(), health, enc, bcfg,
+                                   len(backups), latest_backup, stats)
+
+
+@deploy_router.get("/compliance-evidence")
+async def compliance_evidence(user: dict = Depends(get_current_user)):
+    """Ad-hoc download of a signed compliance-evidence PDF (admins only)."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can export compliance evidence")
+    from datetime import datetime, timezone
+    pdf = await _generate_compliance_pdf(user["org_id"], user["email"])
     fname = f"Obserra-Compliance-Evidence-{datetime.now(timezone.utc).date().isoformat()}.pdf"
     return StreamingResponse(io.BytesIO(pdf), media_type=_PDF_MT,
                              headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+
+# --- Evidence Locker: archive generated compliance PDFs on disk (org-scoped, auditor self-serve) ---
+_EVIDENCE_DIR = os.environ.get("EVIDENCE_DIR", os.path.join(_ROOT, "evidence"))
+
+
+def _safe_evidence_path(filename: str) -> str:
+    name = os.path.basename(filename or "")
+    if not name.endswith(".pdf") or name != (filename or ""):
+        raise HTTPException(400, "Invalid evidence filename")
+    return os.path.join(_EVIDENCE_DIR, name)
+
+
+def _archive_evidence(org_id: str, pdf: bytes, generated_by: str, source: str) -> dict:
+    import json
+    import uuid
+    import hashlib
+    os.makedirs(_EVIDENCE_DIR, exist_ok=True)
+    stamp = _now_iso().replace(":", "").replace("-", "").replace("T", "").replace(".", "").replace("+", "")[:20]
+    fname = f"obserra-evidence-{org_id}-{stamp}-{uuid.uuid4().hex[:6]}.pdf"
+    fp = os.path.join(_EVIDENCE_DIR, fname)
+    with open(fp, "wb") as f:
+        f.write(pdf)
+    meta = {"file": fname, "org_id": org_id, "created_at": _now_iso(), "generated_by": generated_by,
+            "source": source, "size": len(pdf), "sha256": hashlib.sha256(pdf).hexdigest()}
+    with open(fp + ".meta.json", "w", encoding="utf-8") as f:
+        json.dump(meta, f)
+    return meta
+
+
+def _list_evidence_files(org_id: str):
+    import json
+    if not os.path.isdir(_EVIDENCE_DIR):
+        return []
+    out = []
+    for fn in os.listdir(_EVIDENCE_DIR):
+        if fn.startswith(f"obserra-evidence-{org_id}-") and fn.endswith(".pdf"):
+            fp = os.path.join(_EVIDENCE_DIR, fn)
+            info = {"file": fn, "size": os.path.getsize(fp), "created_at": _iso_from_mtime(fp),
+                    "generated_by": None, "source": None, "sha256": None}
+            mp = fp + ".meta.json"
+            if os.path.exists(mp):
+                try:
+                    with open(mp, encoding="utf-8") as f:
+                        m = json.load(f)
+                    info.update(created_at=m.get("created_at", info["created_at"]),
+                                generated_by=m.get("generated_by"), source=m.get("source"),
+                                sha256=m.get("sha256"))
+                except Exception:
+                    pass
+            out.append(info)
+    return sorted(out, key=lambda x: x["created_at"], reverse=True)
+
+
+def _prune_evidence(org_id: str, keep: int = 60):
+    for old in _list_evidence_files(org_id)[keep:]:
+        for p in (os.path.join(_EVIDENCE_DIR, old["file"]), os.path.join(_EVIDENCE_DIR, old["file"] + ".meta.json")):
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+
+
+@deploy_router.post("/evidence/generate")
+async def evidence_generate(user: dict = Depends(get_current_user)):
+    """Generate a compliance PDF and archive it to the Evidence Locker (admins only)."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    pdf = await _generate_compliance_pdf(user["org_id"], user["email"])
+    meta = _archive_evidence(user["org_id"], pdf, user["email"], "manual")
+    _prune_evidence(user["org_id"])
+    return meta
+
+
+@deploy_router.get("/evidence/list")
+async def evidence_list(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    return {"evidence": _list_evidence_files(user["org_id"])}
+
+
+@deploy_router.get("/evidence/download")
+async def evidence_download(file: str, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    fp = _safe_evidence_path(file)
+    if not os.path.exists(fp) or f"-{user['org_id']}-" not in file:
+        raise HTTPException(404, "Evidence not found")
+    with open(fp, "rb") as f:
+        content = f.read()
+    return StreamingResponse(io.BytesIO(content), media_type=_PDF_MT,
+                             headers={"Content-Disposition": f'attachment; filename="{os.path.basename(fp)}"'})
+
+
+class EvidenceConfig(BaseModel):
+    monthly_email: bool = True
+
+
+@deploy_router.get("/evidence-config")
+async def get_evidence_config(user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    cfg = (org.get("system_health") or {}).get("evidence") or {}
+    return {"monthly_email": bool(cfg.get("monthly_email", True))}
+
+
+@deploy_router.put("/evidence-config")
+async def put_evidence_config(body: EvidenceConfig, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from bson import ObjectId
+    await db.organizations.update_one({"_id": ObjectId(user["org_id"])},
+                                      {"$set": {"system_health.evidence.monthly_email": bool(body.monthly_email)}})
+    return {"monthly_email": bool(body.monthly_email)}
+
+
+async def _run_monthly_evidence_email():
+    """Monthly (1st): generate + archive each org's compliance evidence PDF and email it to
+    admins/execs + saved IT/audit recipients. Folded into the monthly-board-report cron."""
+    import base64
+    import logging
+    from kernel import notifications
+    orgs = await db.organizations.find({}).to_list(1000)
+    for org in orgs:
+        oid = str(org["_id"])
+        cfg = (org.get("system_health") or {}).get("evidence") or {}
+        if cfg.get("monthly_email") is False:
+            continue
+        try:
+            pdf = await _generate_compliance_pdf(oid, "scheduler@obserra")
+            meta = _archive_evidence(oid, pdf, "scheduler@obserra", "monthly-cron")
+            _prune_evidence(oid)
+            recips = await db.users.find({"org_id": oid, "role": {"$in": ["admin", "executive"]}},
+                                         {"_id": 0, "email": 1}).to_list(200)
+            emails = {r["email"] for r in recips}
+            emails |= {e for e in (org.get("deploy_recipients") or []) if e}
+            if not emails:
+                continue
+            html = ("<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
+                    "<h2 style='color:#0f1e3d'>Monthly SAP Access Compliance Evidence</h2>"
+                    "<p>Attached is this month's signed compliance-evidence report for your SAP "
+                    "User Access Control platform — system health &amp; controls, access-governance "
+                    "coverage, backup/encryption posture, and a document-integrity signature.</p>"
+                    "<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — Enterprise SAP Access Governance</p></div>")
+            attachments = [{"filename": f"Obserra-Compliance-Evidence-{meta['created_at'][:10]}.pdf",
+                            "content": base64.b64encode(pdf).decode()}]
+            for to in emails:
+                await notifications.send_email(to, "Monthly SAP Access Compliance Evidence — Obserra SAP UAC",
+                                               html, attachments=attachments)
+            await notifications.create(oid, "report", "Monthly compliance evidence delivered",
+                                       f"Signed evidence PDF archived to the Evidence Locker and emailed to {len(emails)} recipient(s).",
+                                       ref="compliance-evidence")
+        except Exception as e:
+            logging.getLogger("deploy").warning(f"monthly evidence email failed for org {oid}: {e}")
 
 
 _TOUR_DIR = os.path.join(_ROOT, "frontend", "public", "tour")

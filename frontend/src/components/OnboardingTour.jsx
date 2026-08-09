@@ -36,6 +36,8 @@ export const OnboardingTour = () => {
 
   useEffect(() => {
     if (!key || localStorage.getItem(key)) return;
+    // Don't auto-launch onboarding over the admin-only System Health console.
+    if (typeof window !== "undefined" && window.location.pathname.startsWith("/app/system-health")) return;
     const t = setTimeout(() => { setStep(0); setOpen(true); }, 600);
     return () => clearTimeout(t);
   }, [key]);
