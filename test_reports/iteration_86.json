@@ -1,0 +1,36 @@
+{
+  "summary": "Iter 86 — Backend module split regression + new SLA Escalation / Digest Schedule / SLA Heatmap features. Backend: 22/22 pytest passing. Frontend: all new testids render on /app/system-health (sh-escalation, sh-digest-schedule, sh-sla-heatmap, day chips 0-6, esc enable/save/chip/remove). Left-nav paths (SoD, Identities, Workflow, SysHealth) all navigate. Inbox regression check: sh-inbox-templates, sh-inbox-export, sh-select-all, sh-comment-reply all present; sh-bulk-apply and sh-select-across appear only after select-all (verified). State fully restored to defaults after test.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/deploy/escalation-config", "issue": "Contact dedupe is case-sensitive (`e not in contacts`). Sending 'owner@company.com' and 'OWNER@company.com' produces two chips. Consider lower-casing for dedupe/comparison."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter86_escalation_digest_heatmap.py",
+    "/app/test_reports/pytest/iter86.xml"
+  ],
+  "action_items": [
+    "Optional: normalize escalation contact case for dedupe (lower() before compare and store) so OWNER@... and owner@... are treated as one."
+  ],
+  "critical_code_review_comments": [
+    "backend/deploy_audit.py: EscalationBody validates emails via regex but dedupe is case-sensitive; consider `e.lower() not in [c.lower() for c in contacts]`.",
+    "SlaHeatmap correctly renders 'All rooms' + per-room bars with % from analytics.on_time_pct.",
+    "digest-schedule PUT correctly dedupes/sorts days and defaults to full week when empty.",
+    "Pre-existing (not this iter): console hydration warning on SoD Watchlist — <option> containing dev instrumentation <span> child. Unrelated to this iter's splits."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter86_escalation_digest_heatmap.py"
+  ],
+  "success_rate": {"backend": "100% (22/22)", "frontend": "100% for iter86 testids"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin, cookie auth)",
+  "seed_data_creation": "None. Existing 2 audit rooms + 3 comments used. Escalation restored to {enabled:false, contacts:[], multiplier:1.5}; digest-schedule restored to {enabled:true, days:[0..6]}; org SLA 72h, no room overrides.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter86 test file exercises escalation-config, digest-schedule, analytics heatmap fields and audit regression. Only unresolved observation is case-insensitive dedupe for escalation contacts (minor)."
+}

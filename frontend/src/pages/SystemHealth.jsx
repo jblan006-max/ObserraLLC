@@ -11,6 +11,7 @@ import {
   Share2, Copy, X, Trash2, DoorOpen, Link2, Palette, MessageCircle, Ban, Download, Pencil, Plus,
   TrendingUp, Timer,
 } from "lucide-react";
+import { HealthTile, UptimeStrip, Sparkline, SlaHeatmap } from "@/components/systemhealth/panels";
 
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
 const slaAge = (s) => {
@@ -27,102 +28,6 @@ const REPLY_TEMPLATES = [
   { label: "Resolved", text: "This has been addressed. Please let us know if you need anything further for your audit." },
 ];
 const fmtBytes = (b) => (b == null ? "—" : b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`);
-const DOT_COLOR = { ok: "142 70% 45%", degraded: "35 90% 55%", down: "0 84% 60%" };
-const RANGES = [{ label: "24h", h: 24 }, { label: "7d", h: 168 }, { label: "30d", h: 720 }];
-
-function HealthTile({ label, value, sub, accent, icon: Icon, ok, testid }) {
-  return (
-    <div data-testid={testid} className="bg-card fact-border rounded-xl p-4 flex items-start gap-3" style={{ borderTop: `2px solid hsl(${accent} / 0.65)` }}>
-      <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ background: `hsl(${accent} / 0.12)` }}>
-        <Icon className="w-5 h-5" style={{ color: `hsl(${accent})` }} strokeWidth={1.6} />
-      </div>
-      <div className="min-w-0">
-        <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-          {label}
-          {ok !== undefined && <span className={`w-1.5 h-1.5 rounded-full ${ok ? "bg-low" : "bg-crit"}`} />}
-        </div>
-        <div className="font-head font-black text-2xl tracking-tight mt-0.5" style={{ color: `hsl(${accent})` }}>{value}</div>
-        {sub && <div className="text-[11px] text-muted-foreground mt-0.5 leading-tight truncate">{sub}</div>}
-      </div>
-    </div>
-  );
-}
-
-function bucketize(points, hours) {
-  const now = Date.now();
-  const start = now - hours * 3600 * 1000;
-  const cols = hours <= 24 ? 48 : hours <= 168 ? 84 : 60;
-  const width = (now - start) / cols;
-  const rank = { ok: 0, degraded: 1, down: 2 };
-  const buckets = Array.from({ length: cols }, (_, i) => ({ status: null, count: 0, start: start + i * width }));
-  (points || []).forEach((p) => {
-    const t = new Date(p.at).getTime();
-    if (t < start || t > now) return;
-    const idx = Math.min(cols - 1, Math.max(0, Math.floor((t - start) / width)));
-    const b = buckets[idx];
-    b.count++;
-    if (b.status === null || rank[p.status] > rank[b.status]) b.status = p.status;
-  });
-  return buckets;
-}
-
-function UptimeStrip({ points, range, setRange }) {
-  const pts = points || [];
-  const upPct = pts.length ? Math.round((pts.filter((p) => p.healthy).length / pts.length) * 100) : null;
-  const buckets = bucketize(pts, range);
-  return (
-    <div className="bg-card fact-border rounded-xl p-5" data-testid="sh-uptime-panel">
-      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <div className="flex items-center gap-2">
-          <Activity className="w-4 h-4 text-primary" />
-          <h2 className="font-head font-bold text-lg">Uptime</h2>
-          {upPct != null && <span className="text-xs font-mono text-muted-foreground" data-testid="sh-uptime-pct">{upPct}% healthy · {pts.length} samples</span>}
-        </div>
-        <div className="flex items-center gap-1 bg-secondary/50 rounded-lg p-0.5" data-testid="sh-uptime-range">
-          {RANGES.map((r) => (
-            <button key={r.h} data-testid={`sh-range-${r.label}`} onClick={() => setRange(r.h)}
-              className={`px-2.5 py-1 rounded-md text-xs font-mono transition-colors ${range === r.h ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
-              {r.label}
-            </button>
-          ))}
-        </div>
-      </div>
-      {pts.length ? (
-        <div className="flex items-end gap-[2px] flex-wrap" data-testid="sh-uptime-dots">
-          {buckets.map((b, i) => (
-            <span key={i} title={`${fmtDT(new Date(b.start).toISOString())} — ${b.status || "no data"}`}
-              className="w-2 h-6 rounded-sm transition-transform hover:scale-125"
-              style={{ background: b.status ? `hsl(${DOT_COLOR[b.status]})` : "hsl(var(--muted-foreground) / 0.15)" }}
-              data-testid={`sh-uptime-dot-${i}`} />
-          ))}
-        </div>
-      ) : (
-        <p className="text-xs text-muted-foreground" data-testid="sh-uptime-empty">Collecting health samples — dots appear as the platform records status over time (auto every ~12 min and nightly).</p>
-      )}
-    </div>
-  );
-}
-
-function Sparkline({ points, testid }) {
-  const vals = (points || []).map((p) => (p.median_hours == null ? null : p.median_hours));
-  const nums = vals.filter((v) => v != null);
-  if (nums.length < 2) return <span className="text-[11px] text-muted-foreground" data-testid={testid}>Not enough history yet</span>;
-  const max = Math.max(...nums, 1);
-  const w = 128, h = 26, n = vals.length;
-  const step = n > 1 ? w / (n - 1) : w;
-  const y = (v) => (h - (v / max) * (h - 4) - 2);
-  const line = vals.map((v, i) => (v == null ? null : `${(i * step).toFixed(1)},${y(v).toFixed(1)}`)).filter(Boolean).join(" ");
-  const last = nums[nums.length - 1];
-  return (
-    <span className="inline-flex items-center gap-2" data-testid={testid} title="Weekly median response time (hours)">
-      <svg width={w} height={h} className="overflow-visible" aria-hidden="true">
-        <polyline points={line} fill="none" stroke="hsl(var(--primary))" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
-        {vals.map((v, i) => (v == null ? null : <circle key={i} cx={(i * step).toFixed(1)} cy={y(v).toFixed(1)} r="1.6" fill="hsl(var(--primary))" />))}
-      </svg>
-      <span className="text-[11px] font-mono text-muted-foreground">{last}h latest</span>
-    </span>
-  );
-}
 
 export default function SystemHealth() {
   const { user } = useAuth();
@@ -191,6 +96,11 @@ export default function SystemHealth() {
   const [slaCfg, setSlaCfg] = useState(null);
   const [savingSla, setSavingSla] = useState(false);
   const [selectAcross, setSelectAcross] = useState(false);
+  const [escalation, setEscalation] = useState(null);
+  const [savingEsc, setSavingEsc] = useState(false);
+  const [escInput, setEscInput] = useState("");
+  const [digestSched, setDigestSched] = useState(null);
+  const [savingSched, setSavingSched] = useState(false);
 
   const loadHealth = useCallback(async () => {
     try { const { data } = await api.get("/health"); setHealth(data); } catch { setHealth((h) => h || { status: "degraded", checks: {} }); }
@@ -244,6 +154,14 @@ export default function SystemHealth() {
     if (!isAdmin) return;
     try { const { data } = await api.get("/deploy/sla-config"); setSlaCfg(data); } catch { /* ignore */ }
   }, [isAdmin]);
+  const loadEscalation = useCallback(async () => {
+    if (!isAdmin) return;
+    try { const { data } = await api.get("/deploy/escalation-config"); setEscalation(data); } catch { /* ignore */ }
+  }, [isAdmin]);
+  const loadDigestSched = useCallback(async () => {
+    if (!isAdmin) return;
+    try { const { data } = await api.get("/deploy/digest-schedule"); setDigestSched(data); } catch { /* ignore */ }
+  }, [isAdmin]);
   const loadCfg = useCallback(async () => {
     if (!isAdmin) return;
     try {
@@ -254,9 +172,9 @@ export default function SystemHealth() {
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([loadHealth(), loadDetail(), loadVer(), loadHistory(), loadBackups(), loadUpgrade(), loadCfg(), loadEvidence(), loadPreviews(), loadShares(), loadRooms(), loadComments(), loadTemplates(), loadAnalytics(), loadSla()]);
+    await Promise.all([loadHealth(), loadDetail(), loadVer(), loadHistory(), loadBackups(), loadUpgrade(), loadCfg(), loadEvidence(), loadPreviews(), loadShares(), loadRooms(), loadComments(), loadTemplates(), loadAnalytics(), loadSla(), loadEscalation(), loadDigestSched()]);
     setRefreshing(false);
-  }, [loadHealth, loadDetail, loadVer, loadHistory, loadBackups, loadUpgrade, loadCfg, loadEvidence, loadPreviews, loadShares, loadRooms, loadComments, loadTemplates, loadAnalytics, loadSla]);
+  }, [loadHealth, loadDetail, loadVer, loadHistory, loadBackups, loadUpgrade, loadCfg, loadEvidence, loadPreviews, loadShares, loadRooms, loadComments, loadTemplates, loadAnalytics, loadSla, loadEscalation, loadDigestSched]);
 
   useEffect(() => { refreshAll(); }, [refreshAll]);
 
@@ -548,6 +466,33 @@ export default function SystemHealth() {
       toast.success(num == null ? "Room now uses the org default SLA" : `Room SLA set to ${num}h`);
       await loadSla();
     } catch (e) { toast.error(e.response?.data?.detail || "Couldn't save room SLA"); }
+  };
+  const saveEscalation = async () => {
+    setSavingEsc(true);
+    try {
+      const contacts = [...(escalation.contacts || [])];
+      const add = escInput.trim();
+      if (add && !contacts.includes(add)) contacts.push(add);
+      const { data } = await api.put("/deploy/escalation-config", { enabled: !!escalation.enabled, contacts, multiplier: parseFloat(escalation.multiplier) || 1.5 });
+      setEscalation(data); setEscInput("");
+      toast.success(data.enabled ? "SLA escalation on" : "SLA escalation saved", { description: data.contacts.length ? `Escalates to ${data.contacts.length} owner(s) past ${data.multiplier}× SLA.` : "Add at least one contact to escalate." });
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't save escalation"); }
+    setSavingEsc(false);
+  };
+  const removeEscContact = (email) => setEscalation((s) => ({ ...s, contacts: (s.contacts || []).filter((c) => c !== email) }));
+  const saveDigestSched = async (next) => {
+    setSavingSched(true);
+    try {
+      const { data } = await api.put("/deploy/digest-schedule", next);
+      setDigestSched(data);
+      toast.success(data.enabled ? "Digest schedule saved" : "Overdue digest paused");
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't save schedule"); }
+    setSavingSched(false);
+  };
+  const toggleDigestDay = (d) => {
+    if (!digestSched) return;
+    const days = digestSched.days.includes(d) ? digestSched.days.filter((x) => x !== d) : [...digestSched.days, d].sort((a, b) => a - b);
+    saveDigestSched({ enabled: digestSched.enabled, days });
   };
   const exportComments = async () => {
     setExporting(true);
@@ -1073,6 +1018,73 @@ export default function SystemHealth() {
         </div>
       )}
 
+      {isAdmin && (escalation || digestSched) && (
+        <div className="bg-card fact-border rounded-xl p-5 space-y-4" data-testid="sh-digest-panel">
+          {escalation && (
+            <div data-testid="sh-escalation">
+              <div className="flex items-center gap-2 mb-2">
+                <AlertTriangle className="w-4 h-4 text-crit" />
+                <h2 className="font-head font-bold text-lg">SLA Escalation</h2>
+                <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer ml-auto select-none">
+                  <input type="checkbox" data-testid="sh-esc-enabled" checked={!!escalation.enabled} onChange={(e) => setEscalation((s) => ({ ...s, enabled: e.target.checked }))} className="w-3.5 h-3.5 accent-primary" />
+                  Enabled
+                </label>
+              </div>
+              <p className="text-[11px] text-muted-foreground mb-2">When a request blows past <b>{escalation.multiplier}×</b> its SLA target, escalate to these owners by email + Slack/Teams — on top of the normal admin notice.</p>
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <label className="text-[11px] text-muted-foreground">Escalate at</label>
+                <input type="number" min="1" max="5" step="0.5" data-testid="sh-esc-multiplier" value={escalation.multiplier ?? 1.5}
+                  onChange={(e) => setEscalation((s) => ({ ...s, multiplier: e.target.value }))}
+                  className="h-7 w-20 rounded-md border border-border bg-secondary/40 px-2 text-[11px] outline-none focus:ring-1 focus:ring-primary" />
+                <span className="text-[11px] text-muted-foreground">× the SLA</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 mb-2" data-testid="sh-esc-contacts">
+                {(escalation.contacts || []).length === 0 && <span className="text-[11px] text-muted-foreground">No escalation contacts yet.</span>}
+                {(escalation.contacts || []).map((em) => (
+                  <span key={em} className="inline-flex items-center gap-1 bg-secondary/50 rounded-full pl-2.5 pr-1 py-0.5 text-[11px]" data-testid={`sh-esc-contact-${em}`}>
+                    {em}
+                    <button type="button" onClick={() => removeEscContact(em)} className="w-4 h-4 rounded-full hover:bg-crit/20 flex items-center justify-center" data-testid={`sh-esc-remove-${em}`}><X className="w-3 h-3" /></button>
+                  </span>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <input type="email" placeholder="owner@company.com" data-testid="sh-esc-input" value={escInput}
+                  onChange={(e) => setEscInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") saveEscalation(); }}
+                  className="h-8 w-56 rounded-md border border-border bg-secondary/40 px-2 text-sm outline-none focus:ring-1 focus:ring-primary" />
+                <Button size="sm" className="gap-1.5 h-8" data-testid="sh-esc-save" onClick={saveEscalation} disabled={savingEsc}>
+                  {savingEsc ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save
+                </Button>
+              </div>
+            </div>
+          )}
+          {digestSched && (
+            <div className={escalation ? "pt-3 border-t border-border/60" : ""} data-testid="sh-digest-schedule">
+              <div className="flex items-center gap-2 mb-2">
+                <Clock className="w-4 h-4 text-primary" />
+                <h2 className="font-head font-bold text-lg">Overdue Digest Schedule</h2>
+                <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer ml-auto select-none">
+                  <input type="checkbox" data-testid="sh-sched-enabled" checked={!!digestSched.enabled} onChange={(e) => saveDigestSched({ enabled: e.target.checked, days: digestSched.days })} className="w-3.5 h-3.5 accent-primary" />
+                  Enabled
+                </label>
+              </div>
+              <p className="text-[11px] text-muted-foreground mb-2">Choose which days the overdue-request digest sends. It runs during the platform's daily {digestSched.run_hour_utc ?? 8}:00 UTC job.</p>
+              <div className="flex flex-wrap gap-1.5" data-testid="sh-sched-days">
+                {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d, i) => {
+                  const on = digestSched.days?.includes(i);
+                  return (
+                    <button key={d} type="button" data-testid={`sh-sched-day-${i}`} disabled={savingSched || !digestSched.enabled}
+                      onClick={() => toggleDigestDay(i)}
+                      className={`px-2.5 py-1 rounded-md text-[11px] font-mono transition-colors ${on ? "bg-primary text-primary-foreground" : "bg-secondary/50 text-muted-foreground hover:text-foreground"} ${!digestSched.enabled ? "opacity-50 cursor-not-allowed" : ""}`}>
+                      {d}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
       {isAdmin && comments.length > 0 && (
         <div className="bg-card fact-border rounded-xl p-5" data-testid="sh-comments-panel">
           <div className="flex flex-wrap items-center gap-2 mb-3">
@@ -1133,6 +1145,7 @@ export default function SystemHealth() {
                   ))}
                 </div>
               )}
+              <SlaHeatmap rooms={reqStats.rooms} org={reqStats.org} testid="sh-sla-heatmap" />
             </div>
           )}
           {selectedIds.size > 0 && (
