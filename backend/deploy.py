@@ -2254,6 +2254,138 @@ async def export_audit_room_comments(user: dict = Depends(get_current_user)):
                              headers={"Content-Disposition": f'attachment; filename="{fn}"'})
 
 
+@deploy_router.get("/audit-request-analytics")
+async def audit_request_analytics(user: dict = Depends(get_current_user)):
+    """Median response time (auditor comment → governance reply) org-wide and per room, plus open/resolved mix."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from bson import ObjectId  # noqa: F401
+    from datetime import datetime
+    org_id = user["org_id"]
+    rows = await db.audit_room_comments.find({"org_id": org_id}, {"_id": 0}).to_list(5000)
+    room_tokens = [x["token"] for x in await db.audit_rooms.find({"org_id": org_id}, {"_id": 0, "token": 1}).to_list(1000)]
+    label = {t: f"Room {i + 1}" for i, t in enumerate(room_tokens)}
+
+    def _median(vals):
+        vals = sorted(vals)
+        n = len(vals)
+        if not n:
+            return None
+        return vals[n // 2] if n % 2 else round((vals[n // 2 - 1] + vals[n // 2]) / 2, 1)
+
+    def _resp_h(c):
+        if c.get("reply_at") and c.get("at"):
+            try:
+                return round((datetime.fromisoformat(c["reply_at"]) - datetime.fromisoformat(c["at"])).total_seconds() / 3600, 1)
+            except Exception:
+                return None
+        return None
+
+    def _bucket(items):
+        rh = [h for h in (_resp_h(c) for c in items) if h is not None]
+        return {
+            "total": len(items),
+            "open": sum(1 for c in items if (c.get("status") or "Open") == "Open"),
+            "in_progress": sum(1 for c in items if c.get("status") == "In Progress"),
+            "resolved": sum(1 for c in items if c.get("status") == "Resolved"),
+            "replied": len(rh),
+            "median_response_hours": _median(rh),
+        }
+
+    per_room = {}
+    for c in rows:
+        per_room.setdefault(c.get("token"), []).append(c)
+    rooms_out = [{"label": label.get(tok, "Archived room"), **_bucket(items)}
+                 for tok, items in per_room.items()]
+    rooms_out.sort(key=lambda r: (r["open"] == 0, r["label"]))
+    return {"org": _bucket(rows), "rooms": rooms_out}
+
+
+def _req_action_html(comment, org_name, done=None):
+    if comment is None:
+        return _audit_wrap("<h1>Request not found</h1><p>This action link is invalid or has expired.</p>", "#c2410c")
+    if done == "resolved":
+        return _audit_wrap("<h1>Marked resolved ✓</h1><p>The auditor request has been resolved. You can close this tab.</p>", "#12805c")
+    if done == "replied":
+        return _audit_wrap("<h1>Reply sent ✓</h1><p>Your reply was sent, the auditor notified (if they left an email), and the request marked resolved.</p>", "#12805c")
+    st = comment.get("status", "Open")
+    tok = comment["action_token"]
+    inner = (f'<div class="pill" style="background:#2f6df6">{_esc_html(st)}</div>'
+             f'<h1>Audit request — {_esc_html(org_name)}</h1>'
+             f'<p class="hint">From {_esc_html(comment.get("author", "Auditor"))} · {comment.get("at", "")[:10]}</p>'
+             f'<div class="welcome">{_esc_html(comment.get("comment", ""))}</div>'
+             f'<h2>Respond</h2>'
+             f'<div id="cbox">'
+             f'<textarea id="rtext" rows="4" placeholder="Type your reply — this resolves the request and emails the auditor if they left an address"></textarea>'
+             f'<button class="btn" id="rsend">Send reply &amp; resolve</button> '
+             f'<button class="btn" id="rres" style="background:#12805c;margin-left:6px">Just mark resolved</button>'
+             f'<div id="rmsg" class="hint" style="margin-top:8px"></div></div>'
+             f'<script>'
+             f'function done(msg){{document.getElementById("cbox").innerHTML="<p style=\\"color:#12805c;font-weight:600\\">"+msg+"</p>";}}'
+             f'document.getElementById("rres").addEventListener("click",async function(){{'
+             f'this.disabled=true;try{{var r=await fetch("/api/deploy/req-action/{tok}/resolve",{{method:"POST"}});'
+             f'if(r.ok)done("Marked resolved ✓");else document.getElementById("rmsg").textContent="Link expired.";}}catch(e){{document.getElementById("rmsg").textContent="Network error.";}}}});'
+             f'document.getElementById("rsend").addEventListener("click",async function(){{'
+             f'var t=document.getElementById("rtext").value.trim();if(!t){{document.getElementById("rmsg").textContent="Enter a reply.";return;}}'
+             f'this.disabled=true;try{{var r=await fetch("/api/deploy/req-action/{tok}/reply",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{reply:t}})}});'
+             f'if(r.ok)done("Reply sent &amp; resolved ✓");else document.getElementById("rmsg").textContent="Link expired.";}}catch(e){{document.getElementById("rmsg").textContent="Network error.";}}}});'
+             f'</script>')
+    return _audit_wrap(inner, "#2f6df6")
+
+
+@deploy_router.get("/req-action/{token}")
+async def req_action_page(token: str):
+    """Public tokenized page so an admin can resolve/reply straight from a Slack/Teams alert."""
+    from bson import ObjectId
+    from fastapi.responses import HTMLResponse
+    c = await db.audit_room_comments.find_one({"action_token": token}, {"_id": 0})
+    if not c:
+        return HTMLResponse(_req_action_html(None, ""))
+    org = await db.organizations.find_one({"_id": ObjectId(c["org_id"])}) or {}
+    return HTMLResponse(_req_action_html(c, org.get("name") or "Organization"))
+
+
+@deploy_router.post("/req-action/{token}/resolve")
+async def req_action_resolve(token: str):
+    res = await db.audit_room_comments.update_one({"action_token": token}, {"$set": {"status": "Resolved"}})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Invalid action link.")
+    return {"ok": True}
+
+
+class ActionReplyBody(BaseModel):
+    reply: str
+
+
+@deploy_router.post("/req-action/{token}/reply")
+async def req_action_reply(token: str, body: ActionReplyBody):
+    from bson import ObjectId
+    reply = (body.reply or "").strip()
+    if not reply:
+        raise HTTPException(400, "A reply is required.")
+    c = await db.audit_room_comments.find_one({"action_token": token})
+    if not c:
+        raise HTTPException(404, "Invalid action link.")
+    await db.audit_room_comments.update_one(
+        {"action_token": token},
+        {"$set": {"reply": reply[:2000], "reply_by": "Slack/Teams action", "reply_at": _now_iso(), "status": "Resolved"}})
+    try:
+        em = c.get("author_email") or ""
+        if em and "@" in em:
+            from kernel import notifications
+            org = await db.organizations.find_one({"_id": ObjectId(c["org_id"])}) or {}
+            oname = org.get("name") or "the organization"
+            html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
+                    f"<h2 style='color:#0f1e3d'>Reply to your audit comment</h2>"
+                    f"<p>The SAP access governance team at <strong>{_esc_html(oname)}</strong> replied:</p>"
+                    f"<blockquote style='border-left:3px solid #2f6df6;margin:0;padding:6px 14px;color:#374151'>{_esc_html(reply[:1000])}</blockquote>"
+                    f"<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — Audit Room</p></div>")
+            await notifications.send_email(em, f"Reply to your audit comment — {oname}", html)
+    except Exception:
+        pass
+    return {"ok": True}
+
+
 async def _run_audit_room_expiry_reminders(within_days: int = 3):
     """Folded into the daily cron: email admins/execs a few days before each Audit Room link expires."""
     from datetime import datetime, timezone, timedelta
@@ -2343,9 +2475,17 @@ async def _run_overdue_request_digest(sla_hours: int = 72):
                 except Exception:
                     pass
             try:
-                lines = "\n".join(f"• {x.get('author', 'Auditor')} — waiting {_age(x.get('at', ''))}: {(x.get('comment') or '')[:100]}" for x in items[:10])
-                body = (f"{len(items)} auditor request(s) have been open longer than {sla_hours // 24} day(s):\n{lines}\n\n"
-                        "Open System Health → Audit Requests to respond.")
+                import secrets as _secrets
+                base = os.environ.get("FRONTEND_URL", "").rstrip("/")
+                slines = []
+                for x in items[:10]:
+                    tok = x.get("action_token")
+                    if not tok:
+                        tok = _secrets.token_urlsafe(16)
+                        await db.audit_room_comments.update_one({"id": x["id"], "org_id": org_id}, {"$set": {"action_token": tok}})
+                    slines.append(f"• {x.get('author', 'Auditor')} — waiting {_age(x.get('at', ''))}: {(x.get('comment') or '')[:90]}\n   Resolve/reply: {base}/api/deploy/req-action/{tok}")
+                body = (f"{len(items)} auditor request(s) have been open longer than {sla_hours // 24} day(s):\n"
+                        + "\n".join(slines) + "\n\nOr open System Health → Audit Requests.")
                 await _route_alert(org, {"slack": True, "teams": True}, f"⚠ {len(items)} audit request(s) past SLA", body)
             except Exception:
                 pass

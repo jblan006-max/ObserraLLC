@@ -165,6 +165,7 @@ export default function SystemHealth() {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkStatus, setBulkStatus] = useState("Resolved");
   const [exporting, setExporting] = useState(false);
+  const [reqStats, setReqStats] = useState(null);
 
   const loadHealth = useCallback(async () => {
     try { const { data } = await api.get("/health"); setHealth(data); } catch { setHealth((h) => h || { status: "degraded", checks: {} }); }
@@ -210,6 +211,10 @@ export default function SystemHealth() {
     if (!isAdmin) return;
     try { const { data } = await api.get("/deploy/reply-templates"); setSavedTemplates(data.templates || []); } catch { /* ignore */ }
   }, [isAdmin]);
+  const loadAnalytics = useCallback(async () => {
+    if (!isAdmin) return;
+    try { const { data } = await api.get("/deploy/audit-request-analytics"); setReqStats(data); } catch { /* ignore */ }
+  }, [isAdmin]);
   const loadCfg = useCallback(async () => {
     if (!isAdmin) return;
     try {
@@ -220,9 +225,9 @@ export default function SystemHealth() {
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([loadHealth(), loadDetail(), loadVer(), loadHistory(), loadBackups(), loadUpgrade(), loadCfg(), loadEvidence(), loadPreviews(), loadShares(), loadRooms(), loadComments(), loadTemplates()]);
+    await Promise.all([loadHealth(), loadDetail(), loadVer(), loadHistory(), loadBackups(), loadUpgrade(), loadCfg(), loadEvidence(), loadPreviews(), loadShares(), loadRooms(), loadComments(), loadTemplates(), loadAnalytics()]);
     setRefreshing(false);
-  }, [loadHealth, loadDetail, loadVer, loadHistory, loadBackups, loadUpgrade, loadCfg, loadEvidence, loadPreviews, loadShares, loadRooms, loadComments, loadTemplates]);
+  }, [loadHealth, loadDetail, loadVer, loadHistory, loadBackups, loadUpgrade, loadCfg, loadEvidence, loadPreviews, loadShares, loadRooms, loadComments, loadTemplates, loadAnalytics]);
 
   useEffect(() => { refreshAll(); }, [refreshAll]);
 
@@ -438,16 +443,21 @@ export default function SystemHealth() {
       await api.post(`/deploy/audit-room-comments/${id}/reply`, { reply });
       toast.success("Reply sent", { description: "Marked as resolved and now visible on the auditor's portal." });
       setReplyDrafts((d) => ({ ...d, [id]: "" }));
-      await loadComments();
+      await Promise.all([loadComments(), loadAnalytics()]);
     } catch (e) { toast.error(e.response?.data?.detail || "Couldn't send reply"); }
   };
   const setCommentStatus = async (id, status) => {
     try {
       await api.post(`/deploy/audit-room-comments/${id}/status`, { status });
-      await loadComments();
+      await Promise.all([loadComments(), loadAnalytics()]);
     } catch (e) { toast.error(e.response?.data?.detail || "Couldn't update status"); }
   };
   const toggleSelect = (id) => setSelectedIds((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const toggleSelectAll = (checked) => setSelectedIds(checked ? new Set(filteredComments.map((c) => c.id)) : new Set());
+  const applyVars = (text, c) => (text || "")
+    .replaceAll("{auditor}", c.author || "the auditor")
+    .replaceAll("{date}", new Date().toLocaleDateString())
+    .replaceAll("{period}", evidence[0]?.period_label || "the current period");
   const bulkSetStatus = async () => {
     const ids = [...selectedIds];
     if (!ids.length) return;
@@ -455,7 +465,7 @@ export default function SystemHealth() {
       const { data } = await api.post("/deploy/audit-room-comments/bulk-status", { ids, status: bulkStatus });
       toast.success(`${data.updated} request(s) set to ${bulkStatus}`);
       setSelectedIds(new Set());
-      await loadComments();
+      await Promise.all([loadComments(), loadAnalytics()]);
     } catch (e) { toast.error(e.response?.data?.detail || "Bulk update failed"); }
   };
   const exportComments = async () => {
@@ -944,6 +954,10 @@ export default function SystemHealth() {
             <h2 className="font-head font-bold text-lg">Audit Requests</h2>
             <span className="text-[11px] text-muted-foreground">Auditor comments — reply and track each through to resolved</span>
             <div className="flex items-center gap-2 ml-auto">
+              <label className="flex items-center gap-1 text-[11px] text-muted-foreground cursor-pointer select-none">
+                <input type="checkbox" data-testid="sh-select-all" checked={filteredComments.length > 0 && filteredComments.every((c) => selectedIds.has(c.id))} onChange={(e) => toggleSelectAll(e.target.checked)} className="w-3.5 h-3.5 accent-primary" />
+                Select all
+              </label>
               <select data-testid="sh-inbox-status-filter" value={inboxStatus} onChange={(e) => setInboxStatus(e.target.value)} className="h-7 rounded-md border border-border bg-secondary/40 px-2 text-[11px]">
                 <option value="all">All statuses</option>
                 <option value="Open">Open</option>
@@ -965,6 +979,30 @@ export default function SystemHealth() {
               </Button>
             </div>
           </div>
+          {reqStats?.org && (
+            <div className="mb-3" data-testid="sh-request-analytics">
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <span className="px-2.5 py-1 rounded-lg bg-secondary/40 font-mono">Median response <b className="text-primary">{reqStats.org.median_response_hours != null ? `${reqStats.org.median_response_hours}h` : "—"}</b></span>
+                <span className="px-2.5 py-1 rounded-lg bg-high/10 text-high font-mono">{reqStats.org.open} open</span>
+                <span className="px-2.5 py-1 rounded-lg bg-primary/10 text-primary font-mono">{reqStats.org.in_progress} in progress</span>
+                <span className="px-2.5 py-1 rounded-lg bg-low/10 text-low font-mono">{reqStats.org.resolved} resolved</span>
+                {reqStats.org.total > 0 && (
+                  <div className="flex-1 min-w-[120px] h-2 rounded-full bg-secondary/60 overflow-hidden flex" title="Resolved / In progress / Open">
+                    <div className="h-full bg-low" style={{ width: `${(reqStats.org.resolved / reqStats.org.total) * 100}%` }} />
+                    <div className="h-full bg-primary" style={{ width: `${(reqStats.org.in_progress / reqStats.org.total) * 100}%` }} />
+                    <div className="h-full bg-high" style={{ width: `${(reqStats.org.open / reqStats.org.total) * 100}%` }} />
+                  </div>
+                )}
+              </div>
+              {reqStats.rooms?.length > 1 && (
+                <div className="flex flex-wrap gap-2 mt-2 text-[11px]" data-testid="sh-request-analytics-rooms">
+                  {reqStats.rooms.map((r) => (
+                    <span key={r.label} className="px-2 py-0.5 rounded-md bg-secondary/40 text-muted-foreground">{r.label}: median <b className="text-foreground">{r.median_response_hours != null ? `${r.median_response_hours}h` : "—"}</b> · {r.open} open</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           {selectedIds.size > 0 && (
             <div className="flex flex-wrap items-center gap-2 mb-2 bg-primary/10 border border-primary/30 rounded-lg px-3 py-2" data-testid="sh-bulk-bar">
               <span className="text-xs font-semibold">{selectedIds.size} selected</span>
@@ -1016,8 +1054,8 @@ export default function SystemHealth() {
                   </div>
                   <div className="flex flex-wrap gap-1.5 mt-2" data-testid={`sh-reply-templates-${i}`}>
                     {activeTemplates.map((tpl) => (
-                      <button key={tpl.label} type="button" onClick={() => setReplyDrafts((d) => ({ ...d, [c.id]: tpl.text }))}
-                        className="text-[10px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:bg-secondary/60 hover:text-foreground transition-colors">{tpl.label}</button>
+                      <button key={tpl.label} type="button"
+                        className="text-[10px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:bg-secondary/60 hover:text-foreground transition-colors" onClick={() => setReplyDrafts((d) => ({ ...d, [c.id]: applyVars(tpl.text, c) }))}>{tpl.label}</button>
                     ))}
                   </div>
                   <div className="flex items-end gap-2 mt-2">
@@ -1198,7 +1236,8 @@ export default function SystemHealth() {
               <h3 className="font-head font-bold text-lg flex items-center gap-2"><Pencil className="w-5 h-5 text-primary" /> Reply templates</h3>
               <button data-testid="sh-template-close" onClick={() => setTemplateModal(false)} className="p-1 rounded-md text-muted-foreground hover:bg-secondary/60"><X className="w-4 h-4" /></button>
             </div>
-            <p className="text-sm text-muted-foreground mb-4">Your own one-tap canned replies for the Audit Requests inbox.</p>
+            <p className="text-sm text-muted-foreground mb-1">Your own one-tap canned replies for the Audit Requests inbox.</p>
+            <p className="text-[11px] text-muted-foreground mb-4">Variables auto-fill when inserted: <code className="text-primary">{"{auditor}"}</code>, <code className="text-primary">{"{period}"}</code>, <code className="text-primary">{"{date}"}</code>.</p>
             <div className="space-y-3">
               {tplDraft.map((t, idx) => (
                 <div key={idx} className="bg-secondary/25 rounded-lg p-3 space-y-2" data-testid={`sh-template-row-${idx}`}>
