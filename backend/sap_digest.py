@@ -79,7 +79,9 @@ def _governance_digest_html(d):
 _DIGEST_DEFAULT = {"enabled": True, "recipients": [], "days": "everyday", "chat_alert": True,
                    "teams_url": "", "slack_url": "",
                    "score_alert": True, "score_threshold": 60, "sev_thresholds": {"Critical": 25, "High": 50},
-                   "evidence_export": False, "evidence_recipients": [], "evidence_day": "mon", "evidence_signed_by": ""}
+                   "evidence_export": False, "evidence_recipients": [], "evidence_day": "mon",
+                   "evidence_prepared_by": "", "evidence_approved_by": "", "evidence_approved_at": "",
+                   "auditor_scopes": []}
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 
 
@@ -137,7 +139,8 @@ class DigestConfigBody(BaseModel):
     evidence_export: bool = False
     evidence_recipients: list[str] = []
     evidence_day: str = "mon"
-    evidence_signed_by: str = ""
+    evidence_prepared_by: str = ""
+    auditor_scopes: list = []
 
 
 @sap_router.get("/digest/config")
@@ -172,18 +175,32 @@ async def put_digest_config(body: DigestConfigBody, user: dict = Depends(require
                 sevt[k] = max(0, int(v))
             except Exception:
                 pass
+    scopes = []
+    for s in (body.auditor_scopes or []):
+        email = (s.get("email") or "").strip() if isinstance(s, dict) else ""
+        if not email:
+            continue
+        areas = [str(a).strip() for a in (s.get("areas") or []) if str(a).strip()]
+        systems = [str(sy).strip() for sy in (s.get("systems") or []) if str(sy).strip()]
+        scopes.append({"email": email, "areas": areas, "systems": systems})
+    prepared = (body.evidence_prepared_by or "").strip()[:120]
+    existing = await db.sap_digest_config.find_one({"org_id": org_id}, {"_id": 0, "evidence_prepared_by": 1}) or {}
     doc = {"org_id": org_id, "enabled": body.enabled, "recipients": recips, "days": days,
            "chat_alert": body.chat_alert, "teams_url": body.teams_url.strip(), "slack_url": body.slack_url.strip(),
            "score_alert": body.score_alert, "score_threshold": max(0, min(100, int(body.score_threshold or 60))),
            "sev_thresholds": sevt or _DIGEST_DEFAULT["sev_thresholds"],
            "evidence_export": body.evidence_export, "evidence_recipients": evid_recips,
            "evidence_day": body.evidence_day if body.evidence_day in _WEEKDAYS else "mon",
-           "evidence_signed_by": (body.evidence_signed_by or "").strip()[:120]}
+           "evidence_prepared_by": prepared, "auditor_scopes": scopes}
+    if existing.get("evidence_prepared_by", "") != prepared:
+        doc["evidence_approved_by"] = ""
+        doc["evidence_approved_at"] = ""
     await db.sap_digest_config.update_one({"org_id": org_id}, {"$set": doc}, upsert=True)
     await _audit(org_id, user["email"], "sap.digest.config",
                  f"enabled={body.enabled} days={days} chat={body.chat_alert} recipients={len(recips)} "
-                 f"score_alert={body.score_alert}@{doc['score_threshold']} evidence={body.evidence_export}")
-    return {"ok": True, "config": {k: doc[k] for k in _DIGEST_DEFAULT}}
+                 f"score_alert={body.score_alert}@{doc['score_threshold']} evidence={body.evidence_export} scopes={len(scopes)}")
+    cfg = await _get_digest_config(org_id)
+    return {"ok": True, "config": {k: cfg[k] for k in _DIGEST_DEFAULT}}
 
 
 @sap_router.post("/digest/test-chat")
@@ -376,7 +393,20 @@ async def _scorecard_payload(org_id, record=True):
                           "governance_score": max(0, m["governance_score"] - k * 3)})
         trend_source = "derived"
     _annotate_trend(trend)
-    return {"current": m, "trend": trend, "trend_source": trend_source, "generated_at": now.isoformat()}
+    return {"current": m, "trend": trend, "trend_source": trend_source,
+            "forecast": _forecast(trend, m), "generated_at": now.isoformat()}
+
+
+def _forecast(trend, current):
+    """Project next week's governance score from the recent weekly pace."""
+    if not trend or len(trend) < 3:
+        return {"next_week_score": current["governance_score"], "delta": 0, "basis": "building weekly history"}
+    gov = [t["governance_score"] for t in trend[-4:]]
+    deltas = [gov[i] - gov[i - 1] for i in range(1, len(gov))]
+    avg = round(sum(deltas) / len(deltas)) if deltas else 0
+    proj = max(0, min(100, current["governance_score"] + avg))
+    return {"next_week_score": proj, "delta": proj - current["governance_score"],
+            "basis": f"{'+' if avg >= 0 else ''}{avg}/wk avg over last {len(gov)} weeks"}
 
 
 def _annotate_trend(trend):
@@ -642,9 +672,11 @@ async def _check_score_alert(org_id, force=False):
     below = bool(reasons)
     wk = _now().strftime("%G-W%V")
     state = await db.sap_digest_state.find_one({"org_id": org_id}, {"_id": 0}) or {}
+    mute_until = state.get("alert_mute_until")
+    muted = bool(mute_until and _now().isoformat() < mute_until)
     already = state.get("score_alert_week") == wk
     posted = False
-    if cfg.get("score_alert") and below and (force or not already):
+    if cfg.get("score_alert") and below and not muted and (force or not already):
         title = "🔴 SAP Access Governance alert — threshold breached"
         text = (f"Governance score {score}/100 · Open SoD {m['open_sod']} "
                 f"(Critical {m['sev']['Critical']} · High {m['sev']['High']}) · "
@@ -663,6 +695,8 @@ async def _check_score_alert(org_id, force=False):
         await db.sap_digest_state.update_one({"org_id": org_id}, {"$unset": {"score_alert_week": ""}})
     return {"score": score, "threshold": thr, "below": below, "reasons": reasons, "posted": posted,
             "enabled": bool(cfg.get("score_alert")), "alerted_this_week": already and not force,
+            "muted": muted, "mute_until": mute_until if muted else None,
+            "mute_reason": state.get("alert_mute_reason") if muted else None,
             "sev": m["sev"], "sev_thresholds": sevt}
 
 
@@ -689,15 +723,64 @@ async def scorecard_alert_check(user: dict = Depends(require_roles("admin"))):
 
 @sap_router.get("/scorecard/alerts")
 async def scorecard_alerts(user: dict = Depends(get_current_user)):
-    """Alert History — every recorded governance score-drop / threshold-breach alert."""
+    """Alert History — every recorded governance score-drop / threshold-breach alert + current mute state."""
     org_id = user["org_id"]
     await _ensure(org_id)
     log = await db.sap_score_alert_log.find({"org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(100)
-    return {"log": log, "total": await db.sap_score_alert_log.count_documents({"org_id": org_id})}
+    state = await db.sap_digest_state.find_one({"org_id": org_id}, {"_id": 0, "alert_mute_until": 1, "alert_mute_reason": 1}) or {}
+    mute_until = state.get("alert_mute_until")
+    muted = bool(mute_until and _now().isoformat() < mute_until)
+    return {"log": log, "total": await db.sap_score_alert_log.count_documents({"org_id": org_id}),
+            "muted": muted, "mute_until": mute_until if muted else None,
+            "mute_reason": state.get("alert_mute_reason") if muted else None}
+
+
+class AlertMuteBody(BaseModel):
+    hours: int = 24
+    reason: str = ""
+
+
+@sap_router.post("/scorecard/alert-mute")
+async def scorecard_alert_mute(body: AlertMuteBody, user: dict = Depends(require_roles("admin"))):
+    """Snooze governance score/threshold alerts for a window so a known dip stops pinging leadership."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    hours = max(1, min(720, int(body.hours or 24)))
+    until = (_now() + timedelta(hours=hours)).isoformat()
+    reason = (body.reason or "").strip()[:200]
+    await db.sap_digest_state.update_one({"org_id": org_id},
+        {"$set": {"org_id": org_id, "alert_mute_until": until, "alert_mute_reason": reason}}, upsert=True)
+    await _audit(org_id, user["email"], "sap.score.alert.mute", f"muted {hours}h until {until} — {reason}")
+    return {"ok": True, "mute_until": until, "mute_reason": reason, "hours": hours}
+
+
+@sap_router.post("/scorecard/alert-unmute")
+async def scorecard_alert_unmute(user: dict = Depends(require_roles("admin"))):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    await db.sap_digest_state.update_one({"org_id": org_id}, {"$unset": {"alert_mute_until": "", "alert_mute_reason": ""}})
+    await _audit(org_id, user["email"], "sap.score.alert.unmute", "alerts un-muted")
+    return {"ok": True}
 
 
 # ── SoD Evidence Pack (auditor CSV/PDF + scheduled weekly auto-email) ─────────────────────────
-async def _sod_evidence_rows(org_id, status="", severity=""):
+def _summarize(rows):
+    return {"total": len(rows), "open": sum(1 for r in rows if r["status"] == "Open"),
+            "mitigated": sum(1 for r in rows if r["status"] == "Mitigated"),
+            "accepted": sum(1 for r in rows if r["status"] == "Accepted"),
+            "critical": sum(1 for r in rows if r["severity"] == "Critical"),
+            "high": sum(1 for r in rows if r["severity"] == "High")}
+
+
+def _scope_rows(rows, areas=None, systems=None):
+    a = {x.lower() for x in (areas or [])}
+    s = {x.lower() for x in (systems or [])}
+    if not a and not s:
+        return rows
+    return [r for r in rows if (not a or r["area"].lower() in a) and (not s or r["system"].lower() in s)]
+
+
+async def _sod_evidence_rows(org_id, status="", severity="", areas=None, systems=None):
     persons, accounts, conflicts, pmap = await _correlate(org_id)
     rows = []
     for c in conflicts:
@@ -718,12 +801,8 @@ async def _sod_evidence_rows(org_id, status="", severity=""):
         })
     sev_order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
     rows.sort(key=lambda r: (0 if r["status"] == "Open" else 1, sev_order.get(r["severity"], 9), r["rule_ref"]))
-    summary = {"total": len(rows), "open": sum(1 for r in rows if r["status"] == "Open"),
-               "mitigated": sum(1 for r in rows if r["status"] == "Mitigated"),
-               "accepted": sum(1 for r in rows if r["status"] == "Accepted"),
-               "critical": sum(1 for r in rows if r["severity"] == "Critical"),
-               "high": sum(1 for r in rows if r["severity"] == "High")}
-    return rows, summary
+    rows = _scope_rows(rows, areas, systems)
+    return rows, _summarize(rows)
 
 
 def _sod_evidence_csv(rows, summary):
@@ -743,7 +822,7 @@ def _sod_evidence_csv(rows, summary):
     return sio.getvalue()
 
 
-def _sod_evidence_pdf(rows, summary, signed_by=""):
+def _sod_evidence_pdf(rows, summary, prepared_by="", approved_by="", approved_at=""):
     """Branded SOX-grade PDF evidence pack of every SoD conflict and its remediation state."""
     from reportlab.lib.pagesizes import LETTER, landscape
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -790,16 +869,27 @@ def _sod_evidence_pdf(rows, summary, signed_by=""):
     ]))
     flow.append(tbl)
     flow.append(Spacer(1, 10))
-    stamp_txt = (f"REVIEWED &amp; SIGNED — {signed_by} · {_now().strftime('%B %d, %Y')}"
-                 if signed_by else
-                 "REVIEWED &amp; SIGNED — Auditor: ____________________     Signature: ____________________     Date: ____________")
-    sign_st = ParagraphStyle("sg", parent=ss["Normal"], fontSize=10, leading=14, fontName="Helvetica-Bold",
-                             textColor=(colors.HexColor("#166534") if signed_by else navy))
-    sign_tbl = Table([[Paragraph(stamp_txt, sign_st)]], colWidths=[9.0 * inch])
+    approved = bool(approved_by)
+    box_color = colors.HexColor("#16a34a") if approved else (colors.HexColor("#d97706") if prepared_by else colors.HexColor("#94a3b8"))
+    box_bg = colors.HexColor("#dcfce7") if approved else (colors.HexColor("#fef3c7") if prepared_by else colors.white)
+    prep_line = (f"Prepared by: <b>{prepared_by}</b> · {_now().strftime('%B %d, %Y')}"
+                 if prepared_by else "Prepared by: ____________________     Date: ____________")
+    if approved:
+        appr_line = f"Approved by: <b>{approved_by}</b> · {(approved_at or '')[:10]}"
+    elif prepared_by:
+        appr_line = "Approved by: <b>PENDING APPROVAL</b>     Signature: ____________________     Date: ____________"
+    else:
+        appr_line = "Approved by: ____________________     Signature: ____________________     Date: ____________"
+    stamp_hdr = "REVIEWED &amp; APPROVED" if approved else ("REVIEWED — PENDING APPROVAL" if prepared_by else "SIGNOFF")
+    sign_hd = ParagraphStyle("sgh", parent=ss["Normal"], fontSize=8, textColor=box_color, fontName="Helvetica-Bold", spaceAfter=3)
+    sign_st = ParagraphStyle("sg", parent=ss["Normal"], fontSize=9.5, leading=13,
+                             textColor=(colors.HexColor("#166534") if approved else navy))
+    sign_tbl = Table([[Paragraph(stamp_hdr, sign_hd)], [Paragraph(prep_line, sign_st)], [Paragraph(appr_line, sign_st)]],
+                     colWidths=[9.0 * inch])
     sign_tbl.setStyle(TableStyle([
-        ("BOX", (0, 0), (-1, -1), 1.2, colors.HexColor("#16a34a") if signed_by else colors.HexColor("#94a3b8")),
-        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#dcfce7") if signed_by else colors.white),
-        ("TOPPADDING", (0, 0), (-1, -1), 9), ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+        ("BOX", (0, 0), (-1, -1), 1.2, box_color),
+        ("BACKGROUND", (0, 0), (-1, -1), box_bg),
+        ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ("LEFTPADDING", (0, 0), (-1, -1), 12), ("RIGHTPADDING", (0, 0), (-1, -1), 12),
     ]))
     flow.append(sign_tbl)
@@ -836,78 +926,118 @@ def _sod_evidence_html(summary):
         'Obserra — Executive Protection &amp; Intelligence LLC · Confidential.</p></div></div>')
 
 
-def _sod_evidence_attachment(rows, summary, signed_by=""):
+def _sod_evidence_attachment(rows, summary, prepared_by="", approved_by="", approved_at=""):
     import base64
-    pdf = _sod_evidence_pdf(rows, summary, signed_by)
+    pdf = _sod_evidence_pdf(rows, summary, prepared_by, approved_by, approved_at)
     return [{"filename": f"sap-sod-evidence-{_now().strftime('%Y%m%d')}.pdf",
              "content": base64.b64encode(pdf.getvalue()).decode()}]
 
 
 class SodEvidenceBody(BaseModel):
-    signed_by: str = ""
+    prepared_by: str = ""
+
+
+class SodApproveBody(BaseModel):
+    approved_by: str = ""
 
 
 @sap_router.get("/sod-evidence/export")
-async def sod_evidence_export(format: str = "pdf", status: str = "", severity: str = "", signed_by: str = "",
+async def sod_evidence_export(format: str = "pdf", status: str = "", severity: str = "", prepared_by: str = "",
                               user: dict = Depends(get_current_user)):
-    """Download the SoD evidence pack (branded PDF or auditor CSV), optionally filtered + signed off."""
+    """Download the SoD evidence pack (branded PDF or auditor CSV), optionally filtered + with signoff."""
     org_id = user["org_id"]
     await _ensure(org_id)
     if format not in ("csv", "pdf"):
         raise HTTPException(status_code=400, detail="format must be csv or pdf")
+    cfg = await _get_digest_config(org_id)
     rows, summary = await _sod_evidence_rows(org_id, status, severity)
     fname = f"sap-sod-evidence-{_now().strftime('%Y%m%d-%H%M')}"
     if format == "csv":
         return Response(content=_sod_evidence_csv(rows, summary), media_type="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="{fname}.csv"'})
-    pdf = _sod_evidence_pdf(rows, summary, signed_by.strip()[:120])
+    prep = (prepared_by or cfg.get("evidence_prepared_by") or "").strip()[:120]
+    pdf = _sod_evidence_pdf(rows, summary, prep, cfg.get("evidence_approved_by", ""), cfg.get("evidence_approved_at", ""))
     return Response(content=pdf.getvalue(), media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{fname}.pdf"'})
 
 
 @sap_router.get("/sod-evidence/preview")
 async def sod_evidence_preview(user: dict = Depends(get_current_user)):
-    """Live preview of exactly what the weekly auto-emailed SoD evidence pack will contain."""
+    """Live preview of exactly what the weekly auto-emailed SoD evidence pack will contain (per recipient scope)."""
     org_id = user["org_id"]
     await _ensure(org_id)
     cfg = await _get_digest_config(org_id)
     rows, summary = await _sod_evidence_rows(org_id)
-    if cfg.get("evidence_recipients"):
-        emails = cfg["evidence_recipients"]
-    else:
-        recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
-                                     {"_id": 0, "email": 1}).to_list(200)
-        emails = [r["email"] for r in recips]
+    emails = cfg.get("evidence_recipients") or [r["email"] for r in await db.users.find(
+        {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)]
+    scopes = {s["email"].lower(): s for s in (cfg.get("auditor_scopes") or [])}
+    recips_detail = []
+    for e in emails:
+        sc = scopes.get(e.lower())
+        rws = _scope_rows(rows, sc.get("areas"), sc.get("systems")) if sc else rows
+        recips_detail.append({"email": e, "conflicts": len(rws), "scoped": bool(sc),
+                              "areas": sc.get("areas") if sc else [], "systems": sc.get("systems") if sc else []})
     return {"html": _sod_evidence_html(summary), "summary": summary, "rows": rows[:25],
-            "recipients": emails, "evidence_day": cfg.get("evidence_day", "mon"),
-            "signed_by": cfg.get("evidence_signed_by", ""), "enabled": bool(cfg.get("evidence_export"))}
+            "recipients": emails, "recipients_detail": recips_detail, "evidence_day": cfg.get("evidence_day", "mon"),
+            "prepared_by": cfg.get("evidence_prepared_by", ""), "approved_by": cfg.get("evidence_approved_by", ""),
+            "approved_at": cfg.get("evidence_approved_at", ""), "enabled": bool(cfg.get("evidence_export"))}
+
+
+@sap_router.post("/sod-evidence/approve")
+async def sod_evidence_approve(body: SodApproveBody, user: dict = Depends(require_roles("admin"))):
+    """Step 2 of the signoff — record the approver + timestamp stamped on the evidence pack."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    cfg = await _get_digest_config(org_id)
+    if not cfg.get("evidence_prepared_by"):
+        raise HTTPException(status_code=400, detail="Set a 'Prepared by' name and save before approving.")
+    approver = (body.approved_by or user.get("name") or user["email"]).strip()[:120]
+    at = _now().isoformat()
+    await db.sap_digest_config.update_one({"org_id": org_id},
+        {"$set": {"evidence_approved_by": approver, "evidence_approved_at": at}}, upsert=True)
+    await _audit(org_id, user["email"], "sap.sod.evidence.approve", f"approved by {approver}")
+    return {"ok": True, "approved_by": approver, "approved_at": at}
+
+
+@sap_router.post("/sod-evidence/unapprove")
+async def sod_evidence_unapprove(user: dict = Depends(require_roles("admin"))):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    await db.sap_digest_config.update_one({"org_id": org_id},
+        {"$set": {"evidence_approved_by": "", "evidence_approved_at": ""}})
+    await _audit(org_id, user["email"], "sap.sod.evidence.unapprove", "approval revoked")
+    return {"ok": True}
 
 
 @sap_router.post("/sod-evidence/send")
 async def sod_evidence_send(body: SodEvidenceBody, user: dict = Depends(require_roles("admin"))):
-    """Email the SoD evidence pack PDF now to the configured auditors (or admins/execs), signed off."""
+    """Email the SoD evidence pack now — each auditor gets a pack scoped to their assigned areas/systems."""
     org_id = user["org_id"]
     await _ensure(org_id)
     from kernel import notifications
     cfg = await _get_digest_config(org_id)
     rows, summary = await _sod_evidence_rows(org_id)
-    signed_by = (body.signed_by or cfg.get("evidence_signed_by") or user.get("name") or user["email"]).strip()[:120]
-    att = _sod_evidence_attachment(rows, summary, signed_by)
-    html = _sod_evidence_html(summary)
-    if cfg.get("evidence_recipients"):
-        emails = cfg["evidence_recipients"]
-    else:
-        recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
-                                     {"_id": 0, "email": 1}).to_list(200)
-        emails = [r["email"] for r in recips] or [user["email"]]
+    prepared = (body.prepared_by or cfg.get("evidence_prepared_by") or user.get("name") or user["email"]).strip()[:120]
+    approved = cfg.get("evidence_approved_by", "")
+    approved_at = cfg.get("evidence_approved_at", "")
+    emails = cfg.get("evidence_recipients") or [r["email"] for r in await db.users.find(
+        {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)] or [user["email"]]
+    scopes = {s["email"].lower(): s for s in (cfg.get("auditor_scopes") or [])}
     sent = 0
+    detail = []
     for e in emails:
+        sc = scopes.get(e.lower())
+        rws = _scope_rows(rows, sc.get("areas"), sc.get("systems")) if sc else rows
+        smy = _summarize(rws)
+        att = _sod_evidence_attachment(rws, smy, prepared, approved, approved_at)
+        html = _sod_evidence_html(smy)
         if await notifications.send_email(e, "SAP SoD Evidence Pack — Obserra UAC", html, attachments=att):
             sent += 1
+        detail.append({"email": e, "conflicts": smy["total"], "scoped": bool(sc)})
     await _audit(org_id, user["email"], "sap.sod.evidence.send",
-                 f"evidence pack emailed to {len(emails)}, {sent} sent, signed_by={signed_by}")
+                 f"evidence pack emailed to {len(emails)}, {sent} sent, prepared_by={prepared}, approved_by={approved or 'pending'}")
     return {"ok": True, "sent": sent, "recipients": emails, "conflicts": summary["total"],
-            "signed_by": signed_by, "summary": summary}
+            "prepared_by": prepared, "approved_by": approved, "detail": detail, "summary": summary}
 
 
 async def run_sap_sod_evidence_export():
@@ -927,15 +1057,18 @@ async def run_sap_sod_evidence_export():
             continue
         try:
             rows, summary = await _sod_evidence_rows(org_id)
-            att = _sod_evidence_attachment(rows, summary, cfg.get("evidence_signed_by", ""))
-            html = _sod_evidence_html(summary)
-            if cfg.get("evidence_recipients"):
-                emails = cfg["evidence_recipients"]
-            else:
-                recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
-                                             {"_id": 0, "email": 1}).to_list(200)
-                emails = [r["email"] for r in recips]
+            prepared = cfg.get("evidence_prepared_by", "")
+            approved = cfg.get("evidence_approved_by", "")
+            approved_at = cfg.get("evidence_approved_at", "")
+            emails = cfg.get("evidence_recipients") or [r["email"] for r in await db.users.find(
+                {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)]
+            scopes = {s["email"].lower(): s for s in (cfg.get("auditor_scopes") or [])}
             for e in emails:
+                sc = scopes.get(e.lower())
+                rws = _scope_rows(rows, sc.get("areas"), sc.get("systems")) if sc else rows
+                smy = _summarize(rws)
+                att = _sod_evidence_attachment(rws, smy, prepared, approved, approved_at)
+                html = _sod_evidence_html(smy)
                 await notifications.send_email(e, "Weekly SAP SoD Evidence Pack — Obserra UAC", html, attachments=att)
             await notifications.create(
                 org_id, "report", "Weekly SoD evidence pack delivered",

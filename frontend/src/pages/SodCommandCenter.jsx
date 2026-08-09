@@ -65,6 +65,9 @@ export default function SodCommandCenter() {
   const [scoreBusy, setScoreBusy] = useState(false);
   const [evidBusy, setEvidBusy] = useState(false);
   const [scoreAlerts, setScoreAlerts] = useState([]);
+  const [scoreMute, setScoreMute] = useState({ muted: false });
+  const [muteBusy, setMuteBusy] = useState(false);
+  const [approveBusy, setApproveBusy] = useState(false);
   const [why, setWhy] = useState(null);
   const [whyBusy, setWhyBusy] = useState(false);
   const [evidPreview, setEvidPreview] = useState(null);
@@ -80,9 +83,9 @@ export default function SodCommandCenter() {
     setData(data);
   }, [sev, area, status]);
   const loadArem = useCallback(async () => { const { data } = await api.get("/sap/autoremediation"); setArem(data); }, []);
-  const loadDcfg = useCallback(async () => { const { data } = await api.get("/sap/digest/config"); setDcfg(data); setDcfgLocal({ ...data.config, recipients: (data.config.recipients || []).join(", "), evidence_recipients: (data.config.evidence_recipients || []).join(", ") }); }, []);
+  const loadDcfg = useCallback(async () => { const { data } = await api.get("/sap/digest/config"); setDcfg(data); setDcfgLocal({ ...data.config, recipients: (data.config.recipients || []).join(", "), evidence_recipients: (data.config.evidence_recipients || []).join(", "), auditor_scopes: (data.config.auditor_scopes || []).map((s) => ({ email: s.email, areas: (s.areas || []).join(", "), systems: (s.systems || []).join(", ") })) }); }, []);
   const loadScorecard = useCallback(async () => { const { data } = await api.get("/sap/scorecard"); setScorecard(data); }, []);
-  const loadAlerts = useCallback(async () => { try { const { data } = await api.get("/sap/scorecard/alerts"); setScoreAlerts(data.log || []); } catch { /* noop */ } }, []);
+  const loadAlerts = useCallback(async () => { try { const { data } = await api.get("/sap/scorecard/alerts"); setScoreAlerts(data.log || []); setScoreMute({ muted: data.muted, mute_until: data.mute_until, mute_reason: data.mute_reason }); } catch { /* noop */ } }, []);
   const loadWhy = useCallback(async () => { setWhyBusy(true); try { const { data } = await api.get("/sap/scorecard/why"); setWhy(data); } catch { /* noop */ } setWhyBusy(false); }, []);
   useEffect(() => { loadConflicts(); }, [loadConflicts]);
   useEffect(() => { loadArem(); }, [loadArem]);
@@ -133,7 +136,8 @@ export default function SodCommandCenter() {
     try {
       const recips = (dcfgLocal.recipients || "").split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
       const evid = (dcfgLocal.evidence_recipients || "").split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
-      await api.put("/sap/digest/config", { ...dcfgLocal, recipients: recips, evidence_recipients: evid, score_threshold: Number(dcfgLocal.score_threshold) || 60 });
+      const scopes = (dcfgLocal.auditor_scopes || []).map((s) => ({ email: (s.email || "").trim(), areas: (s.areas || "").split(/[,\n]/).map((x) => x.trim()).filter(Boolean), systems: (s.systems || "").split(/[,\n]/).map((x) => x.trim()).filter(Boolean) })).filter((s) => s.email);
+      await api.put("/sap/digest/config", { ...dcfgLocal, recipients: recips, evidence_recipients: evid, score_threshold: Number(dcfgLocal.score_threshold) || 60, auditor_scopes: scopes });
       toast.success("Governance digest schedule saved");
       await loadDcfg();
     } catch (e) { toast.error(e?.response?.data?.detail || (e?.response?.status === 403 ? "Admin access required" : "Could not save schedule")); }
@@ -172,7 +176,8 @@ export default function SodCommandCenter() {
     try {
       const { data } = await api.post("/sap/scorecard/alert-check");
       const rs = (data.reasons || []).join(" · ");
-      if (data.below) toast[data.posted ? "success" : "info"](`Threshold breached — score ${data.score}/100`, { description: (data.posted ? "Alert posted to Slack / Teams. " : "No chat webhook configured. ") + rs });
+      if (data.muted) toast.info(`Alerts muted — would flag score ${data.score}/100`, { description: rs || "No breach right now" });
+      else if (data.below) toast[data.posted ? "success" : "info"](`Threshold breached — score ${data.score}/100`, { description: (data.posted ? "Alert posted to Slack / Teams. " : "No chat webhook configured. ") + rs });
       else toast.success(`All thresholds healthy — score ${data.score}/100`, { description: "No alert needed" });
       await loadAlerts();
     } catch (e) { toast.error(e?.response?.data?.detail || "Check failed (admin only)"); }
@@ -181,14 +186,15 @@ export default function SodCommandCenter() {
   const sendEvidence = async () => {
     setEvidBusy(true);
     try {
-      const { data } = await api.post("/sap/sod-evidence/send", { signed_by: dcfgLocal?.evidence_signed_by || "" });
-      toast.success(`SoD evidence pack emailed to ${data.sent} recipient(s)`, { description: `${data.conflicts} conflict(s) · signed by ${data.signed_by}` });
+      const { data } = await api.post("/sap/sod-evidence/send", { prepared_by: dcfgLocal?.evidence_prepared_by || "" });
+      const scoped = (data.detail || []).some((d) => d.scoped);
+      toast.success(`SoD evidence pack emailed to ${data.sent} recipient(s)`, { description: `Prepared by ${data.prepared_by}${data.approved_by ? ` · approved by ${data.approved_by}` : " · pending approval"}${scoped ? " · scoped per auditor" : ""}` });
     } catch (e) { toast.error(e?.response?.data?.detail || "Send failed (admin only)"); }
     setEvidBusy(false);
   };
   const exportEvidence = async (fmt) => {
     try {
-      const sb = fmt === "pdf" && dcfgLocal?.evidence_signed_by ? `&signed_by=${encodeURIComponent(dcfgLocal.evidence_signed_by)}` : "";
+      const sb = fmt === "pdf" && dcfgLocal?.evidence_prepared_by ? `&prepared_by=${encodeURIComponent(dcfgLocal.evidence_prepared_by)}` : "";
       const res = await api.get(`/sap/sod-evidence/export?format=${fmt}${sb}`, { responseType: "blob" });
       const url = URL.createObjectURL(res.data);
       const a = document.createElement("a"); a.href = url; a.download = `sap-sod-evidence.${fmt}`; a.click();
@@ -196,6 +202,42 @@ export default function SodCommandCenter() {
       toast.success(`SoD evidence pack exported (${fmt.toUpperCase()})`);
     } catch { toast.error("Export failed"); }
   };
+  const muteAlert = async (hours) => {
+    setMuteBusy(true);
+    try {
+      const reason = window.prompt("Reason for snoozing alerts (optional):", "Known dip — remediation in progress") || "";
+      const { data } = await api.post("/sap/scorecard/alert-mute", { hours, reason });
+      toast.success(`Alerts muted for ${hours >= 168 ? "7 days" : hours + "h"}`, { description: data.mute_reason || "" });
+      await loadAlerts();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Mute failed (admin only)"); }
+    setMuteBusy(false);
+  };
+  const unmuteAlert = async () => {
+    setMuteBusy(true);
+    try { await api.post("/sap/scorecard/alert-unmute"); toast.success("Alerts un-muted"); await loadAlerts(); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Unmute failed (admin only)"); }
+    setMuteBusy(false);
+  };
+  const approveEvidence = async () => {
+    const approver = window.prompt("Approver name / title:", dcfg?.config?.evidence_approved_by || "");
+    if (approver === null) return;
+    setApproveBusy(true);
+    try {
+      const { data } = await api.post("/sap/sod-evidence/approve", { approved_by: approver });
+      toast.success("Evidence pack approved", { description: `Approved by ${data.approved_by}` });
+      await loadDcfg();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Approve failed (set & save 'Prepared by' first)"); }
+    setApproveBusy(false);
+  };
+  const unapproveEvidence = async () => {
+    setApproveBusy(true);
+    try { await api.post("/sap/sod-evidence/unapprove"); toast.success("Approval revoked"); await loadDcfg(); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Failed (admin only)"); }
+    setApproveBusy(false);
+  };
+  const addScope = () => setDcfgLocal({ ...dcfgLocal, auditor_scopes: [...(dcfgLocal.auditor_scopes || []), { email: "", areas: "", systems: "" }] });
+  const setScope = (i, k, v) => setDcfgLocal({ ...dcfgLocal, auditor_scopes: (dcfgLocal.auditor_scopes || []).map((s, j) => (j === i ? { ...s, [k]: v } : s)) });
+  const removeScope = (i) => setDcfgLocal({ ...dcfgLocal, auditor_scopes: (dcfgLocal.auditor_scopes || []).filter((_, j) => j !== i) });
   const toggleSev = (s) => { const cur = arem.config.severities; const next = cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]; saveArem({ severities: next.length ? next : ["Critical"] }); };
 
   const openRule = async (r) => {
@@ -299,6 +341,12 @@ export default function SodCommandCenter() {
                 <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Why did the score move?</span>
                 <button data-testid="scorecard-why-refresh" onClick={loadWhy} disabled={whyBusy} className="text-[10px] text-primary hover:underline disabled:opacity-50">{whyBusy ? "…" : "refresh"}</button>
                 {why?.model && <span className="text-[9px] font-mono text-muted-foreground">· {why.model}</span>}
+                <div className="flex-1" />
+                {scorecard.forecast && (
+                  <span data-testid="scorecard-forecast" title={scorecard.forecast.basis} className="text-[10px] font-mono px-2 py-0.5 rounded-full shrink-0" style={{ background: scorecard.forecast.delta >= 0 ? "hsl(142 70% 45% / 0.14)" : "hsl(0 84% 60% / 0.14)", color: scorecard.forecast.delta >= 0 ? "hsl(142 70% 36%)" : "hsl(0 84% 52%)" }}>
+                    Forecast next wk {scorecard.forecast.next_week_score}/100 ({scorecard.forecast.delta >= 0 ? "+" : ""}{scorecard.forecast.delta})
+                  </span>
+                )}
               </div>
               <div className="text-sm text-foreground/90 mt-0.5" data-testid="scorecard-why-text">{whyBusy && !why ? "Analyzing the 8-week trend…" : (why?.summary || "—")}</div>
             </div>
@@ -487,9 +535,47 @@ export default function SodCommandCenter() {
                 <Input data-testid="evidence-recipients" value={dcfgLocal.evidence_recipients || ""} onChange={(e) => setDcfgLocal({ ...dcfgLocal, evidence_recipients: e.target.value })} placeholder="auditor@company.com, soc@company.com" />
               </div>
             </div>
-            <div className="mt-2">
-              <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Reviewed &amp; signed by (auditor/reviewer — stamped on the PDF)</div>
-              <Input data-testid="evidence-signed-by" value={dcfgLocal.evidence_signed_by || ""} onChange={(e) => setDcfgLocal({ ...dcfgLocal, evidence_signed_by: e.target.value })} placeholder="e.g. Jane Auditor, Internal Audit" />
+            <div className="mt-3 rounded-md border border-border p-2.5" data-testid="evidence-signoff">
+              <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2">Two-step signoff (stamped on the PDF)</div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <div className="text-[10px] text-muted-foreground mb-1">1 · Prepared by</div>
+                  <Input data-testid="evidence-prepared-by" value={dcfgLocal.evidence_prepared_by || ""} onChange={(e) => setDcfgLocal({ ...dcfgLocal, evidence_prepared_by: e.target.value })} placeholder="e.g. Sam Prep, GRC Analyst" className="h-8" />
+                </div>
+                <div>
+                  <div className="text-[10px] text-muted-foreground mb-1">2 · Approval</div>
+                  {dcfg?.config?.evidence_approved_by ? (
+                    <div className="flex items-center gap-2 h-8">
+                      <span data-testid="evidence-approval-status" className="text-[11px] px-2 py-0.5 rounded-full font-mono" style={{ background: "hsl(142 70% 45% / 0.14)", color: "hsl(142 70% 34%)" }}>✓ {dcfg.config.evidence_approved_by} · {(dcfg.config.evidence_approved_at || "").slice(0, 10)}</span>
+                      <Button size="sm" variant="ghost" className="h-7 text-[11px]" data-testid="evidence-unapprove" onClick={unapproveEvidence} disabled={approveBusy}>Revoke</Button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 h-8">
+                      <span data-testid="evidence-approval-status" className="text-[11px] px-2 py-0.5 rounded-full font-mono" style={{ background: "hsl(35 90% 55% / 0.14)", color: "hsl(35 90% 40%)" }}>Pending approval</span>
+                      <Button size="sm" variant="outline" className="h-7 text-[11px]" data-testid="evidence-approve" onClick={approveEvidence} disabled={approveBusy}>Approve pack</Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+              <p className="text-[10px] text-muted-foreground mt-1.5">Save the schedule after editing "Prepared by" (changing it clears any prior approval), then approve. The PDF carries both names + the approval date.</p>
+            </div>
+            <div className="mt-3" data-testid="auditor-scopes">
+              <div className="flex items-center gap-2 mb-1.5">
+                <div className="text-[10px] font-mono uppercase text-muted-foreground">Per-auditor scopes — each recipient gets a pack filtered to their areas/systems (blank = full pack)</div>
+                <div className="flex-1" />
+                <Button size="sm" variant="outline" className="h-7 text-[11px]" data-testid="auditor-scope-add" onClick={addScope}>+ Add scope</Button>
+              </div>
+              <div className="space-y-2">
+                {(dcfgLocal.auditor_scopes || []).map((s, i) => (
+                  <div key={i} className="grid grid-cols-1 md:grid-cols-[1.4fr_1fr_1fr_auto] gap-2 items-center" data-testid={`auditor-scope-${i}`}>
+                    <Input data-testid={`auditor-scope-email-${i}`} value={s.email} onChange={(e) => setScope(i, "email", e.target.value)} placeholder="auditor@company.com" className="h-8" />
+                    <Input data-testid={`auditor-scope-areas-${i}`} value={s.areas} onChange={(e) => setScope(i, "areas", e.target.value)} placeholder="Finance, Treasury" className="h-8" />
+                    <Input data-testid={`auditor-scope-systems-${i}`} value={s.systems} onChange={(e) => setScope(i, "systems", e.target.value)} placeholder="S4P, ECP" className="h-8" />
+                    <Button size="sm" variant="ghost" className="h-8 text-crit" data-testid={`auditor-scope-remove-${i}`} onClick={() => removeScope(i)}>Remove</Button>
+                  </div>
+                ))}
+                {(!dcfgLocal.auditor_scopes || dcfgLocal.auditor_scopes.length === 0) && <div className="text-[11px] text-muted-foreground">No scopes — every recipient gets the full evidence pack.</div>}
+              </div>
             </div>
             <div className="flex flex-wrap items-center gap-2 mt-3">
               <Button size="sm" variant="outline" className="h-8 gap-1.5" data-testid="evidence-send-now" onClick={sendEvidence} disabled={evidBusy}><Mail className="w-3.5 h-3.5" />{evidBusy ? "Sending…" : "Send evidence pack now"}</Button>
@@ -615,8 +701,22 @@ export default function SodCommandCenter() {
           {evidPreview && (
             <div className="max-h-[72vh] overflow-y-auto space-y-4">
               <div className="text-[11px] font-mono text-muted-foreground" data-testid="evidence-preview-meta">
-                {evidPreview.enabled ? "Scheduled" : "Not scheduled"} · sends every <b className="text-foreground">{({ mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday", sat: "Saturday", sun: "Sunday" })[evidPreview.evidence_day] || evidPreview.evidence_day}</b> to {evidPreview.recipients?.length || 0} recipient(s){evidPreview.recipients?.length ? `: ${evidPreview.recipients.join(", ")}` : " (admins/execs)"}{evidPreview.signed_by ? ` · signed by ${evidPreview.signed_by}` : ""}
+                {evidPreview.enabled ? "Scheduled" : "Not scheduled"} · sends every <b className="text-foreground">{({ mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday", sat: "Saturday", sun: "Sunday" })[evidPreview.evidence_day] || evidPreview.evidence_day}</b> · Prepared by <b className="text-foreground">{evidPreview.prepared_by || "—"}</b> · {evidPreview.approved_by ? <span style={{ color: "hsl(142 70% 38%)" }}>Approved by {evidPreview.approved_by}</span> : <span style={{ color: "hsl(35 90% 45%)" }}>Pending approval</span>}
               </div>
+              {(evidPreview.recipients_detail || []).length > 0 && (
+                <div className="rounded-lg border border-border p-2.5" data-testid="evidence-preview-recipients">
+                  <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1.5">Per-recipient delivery</div>
+                  <div className="space-y-1">
+                    {evidPreview.recipients_detail.map((r, i) => (
+                      <div key={i} className="flex flex-wrap items-center gap-2 text-[11px]" data-testid={`evidence-preview-recipient-${i}`}>
+                        <span className="font-mono">{r.email}</span>
+                        <span className="px-1.5 py-0.5 rounded-full bg-secondary text-muted-foreground">{r.conflicts} conflict(s)</span>
+                        {r.scoped ? <span className="px-1.5 py-0.5 rounded-full font-mono" style={{ background: "hsl(199 89% 48% / 0.12)", color: "hsl(199 89% 42%)" }}>scoped: {[...(r.areas || []), ...(r.systems || [])].join(", ")}</span> : <span className="text-muted-foreground">full pack</span>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
               <div className="rounded-lg border border-border bg-white" dangerouslySetInnerHTML={{ __html: evidPreview.html || "" }} />
               <div>
                 <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2">Attached PDF preview — first {evidPreview.rows?.length || 0} of {evidPreview.summary?.total || 0} conflict(s)</div>
