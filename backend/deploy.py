@@ -1830,8 +1830,15 @@ def _audit_room_html(org_name, room, findings, latest, branding=None, comments=N
             f'<span class="sev" style="background:{stbg.get(st, "#6b7280")}">{_esc_html(st)}</span></div>'
             f'<div class="ctext">{_esc_html(c.get("comment", ""))}</div>{reply_html}</div>')
     _disp = "block" if comments else "none"
-    thread_html = (f'<h2 id="thread-h" style="display:{_disp}">Comment thread</h2>'
-                   f'<div id="thread-list">' + "".join(items) + '</div>')
+    reply_count = sum(1 for c in comments if c.get("reply"))
+    thread_html = (f'<div id="reply-alert" style="display:none;background:#eef4ff;border:1px solid #c7dbff;border-radius:8px;padding:8px 12px;margin:8px 0;color:#1e40af;font-weight:600;font-size:13px"></div>'
+                   f'<h2 id="thread-h" style="display:{_disp}">Comment thread</h2>'
+                   f'<div id="thread-list">' + "".join(items) + '</div>'
+                   f'<script>(function(){{var tok="{room["token"]}";var total={reply_count};'
+                   f'var k="obserra_seen_replies_"+tok;var seen=parseInt(localStorage.getItem(k)||"0",10);var nw=total-seen;'
+                   f'if(nw>0){{var el=document.getElementById("reply-alert");if(el){{el.style.display="block";'
+                   f'el.textContent=nw+" new repl"+(nw===1?"y":"ies")+" from the governance team";}}}}'
+                   f'localStorage.setItem(k,String(total));}})();</script>')
     # Auditor comment box (posts back to the room comment endpoint)
     comment_html = (
         '<h2>Leave a comment</h2>'
@@ -2165,6 +2172,88 @@ async def renew_audit_room(body: RenewRoomBody, user: dict = Depends(get_current
     return {"ok": True, "expires_at": expires, "ttl_days": ttl}
 
 
+_DEFAULT_REPLY_TEMPLATES = [
+    {"label": "Evidence attached", "text": "The requested evidence is attached in the latest signed evidence pack — see the download on your portal."},
+    {"label": "Under review", "text": "Thanks — the governance team is reviewing this request and will follow up shortly."},
+    {"label": "Please clarify", "text": "Could you clarify the specific system, control or period this request relates to so we can provide the right evidence?"},
+    {"label": "Resolved", "text": "This has been addressed. Please let us know if you need anything further for your audit."},
+]
+
+
+class BulkStatusBody(BaseModel):
+    ids: list[str]
+    status: str
+
+
+@deploy_router.post("/audit-room-comments/bulk-status")
+async def bulk_set_comment_status(body: BulkStatusBody, user: dict = Depends(get_current_user)):
+    """Resolve / reassign many auditor requests at once during a busy audit."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    if body.status not in ("Open", "In Progress", "Resolved"):
+        raise HTTPException(400, "Invalid status")
+    ids = [i for i in (body.ids or []) if i][:500]
+    if not ids:
+        raise HTTPException(400, "No requests selected.")
+    res = await db.audit_room_comments.update_many(
+        {"id": {"$in": ids}, "org_id": user["org_id"]}, {"$set": {"status": body.status}})
+    return {"ok": True, "updated": res.modified_count}
+
+
+class ReplyTemplatesBody(BaseModel):
+    templates: list[dict]
+
+
+@deploy_router.get("/reply-templates")
+async def get_reply_templates(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    tpls = (org.get("system_health") or {}).get("reply_templates")
+    return {"templates": tpls if tpls else _DEFAULT_REPLY_TEMPLATES, "is_default": not tpls}
+
+
+@deploy_router.put("/reply-templates")
+async def set_reply_templates(body: ReplyTemplatesBody, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from bson import ObjectId
+    clean = []
+    for t in (body.templates or [])[:30]:
+        label = (str(t.get("label") or "")).strip()[:60]
+        text = (str(t.get("text") or "")).strip()[:2000]
+        if label and text:
+            clean.append({"label": label, "text": text})
+    await db.organizations.update_one({"_id": ObjectId(user["org_id"])},
+                                      {"$set": {"system_health.reply_templates": clean}})
+    return {"ok": True, "templates": clean}
+
+
+@deploy_router.get("/audit-room-comments/export.csv")
+async def export_audit_room_comments(user: dict = Depends(get_current_user)):
+    """Download the full Audit Requests log (with replies, status, timestamps) as CSV for the audit file."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    import csv
+    from datetime import datetime, timezone
+    org_id = user["org_id"]
+    rows = await db.audit_room_comments.find({"org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(5000)
+    room_tokens = [x["token"] for x in await db.audit_rooms.find({"org_id": org_id}, {"_id": 0, "token": 1}).to_list(1000)]
+    label = {t: f"Room {i + 1}" for i, t in enumerate(room_tokens)}
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Submitted", "Room", "Auditor", "Auditor email", "Status", "Request", "Reply", "Replied by", "Replied at"])
+    for r in rows:
+        w.writerow([r.get("at", ""), label.get(r.get("token"), "Archived room"), r.get("author", ""),
+                    r.get("author_email", ""), r.get("status", "Open"), r.get("comment", ""),
+                    r.get("reply") or "", r.get("reply_by") or "", r.get("reply_at") or ""])
+    data = buf.getvalue().encode("utf-8-sig")
+    fn = f"audit-requests-{datetime.now(timezone.utc).date().isoformat()}.csv"
+    return StreamingResponse(io.BytesIO(data), media_type="text/csv",
+                             headers={"Content-Disposition": f'attachment; filename="{fn}"'})
+
+
 async def _run_audit_room_expiry_reminders(within_days: int = 3):
     """Folded into the daily cron: email admins/execs a few days before each Audit Room link expires."""
     from datetime import datetime, timezone, timedelta
@@ -2253,6 +2342,13 @@ async def _run_overdue_request_digest(sla_hours: int = 72):
                     await notifications.send_email(rr["email"], f"{len(items)} audit request(s) past SLA — Obserra SAP UAC", html)
                 except Exception:
                     pass
+            try:
+                lines = "\n".join(f"• {x.get('author', 'Auditor')} — waiting {_age(x.get('at', ''))}: {(x.get('comment') or '')[:100]}" for x in items[:10])
+                body = (f"{len(items)} auditor request(s) have been open longer than {sla_hours // 24} day(s):\n{lines}\n\n"
+                        "Open System Health → Audit Requests to respond.")
+                await _route_alert(org, {"slack": True, "teams": True}, f"⚠ {len(items)} audit request(s) past SLA", body)
+            except Exception:
+                pass
             await notifications.create(org_id, "system", "Audit requests past SLA",
                                        f"{len(items)} auditor request(s) have been open longer than {sla_hours // 24} day(s).",
                                        ref="system-health", dedupe_key=f"overdue-req:{today}")

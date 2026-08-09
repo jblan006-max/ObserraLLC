@@ -8,7 +8,7 @@ import {
   Activity, Database, Plug, Clock, ServerCog, ArrowUpCircle, DownloadCloud, Loader2,
   HardDriveDownload, RotateCcw, ShieldCheck, AlertTriangle, RefreshCw, Building2, Terminal, CheckCircle2,
   Save, Mail, MessageSquare, Slack, Zap, Archive, Lock, Send, FileText, KeyRound, Eye, History, FileCheck2,
-  Share2, Copy, X, Trash2, DoorOpen, Link2, Palette, MessageCircle, Ban,
+  Share2, Copy, X, Trash2, DoorOpen, Link2, Palette, MessageCircle, Ban, Download, Pencil, Plus,
 } from "lucide-react";
 
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
@@ -158,6 +158,13 @@ export default function SystemHealth() {
   const [replyDrafts, setReplyDrafts] = useState({});
   const [inboxStatus, setInboxStatus] = useState("all");
   const [inboxRoom, setInboxRoom] = useState("all");
+  const [savedTemplates, setSavedTemplates] = useState([]);
+  const [templateModal, setTemplateModal] = useState(false);
+  const [tplDraft, setTplDraft] = useState([]);
+  const [savingTpl, setSavingTpl] = useState(false);
+  const [selectedIds, setSelectedIds] = useState(new Set());
+  const [bulkStatus, setBulkStatus] = useState("Resolved");
+  const [exporting, setExporting] = useState(false);
 
   const loadHealth = useCallback(async () => {
     try { const { data } = await api.get("/health"); setHealth(data); } catch { setHealth((h) => h || { status: "degraded", checks: {} }); }
@@ -199,6 +206,10 @@ export default function SystemHealth() {
     if (!isAdmin) return;
     try { const { data } = await api.get("/deploy/audit-room-comments"); setComments(data.comments || []); } catch { /* ignore */ }
   }, [isAdmin]);
+  const loadTemplates = useCallback(async () => {
+    if (!isAdmin) return;
+    try { const { data } = await api.get("/deploy/reply-templates"); setSavedTemplates(data.templates || []); } catch { /* ignore */ }
+  }, [isAdmin]);
   const loadCfg = useCallback(async () => {
     if (!isAdmin) return;
     try {
@@ -209,9 +220,9 @@ export default function SystemHealth() {
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([loadHealth(), loadDetail(), loadVer(), loadHistory(), loadBackups(), loadUpgrade(), loadCfg(), loadEvidence(), loadPreviews(), loadShares(), loadRooms(), loadComments()]);
+    await Promise.all([loadHealth(), loadDetail(), loadVer(), loadHistory(), loadBackups(), loadUpgrade(), loadCfg(), loadEvidence(), loadPreviews(), loadShares(), loadRooms(), loadComments(), loadTemplates()]);
     setRefreshing(false);
-  }, [loadHealth, loadDetail, loadVer, loadHistory, loadBackups, loadUpgrade, loadCfg, loadEvidence, loadPreviews, loadShares, loadRooms, loadComments]);
+  }, [loadHealth, loadDetail, loadVer, loadHistory, loadBackups, loadUpgrade, loadCfg, loadEvidence, loadPreviews, loadShares, loadRooms, loadComments, loadTemplates]);
 
   useEffect(() => { refreshAll(); }, [refreshAll]);
 
@@ -436,6 +447,40 @@ export default function SystemHealth() {
       await loadComments();
     } catch (e) { toast.error(e.response?.data?.detail || "Couldn't update status"); }
   };
+  const toggleSelect = (id) => setSelectedIds((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const bulkSetStatus = async () => {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    try {
+      const { data } = await api.post("/deploy/audit-room-comments/bulk-status", { ids, status: bulkStatus });
+      toast.success(`${data.updated} request(s) set to ${bulkStatus}`);
+      setSelectedIds(new Set());
+      await loadComments();
+    } catch (e) { toast.error(e.response?.data?.detail || "Bulk update failed"); }
+  };
+  const exportComments = async () => {
+    setExporting(true);
+    try {
+      const res = await api.get("/deploy/audit-room-comments/export.csv", { responseType: "blob" });
+      blobDownload(res.data, `audit-requests-${new Date().toISOString().slice(0, 10)}.csv`);
+    } catch { toast.error("Export failed"); }
+    setExporting(false);
+  };
+  const openTemplateEditor = () => {
+    setTplDraft((savedTemplates.length ? savedTemplates : REPLY_TEMPLATES).map((t) => ({ ...t })));
+    setTemplateModal(true);
+  };
+  const saveTemplates = async () => {
+    setSavingTpl(true);
+    try {
+      const clean = tplDraft.filter((t) => (t.label || "").trim() && (t.text || "").trim());
+      const { data } = await api.put("/deploy/reply-templates", { templates: clean });
+      setSavedTemplates(data.templates || clean);
+      toast.success("Reply templates saved");
+      setTemplateModal(false);
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't save templates"); }
+    setSavingTpl(false);
+  };
   const sendTestDigest = async () => {
     const email = digestTestEmail.trim();
     if (!email.includes("@")) { toast.error("Enter a valid email address"); return; }
@@ -542,6 +587,7 @@ export default function SystemHealth() {
   const openComments = comments.filter((c) => (c.status || "Open") !== "Resolved");
   const oldestOpen = openComments.length ? openComments.reduce((a, b) => (new Date(a.at) <= new Date(b.at) ? a : b)) : null;
   const oldestOpenBreach = oldestOpen && (Date.now() - new Date(oldestOpen.at).getTime()) / 3.6e6 >= 24;
+  const activeTemplates = savedTemplates.length ? savedTemplates : REPLY_TEMPLATES;
 
   const ALERT_ROWS = [
     { key: "db", label: "Database", icon: Database },
@@ -911,8 +957,26 @@ export default function SystemHealth() {
                 </select>
               )}
               <span className="text-[11px] font-mono text-muted-foreground" data-testid="sh-comments-open-count">{comments.filter((c) => (c.status || "Open") !== "Resolved").length} open</span>
+              <Button size="sm" variant="outline" className="gap-1.5 h-7 px-2 text-[11px]" data-testid="sh-inbox-templates" onClick={openTemplateEditor}>
+                <Pencil className="w-3.5 h-3.5" /> Templates
+              </Button>
+              <Button size="sm" variant="outline" className="gap-1.5 h-7 px-2 text-[11px]" data-testid="sh-inbox-export" onClick={exportComments} disabled={exporting}>
+                {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Export CSV
+              </Button>
             </div>
           </div>
+          {selectedIds.size > 0 && (
+            <div className="flex flex-wrap items-center gap-2 mb-2 bg-primary/10 border border-primary/30 rounded-lg px-3 py-2" data-testid="sh-bulk-bar">
+              <span className="text-xs font-semibold">{selectedIds.size} selected</span>
+              <select value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)} data-testid="sh-bulk-status" className="h-7 rounded-md border border-border bg-secondary/40 px-2 text-[11px] ml-auto">
+                <option value="Open">Open</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Resolved">Resolved</option>
+              </select>
+              <Button size="sm" className="h-7 px-3 text-[11px]" data-testid="sh-bulk-apply" onClick={bulkSetStatus}>Apply</Button>
+              <Button size="sm" variant="outline" className="h-7 px-3 text-[11px]" data-testid="sh-bulk-clear" onClick={() => setSelectedIds(new Set())}>Clear</Button>
+            </div>
+          )}
           <div className="space-y-3">
             {filteredComments.length === 0 && (
               <p className="text-xs text-muted-foreground" data-testid="sh-inbox-empty">No requests match the current filter.</p>
@@ -923,7 +987,10 @@ export default function SystemHealth() {
               return (
                 <div key={c.id || i} className="bg-secondary/25 rounded-lg px-3 py-2.5" data-testid={`sh-comment-${i}`}>
                   <div className="flex items-center justify-between gap-2">
-                    <span className="text-xs font-semibold">{c.author}</span>
+                    <div className="flex items-center gap-2">
+                      <input type="checkbox" data-testid={`sh-comment-select-${i}`} checked={selectedIds.has(c.id)} onChange={() => toggleSelect(c.id)} className="w-3.5 h-3.5 accent-primary" />
+                      <span className="text-xs font-semibold">{c.author}</span>
+                    </div>
                     <div className="flex items-center gap-2">
                       {st !== "Resolved" && slaAge(c.at) && (
                         <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${slaAge(c.at).color}`} data-testid={`sh-comment-sla-${i}`}>waiting {slaAge(c.at).label}</span>
@@ -948,7 +1015,7 @@ export default function SystemHealth() {
                     </select>
                   </div>
                   <div className="flex flex-wrap gap-1.5 mt-2" data-testid={`sh-reply-templates-${i}`}>
-                    {REPLY_TEMPLATES.map((tpl) => (
+                    {activeTemplates.map((tpl) => (
                       <button key={tpl.label} type="button" onClick={() => setReplyDrafts((d) => ({ ...d, [c.id]: tpl.text }))}
                         className="text-[10px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:bg-secondary/60 hover:text-foreground transition-colors">{tpl.label}</button>
                     ))}
@@ -1118,6 +1185,40 @@ export default function SystemHealth() {
               <Button size="sm" variant="outline" onClick={() => setBrandModal(false)} disabled={savingBrand}>Cancel</Button>
               <Button size="sm" className="gap-1.5" data-testid="sh-brand-save" onClick={saveRoomBranding} disabled={savingBrand}>
                 {savingBrand ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {templateModal && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" data-testid="sh-template-modal" onClick={() => !savingTpl && setTemplateModal(false)}>
+          <div className="bg-card fact-border rounded-2xl shadow-2xl w-full max-w-lg p-6 max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="font-head font-bold text-lg flex items-center gap-2"><Pencil className="w-5 h-5 text-primary" /> Reply templates</h3>
+              <button data-testid="sh-template-close" onClick={() => setTemplateModal(false)} className="p-1 rounded-md text-muted-foreground hover:bg-secondary/60"><X className="w-4 h-4" /></button>
+            </div>
+            <p className="text-sm text-muted-foreground mb-4">Your own one-tap canned replies for the Audit Requests inbox.</p>
+            <div className="space-y-3">
+              {tplDraft.map((t, idx) => (
+                <div key={idx} className="bg-secondary/25 rounded-lg p-3 space-y-2" data-testid={`sh-template-row-${idx}`}>
+                  <div className="flex items-center gap-2">
+                    <input value={t.label} data-testid={`sh-template-label-${idx}`} onChange={(e) => setTplDraft((d) => d.map((x, j) => (j === idx ? { ...x, label: e.target.value } : x)))}
+                      placeholder="Chip label (e.g. Evidence attached)" className="flex-1 rounded-md border border-border bg-secondary/40 px-2.5 py-1.5 text-sm" />
+                    <button data-testid={`sh-template-remove-${idx}`} onClick={() => setTplDraft((d) => d.filter((_, j) => j !== idx))} className="p-1.5 rounded-md text-muted-foreground hover:text-crit hover:bg-secondary/60"><Trash2 className="w-4 h-4" /></button>
+                  </div>
+                  <textarea rows={2} value={t.text} data-testid={`sh-template-text-${idx}`} onChange={(e) => setTplDraft((d) => d.map((x, j) => (j === idx ? { ...x, text: e.target.value } : x)))}
+                    placeholder="Reply text inserted when the chip is tapped" className="w-full rounded-md border border-border bg-secondary/40 px-2.5 py-1.5 text-sm resize-y" />
+                </div>
+              ))}
+            </div>
+            <Button size="sm" variant="outline" className="gap-1.5 mt-3" data-testid="sh-template-add" onClick={() => setTplDraft((d) => [...d, { label: "", text: "" }])}>
+              <Plus className="w-4 h-4" /> Add template
+            </Button>
+            <div className="flex justify-end gap-2 mt-5">
+              <Button size="sm" variant="outline" onClick={() => setTemplateModal(false)} disabled={savingTpl}>Cancel</Button>
+              <Button size="sm" className="gap-1.5" data-testid="sh-template-save" onClick={saveTemplates} disabled={savingTpl}>
+                {savingTpl ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
               </Button>
             </div>
           </div>
