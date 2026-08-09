@@ -8,6 +8,7 @@ import {
   Activity, Database, Plug, Clock, ServerCog, ArrowUpCircle, DownloadCloud, Loader2,
   HardDriveDownload, RotateCcw, ShieldCheck, AlertTriangle, RefreshCw, Building2, Terminal, CheckCircle2,
   Save, Mail, MessageSquare, Slack, Zap, Archive, Lock, Send, FileText, KeyRound, Eye, History, FileCheck2,
+  Share2, Copy, X,
 } from "lucide-react";
 
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
@@ -126,6 +127,10 @@ export default function SystemHealth() {
   const [previews, setPreviews] = useState([]);
   const [digest, setDigest] = useState(null);
   const [digesting, setDigesting] = useState(false);
+  const [period, setPeriod] = useState("current");
+  const [shareModal, setShareModal] = useState(null);
+  const [sharingFile, setSharingFile] = useState(null);
+  const [sendingDigest, setSendingDigest] = useState(false);
 
   const loadHealth = useCallback(async () => {
     try { const { data } = await api.get("/health"); setHealth(data); } catch { setHealth((h) => h || { status: "degraded", checks: {} }); }
@@ -259,11 +264,32 @@ export default function SystemHealth() {
     setDownloadingPdf(false);
   };
 
+  const periodOpts = () => {
+    const opts = [{ v: "current", label: "Current snapshot" }];
+    const now = new Date();
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      opts.push({ v: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`, label: d.toLocaleString(undefined, { month: "long", year: "numeric" }) });
+    }
+    const seen = new Set();
+    for (let i = 0; i < 4; i++) {
+      const qd = new Date(now.getFullYear(), now.getMonth() - i * 3, 1);
+      const q = Math.floor(qd.getMonth() / 3) + 1;
+      const v = `${qd.getFullYear()}-Q${q}`;
+      if (!seen.has(v)) { seen.add(v); opts.push({ v, label: `Q${q} ${qd.getFullYear()}` }); }
+    }
+    return opts;
+  };
+  const periodBody = () => {
+    if (period === "current") return null;
+    if (period.includes("-Q")) return { kind: "quarter", value: period };
+    return { kind: "month", value: period };
+  };
   const generateEvidence = async () => {
     setGenEvidence(true);
     try {
-      const { data } = await api.post("/deploy/evidence/generate");
-      toast.success("Evidence archived to locker", { description: `Signed PDF added (${fmtBytes(data.size)}).` });
+      const { data } = await api.post("/deploy/evidence/generate", { period: periodBody() });
+      toast.success("Evidence archived to locker", { description: `${data.period_label} · ${fmtBytes(data.size)}` });
       await loadEvidence();
     } catch (e) { toast.error(e.response?.data?.detail || "Couldn't archive evidence"); }
     setGenEvidence(false);
@@ -274,13 +300,34 @@ export default function SystemHealth() {
       blobDownload(res.data, file);
     } catch { toast.error("Download failed"); }
   };
-  const toggleMonthlyEvidence = async () => {
-    const next = !(evCfg?.monthly_email);
+  const saveEvidenceCfg = async (patch) => {
+    const next = { monthly_email: !!evCfg?.monthly_email, keep: parseInt(evCfg?.keep || 60, 10), ...patch };
     try {
-      const { data } = await api.put("/deploy/evidence-config", { monthly_email: next });
+      const { data } = await api.put("/deploy/evidence-config", next);
       setEvCfg(data);
-      toast.success(next ? "Monthly evidence email on" : "Monthly evidence email paused", { description: next ? "Auditors & admins receive the signed PDF on the 1st of each month." : "The scheduled evidence email is paused." });
+      if (patch.monthly_email !== undefined) toast.success(data.monthly_email ? "Monthly evidence email on" : "Monthly evidence email paused", { description: data.monthly_email ? "Auditors & admins receive the signed PDF on the 1st of each month." : "The scheduled evidence email is paused." });
+      else toast.success("Retention updated", { description: `Keeping the latest ${data.keep} report(s); older ones roll off.` });
     } catch (e) { toast.error(e.response?.data?.detail || "Couldn't update"); }
+  };
+  const shareEvidence = async (file) => {
+    setSharingFile(file);
+    try {
+      const { data } = await api.post("/deploy/evidence/share", { file, ttl_days: 7 });
+      setShareModal({ file, url: data.url, expires_at: data.expires_at });
+      try { await navigator.clipboard.writeText(data.url); toast.success("Share link copied", { description: `Read-only, expires ${new Date(data.expires_at).toLocaleDateString()}.` }); }
+      catch { toast.success("Share link created"); }
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't create link"); }
+    setSharingFile(null);
+  };
+  const sendDigestNow = async () => {
+    setSendingDigest(true);
+    try {
+      const { data } = await api.post("/deploy/health-digest-send");
+      if (data.sent) toast.success("Digest sent", { description: `Routed to: ${data.channels?.join(", ") || "in-app only"}.` });
+      else toast("Nothing to send", { description: "All systems healthy — no degraded events today." });
+      await previewDigest();
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't send digest"); }
+    setSendingDigest(false);
   };
   const previewDigest = async () => {
     setDigesting(true);
@@ -568,17 +615,32 @@ export default function SystemHealth() {
               <h2 className="font-head font-bold text-lg">Evidence Locker</h2>
               <span className="text-[11px] text-muted-foreground">Signed compliance PDFs, archived by date for auditor self-serve</span>
             </div>
-            <Button size="sm" className="gap-1.5" data-testid="sh-evidence-generate" onClick={generateEvidence} disabled={genEvidence}>
-              {genEvidence ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}{genEvidence ? "Generating…" : "Generate & archive"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <select data-testid="sh-evidence-period" value={period} onChange={(e) => setPeriod(e.target.value)} className="h-9 rounded-md border border-border bg-secondary/40 px-2 text-xs" title="Reporting period">
+                {periodOpts().map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+              </select>
+              <Button size="sm" className="gap-1.5" data-testid="sh-evidence-generate" onClick={generateEvidence} disabled={genEvidence}>
+                {genEvidence ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}{genEvidence ? "Generating…" : "Generate & archive"}
+              </Button>
+            </div>
           </div>
 
           {evCfg && (
-            <label className="flex flex-wrap items-center gap-2.5 mb-4 p-3 rounded-lg bg-secondary/30 border border-border/50 cursor-pointer select-none" data-testid="sh-evidence-monthly-row">
-              <input type="checkbox" data-testid="sh-evidence-monthly" checked={!!evCfg.monthly_email} onChange={toggleMonthlyEvidence} className="w-4 h-4 accent-primary" />
-              <span className="text-sm font-medium">Email monthly evidence</span>
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mb-4 p-3 rounded-lg bg-secondary/30 border border-border/50" data-testid="sh-evidence-monthly-row">
+              <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                <input type="checkbox" data-testid="sh-evidence-monthly" checked={!!evCfg.monthly_email} onChange={(e) => saveEvidenceCfg({ monthly_email: e.target.checked })} className="w-4 h-4 accent-primary" />
+                <span className="text-sm font-medium">Email monthly evidence</span>
+              </label>
               <span className="text-[11px] text-muted-foreground flex-1 min-w-[160px]">On the 1st of each month the signed PDF is archived here and emailed to admins, executives and your saved IT/audit recipients.</span>
-            </label>
+              <label className="flex items-center gap-2 text-xs text-muted-foreground">
+                Keep latest
+                <input type="number" min="1" max="365" data-testid="sh-evidence-keep" value={evCfg.keep ?? 60}
+                  onChange={(e) => setEvCfg({ ...evCfg, keep: e.target.value })}
+                  onBlur={(e) => saveEvidenceCfg({ keep: Math.max(1, Math.min(365, parseInt(e.target.value || "60", 10))) })}
+                  className="w-16 h-8 rounded-md border border-border bg-background px-2 text-foreground" />
+                report(s)
+              </label>
+            </div>
           )}
 
           {evidence.length ? (
@@ -588,12 +650,18 @@ export default function SystemHealth() {
                 <tbody>
                   {evidence.map((ev) => (
                     <tr key={ev.file} className="border-b border-border/50" data-testid={`sh-evidence-row-${ev.file}`}>
-                      <td className="p-2 font-mono text-xs"><span className="truncate max-w-[190px] inline-block align-middle">{ev.file}</span></td>
+                      <td className="p-2 font-mono text-xs"><span className="truncate max-w-[190px] inline-block align-middle">{ev.file}</span><div className="text-[10px] text-muted-foreground font-sans">{ev.period_label || "—"}</div></td>
                       <td className="p-2 text-xs text-muted-foreground">{ev.generated_by || "—"}</td>
                       <td className="p-2"><span className={`text-[9px] font-mono uppercase px-1.5 py-0.5 rounded ${ev.source === "monthly-cron" ? "bg-ai/15 text-ai" : "bg-secondary text-muted-foreground"}`}>{ev.source === "monthly-cron" ? "monthly" : "manual"}</span></td>
                       <td className="p-2 font-mono text-xs">{fmtBytes(ev.size)}</td>
                       <td className="p-2 text-xs text-muted-foreground">{fmtDT(ev.created_at)}</td>
-                      <td className="p-2 text-right"><button data-testid={`sh-evidence-download-${ev.file}`} onClick={() => downloadEvidence(ev.file)} className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-secondary/60 transition-colors" title="Download signed PDF"><DownloadCloud className="w-4 h-4" /></button></td>
+                      <td className="p-2">
+                        <div className="flex items-center justify-end gap-1">
+                          {ev.verify_token && <a data-testid={`sh-evidence-verify-${ev.file}`} href={`${process.env.REACT_APP_BACKEND_URL}/api/deploy/evidence/verify/${ev.verify_token}`} target="_blank" rel="noreferrer" className="p-1.5 rounded-md text-muted-foreground hover:text-ai hover:bg-secondary/60 transition-colors" title="Open public verification page"><ShieldCheck className="w-4 h-4" /></a>}
+                          <button data-testid={`sh-evidence-share-${ev.file}`} onClick={() => shareEvidence(ev.file)} disabled={sharingFile === ev.file} className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-secondary/60 transition-colors disabled:opacity-50" title="Create read-only share link">{sharingFile === ev.file ? <Loader2 className="w-4 h-4 animate-spin" /> : <Share2 className="w-4 h-4" />}</button>
+                          <button data-testid={`sh-evidence-download-${ev.file}`} onClick={() => downloadEvidence(ev.file)} className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-secondary/60 transition-colors" title="Download signed PDF"><DownloadCloud className="w-4 h-4" /></button>
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -698,10 +766,29 @@ export default function SystemHealth() {
                       </div>
                     ))}
                   </div>
+                  <Button size="sm" className="gap-1.5 mt-3" data-testid="sh-digest-send" onClick={sendDigestNow} disabled={sendingDigest}>
+                    {sendingDigest ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Send digest now
+                  </Button>
                 </>
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {shareModal && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" data-testid="sh-share-modal" onClick={() => setShareModal(null)}>
+          <div className="bg-card border border-border rounded-xl p-5 w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-head font-bold text-lg flex items-center gap-2"><Share2 className="w-4 h-4 text-primary" /> Share evidence</h3>
+              <button data-testid="sh-share-close" onClick={() => setShareModal(null)} className="p-1 rounded-md text-muted-foreground hover:bg-secondary/60"><X className="w-4 h-4" /></button>
+            </div>
+            <p className="text-xs text-muted-foreground mb-3">Read-only link — no Obserra account required. Expires {new Date(shareModal.expires_at).toLocaleDateString()}.</p>
+            <div className="flex items-center gap-2">
+              <input readOnly data-testid="sh-share-url" value={shareModal.url} className="flex-1 h-9 rounded-md border border-border bg-secondary/40 px-2 text-xs font-mono" onFocus={(e) => e.target.select()} />
+              <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-share-copy" onClick={async () => { try { await navigator.clipboard.writeText(shareModal.url); toast.success("Copied"); } catch { toast.error("Copy failed"); } }}><Copy className="w-3.5 h-3.5" /> Copy</Button>
+            </div>
+          </div>
         </div>
       )}
 
