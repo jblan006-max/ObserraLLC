@@ -86,6 +86,20 @@ def _dismiss_overlays(page):
             pass
 
 
+def _settle(page):
+    """Wait for network to go idle and the app's lazy-route Suspense spinner to clear."""
+    try:
+        page.wait_for_load_state("networkidle", timeout=12000)
+    except Exception:
+        pass
+    try:
+        page.wait_for_function(
+            "() => { const m = document.querySelector('main'); return m && !m.querySelector('.animate-spin'); }",
+            timeout=12000)
+    except Exception:
+        pass
+
+
 def run():
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
@@ -101,13 +115,15 @@ def run():
         page.fill("input[type=email]", EMAIL)
         page.fill("input[type=password]", PASSWORD)
         page.get_by_test_id("auth-submit").click()
-        page.wait_for_timeout(4000)
+        page.wait_for_timeout(3000)
+        _settle(page)
         _dismiss_overlays(page)
         pages = [p for p in PAGES if p[1] in TOUR_MAP] if os.environ.get("SHOT_TOUR_ONLY") else PAGES
         for route, name, scroll_y in pages:
             try:
                 page.goto(f"{BASE}/app/{route}", wait_until="domcontentloaded", timeout=45000)
-                page.wait_for_timeout(2200)
+                _settle(page)
+                page.wait_for_timeout(800)
                 _dismiss_overlays(page)
                 if scroll_y:
                     page.evaluate("(y) => window.scrollTo(0, y)", scroll_y)

@@ -112,3 +112,8 @@
 - `Settings.jsx`: "Regenerate tour images" button beside "Regenerate guides" (180s client timeout).
 - Note: this forked pod had Playwright browser build 1208 but the Python package expects 1234 — reinstalled chromium 1234 to `/pw-browsers`. Endpoint verified: 200, all 4 images refreshed in ~19s.
 
+## Feature — One-click "Refresh all visuals" + hardened capture (Jun 2026, curl + screenshot-verified)
+- Added an admin **Refresh all visuals** button (Settings → Deployment & Documentation) that recaptures every dashboard screenshot once, then rebuilds BOTH the in-app tour previews and the PDF/Word guides in a single pass. It calls the existing `POST /api/deploy/regenerate-guides?capture=true` (a full capture already refreshes tour images via `_copy_tour_shots`, then `gen_docs.generate_all()` rebuilds the guides). 300s client timeout.
+- Hardened `scripts/capture_shots.py` with `_settle(page)` — waits for `networkidle` + the app's lazy-route Suspense spinner (`main .animate-spin`) to clear before screenshotting. Root cause it fixes: a fixed 2.2s wait could capture the loading spinner (blank ~8.9KB JPEGs) if a route hadn't finished loading (e.g. during a dev hot-reload). Post-fix captures are full-content 115–171KB.
+- Verified: full capture+rebuild endpoint 200 (PDF ~2.5MB, DOCX ~1.86MB); `overview.jpg` renders the live Executive SAP Access Risk dashboard; both new buttons render; tour preview shows the refreshed screenshot.
+

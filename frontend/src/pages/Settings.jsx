@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { api, API } from "@/lib/api";
 import { toast } from "sonner";
-import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw, Image as ImageIcon, Server, Package, FileText, RefreshCw, Send, Bookmark, X, Lock } from "lucide-react";
+import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw, Image as ImageIcon, Server, Package, FileText, RefreshCw, Send, Bookmark, X, Lock, Sparkles } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SsoCard } from "@/components/SsoCard";
 
@@ -98,6 +98,16 @@ export default function Settings() {
       toast.success(`Tour images refreshed to match the current UI (${data.images?.length || 0} screens)`);
     } catch (e) { toast.error(e.response?.data?.detail || "Could not regenerate tour images"); }
     setTourBusy(false);
+  };
+
+  const [allVisualsBusy, setAllVisualsBusy] = useState(false);
+  const refreshAllVisuals = async () => {
+    setAllVisualsBusy(true);
+    try {
+      await api.post("/deploy/regenerate-guides?capture=true", {}, { timeout: 300000 });
+      toast.success("All visuals refreshed — recaptured every dashboard, then rebuilt the tour previews and PDF/Word guides");
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not refresh visuals"); }
+    setAllVisualsBusy(false);
   };
 
   const [emailTo, setEmailTo] = useState("");
@@ -489,6 +499,10 @@ export default function Settings() {
             <button data-testid="regenerate-tour" disabled={tourBusy} onClick={regenTourImages} title="Recapture the in-app tour preview screenshots from the live dashboards"
               className="px-4 py-2.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-primary/40 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
               {tourBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <ImageIcon className="w-4 h-4" />} Regenerate tour images
+            </button>
+            <button data-testid="refresh-all-visuals" disabled={allVisualsBusy} onClick={refreshAllVisuals} title="Recapture every dashboard screenshot once, then rebuild the in-app tour previews and the PDF/Word guides in one pass"
+              className="px-4 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 hover:opacity-90 transition-opacity">
+              {allVisualsBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Refresh all visuals
             </button>
           </div>
           <div className="flex items-center gap-2 flex-wrap pt-1" data-testid="email-docs-row">
