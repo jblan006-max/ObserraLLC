@@ -1,0 +1,82 @@
+name: Release
+
+# On a version tag (e.g. v1.1.0):
+#   • stamps VERSION from the tag (traceability)
+#   • builds & pushes prebuilt backend/frontend images to GHCR (customers can pull, no local build)
+#   • attaches the versioned self-contained .zip as a GitHub Release asset
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Stamp VERSION from the git tag
+        env:
+          OBSERRA_VERSION: ${{ github.ref_name }}
+        run: python scripts/stamp_version.py
+
+      - name: Assemble self-contained package
+        run: python scripts/assemble_onprem.py dist
+
+      - name: Zip the package
+        run: cd dist && zip -rq "Obserra-SAP-UAC-OnPrem-${{ github.ref_name }}.zip" obserra-sap-uac
+
+      - name: Compute lowercase GHCR image prefix
+        id: img
+        run: echo "prefix=ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build & push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: dist/obserra-sap-uac
+          file: dist/obserra-sap-uac/deploy/backend.Dockerfile
+          push: true
+          tags: |
+            ${{ steps.img.outputs.prefix }}/backend:${{ github.ref_name }}
+            ${{ steps.img.outputs.prefix }}/backend:latest
+
+      - name: Build & push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: dist/obserra-sap-uac
+          file: dist/obserra-sap-uac/deploy/frontend.Dockerfile
+          push: true
+          # Prebuilt image defaults to the standard host:8080 mapping; customers who need a
+          # different public URL should build locally (install.sh) or set PUBLIC_URL at build.
+          build-args: |
+            REACT_APP_BACKEND_URL=http://localhost:8080
+          tags: |
+            ${{ steps.img.outputs.prefix }}/frontend:${{ github.ref_name }}
+            ${{ steps.img.outputs.prefix }}/frontend:latest
+
+      - name: Create GitHub Release with the .zip asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/Obserra-SAP-UAC-OnPrem-${{ github.ref_name }}.zip
+          generate_release_notes: true

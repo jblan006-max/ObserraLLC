@@ -216,6 +216,7 @@ class BootstrapBody(BaseModel):
     password: str
     name: str | None = "Administrator"
     org_name: str | None = None
+    seed_demo: bool = True
 
 
 @auth_router.get("/bootstrap-status")
@@ -252,6 +253,9 @@ async def bootstrap_admin(body: BootstrapBody, response: Response):
     try:
         from seed_data import seed_org
         await seed_org(org_id)
+        if body.seed_demo:
+            from sap_engine import seed_sap_uac
+            await seed_sap_uac(org_id)
     except Exception:
         pass
     await _log_audit(org_id, email, "user.bootstrap_admin", "First administrator & organization created")

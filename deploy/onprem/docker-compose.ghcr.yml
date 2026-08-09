@@ -1,0 +1,42 @@
+version: "3.9"
+
+# Obserra SAP UAC — run PREBUILT images from GHCR (no local build).
+# Every tagged release publishes ghcr.io/<owner>/<repo>/{backend,frontend} images.
+#
+# Usage (from the package root):
+#   IMAGE_PREFIX=ghcr.io/your-org/obserra-sap-uac IMAGE_TAG=v1.0.0 \
+#     docker compose -f deploy/docker-compose.ghcr.yml --env-file deploy/.env up -d
+#
+# Then open http://<this-machine-ip>:8080
+
+services:
+  mongodb:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - obserra_uac_mongo:/data/db
+    networks: [obserra]
+
+  backend:
+    image: ${IMAGE_PREFIX:-ghcr.io/your-org/obserra-sap-uac}/backend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file: ./.env
+    environment:
+      - MONGO_URL=mongodb://mongodb:27017
+    depends_on: [mongodb]
+    networks: [obserra]
+
+  frontend:
+    image: ${IMAGE_PREFIX:-ghcr.io/your-org/obserra-sap-uac}/frontend:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    depends_on: [backend]
+    networks: [obserra]
+
+volumes:
+  obserra_uac_mongo:
+
+networks:
+  obserra:
+    driver: bridge

@@ -21,6 +21,9 @@ DOCKERIGNORE = (
 
 
 def read_version():
+    v = (os.environ.get("OBSERRA_VERSION") or "").strip().lstrip("v")
+    if v:
+        return v
     try:
         with open(os.path.join(ROOT, "VERSION")) as f:
             return f.read().strip() or "1.0.0"

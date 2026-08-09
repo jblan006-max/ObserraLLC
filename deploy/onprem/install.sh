@@ -43,14 +43,14 @@ docker compose -f "$COMPOSE" --env-file "$ENV_FILE" up -d --build
 say "Waiting for the app to become healthy…"
 ok=0
 for _ in $(seq 1 90); do
-  if curl -fsS "${PUBLIC_URL}/" >/dev/null 2>&1; then ok=1; break; fi
+  if curl -fsS "${PUBLIC_URL}/api/health" 2>/dev/null | grep -q '"status":"ok"'; then ok=1; break; fi
   sleep 3
 done
 
 if [ "$ok" != "1" ]; then
   err "Containers started but the health check timed out."
   echo "   Check logs:  docker compose -f ${COMPOSE} logs -f backend"
-  echo "   (If PUBLIC_URL is a non-local domain, open it in a browser to confirm.)"
+  echo "   Health URL:  ${PUBLIC_URL}/api/health"
   exit 0
 fi
 
@@ -60,6 +60,9 @@ say "Obserra SAP UAC is up at ${PUBLIC_URL}"
 STATUS="$(curl -fsS "${PUBLIC_URL}/api/auth/bootstrap-status" 2>/dev/null || echo '')"
 if printf '%s' "$STATUS" | grep -q '"initialized":false'; then
   echo
+  read -r -p "   Load the demo SAP dataset so dashboards are populated? [Y/n]: " DEMO_ANS
+  case "${DEMO_ANS:-Y}" in [Nn]*) SEED_DEMO=false ;; *) SEED_DEMO=true ;; esac
+
   say "Create the first administrator account:"
   read -r -p "   Admin email [jblan2026@gmail.com]: " ADMIN_EMAIL
   ADMIN_EMAIL="${ADMIN_EMAIL:-jblan2026@gmail.com}"
@@ -71,9 +74,10 @@ if printf '%s' "$STATUS" | grep -q '"initialized":false'; then
   done
   RESP="$(curl -sS -X POST "${PUBLIC_URL}/api/auth/bootstrap-admin" \
             -H 'Content-Type: application/json' \
-            -d "{\"email\":\"${ADMIN_EMAIL}\",\"password\":\"${ADMIN_PW}\",\"name\":\"Administrator\"}" || true)"
+            -d "{\"email\":\"${ADMIN_EMAIL}\",\"password\":\"${ADMIN_PW}\",\"name\":\"Administrator\",\"seed_demo\":${SEED_DEMO}}" || true)"
   if printf '%s' "$RESP" | grep -q '"email"'; then
     say "Administrator ${ADMIN_EMAIL} created. Sign in at ${PUBLIC_URL}"
+    [ "$SEED_DEMO" = "true" ] && echo "   Demo SAP dataset loaded — dashboards are populated."
   else
     err "Could not create the admin automatically: ${RESP}"
     echo "   Create it from the app's Create Account screen instead."

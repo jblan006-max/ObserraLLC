@@ -62,8 +62,9 @@ That's it. The installer will:
 1. Check Docker & Compose are present.
 2. Create `deploy/.env` from the template and **auto‑generate a strong `JWT_SECRET`**.
 3. Build and start MongoDB, the FastAPI backend and the React web app.
-4. Wait until the app is healthy, then **prompt you to create the first
-   administrator** (email + password) — no database commands required.
+4. Wait until the app is healthy (`/api/health`), then ask whether to **load the
+   demo SAP dataset** (so dashboards are populated) and **prompt you to create the
+   first administrator** (email + password) — no database commands required.
 5. Print the URL to open.
 
 When it finishes, open:
@@ -114,6 +115,20 @@ docker compose -f deploy/docker-compose.yml up -d --build     # update after rep
 ```
 
 MongoDB data persists in the `obserra_uac_mongo` Docker volume across restarts.
+
+### Prebuilt images (GHCR — no local build)
+
+Every tagged release also publishes prebuilt `backend` and `frontend` images to the
+GitHub Container Registry, so you can run without building locally:
+
+```bash
+IMAGE_PREFIX=ghcr.io/your-org/obserra-sap-uac IMAGE_TAG=v1.0.0 \
+  docker compose -f deploy/docker-compose.ghcr.yml --env-file deploy/.env up -d
+```
+
+`GET /api/health` reports readiness (`{"status":"ok"}`) for load balancers and uptime
+checks. Admins are shown an in‑app banner when a newer release is available (set
+`UPDATE_MANIFEST_URL` in `deploy/.env` to a JSON `{ "version": "1.1.0", "url": "…" }`).
 
 ## Manual launch
 

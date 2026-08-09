@@ -19,6 +19,9 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Stamp VERSION from git tag (traceability; no-op when untagged)
+        run: python scripts/stamp_version.py
+
       - name: Assemble on-prem package
         run: python scripts/assemble_onprem.py dist
 

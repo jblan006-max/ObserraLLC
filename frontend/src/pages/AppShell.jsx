@@ -3,6 +3,7 @@ import { NavLink, Outlet, useNavigate, useLocation, Navigate } from "react-route
 import { useAuth } from "@/context/AuthContext";
 import { SapAdvisor } from "@/components/SapAdvisor";
 import { OnboardingTour } from "@/components/OnboardingTour";
+import { UpdateBanner } from "@/components/UpdateBanner";
 import { LockedGate } from "@/components/LockedGate";
 import { NotificationBell } from "@/components/NotificationBell";
 import ForcePasswordReset from "@/pages/ForcePasswordReset";
@@ -300,6 +301,7 @@ export default function AppShell() {
 
       <SapAdvisor />
       <OnboardingTour />
+      <UpdateBanner />
     </div>
     </DeepDiveProvider>
   );

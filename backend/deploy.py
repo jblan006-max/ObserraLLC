@@ -168,6 +168,72 @@ async def refresh_visuals(background_tasks: BackgroundTasks, user: dict = Depend
     return {"ok": True, "status": "started"}
 
 
+_UPDATE_CACHE = {"ts": 0.0, "data": None}
+
+
+def _ver_tuple(v):
+    import re
+    p = [int(x) for x in re.findall(r"\d+", v or "")][:3]
+    return tuple(p + [0] * (3 - len(p)))
+
+
+async def _fetch_latest_version():
+    """Best-effort: fetch {version, notes?, url?} from UPDATE_MANIFEST_URL (cached 6h).
+    Unset/unreachable => None, so hosted deployments simply never show an update banner."""
+    url = os.environ.get("UPDATE_MANIFEST_URL")
+    if not url:
+        return None
+    import time
+    if _UPDATE_CACHE["data"] and time.time() - _UPDATE_CACHE["ts"] < 21600:
+        return _UPDATE_CACHE["data"]
+    from starlette.concurrency import run_in_threadpool
+
+    def _get():
+        import json
+        import urllib.request
+        req = urllib.request.Request(url, headers={"User-Agent": "Obserra-SAP-UAC/update-check"})
+        with urllib.request.urlopen(req, timeout=4) as r:
+            return json.loads(r.read().decode())
+    try:
+        data = await run_in_threadpool(_get)
+        _UPDATE_CACHE.update(ts=time.time(), data=data)
+        return data
+    except Exception:
+        return None
+
+
+@deploy_router.get("/version")
+async def deploy_version(user: dict = Depends(get_current_user)):
+    """Running version + whether a newer on-prem release is available."""
+    current = onprem_pack.read_version()
+    latest, notes, url = current, None, None
+    manifest = await _fetch_latest_version()
+    if manifest:
+        latest = str(manifest.get("version") or current).lstrip("v")
+        notes = manifest.get("notes")
+        url = manifest.get("url")
+    return {"current": current, "latest": latest,
+            "update_available": _ver_tuple(latest) > _ver_tuple(current),
+            "notes": notes, "url": url}
+
+
+@deploy_router.post("/seed-demo")
+async def seed_demo(user: dict = Depends(get_current_user)):
+    """Load the realistic demo SAP dataset for this org so dashboards are populated
+    (idempotent). Used by the on-prem installer and available to admins in-app."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can load demo data")
+    from db import db
+    from seed_data import seed_org
+    from sap_engine import seed_sap_uac
+    org_id = user["org_id"]
+    await seed_org(org_id)
+    await seed_sap_uac(org_id)
+    persons = await db.sap_persons.count_documents({"org_id": org_id})
+    accounts = await db.sap_accounts.count_documents({"org_id": org_id})
+    return {"ok": True, "persons": persons, "accounts": accounts}
+
+
 _TOUR_DIR = os.path.join(_ROOT, "frontend", "public", "tour")
 _TOUR_IMAGES = ["overview.jpg", "sod.jpg", "watchlist.jpg", "monitoring.jpg"]
 

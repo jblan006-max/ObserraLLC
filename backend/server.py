@@ -101,6 +101,29 @@ async def security_headers(request, call_next):
     return resp
 
 
+_APP_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def _app_version():
+    try:
+        with open(os.path.join(_APP_ROOT, "VERSION")) as f:
+            return f.read().strip() or "1.0.0"
+    except Exception:
+        return "1.0.0"
+
+
+@app.get("/api/health")
+async def health():
+    """Liveness/readiness probe for install.sh, load balancers and uptime checks."""
+    db_ok = True
+    try:
+        await client.admin.command("ping")
+    except Exception:
+        db_ok = False
+    return {"status": "ok" if db_ok else "degraded", "service": "obserra-sap-uac",
+            "version": _app_version(), "db": db_ok}
+
+
 @app.on_event("startup")
 async def startup():
     await db.users.create_index("email", unique=True)

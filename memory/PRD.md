@@ -443,3 +443,16 @@ Re-pointed the existing "Obserra standard" documentation pipeline from the old E
 - **In-app guided tour** (`OnboardingTour.jsx`): EXEC/OPS steps rewritten for SAP UAC (SoD Command Center focus, targets `nav-sod-command-center`). Mechanism unchanged (`if (!open) return null`); auto-shows on first login, replayable from Settings.
 - Verified: `GET /api/deploy/guide.pdf` (1.47 MB) and `/guide.docx` (0.97 MB) return 200 with correct content-types; PDF pages render with SAP UAC screenshots.
 
+
+## SAP UAC — On-prem one-click installer + hardening (Jun 2026, this fork)
+Continued from the docs work; all curl + screenshot verified on the live app.
+- **In-app tour fix**: `<OnboardingTour />` was never mounted anywhere → mounted in `AppShell.jsx`; auto-show, Settings "Replay tour", and step preview images now work.
+- **Refresh tour images / Refresh all visuals**: `SHOT_TOUR_ONLY` mode + `POST /api/deploy/regenerate-tour`; "Refresh all visuals" now runs in the background (`POST /api/deploy/refresh-visuals`) and posts a "Visuals updated" in-app notification. Hardened `capture_shots.py` with `_settle()` (networkidle + Suspense spinner clear) to stop blank captures.
+- **Self-contained one-click installer**: `_build_onprem_zip()` bundles full `backend/`+`frontend/` source + deploy files + `.dockerignore` + executable `install.sh` (shared `scripts/onprem_pack.py`); rebranded to "Obserra SAP UAC"; fixed broken Docker build contexts across plain/Caddy/Traefik compose; `install.sh` auto-generates JWT_SECRET, launches, health-checks, and creates the first admin.
+- **Version stamp**: `VERSION` (1.0.0) + `BUILD_INFO`; version-stamped download filename; `OBSERRA_VERSION` env + `scripts/stamp_version.py` (git-tag bump).
+- **Offline mode**: bundled `emergentintegrations` wheel + `build-wheelhouse.sh` + `OFFLINE` marker for air-gapped builds.
+- **Seed admin / seed sample data**: `bootstrap-status` + `bootstrap-admin` (first-run only, 409 in hosted) with a `seed_demo` flag; `POST /api/deploy/seed-demo` loads the realistic SAP dataset (46 persons / 54 accounts).
+- **Health endpoint**: `GET /api/health` (`{status,service,version,db}`), used by `install.sh`.
+- **Update notifier**: `GET /api/deploy/version` (+ `UPDATE_MANIFEST_URL`, UA header to avoid 403) drives an admin-only dismissible `UpdateBanner.jsx`.
+- **CI/release**: `scripts/assemble_onprem.py` + `Makefile` + `.github/workflows/onprem-verify.yml` (docker build on push) and `release.yml` (tag → stamp, GHCR image push, versioned `.zip` release asset); `docker-compose.ghcr.yml` runs prebuilt images. Test creds unchanged (`jblan2026@gmail.com`); see `test_credentials.md`.
+
