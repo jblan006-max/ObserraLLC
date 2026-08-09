@@ -131,6 +131,11 @@ class DigestConfigBody(BaseModel):
     chat_alert: bool = True
     teams_url: str = ""
     slack_url: str = ""
+    score_alert: bool = True
+    score_threshold: int = 60
+    evidence_export: bool = False
+    evidence_recipients: list[str] = []
+    evidence_day: str = "mon"
 
 
 @sap_router.get("/digest/config")

@@ -127,7 +127,7 @@ export default function SodCommandCenter() {
       await api.put("/sap/digest/config", { ...dcfgLocal, recipients: recips, evidence_recipients: evid, score_threshold: Number(dcfgLocal.score_threshold) || 60 });
       toast.success("Governance digest schedule saved");
       await loadDcfg();
-    } catch (e) { toast.error(e?.response?.data?.detail || "Could not save (admin only)"); }
+    } catch (e) { toast.error(e?.response?.data?.detail || (e?.response?.status === 403 ? "Admin access required" : "Could not save schedule")); }
     setDcfgBusy(false);
   };
   const testChat = async () => {
