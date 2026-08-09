@@ -6,12 +6,13 @@ import { useDeepDive } from "@/context/DeepDiveContext";
 import {
   PieChart, Pie, Cell, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
 } from "recharts";
-import { Users, Gauge, ShieldAlert, KeyRound, Activity, BarChart3, Globe, Layers } from "lucide-react";
+import { Users, Gauge, ShieldAlert, KeyRound, Activity, BarChart3, Globe, Layers, Star, Filter } from "lucide-react";
+import { SodWatchlist } from "@/components/SodWatchlist";
 
 const CHART_TT = { background: "hsl(215 38% 10%)", border: "1px solid hsl(215 30% 18%)", borderRadius: 8, fontSize: 12 };
 const REGION_COLORS = ["#3b6ef5", "#42c98e", "#f5a623", "#a06cf0", "#e0574a"];
 
-const BarList = ({ items, color = "hsl(210 92% 62%)", testid, onItemClick }) => {
+const BarList = ({ items, color = "hsl(210 92% 62%)", testid, onItemClick, onPin, pinnedSet }) => {
   const max = Math.max(1, ...items.map((i) => i.value));
   return (
     <div className="space-y-2.5" data-testid={testid}>
@@ -27,6 +28,17 @@ const BarList = ({ items, color = "hsl(210 92% 62%)", testid, onItemClick }) => 
             </div>
           </>
         );
+        if (onPin) {
+          const isPinned = pinnedSet?.has(i.name);
+          return (
+            <div key={i.name} className="flex items-center gap-2">
+              <div role="button" tabIndex={0} onClick={() => onItemClick?.(i)} className="flex-1 min-w-0 cursor-pointer hover:opacity-80 transition-opacity" data-testid={`${testid}-item-${idx}`}>{inner}</div>
+              <button type="button" onClick={(e) => { e.stopPropagation(); onPin(i); }} className="shrink-0 p-1 rounded hover:bg-secondary/60 transition-colors" data-testid={`${testid}-pin-${idx}`} title={isPinned ? "Unpin from watchlist" : "Pin to watchlist"}>
+                <Star className="w-3.5 h-3.5" style={{ color: isPinned ? "hsl(35 90% 55%)" : "hsl(215 15% 45%)", fill: isPinned ? "hsl(35 90% 55%)" : "none" }} />
+              </button>
+            </div>
+          );
+        }
         return onItemClick ? (
           <button key={i.name} type="button" onClick={() => onItemClick(i)} className="w-full text-left cursor-pointer hover:opacity-80 transition-opacity" data-testid={`${testid}-item-${idx}`}>{inner}</button>
         ) : (
@@ -47,9 +59,34 @@ const Panel = ({ title, sub, icon: Icon, children, className = "" }) => (
 
 export default function SapAnalytics() {
   const [d, setD] = useState(null);
+  const [region, setRegion] = useState("");
+  const [department, setDepartment] = useState("");
+  const [pinned, setPinned] = useState(new Set());
   const { openDeepDive } = useDeepDive();
-  const load = useCallback(async () => { const { data } = await api.get("/sap/analytics"); setD(data); }, []);
+  const load = useCallback(async () => {
+    const params = new URLSearchParams();
+    if (region) params.set("region", region);
+    if (department) params.set("department", department);
+    const { data } = await api.get(`/sap/analytics?${params.toString()}`);
+    setD(data);
+  }, [region, department]);
+  const loadPinned = useCallback(async () => {
+    const { data } = await api.get("/sap/watchlist");
+    setPinned(new Set(data.pinned.map((p) => p.area)));
+  }, []);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    loadPinned();
+    const h = () => loadPinned();
+    window.addEventListener("sap-watchlist-changed", h);
+    return () => window.removeEventListener("sap-watchlist-changed", h);
+  }, [loadPinned]);
+  const togglePin = async (item) => {
+    const area = item.name;
+    if (pinned.has(area)) await api.delete(`/sap/watchlist?area=${encodeURIComponent(area)}`);
+    else await api.post("/sap/watchlist", { area });
+    window.dispatchEvent(new Event("sap-watchlist-changed"));
+  };
   if (!d) return <Spinner />;
   const k = d.kpis;
   const riskPie = ["Critical", "High", "Medium", "Low"].map((r) => ({ name: r, value: d.risk_distribution[r] || 0 }));
@@ -90,6 +127,28 @@ export default function SapAnalytics() {
         <p className="text-sm text-muted-foreground mt-1">Live access, license, risk and governance metrics across the SAP landscape.</p>
       </div>
 
+      <div className="flex flex-wrap items-center gap-3 bg-card fact-border rounded-xl p-3" data-testid="an-filter-bar">
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground font-mono uppercase tracking-wider"><Filter className="w-3.5 h-3.5" /> Explore</div>
+        <select data-testid="an-filter-region" value={region} onChange={(e) => setRegion(e.target.value)} className="h-8 rounded-md bg-secondary/50 border border-border text-sm px-2 focus:outline-none focus:ring-1 focus:ring-primary">
+          <option value="">All regions</option>
+          {d.filters.regions.map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+        <select data-testid="an-filter-dept" value={department} onChange={(e) => setDepartment(e.target.value)} className="h-8 rounded-md bg-secondary/50 border border-border text-sm px-2 focus:outline-none focus:ring-1 focus:ring-primary">
+          <option value="">All departments</option>
+          {d.filters.departments.map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+        {(region || department) ? (
+          <>
+            <span className="text-xs text-muted-foreground" data-testid="an-filter-summary">Viewing <b className="text-foreground">{[region, department].filter(Boolean).join(" · ")}</b> — {d.kpis.identities} identities</span>
+            <button data-testid="an-filter-clear" onClick={() => { setRegion(""); setDepartment(""); }} className="text-xs px-2 py-1 rounded-md bg-secondary/60 hover:bg-secondary transition-colors">Clear</button>
+          </>
+        ) : (
+          <span className="text-xs text-muted-foreground">Filter every chart to a region or department slice.</span>
+        )}
+      </div>
+
+      <SodWatchlist />
+
       <SapInsight dashboard="SAP Analytics" focus="access, license and risk analytics" accent="199 89% 48%" auto slug="sap-analytics" />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -110,7 +169,7 @@ export default function SapAnalytics() {
           <BarList items={d.top_roles} testid="an-top-roles" onItemClick={openRole} />
         </Panel>
         <Panel title="Open SoD Conflicts by Area" sub="Toxic combinations grouped by business process. Click an area to drill in." icon={ShieldAlert} className="lg:col-span-6">
-          <BarList items={d.sod_by_area} color="hsl(0 84% 60%)" testid="an-sod-area" onItemClick={openSodArea} />
+          <BarList items={d.sod_by_area} color="hsl(0 84% 60%)" testid="an-sod-area" onItemClick={openSodArea} onPin={togglePin} pinnedSet={pinned} />
         </Panel>
       </div>
 

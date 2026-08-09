@@ -1563,19 +1563,34 @@ async def activation_tickets(user: dict = Depends(get_current_user)):
 
 
 @sap_router.get("/analytics")
-async def analytics(user: dict = Depends(get_current_user)):
-    """SAP access analytics / metrics — aggregated live for the metrics dashboard."""
+async def analytics(region: str = "", department: str = "", user: dict = Depends(get_current_user)):
+    """SAP access analytics / metrics — aggregated live for the metrics dashboard.
+
+    Optional `region` / `department` filters scope every metric to that slice so managers
+    can drill into any part of the SAP landscape on the spot."""
     org_id = user["org_id"]
     await _ensure(org_id)
     persons, accounts, conflicts, pmap = await _correlate(org_id)
     overrides = {o["person_ref"]: o for o in await db.sap_activation.find({"org_id": org_id}, {"_id": 0}).to_list(5000)}
+    all_regions = sorted({p["region"] for p in persons})
+    all_departments = sorted({p["department"] for p in persons})
+    region, department = region.strip(), department.strip()
+    if region:
+        persons = [p for p in persons if p["region"] == region]
+    if department:
+        persons = [p for p in persons if p["department"] == department]
+    if region or department:
+        keep = {p["ref"] for p in persons}
+        accounts = [a for a in accounts if a.get("person_ref") in keep]
+        acc_refs = {a["ref"] for a in accounts}
+        conflicts = [c for c in conflicts if c.get("account_ref") in acc_refs]
     open_conf = [c for c in conflicts if c.get("status") == "Open"]
     acc_by_person = {}
     for a in accounts:
         if a.get("person_ref"):
             acc_by_person.setdefault(a["person_ref"], []).append(a)
     activated = 0
-    lic_map, dept, region, le_map = {}, {}, {}, {}
+    lic_map, dept, region_agg, le_map = {}, {}, {}, {}
     saml_mapped = 0
     for p in persons:
         st = _activation_status(p, overrides.get(p["ref"]))
@@ -1586,7 +1601,7 @@ async def analytics(user: dict = Depends(get_current_user)):
         lic = _license_type(primary, _account_flags(primary, p)) if primary else "Employee"
         lic_map[lic] = lic_map.get(lic, 0) + 1
         dept[p["department"]] = dept.get(p["department"], 0) + 1
-        region[p["region"]] = region.get(p["region"], 0) + 1
+        region_agg[p["region"]] = region_agg.get(p["region"], 0) + 1
         le_map[p["legal_entity"]] = le_map.get(p["legal_entity"], 0) + 1
         if p.get("email"):
             saml_mapped += 1
@@ -1622,13 +1637,70 @@ async def analytics(user: dict = Depends(get_current_user)):
         },
         "license_breakdown": sorted(({"name": k, "value": v} for k, v in lic_map.items()), key=lambda x: -x["value"]),
         "by_department": sorted(({"name": k, "value": v} for k, v in dept.items()), key=lambda x: -x["value"]),
-        "by_region": [{"name": k, "value": v} for k, v in region.items()],
+        "by_region": [{"name": k, "value": v} for k, v in region_agg.items()],
         "by_legal_entity": sorted(({"name": k, "value": v} for k, v in le_map.items()), key=lambda x: -x["value"]),
         "top_roles": top_roles, "sod_by_area": sorted(({"name": k, "value": v} for k, v in sod_area.items()), key=lambda x: -x["value"]),
         "trend": trend, "risk_distribution": {r: sum(1 for p in persons if p["risk"]["rating"] == r) for r in ["Critical", "High", "Medium", "Low"]},
         "top_risk": [{"ref": p["ref"], "name": p["name"], "department": p["department"], "score": p["risk"]["score"], "rating": p["risk"]["rating"]} for p in top_risk],
+        "filters": {"regions": all_regions, "departments": all_departments, "region": region, "department": department},
         "generated_at": _now().isoformat(),
     }
+
+
+# ── SoD Risk Watchlist (per-user pinned business areas — hot spots first) ─────
+_SOD_AREAS = sorted({r["area"] for r in SOD_RULES})
+
+
+def _wl_key(user):
+    return user.get("email") or user.get("id") or "anon"
+
+
+async def _area_stats(org_id):
+    """Live open-SoD-conflict counts (with severity split) per business area."""
+    _, _, conflicts, _ = await _correlate(org_id)
+    stats = {a: {"area": a, "open": 0, "Critical": 0, "High": 0, "Medium": 0, "Low": 0} for a in _SOD_AREAS}
+    for c in conflicts:
+        if c.get("status") != "Open":
+            continue
+        s = stats.setdefault(c["area"], {"area": c["area"], "open": 0, "Critical": 0, "High": 0, "Medium": 0, "Low": 0})
+        s["open"] += 1
+        s[c["severity"]] = s.get(c["severity"], 0) + 1
+    return stats
+
+
+@sap_router.get("/watchlist")
+async def get_watchlist(user: dict = Depends(get_current_user)):
+    """The signed-in auditor's pinned SoD areas (hottest first) + all available areas to pin."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    stats = await _area_stats(org_id)
+    pinned_areas = {d["area"] for d in await db.sap_watchlist.find(
+        {"org_id": org_id, "user": _wl_key(user)}, {"_id": 0}).to_list(100)}
+    pinned = sorted((stats[a] for a in pinned_areas if a in stats), key=lambda s: (-s["Critical"], -s["open"], s["area"]))
+    available = sorted(stats.values(), key=lambda s: (-s["open"], s["area"]))
+    return {"pinned": pinned, "available": [{**s, "pinned": s["area"] in pinned_areas} for s in available]}
+
+
+class WatchlistBody(BaseModel):
+    area: str
+
+
+@sap_router.post("/watchlist")
+async def pin_watchlist(body: WatchlistBody, user: dict = Depends(get_current_user)):
+    area = body.area.strip()
+    if area not in _SOD_AREAS:
+        raise HTTPException(status_code=404, detail="Unknown SoD area")
+    key = _wl_key(user)
+    await db.sap_watchlist.update_one(
+        {"org_id": user["org_id"], "user": key, "area": area},
+        {"$set": {"org_id": user["org_id"], "user": key, "area": area, "at": _now().isoformat()}}, upsert=True)
+    return await get_watchlist(user)
+
+
+@sap_router.delete("/watchlist")
+async def unpin_watchlist(area: str, user: dict = Depends(get_current_user)):
+    await db.sap_watchlist.delete_one({"org_id": user["org_id"], "user": _wl_key(user), "area": area.strip()})
+    return await get_watchlist(user)
 
 
 # ── Advisor (grounded NL query over the SAP access model) ─────────────────────

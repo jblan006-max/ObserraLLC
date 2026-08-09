@@ -1,0 +1,32 @@
+{
+  "summary": "Iter 70 regression + new-feature verification for SAP UAC refactor (sap_digest.py -> sap_ask.py + sap_evidence.py; SodCommandCenter.jsx -> GovernanceDigestCard.jsx + SodWatchlist.jsx) and two new features: Analytics Explorer filters + SoD Risk Watchlist. Backend 20/20 pytest pass (initial 21st test had a wrong shape assertion for /scorecard — corrected, all green). Frontend end-to-end verified via Playwright: /app/analytics filter bar (region 'EMEA' -> 'Viewing EMEA — 23 identities' summary), an-filter-clear resets, an-sod-area-item-N + an-sod-area-pin-N clickable/toggling watchlist, watchlist-add dropdown adds card, watchlist-unpin-N removes; sod-watchlist appears on /app/analytics AND /app/sod; /app/sod extracted GovernanceDigestCard renders with sod-command-center, sod-digest-schedule, digest-enable, digest-save, score-alert-toggle, score-threshold, score-alert-check, evidence-export-toggle — all present and clickable, zero pageerrors, zero React runtime errors (missing-prop risk NOT triggered). Only the known cosmetic hydration warning ('<span> cannot be a child of <option>') was observed, which is dev-only instrumentation.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "verified_flows": [
+    "Refactor regression — moved to sap_ask: GET /api/sap/ask-analytics 200 {total,by_source,top_questions,top_askers}; GET /api/sap/ask-log 200 {entries,total,by_source}; GET /api/sap/digest/ask/intro 200; GET /api/sap/digest/ask/history 200; POST /api/sap/digest/ask multi-turn with session_id='iter70-a' 200 grounded (>5 chars) + 2nd turn 200.",
+    "Refactor regression — moved to sap_evidence: GET /api/sap/sod-evidence/preview 200.",
+    "Cross-module: GET /api/sap/scorecard 200 (returns 'current' block), GET /api/sap/scorecard/why 200, GET /api/sap/digest/config 200, POST /api/sap/digest/share 200 with valid share token (confirms _digest_ai_context is resolvable across sap_digest -> sap_ask boundary), GET /api/sap/digest/recap/preview 200.",
+    "NEW Analytics Explorer: GET /api/sap/analytics returns filters:{regions,departments,region:'',department:''}; ?region=EMEA scopes identities (<= baseline, >0) and filters.region='EMEA'; ?department=<first dept> scopes; combined region+department scopes and both filters echoed.",
+    "NEW Watchlist: GET /api/sap/watchlist {pinned:[], available:[{area,open,Critical,High,Medium,Low,pinned}]}, available sorted by -open, area+severity keys present. POST {area:'Finance'} 200 -> Finance in pinned + 'pinned':true reflected in available. POST unknown area -> 404. Pinning 2 more areas confirmed pinned sort order (-Critical, -open). DELETE ?area=Finance removes from pinned. Cleanup unpinned all — pinned=[] final.",
+    "FRONTEND /app/analytics: an-filter-bar/-region/-dept/sod-watchlist all visible; region=EMEA -> an-filter-summary text 'Viewing EMEA — 23 identities'; an-filter-clear works; an-sod-area-item-0 + an-sod-area-pin-0 exist; pin star adds to watchlist (watchlist-item-0 appears); watchlist-add dropdown grows list to 2 items; unpin buttons remove; watchlist-empty shown when zero pinned. Cleanup performed — 0 pinned areas remain.",
+    "FRONTEND /app/sod: sod-command-center + sod-watchlist + sod-digest-schedule render; digest-enable/digest-save/score-alert-toggle/score-threshold/score-alert-check/evidence-export-toggle all present and clickable. Extracted GovernanceDigestCard mounts without missing-prop errors; only cosmetic <span>-in-<option> hydration warning observed (dev instrumentation, known safe)."
+  ],
+  "test_report_links": [
+    "/app/backend/tests/test_iter70_refactor_analytics_watchlist.py",
+    "/app/test_reports/pytest/iter70.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "sap_digest.py still ~1207 lines and sap_uac.py ~2138 lines — over the 700-line guideline. sap_digest was split (good) but sap_uac keeps growing (analytics + watchlist added); consider peeling analytics/watchlist into sap_analytics.py in a future pass.",
+    "SodCommandCenter.jsx dropped from 1191 -> 836 lines (still over 700). GovernanceDigestCard extraction is clean; the remaining large blocks (Scorecard, Auto-Rem, Simulator, Rule Library, Conflicts table) are next candidates.",
+    "GovernanceDigestCard receives 53 props (auto-computed) — this is brittle. Recommend consolidating into a single `digest` state object + setter, or moving state ownership into the child component with events up to parent for save.",
+    "SodWatchlist.jsx uses a window CustomEvent 'sap-watchlist-changed' to sync — works, but a shared React context or lightweight store (Zustand) would be cleaner and testable without DOM globals."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter70_refactor_analytics_watchlist.py"],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Pinned Finance + 2 other SoD areas transiently during backend + frontend tests. Post-test CLEANUP performed: all pinned areas unpinned via DELETE and via watchlist-unpin-N UI; final GET /api/sap/watchlist -> pinned:[]. Multi-turn AI ask created 2 log entries in ask-log (session_id 'iter70-a'); this is normal accumulation and matches previous iterations' behavior.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend regression file /app/backend/tests/test_iter70_refactor_analytics_watchlist.py covers all moved endpoints + cross-module digest/share + Analytics Explorer + Watchlist CRUD/sort/404 and is idempotent (auto-cleans pinned areas). 20/20 pass in ~5s. Refactor confirmed safe end-to-end. Watchlist collection is db.sap_watchlist keyed by (org_id, user.email, area)."
+}
