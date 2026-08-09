@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Auto-capture fresh dashboard screenshots for the Install & User Guide.
+"""Auto-capture fresh dashboard screenshots for the SAP UAC Install & User Guide.
 
 Drives the live app with Playwright (Chromium), logs in as an admin, and saves
 JPEGs to scripts/shots using the exact filenames gen_docs.py embeds. Best-effort:
@@ -34,17 +34,40 @@ BASE = _backend_url()
 EMAIL = os.environ.get("SHOT_EMAIL", "jblan2026@gmail.com")
 PASSWORD = os.environ.get("SHOT_PASSWORD", "Obserra2026!")
 
-# route -> screenshot filename (must match gen_docs.py SECTIONS)
+# (route under /app, screenshot filename, scroll_y) — must match gen_docs.py SECTIONS
 PAGES = [
-    ("", "02_exec_overview"),
-    ("risks", "04_risk_register"),
-    ("cyber-risk", "04b_risk_fair"),
-    ("ai-governance", "05_ai_governance"),
-    ("controls", "06_control_monitoring"),
-    ("compliance", "07_compliance"),
-    ("reporting", "08_reporting"),
-    ("settings", "09_settings"),
+    ("", "02_exec_overview", 0),
+    ("analytics", "03_sap_analytics", 0),
+    ("sod", "04_sod_command_center", 0),
+    ("sod", "05_sod_watchlist_leaderboard", 520),
+    ("privileged", "06_privileged_access", 0),
+    ("monitoring", "07_access_monitoring", 0),
+    ("identities", "08_identities", 0),
+    ("lifecycle", "09_lifecycle", 0),
+    ("hr-reconciliation", "10_hr_reconciliation", 0),
+    ("roles", "11_role_intelligence", 0),
+    ("access-requests", "12_access_requests", 0),
+    ("certifications", "13_certifications", 0),
+    ("settings", "14_settings", 0),
 ]
+
+
+def _dismiss_overlays(page):
+    for _ in range(3):
+        s = page.query_selector("[data-testid=tour-skip]") or page.query_selector("text=Skip")
+        if s:
+            try:
+                s.click(); page.wait_for_timeout(400)
+            except Exception:
+                break
+        else:
+            break
+    c = page.query_selector("[data-testid=advisor-close]")
+    if c:
+        try:
+            c.click(); page.wait_for_timeout(300)
+        except Exception:
+            pass
 
 
 def run():
@@ -52,31 +75,29 @@ def run():
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
         page = browser.new_page(viewport={"width": 1440, "height": 900})
-        # Login
-        page.goto(f"{BASE}/login", wait_until="domcontentloaded", timeout=45000)
-        page.wait_for_selector("input[type=email]", state="visible", timeout=20000)
-        page.fill("input[type=email]", EMAIL)
-        page.fill("input[type=password]", PASSWORD)
-        page.get_by_test_id("auth-submit").click()
-        page.wait_for_timeout(4000)
-        for _ in range(3):
-            s = page.query_selector("text=Skip")
-            if s:
-                s.click(); page.wait_for_timeout(500)
+        # Login (SAP UAC auth form lives on the landing route "/")
+        page.goto(f"{BASE}/", wait_until="domcontentloaded", timeout=45000)
+        page.wait_for_selector("input[type=email]", state="visible", timeout=25000)
         try:
             page.screenshot(path=os.path.join(SHOTS, "01_login.jpg"), type="jpeg", quality=70)
         except Exception:
             pass
-        for route, name in PAGES:
+        page.fill("input[type=email]", EMAIL)
+        page.fill("input[type=password]", PASSWORD)
+        page.get_by_test_id("auth-submit").click()
+        page.wait_for_timeout(4000)
+        _dismiss_overlays(page)
+        for route, name, scroll_y in PAGES:
             try:
-                page.goto(f"{BASE}/app/{route}", wait_until="networkidle", timeout=45000)
-                page.wait_for_timeout(1800)
-                s = page.query_selector("text=Skip")
-                if s:
-                    s.click(); page.wait_for_timeout(400)
-                c = page.query_selector("[data-testid=advisor-close]")
-                if c:
-                    c.click(); page.wait_for_timeout(300)
+                page.goto(f"{BASE}/app/{route}", wait_until="domcontentloaded", timeout=45000)
+                page.wait_for_timeout(2200)
+                _dismiss_overlays(page)
+                if scroll_y:
+                    page.evaluate("(y) => window.scrollTo(0, y)", scroll_y)
+                    page.wait_for_timeout(700)
+                else:
+                    page.evaluate("() => window.scrollTo(0, 0)")
+                    page.wait_for_timeout(200)
                 page.screenshot(path=os.path.join(SHOTS, f"{name}.jpg"), type="jpeg", quality=70)
                 print("captured", name)
             except Exception as e:

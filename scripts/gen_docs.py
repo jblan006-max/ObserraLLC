@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the Obserra Install & User Guide as both PDF and Word (.docx).
+"""Generate the Obserra SAP UAC Install & User Guide as both PDF and Word (.docx).
 
 Screenshots are read from /app/scripts/shots and embedded. Output is written to
 /app/backend/assets/docs so the backend can serve them for download.
@@ -14,119 +14,160 @@ os.makedirs(OUT, exist_ok=True)
 NAVY = "#0f1e3d"
 AI = "#12b4d6"
 
+GUIDE_TITLE = "Obserra SAP UAC — Install & User Guide"
+
 # (heading, level, [paragraphs], screenshot_filename_or_None)
 SECTIONS = [
-    ("Obserra EIOS — Install & User Guide", 0, [
+    (GUIDE_TITLE, 0, [
         "Executive Protection & Intelligence LLC",
-        "A continuous AI control plane for enterprise cyber risk, AI governance and "
-        "board-ready executive intelligence. This guide covers installation (cloud, "
-        "mobile and on-premise) and a full walkthrough of every dashboard.",
+        "Obserra SAP UAC is an enterprise SAP User Access Control and Access Intelligence "
+        "platform. It unifies canonical HR identity, real-time Segregation-of-Duties (SoD), "
+        "privileged access management (PAM) and ServiceNow-driven remediation into one "
+        "evidence-grounded control plane. This guide covers installation (cloud, mobile and "
+        "on-premise) and a full walkthrough of every dashboard.",
     ], None),
 
-    ("1. About Obserra", 1, [
-        "Obserra presents one evidence-grounded platform at two altitudes: an Executive "
-        "view (financial exposure, risk reduction, decisions required) and an Operational "
-        "view (AI usage, patching, incidents and remediation). Every metric carries its "
-        "source, freshness and confidence.",
-        "The platform is delivered as an installable Progressive Web App (PWA) and can also "
-        "be self-hosted on-premise with Docker.",
+    ("1. About Obserra SAP UAC", 1, [
+        "Obserra SAP UAC gives access, audit and GRC teams a single live view of who can do "
+        "what across the SAP landscape — and the tooling to fix it. It reconciles HR against "
+        "SAP accounts, detects SoD conflicts and privileged exposure in real time, and turns "
+        "every finding into an actionable, auditable ServiceNow change.",
+        "Every number is computed LIVE from the underlying records on each request (No-Mock): "
+        "the shipped dataset is a realistic, fully sourced snapshot, and real SAP / ServiceNow "
+        "connectors slot in later without changing the API contract. Every metric carries its "
+        "source and freshness so findings are audit-defensible.",
+        "The platform is delivered as an installable Progressive Web App (PWA) and can also be "
+        "self-hosted on-premise with Docker.",
     ], None),
 
     ("2. Installing the App (One-Click PWA)", 1, [
-        "Obserra installs like a native app straight from the browser — no app store required. "
-        "It works across desktop, tablet and mobile.",
+        "Obserra SAP UAC installs like a native app straight from the browser — no app store "
+        "required. It works across desktop, tablet and mobile.",
         "Desktop (Chrome / Edge): open the site and click the Install icon in the address bar, "
-        "or use the in-app 'Install Obserra' banner.",
-        "Android (Chrome): tap the 'Install Obserra' banner, or use menu -> Add to Home screen.",
+        "or use the in-app 'Install' banner.",
+        "Android (Chrome): tap the 'Install' banner, or use menu -> Add to Home screen.",
         "iPhone / iPad (Safari): tap Share -> Add to Home Screen.",
-        "Once installed, Obserra launches full-screen and can receive push notifications.",
+        "Once installed, the app launches full-screen and can receive push notifications for "
+        "access alerts and SoD threshold breaches.",
     ], None),
 
     ("3. On-Premise Installation (Docker)", 1, [
         "For fully self-hosted deployments, download the on-premise package from "
-        "Settings -> Deployment & Documentation. No install script is required; an optional "
-        "install.sh is included for convenience.",
+        "Settings -> Deployment & Documentation. An optional install.sh is included for convenience.",
         "Prerequisites: Docker 24+ and Docker Compose v2, 2 vCPU / 4 GB RAM (8 GB recommended).",
         "Steps: (1) place the backend/ and frontend/ source next to the deploy/ folder; "
         "(2) copy .env.example to .env and set JWT_SECRET, EMERGENT_LLM_KEY and PUBLIC_URL; "
         "(3) run: docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build; "
         "(4) open http://<machine-ip>:8080.",
-        "MongoDB data persists in a Docker volume across restarts. For production, terminate "
-        "TLS with a reverse proxy in front of port 8080. Full details are in the bundled INSTALL.md.",
+        "MongoDB data persists in a Docker volume across restarts. For production, terminate TLS "
+        "with a reverse proxy in front of port 8080. Full details are in the bundled INSTALL.md.",
     ], None),
 
     ("4. Signing In", 1, [
-        "Open the app and sign in with your work email and password. Enterprise SSO, Apple "
-        "and Google sign-in, and passwordless QR login are also available. Passwords follow "
-        "NIST 800-63B (>=12 chars with upper/lower/number/symbol).",
+        "Open the app and sign in with your work email and password. Passwords follow "
+        "NIST 800-63B (>=12 chars with upper/lower/number/symbol). Roles determine what you see: "
+        "admins get full governance controls, executives get the board view.",
     ], "01_login.jpg"),
 
     ("5. Executive Overview", 1, [
-        "The Executive view opens on strategic, board-ready intelligence: the Posture Trend, "
-        "the Enterprise Health Index, Top Risks by Business Impact and Decisions Required. "
-        "Use 'Generate Board Report' to produce a branded PDF at any time.",
+        "The landing dashboard opens on board-ready SAP access posture: the auto-running AI "
+        "Analyst headline, key KPIs (identities, accounts, open SoD, average risk, license "
+        "usage), top exposures and the decisions that need attention. Switch altitude between "
+        "Executive and Operational from the toggle in the top bar.",
     ], "02_exec_overview.jpg"),
 
-    ("6. Operational Command", 1, [
-        "Toggle to Operational mode (top-right) for the working view: NIST control maturity, "
-        "third-party vendor risk, phishing click-rate, patching coverage, the risk heatmap and "
-        "remediation workflows.",
-    ], "03_operational_overview.jpg"),
+    ("6. SAP Analytics", 1, [
+        "A deep analytics workspace over the whole SAP estate: identities, accounts, SoD by "
+        "business area, license utilisation and risk distribution, with drill-downs on every "
+        "chart. Export any view as a branded PDF or CSV for auditors and steering committees.",
+    ], "03_sap_analytics.jpg"),
 
-    ("7. Risk Register", 1, [
-        "The Risk Register lists every tracked risk with inherent vs residual scoring, financial "
-        "exposure (FAIR-style annualized loss expectancy) and evidence links for board defensibility.",
-    ], "04_risk_register.jpg"),
+    ("7. SoD Command Center", 1, [
+        "The heart of the platform. An AI insight card summarises the live SoD picture, followed "
+        "by severity KPIs, the Access Governance Scorecard (with an 8-week trend and 'why the "
+        "score moved'), the SoD -> ServiceNow Auto-Remediation rule engine, the Governance Digest "
+        "schedule (email + Slack/Teams + voice briefing + evidence pack), a pre-assignment risk "
+        "simulator, the SoD rule library and the full detected-conflicts table with severity, "
+        "area and status filters. Every row opens a detail view with an AI risk rating and "
+        "concrete 'how to fix' steps.",
+    ], "04_sod_command_center.jpg"),
 
-    ("7b. Risk (FAIR) Quantification", 1, [
-        "The Risk workspace quantifies exposure using Factor Analysis of Information Risk (FAIR). "
-        "It surfaces board KPIs — $ at Risk (residual ALE), worst-case P90, remediation ROI and "
-        "accepted (unremediated) exposure — plus a per-area exposure breakdown showing the dominant "
-        "driver of each risk (loss magnitude, threat frequency or control weakness), a loss-exceedance "
-        "curve, and plain-English FAIR-based deductions. Auto-updating IBM/DBIR benchmark feeds carry "
-        "last-pull timestamps and sources, and a 'Why these KPIs' panel cites Gartner, NACD, the FAIR "
-        "Institute and the WEF so every board metric is defensible.",
-    ], "04b_risk_fair.jpg"),
+    ("8. Risk Watchlist, Owner Leaderboard & Board Pack", 1, [
+        "Pin the SoD business areas you own to the Risk Watchlist so their hot spots surface "
+        "every login; flip the 'Assigned to me' lens to see only your areas, set a bell alert "
+        "threshold, and open a one-tap ServiceNow remediation ticket. Click any ticket badge to "
+        "view its full ServiceNow change timeline, which auto-refreshes while open.",
+        "The Owner Accountability Leaderboard ranks who carries the most open Critical SoD across "
+        "regions, flags unowned hot spots, lets admins assign an owner in place, and can 'nudge "
+        "all owners' — emailing each owner their assigned hot spots on demand.",
+        "The Board Pack card previews this month's executive access-governance pack (posture "
+        "summary, hottest areas, risk movers and 30-day remediation wins) with the analytics PDF "
+        "attached; admins can send it immediately or schedule the monthly auto-send day and "
+        "recipients inline.",
+    ], "05_sod_watchlist_leaderboard.jpg"),
 
-    ("8. AI Governance Suite", 1, [
-        "Inventory of AI systems with NIST AI RMF mapping, model cards (bias, safety, security, "
-        "explainability), drift and hallucination indicators, shadow-AI discovery and incident "
-        "management. Bring shadow tools under governance in one click.",
-    ], "05_ai_governance.jpg"),
+    ("9. Privileged Access (PAM)", 1, [
+        "Track SAP privileged and emergency (firefighter) access: who holds elevated roles, how "
+        "long, and whether usage is justified. Revoke privileged access, lock accounts or trigger "
+        "recertification in one click, each stamped to the audit trail and a ServiceNow change.",
+    ], "06_privileged_access.jpg"),
 
-    ("9. Control Monitoring", 1, [
-        "Continuously monitor control health and drift. Open alerts can be summarized to you on a "
-        "daily or weekly digest cadence (configurable in Settings).",
-    ], "06_control_monitoring.jpg"),
+    ("10. Access Monitoring", 1, [
+        "Continuous monitoring of access signals — anomalous logons, dormant-but-entitled "
+        "accounts, terminated identities with residual access and connector health — so drift is "
+        "caught the moment it appears.",
+    ], "07_access_monitoring.jpg"),
 
-    ("10. Compliance Posture", 1, [
-        "Track compliance posture across frameworks with evidence freshness so every figure stays "
-        "audit-ready.",
-    ], "07_compliance.jpg"),
+    ("11. Identities", 1, [
+        "The canonical identity register reconciled from HR: each person with their SAP accounts, "
+        "roles, risk score and lifecycle state. Open any identity for the full access footprint, "
+        "an AI risk rating and lifecycle actions (activate, suspend, resume, deactivate).",
+    ], "08_identities.jpg"),
 
-    ("11. Evidence & Reporting", 1, [
-        "Generate board-ready packets tied to evidence. 'New Board Report' synthesizes a report and "
-        "shows a live branded cover preview. Export as a vertical PDF or a landscape Quarterly Deck, "
-        "toggle a light/dark cover theme, email it, or share to Microsoft Teams. A monthly job also "
-        "emails the branded PDF to chosen recipients automatically.",
-    ], "08_reporting.jpg"),
+    ("12. Joiner / Mover / Leaver", 1, [
+        "Automate the identity lifecycle. New joiners get provisioned to role templates, movers "
+        "are re-evaluated for SoD as they change departments, and leavers are deprovisioned with "
+        "residual-access checks — every step orchestrated through ServiceNow.",
+    ], "09_lifecycle.jpg"),
 
-    ("12. Settings, Branding & Deployment", 1, [
-        "Personal preferences (digest cadence, replay the guided tour) plus admin controls: board-report "
-        "recipients, custom report branding (company name, logo, accent colour) with a live cover preview, "
-        "a 'Send me a test now' button, and the Deployment & Documentation downloads (on-premise package, "
-        "this guide in PDF and Word).",
-    ], "09_settings.jpg"),
+    ("13. HR Reconciliation", 1, [
+        "Reconcile SAP accounts against the HR source of truth to surface orphaned accounts, "
+        "missing owners and identity mismatches, with one-tap remediation for each exception.",
+    ], "10_hr_reconciliation.jpg"),
 
-    ("13. Obserra Advisor", 1, [
-        "The floating Advisor (bottom-right) answers board-level questions grounded on your live posture — "
-        "financial exposure, top risks and the decisions that need sign-off. It can also execute recommended "
-        "actions and, for admins, reports its own usage and spend.",
+    ("14. Role Intelligence", 1, [
+        "Analyse the role model: composite vs single roles, over-provisioning, redundant "
+        "assignments and role-level SoD risk — with recommendations to right-size access before "
+        "it becomes an audit finding.",
+    ], "11_role_intelligence.jpg"),
+
+    ("15. Access Requests", 1, [
+        "A self-service access request and approval workflow with automatic pre-assignment SoD "
+        "simulation, so risky combinations are flagged before they are ever granted.",
+    ], "12_access_requests.jpg"),
+
+    ("16. Certifications", 1, [
+        "Run periodic access certification (attestation) campaigns: reviewers confirm or revoke "
+        "entitlements, with progress tracking and an auditable record of every decision.",
+    ], "13_certifications.jpg"),
+
+    ("17. Settings, Branding & Deployment", 1, [
+        "Personal preferences (digest cadence, replay the guided tour) plus admin controls: "
+        "governance-digest and board-pack recipients, custom branding (company name, logo, accent "
+        "colour), a 'send me a test now' button, and the Deployment & Documentation downloads "
+        "(on-premise package and this guide in PDF and Word).",
+    ], "14_settings.jpg"),
+
+    ("18. Obserra Advisor", 1, [
+        "The floating Advisor (top bar) answers access-governance questions grounded on your live "
+        "SAP posture — open SoD, privileged exposure and the remediations that need sign-off. It "
+        "can execute recommended actions and, for admins, reports its own usage and spend.",
     ], None),
 
-    ("14. Support", 1, [
-        "For assistance contact your Obserra administrator. Risk scores and AI evaluations are decision-support "
-        "estimates and do not constitute legal, financial, regulatory or security guarantees.",
+    ("19. Support", 1, [
+        "For assistance contact your Obserra administrator. Risk scores and AI evaluations are "
+        "decision-support estimates and do not constitute legal, financial, regulatory or security "
+        "guarantees.",
     ], None),
 ]
 
@@ -146,7 +187,7 @@ def build_pdf(path):
     body = ParagraphStyle("body", parent=styles["BodyText"], fontSize=10.5, leading=15, spaceAfter=6)
     cap = ParagraphStyle("cap", parent=body, fontSize=8, textColor=colors.grey)
     doc = SimpleDocTemplate(path, pagesize=LETTER, topMargin=0.85 * inch, bottomMargin=0.8 * inch,
-                            title="Obserra EIOS — Install & User Guide", author="Obserra")
+                            title=GUIDE_TITLE, author="Obserra")
     story = []
     for i, (head, lvl, paras, shot) in enumerate(SECTIONS):
         if lvl == 0:
@@ -171,7 +212,7 @@ def build_pdf(path):
         canvas.saveState()
         canvas.setFont("Helvetica", 7); canvas.setFillColor(colors.grey)
         canvas.drawCentredString(LETTER[0] / 2, 0.5 * inch,
-                                 "Obserra — Executive Protection & Intelligence LLC  ·  Confidential")
+                                 "Obserra SAP UAC — Executive Protection & Intelligence LLC  ·  Confidential")
         canvas.restoreState()
 
     doc.build(story, onFirstPage=footer, onLaterPages=footer)

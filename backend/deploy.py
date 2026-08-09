@@ -39,7 +39,7 @@ async def guide_pdf(user: dict = Depends(get_current_user)):
     if not os.path.exists(_GUIDE_PDF):
         raise HTTPException(404, "Guide not generated yet")
     return FileResponse(_GUIDE_PDF, media_type="application/pdf",
-                        filename="Obserra-Install-and-User-Guide.pdf")
+                        filename="Obserra-SAP-UAC-Install-and-User-Guide.pdf")
 
 
 @deploy_router.get("/guide.docx")
@@ -51,7 +51,7 @@ async def guide_docx(user: dict = Depends(get_current_user)):
     return FileResponse(
         _GUIDE_DOCX,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename="Obserra-Install-and-User-Guide.docx")
+        filename="Obserra-SAP-UAC-Install-and-User-Guide.docx")
 
 
 def _build_onprem_zip() -> bytes:
@@ -134,7 +134,7 @@ def _doc_attachments():
     attachments = []
     if os.path.exists(_GUIDE_PDF):
         with open(_GUIDE_PDF, "rb") as f:
-            attachments.append({"filename": "Obserra-Install-and-User-Guide.pdf",
+            attachments.append({"filename": "Obserra-SAP-UAC-Install-and-User-Guide.pdf",
                                 "content": base64.b64encode(f.read()).decode()})
     if os.path.isdir(_ONPREM):
         attachments.append({"filename": "obserra-onprem-deploy.zip",
@@ -144,12 +144,12 @@ def _doc_attachments():
 
 def _docs_html(sender_email):
     return ("<div style='font:400 14px Arial;color:#0f1e3d'>"
-            "<h2 style='font:800 20px Arial;color:#0f1e3d'>Obserra EIOS — Install &amp; Deployment</h2>"
+            "<h2 style='font:800 20px Arial;color:#0f1e3d'>Obserra SAP UAC — Install &amp; Deployment</h2>"
             "<p>Attached you'll find the <b>Install &amp; User Guide</b> (PDF) and the "
             "<b>on-premise deployment package</b> (zip).</p>"
             "<ul><li>Self-host with Docker: unzip and follow <code>INSTALL.md</code>.</li>"
             "<li>Install the app on any device straight from the browser (PWA) — no app store needed.</li></ul>"
-            f"<p style='color:#6b7280'>Sent by {sender_email} via Obserra EIOS.</p></div>")
+            f"<p style='color:#6b7280'>Sent by {sender_email} via Obserra SAP UAC.</p></div>")
 
 
 @deploy_router.post("/email-docs")
@@ -161,7 +161,7 @@ async def email_docs(body: EmailDocsBody, user: dict = Depends(get_current_user)
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", to):
         raise HTTPException(400, "Enter a valid email address")
     from kernel import notifications
-    await notifications.send_email(to, "Obserra EIOS — Install Guide & Deployment Package",
+    await notifications.send_email(to, "Obserra SAP UAC — Install Guide & Deployment Package",
                                    _docs_html(user["email"]), attachments=_doc_attachments())
     return {"status": "sent", "to": to}
 
@@ -181,7 +181,7 @@ async def email_docs_all(user: dict = Depends(get_current_user)):
     sent = []
     for to in recipients:
         try:
-            await notifications.send_email(to, "Obserra EIOS — Install Guide & Deployment Package",
+            await notifications.send_email(to, "Obserra SAP UAC — Install Guide & Deployment Package",
                                            html, attachments=attachments)
             sent.append(to)
         except Exception:

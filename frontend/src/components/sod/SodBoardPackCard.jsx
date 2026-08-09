@@ -48,7 +48,8 @@ export function SodBoardPackCard() {
     setCfgBusy(true);
     try {
       const recips = (cfg.recipients || "").split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
-      const { data } = await api.put("/sap/board-pack/config", { enabled: cfg.enabled, day: Number(cfg.day) || 1, recipients: recips });
+      const day = Math.min(28, Math.max(1, Number(cfg.day) || 1));
+      const { data } = await api.put("/sap/board-pack/config", { enabled: cfg.enabled, day, recipients: recips });
       setCfg((c) => ({ ...c, enabled: !!data.enabled, day: data.day, resolved: data.resolved_recipients || [] }));
       toast.success("Board pack schedule saved", { description: data.enabled ? `Auto-sends on day ${data.day} each month` : "Monthly auto-send is off" });
     } catch (e) { toast.error(e?.response?.data?.detail || (e?.response?.status === 403 ? "Admin access required" : "Save failed")); }

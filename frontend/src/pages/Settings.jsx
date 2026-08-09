@@ -450,17 +450,17 @@ export default function Settings() {
       {isAdmin && (
         <div className="bg-card fact-border rounded-xl p-6 space-y-4" data-testid="deployment-docs-settings">
           <div className="flex items-center gap-2"><Server className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Deployment &amp; Documentation</h2></div>
-          <p className="text-sm text-muted-foreground">Obserra installs on any device as a one-click app (PWA) — on desktop use the Install button in the address bar or the in-app banner; on mobile use "Add to Home Screen". For fully self-hosted use, download the on-premise package and guides below.</p>
+          <p className="text-sm text-muted-foreground">Obserra SAP UAC installs on any device as a one-click app (PWA) — on desktop use the Install button in the address bar or the in-app banner; on mobile use "Add to Home Screen". For fully self-hosted use, download the on-premise package and guides below. The Install &amp; User Guide includes screenshots and a walkthrough of every SAP UAC dashboard.</p>
           <div className="flex items-center gap-3 flex-wrap">
             <button data-testid="download-onprem" disabled={dlBusy} onClick={() => downloadFile("/deploy/onprem-package", "obserra-onprem-deploy.zip", "onprem")}
               className="px-4 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
               {dlBusy === "onprem" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />} On‑premise package (.zip)
             </button>
-            <button data-testid="download-guide-pdf" disabled={dlBusy} onClick={() => downloadFile("/deploy/guide.pdf", "Obserra-Install-and-User-Guide.pdf", "pdf")}
+            <button data-testid="download-guide-pdf" disabled={dlBusy} onClick={() => downloadFile("/deploy/guide.pdf", "Obserra-SAP-UAC-Install-and-User-Guide.pdf", "pdf")}
               className="px-4 py-2.5 rounded-md border border-primary/40 text-foreground hover:bg-primary/10 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
               {dlBusy === "pdf" ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4 text-primary" />} Install &amp; User Guide (PDF)
             </button>
-            <button data-testid="download-guide-docx" disabled={dlBusy} onClick={() => downloadFile("/deploy/guide.docx", "Obserra-Install-and-User-Guide.docx", "docx")}
+            <button data-testid="download-guide-docx" disabled={dlBusy} onClick={() => downloadFile("/deploy/guide.docx", "Obserra-SAP-UAC-Install-and-User-Guide.docx", "docx")}
               className="px-4 py-2.5 rounded-md border border-primary/40 text-foreground hover:bg-primary/10 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
               {dlBusy === "docx" ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4 text-primary" />} Install &amp; User Guide (Word)
             </button>
@@ -497,7 +497,7 @@ export default function Settings() {
               {allBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send to whole IT list ({book.length})
             </button>
           )}
-          <p className="text-xs text-muted-foreground">Emails the guide (PDF) + on-premise package (zip) as attachments. Prefer a guided video? Use the built-in walkthrough via <span className="text-foreground">Guided Tour → Replay tour</span> above — it narrates Executive vs Operational mode in-app.</p>
+          <p className="text-xs text-muted-foreground">Emails the guide (PDF) + on-premise package (zip) as attachments. Prefer a guided walkthrough? Use the built-in tour via <span className="text-foreground">Guided Tour → Replay tour</span> above — it walks you through the SAP UAC dashboards in-app.</p>
         </div>
       )}
     </div>

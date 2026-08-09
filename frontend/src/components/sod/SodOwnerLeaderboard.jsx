@@ -26,6 +26,7 @@ export function SodOwnerLeaderboard() {
   }, [load]);
 
   const nudgeAll = async () => {
+    if (!window.confirm("Email every owner their assigned Critical hot spots now?")) return;
     setNudgeBusy(true);
     try {
       const { data } = await api.post("/sap/watchlist/leaderboard/nudge");

@@ -85,3 +85,18 @@
 - Owner Digest Deep-Links: `_owner_digest_html` area rows link to `/app/sod?wl=<area>`; watchlist scrolls to + ring-highlights that card.
 - Verified frontend 100% (iteration_73). Fixed a transient `cardRef` runtime error from a silent partial edit.
 
+
+## Jun 2026 — Leaderboard Nudge + Assign-from-Leaderboard + Board-Pack Scheduling + Timeline Toast (iteration_74)
+- Leaderboard Nudge: admin `POST /api/sap/watchlist/leaderboard/nudge` + "Nudge all owners" button (confirm-gated) — emails each owner their hot spots now.
+- Assign From Leaderboard: leaderboard `unassigned` areas + inline owner-email/Assign → `/sap/watchlist/remediate`, live-refreshes the board.
+- Board Pack Scheduling: `sap_board_pack_config` + `GET/PUT /api/sap/board-pack/config`; inline enable/day/recipients editor + header chip; cron gates on enabled AND day-of-month.
+- Timeline Toast: ticket modal toasts when a live-refreshing change advances a stage.
+- Verified frontend 100% (iteration_74). Baseline reseeded (kept Finance pin).
+
+
+## Jun 2026 — Walkthroughs & setup guides rebuilt for SAP UAC (with screenshots)
+- `scripts/capture_shots.py`: captures 14 live SAP UAC screens (incl. Watchlist/Owner-Leaderboard/Board-Pack). Reinstalled Playwright Chromium 1234.
+- `scripts/gen_docs.py`: SAP UAC Install & User Guide → PDF (16 pages) + DOCX (14 images) in `backend/assets/docs/`, verified by rendering.
+- `deploy.py` + `Settings.jsx`: SAP UAC download filenames + email/section copy; auto-refresh pipeline unchanged.
+- `OnboardingTour.jsx`: EXEC/OPS steps rewritten for SAP UAC (SoD Command Center focus).
+

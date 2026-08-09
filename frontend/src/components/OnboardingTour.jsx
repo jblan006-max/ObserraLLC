@@ -3,25 +3,25 @@ import { useAuth } from "@/context/AuthContext";
 import { ArrowRight, ArrowLeft } from "lucide-react";
 
 const EXEC_STEPS = [
-  { title: "Welcome to Obserra",
-    body: "One evidence-grounded platform, viewed at two altitudes. Every metric carries its source, freshness and confidence — switch altitude anytime from the toggle in the top bar." },
+  { title: "Welcome to Obserra SAP UAC",
+    body: "Your live SAP access-control plane. Every number — open SoD, privileged exposure, risk scores — recomputes from the underlying records on every request, and each metric carries its source and freshness. Switch altitude anytime from the toggle in the top bar." },
   { title: "Executive Mode", spotlight: true,
-    body: "The boardroom view — highlighted above. KPIs are framed in dollar-impact and posture: financial exposure, risk reduction and compliance readiness, so leadership sees what matters without the noise." },
+    body: "The boardroom view — highlighted above. SAP access risk framed as posture and business impact: identities, open Segregation-of-Duties conflicts, privileged exposure and average risk, so leadership sees what matters without the noise." },
   { title: "Operational Mode", spotlight: true,
-    body: "Flip the same toggle to Operational for live counts and signals — open risks, control gaps and connector health — so your team can act on specifics in real time." },
-  { title: "Where to start", spotlight: true, target: "nav-overview",
-    body: "Your Overview — highlighted in the sidebar — is the executive command center: financial exposure, risk-reduction momentum and compliance readiness at a glance. Come back here anytime." },
+    body: "Flip the same toggle to Operational for the working view — live SoD counts, privileged access, HR reconciliation and connector health — so your team can act on specifics in real time." },
+  { title: "Start at the SoD Command Center", spotlight: true, target: "nav-sod-command-center",
+    body: "Highlighted in the sidebar — the SoD Command Center is where you pin risk areas to the watchlist, see the owner leaderboard, and open one-tap ServiceNow remediation. Come back here anytime." },
 ];
 
 const OPS_STEPS = [
-  { title: "Welcome to Obserra",
-    body: "This is your operational cockpit. Every metric is evidence-grounded and carries its source and freshness, so you always know what you're acting on." },
+  { title: "Welcome to Obserra SAP UAC",
+    body: "This is your operational cockpit for SAP access. Every metric is evidence-grounded and carries its source and freshness, so you always know exactly what you're acting on." },
   { title: "Operational Mode", spotlight: true,
-    body: "The toggle above keeps you in Operational view — live counts and signals for open risks, control gaps and connector health. This is your day-to-day working surface." },
+    body: "The toggle above keeps you in Operational view — live SoD counts, privileged access, HR reconciliation and connector health. This is your day-to-day working surface." },
   { title: "Where you'll work",
-    body: "Jump into the Risk Register, Control Monitoring and Situation Room from the sidebar to triage, investigate and remediate. The Advisor can execute remediations for you too." },
-  { title: "Start in the Risk Register", spotlight: true, target: "nav-risk-register",
-    body: "Highlighted in the sidebar — the Risk Register is your triage home base. Open it to review, prioritize and remediate risks, with the Advisor one click away." },
+    body: "Jump into the SoD Command Center, Privileged Access and Access Monitoring from the sidebar to triage, investigate and remediate. The Advisor can execute remediations for you too." },
+  { title: "Start at the SoD Command Center", spotlight: true, target: "nav-sod-command-center",
+    body: "Highlighted in the sidebar — the SoD Command Center is your triage home base: risk watchlist, owner leaderboard and one-tap ServiceNow remediation, with the Advisor one click away." },
 ];
 
 export const OnboardingTour = () => {
