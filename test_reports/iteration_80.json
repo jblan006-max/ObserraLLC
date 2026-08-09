@@ -1,0 +1,18 @@
+{
+  "summary": "Tested new Audit Room follow-up batch: (1) Audit Requests inbox on /app/system-health, (2) Room Analytics line, (3) Public audit-room portal with comment thread + name-stamped download, (4) Evidence watermark PDF download. All flows PASS end-to-end. Login via jblan2026@gmail.com works. Backend endpoints (login, list rooms, list comments, portal HTML, evidence PDF, reply, status change) all return 200 with expected data. Frontend UI: sh-comments-panel renders as 'Audit Requests' with open-count chip (initially '2 open', becomes '1 open' after reply auto-resolves). Comment row 0 has status dropdown (Open/In Progress/Resolved) — changing to 'In Progress' persists; typing a reply and clicking Reply shows success toast ('Reply sent — Marked as resolved and now visible on the auditor's portal.'), clears the textarea, appends sh-comment-reply-0 with 'YOUR REPLY · JBLAN2026@GMAIL.COM · <ts>' + body, and flips status to Resolved automatically. sh-room-analytics-d6hUYZlup7KLlDnJVVVQMw renders '2 open(s) · last viewed Aug 9, 06:15 PM · 1 download(s) · by Test Auditor'. Public portal (unauthenticated) returns HTML containing: welcome note, Open SoD tile, Top open Segregation-of-Duties table, Latest signed evidence section with #dlname input + 'stamped on the PDF' hint + Download button, Comment thread listing Sam Reviewer (Deloitte) comment with inline reply and status pill 'Resolved', Leave a comment form. Evidence PDF endpoint returns %PDF (36918 bytes) with ?who=Test Auditor watermark. Regression: system-health loads all panels (health tiles, uptime, backups, evidence locker, Shared Access Links, Room Branding button, Revoke all button present but NOT clicked). No console errors during navigation/reply flow (only pre-login 401 on /api/auth/me which is expected).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Older seeded comment on room nDGtQLmesOZQK-D6wriEBQ lacks id/status/reply fields (legacy schema). The admin inbox handles it gracefully (row rendered, status 'Open' default) but its status/reply endpoints cannot be exercised because it has no id. Consider a one-off migration to backfill id/status on pre-existing comments so admins can process them via the inbox.",
+    "Public portal reply label reads 'Governance team:' rather than mirroring the admin-side 'Your reply · <admin email>' label. Minor inconsistency — acceptable since the auditor doesn't need to see the admin email, but flagging for product decision."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (cookie login) — verified working",
+  "seed_data_creation": "During test I posted a reply on comment TpvoYy5MeFBL (room d6hUYZlup7KLlDnJVVVQMw). The seeded auditor comment on that room is now Resolved with reply 'Last recert was 2026-07-15 — evidence attached in the room.' If main agent needs an Open comment for further testing, either revert this status via POST /api/deploy/audit-room-comments/TpvoYy5MeFBL/status {status:'Open'} or use the room nDGtQLmesOZQK- older comment (though that one has no id).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 5 request items verified. Note: the primary seeded comment was marked Resolved during testing (see seed_data_creation). Revoke-all was intentionally NOT exercised. Public portal is server-rendered HTML — inspect via curl and grep for keywords rather than Playwright."
+}

@@ -142,6 +142,7 @@ export default function SystemHealth() {
   const [brandLogo, setBrandLogo] = useState(null);
   const [savingBrand, setSavingBrand] = useState(false);
   const [revokingAll, setRevokingAll] = useState(false);
+  const [replyDrafts, setReplyDrafts] = useState({});
 
   const loadHealth = useCallback(async () => {
     try { const { data } = await api.get("/health"); setHealth(data); } catch { setHealth((h) => h || { status: "degraded", checks: {} }); }
@@ -396,6 +397,22 @@ export default function SystemHealth() {
       setBrandModal(false);
     } catch (e) { toast.error(e.response?.data?.detail || "Couldn't save branding"); }
     setSavingBrand(false);
+  };
+  const replyComment = async (id) => {
+    const reply = (replyDrafts[id] || "").trim();
+    if (!reply) { toast.error("Enter a reply"); return; }
+    try {
+      await api.post(`/deploy/audit-room-comments/${id}/reply`, { reply });
+      toast.success("Reply sent", { description: "Marked as resolved and now visible on the auditor's portal." });
+      setReplyDrafts((d) => ({ ...d, [id]: "" }));
+      await loadComments();
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't send reply"); }
+  };
+  const setCommentStatus = async (id, status) => {
+    try {
+      await api.post(`/deploy/audit-room-comments/${id}/status`, { status });
+      await loadComments();
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't update status"); }
   };
   const sendTestDigest = async () => {
     const email = digestTestEmail.trim();
@@ -791,7 +808,13 @@ export default function SystemHealth() {
                   <DoorOpen className="w-4 h-4 text-ai shrink-0" />
                   <div className="min-w-0">
                     <div className="text-xs font-medium flex items-center gap-2">Audit Room{r.expired && <span className="text-[9px] uppercase text-crit font-mono">expired</span>}</div>
-                    <div className="text-[11px] text-muted-foreground">by {r.created_by} · expires {fmtDT(r.expires_at)} · {r.opens} open(s)</div>
+                    <div className="text-[11px] text-muted-foreground">by {r.created_by} · expires {fmtDT(r.expires_at)}</div>
+                    <div className="text-[11px] text-muted-foreground flex flex-wrap gap-x-2" data-testid={`sh-room-analytics-${r.token}`}>
+                      <span>{r.opens || 0} open(s)</span>
+                      <span>· last viewed {r.last_opened_at ? fmtDT(r.last_opened_at) : "—"}</span>
+                      <span>· {r.downloads || 0} download(s)</span>
+                      {r.last_downloaded_by && <span>· by {r.last_downloaded_by}</span>}
+                    </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
@@ -820,19 +843,48 @@ export default function SystemHealth() {
         <div className="bg-card fact-border rounded-xl p-5" data-testid="sh-comments-panel">
           <div className="flex items-center gap-2 mb-3">
             <MessageCircle className="w-4 h-4 text-primary" />
-            <h2 className="font-head font-bold text-lg">Auditor Comments</h2>
-            <span className="text-[11px] text-muted-foreground">Notes left by external auditors on your Audit Room portal</span>
+            <h2 className="font-head font-bold text-lg">Audit Requests</h2>
+            <span className="text-[11px] text-muted-foreground">Auditor comments — reply and track each through to resolved</span>
+            <span className="ml-auto text-[11px] font-mono text-muted-foreground" data-testid="sh-comments-open-count">{comments.filter((c) => c.status !== "Resolved").length} open</span>
           </div>
-          <div className="space-y-2">
-            {comments.map((c, i) => (
-              <div key={i} className="bg-secondary/25 rounded-lg px-3 py-2" data-testid={`sh-comment-${i}`}>
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold">{c.author}</span>
-                  <span className="text-[11px] text-muted-foreground">{fmtDT(c.at)}</span>
+          <div className="space-y-3">
+            {comments.map((c, i) => {
+              const st = c.status || "Open";
+              const stColor = st === "Resolved" ? "text-low" : st === "In Progress" ? "text-primary" : "text-high";
+              return (
+                <div key={c.id || i} className="bg-secondary/25 rounded-lg px-3 py-2.5" data-testid={`sh-comment-${i}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-xs font-semibold">{c.author}</span>
+                    <span className="text-[11px] text-muted-foreground">{fmtDT(c.at)}</span>
+                  </div>
+                  <p className="text-sm text-foreground/90 mt-1 whitespace-pre-wrap break-words">{c.comment}</p>
+                  {c.reply && (
+                    <div className="mt-2 pl-3 border-l-2 border-primary/40" data-testid={`sh-comment-reply-${i}`}>
+                      <div className="text-[10px] font-mono uppercase tracking-wider text-primary">Your reply · {c.reply_by} · {fmtDT(c.reply_at)}</div>
+                      <p className="text-sm text-foreground/80 mt-0.5 whitespace-pre-wrap break-words">{c.reply}</p>
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center gap-2 mt-2">
+                    <span className={`text-[10px] font-mono uppercase tracking-wider ${stColor}`}>{st}</span>
+                    <select value={st} data-testid={`sh-comment-status-${i}`} onChange={(e) => setCommentStatus(c.id, e.target.value)}
+                      className="h-7 rounded-md border border-border bg-secondary/40 px-2 text-[11px]">
+                      <option value="Open">Open</option>
+                      <option value="In Progress">In Progress</option>
+                      <option value="Resolved">Resolved</option>
+                    </select>
+                  </div>
+                  <div className="flex items-end gap-2 mt-2">
+                    <textarea rows={1} data-testid={`sh-comment-reply-input-${i}`} value={replyDrafts[c.id] || ""}
+                      onChange={(e) => setReplyDrafts((d) => ({ ...d, [c.id]: e.target.value }))}
+                      placeholder={c.reply ? "Reply again…" : "Reply to this auditor…"}
+                      className="flex-1 rounded-md border border-border bg-secondary/40 px-2.5 py-1.5 text-sm resize-y min-h-[34px]" />
+                    <Button size="sm" className="gap-1.5 shrink-0" data-testid={`sh-comment-reply-send-${i}`} onClick={() => replyComment(c.id)}>
+                      <Send className="w-3.5 h-3.5" /> Reply
+                    </Button>
+                  </div>
                 </div>
-                <p className="text-sm text-foreground/90 mt-1 whitespace-pre-wrap break-words">{c.comment}</p>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

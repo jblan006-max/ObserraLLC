@@ -1725,8 +1725,13 @@ def _audit_wrap(inner, badge):
             '.ftab td{padding:7px 8px;border-bottom:1px solid #f1f5f9;vertical-align:top}'
             '.sev{display:inline-block;color:#fff;font-size:10px;font-weight:700;padding:2px 8px;border-radius:999px}'
             '.clist{margin:8px 0;padding-left:18px}.clist li{margin:4px 0;font-size:13px}'
-            '#cbox input,#cbox textarea{width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:8px;padding:9px 11px;font-size:14px;margin:6px 0;font-family:inherit}'
+            '#cbox input,#cbox textarea,#dlname{width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:8px;padding:9px 11px;font-size:14px;margin:6px 0;font-family:inherit}'
             '#csend{border:none;cursor:pointer;margin-top:4px}'
+            '#dlbtn{border:none;cursor:pointer;margin-top:4px}'
+            '.thread{background:#f4f6fb;border-radius:10px;padding:10px 12px;margin:8px 0}'
+            '.thead{display:flex;justify-content:space-between;align-items:center;font-size:12px;font-weight:600;color:#0f1e3d}'
+            '.ctext{font-size:13px;color:#374151;margin-top:4px;white-space:pre-wrap}'
+            '.reply{font-size:13px;color:#111827;margin-top:8px;padding-top:8px;border-top:1px dashed #d1d5db;white-space:pre-wrap}'
             '.brand{max-width:720px;margin:14px auto 0;text-align:center;color:#94a3b8;font-size:12px}</style></head>'
             f'<body><div class="card">{inner}</div><div class="brand">Obserra SAP UAC · Enterprise SAP Access Governance</div></body></html>')
 
@@ -1735,7 +1740,7 @@ def _esc_html(s):
     return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def _audit_room_html(org_name, room, findings, latest, branding=None):
+def _audit_room_html(org_name, room, findings, latest, branding=None, comments=None):
     if org_name is None:
         return _audit_wrap("<h1>Audit room not found</h1><p>This link is invalid or has been revoked.</p>", "#c2410c")
     if org_name == "expired":
@@ -1750,8 +1755,6 @@ def _audit_room_html(org_name, room, findings, latest, branding=None):
     status = "Healthy" if findings["healthy"] else "Degraded"
     scolor = "#12805c" if findings["healthy"] else "#c2410c"
     tile_html = "".join(f'<div class="tile"><div class="tv">{v}</div><div class="tl">{ln}</div></div>' for ln, v in tiles)
-    evidence_btn = (f'<a class="btn" href="/api/deploy/audit-room/{room["token"]}/evidence" target="_blank" rel="noreferrer">Download latest signed evidence (PDF)</a>'
-                    if latest else '<p class="hint">No signed evidence report has been generated yet.</p>')
     period = latest.get("period_label") if latest else "—"
     # Findings depth — top open SoD violations
     conflicts = findings.get("top_conflicts") or []
@@ -1778,6 +1781,38 @@ def _audit_room_html(org_name, room, findings, latest, branding=None):
     logo_html = f'<img src="{logo}" alt="logo" class="rlogo"/>' if logo else ""
     welcome = branding.get("welcome") or ""
     welcome_html = f'<div class="welcome">{_esc_html(welcome)}</div>' if welcome else ""
+    # Latest signed evidence — download stamps the auditor's name + access date onto the PDF
+    if latest:
+        evidence_html = (
+            '<h2>Latest signed evidence</h2>'
+            f'<p class="hint">Reporting period: {period}</p>'
+            '<input id="dlname" placeholder="Your name (stamped on the PDF for provenance)" />'
+            '<button class="btn" id="dlbtn" onclick="dlEvidence()">Download latest signed evidence (PDF)</button>'
+            '<script>'
+            'function dlEvidence(){'
+            'var n=document.getElementById("dlname").value.trim();'
+            f'var u="/api/deploy/audit-room/{room["token"]}/evidence";'
+            'if(n)u+="?who="+encodeURIComponent(n);'
+            'window.open(u,"_blank");'
+            '}</script>')
+    else:
+        evidence_html = '<h2>Latest signed evidence</h2><p class="hint">No signed evidence report has been generated yet.</p>'
+    # Existing exchange — auditor comments + governance-team replies + status
+    comments = comments or []
+    if comments:
+        stbg = {"Open": "#b45309", "In Progress": "#2f6df6", "Resolved": "#12805c"}
+        items = []
+        for c in comments:
+            st = c.get("status", "Open")
+            reply_html = (f'<div class="reply"><strong>Governance team:</strong> {_esc_html(c["reply"])}</div>'
+                          if c.get("reply") else "")
+            items.append(
+                f'<div class="thread"><div class="thead"><span>{_esc_html(c.get("author", "Auditor"))}</span>'
+                f'<span class="sev" style="background:{stbg.get(st, "#6b7280")}">{_esc_html(st)}</span></div>'
+                f'<div class="ctext">{_esc_html(c.get("comment", ""))}</div>{reply_html}</div>')
+        thread_html = '<h2>Comment thread</h2>' + "".join(items)
+    else:
+        thread_html = ""
     # Auditor comment box (posts back to the room comment endpoint)
     comment_html = (
         '<h2>Leave a comment</h2>'
@@ -1806,7 +1841,8 @@ def _audit_room_html(org_name, room, findings, latest, branding=None):
              f'{welcome_html}'
              f'<div class="tiles">{tile_html}</div>'
              f'{conflicts_html}{certs_html}'
-             f'<h2>Latest signed evidence</h2><p class="hint">Reporting period: {period}</p>{evidence_btn}'
+             f'{evidence_html}'
+             f'{thread_html}'
              f'{comment_html}')
     return _audit_wrap(inner, "#2f6df6")
 
@@ -1870,12 +1906,13 @@ async def view_audit_room(token: str):
     latest = (_list_evidence_files(room["org_id"]) or [None])[0]
     cfg = _room_branding_cfg(org)
     branding = {"logo": _resolve_room_logo(org, cfg), "welcome": cfg["welcome"]}
-    return HTMLResponse(_audit_room_html(org.get("name") or "Organization", room, findings, latest, branding))
+    room_comments = await db.audit_room_comments.find({"token": token}, {"_id": 0}).sort("at", 1).to_list(200)
+    return HTMLResponse(_audit_room_html(org.get("name") or "Organization", room, findings, latest, branding, room_comments))
 
 
 @deploy_router.get("/audit-room/{token}/evidence")
-async def audit_room_evidence(token: str):
-    """Public download of the latest evidence PDF for an audit room (watermarked)."""
+async def audit_room_evidence(token: str, who: str = ""):
+    """Public download of the latest evidence PDF (watermarked with the auditor's name + access date)."""
     from datetime import datetime, timezone
     room = await db.audit_rooms.find_one({"token": token})
     if not room:
@@ -1888,7 +1925,13 @@ async def audit_room_evidence(token: str):
     fp = _safe_evidence_path(latest["file"])
     with open(fp, "rb") as f:
         content = f.read()
-    content = _watermark_pdf(content, "AUDIT ROOM COPY", f"Audit room · expires {room.get('expires_at', '')[:10]}")
+    auditor = (who or "").strip()[:120] or "External auditor"
+    access = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    content = _watermark_pdf(content, "AUDIT ROOM COPY",
+                             f"Downloaded by {auditor} · {access} · expires {room.get('expires_at', '')[:10]}")
+    await db.audit_rooms.update_one({"token": token},
+                                    {"$inc": {"downloads": 1},
+                                     "$set": {"last_downloaded_at": _now_iso(), "last_downloaded_by": auditor}})
     return StreamingResponse(io.BytesIO(content), media_type=_PDF_MT,
                              headers={"Content-Disposition": f'inline; filename="{os.path.basename(fp)}"'})
 
@@ -1962,9 +2005,12 @@ async def audit_room_comment(token: str, body: RoomCommentBody):
         raise HTTPException(400, "A comment is required.")
     author = (body.author or "").strip()[:120] or "Anonymous auditor"
     org_id = room["org_id"]
+    import secrets
+    cid = secrets.token_urlsafe(9)
     await db.audit_room_comments.insert_one({
-        "token": token, "org_id": org_id, "author": author,
-        "comment": text[:2000], "at": _now_iso()})
+        "id": cid, "token": token, "org_id": org_id, "author": author,
+        "comment": text[:2000], "at": _now_iso(),
+        "status": "Open", "reply": None, "reply_by": None, "reply_at": None})
     await db.audit_rooms.update_one({"token": token}, {"$inc": {"comments": 1}})
     try:
         from kernel import notifications
@@ -1993,6 +2039,84 @@ async def list_audit_room_comments(user: dict = Depends(get_current_user)):
         raise HTTPException(403, "Admins only")
     rows = await db.audit_room_comments.find({"org_id": user["org_id"]}, {"_id": 0}).sort("at", -1).to_list(200)
     return {"comments": rows}
+
+
+class CommentReplyBody(BaseModel):
+    reply: str
+
+
+@deploy_router.post("/audit-room-comments/{comment_id}/reply")
+async def reply_audit_room_comment(comment_id: str, body: CommentReplyBody, user: dict = Depends(get_current_user)):
+    """Admin reply to an auditor comment — the whole exchange stays in one place and shows on the portal."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    reply = (body.reply or "").strip()
+    if not reply:
+        raise HTTPException(400, "A reply is required.")
+    res = await db.audit_room_comments.update_one(
+        {"id": comment_id, "org_id": user["org_id"]},
+        {"$set": {"reply": reply[:2000], "reply_by": user["email"], "reply_at": _now_iso(), "status": "Resolved"}})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Comment not found.")
+    return {"ok": True}
+
+
+class CommentStatusBody(BaseModel):
+    status: str
+
+
+@deploy_router.post("/audit-room-comments/{comment_id}/status")
+async def set_audit_room_comment_status(comment_id: str, body: CommentStatusBody, user: dict = Depends(get_current_user)):
+    """Track an auditor request through Open → In Progress → Resolved."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    if body.status not in ("Open", "In Progress", "Resolved"):
+        raise HTTPException(400, "Invalid status")
+    res = await db.audit_room_comments.update_one(
+        {"id": comment_id, "org_id": user["org_id"]}, {"$set": {"status": body.status}})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Comment not found.")
+    return {"ok": True}
+
+
+async def _run_audit_room_expiry_reminders(within_days: int = 3):
+    """Folded into the daily cron: email admins/execs a few days before each Audit Room link expires."""
+    from datetime import datetime, timezone, timedelta
+    from bson import ObjectId
+    from kernel import notifications
+    now = datetime.now(timezone.utc)
+    horizon = (now + timedelta(days=within_days)).isoformat()
+    nowiso = now.isoformat()
+    rooms = await db.audit_rooms.find({"expires_at": {"$gt": nowiso, "$lte": horizon}}).to_list(1000)
+    for room in rooms:
+        try:
+            token = room["token"]
+            if room.get("expiry_reminder_sent"):
+                continue
+            org_id = room["org_id"]
+            exp = room.get("expires_at", "")
+            days_left = max(0, (datetime.fromisoformat(exp) - now).days) if exp else 0
+            org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+            oname = org.get("name") or "your organization"
+            await notifications.create(org_id, "system", "Audit Room link expiring soon",
+                                       f"An Audit Room for {oname} expires on {exp[:10]} ({days_left}d). Renew it to keep auditor access live.",
+                                       ref="system-health", dedupe_key=f"room-expiry:{token}")
+            recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
+                                         {"_id": 0, "email": 1}).to_list(200)
+            html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
+                    f"<h2 style='color:#b45309'>Audit Room link expiring soon</h2>"
+                    f"<p>An external auditor Audit Room for <strong>{_esc_html(oname)}</strong> expires on "
+                    f"<strong>{exp[:10]}</strong> — about {days_left} day(s) away.</p>"
+                    f"<p>Open <strong>System Health → Shared Access Links</strong> to renew it so your audit doesn't stall on a dead link.</p>"
+                    f"<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — System Health · Audit Room</p></div>")
+            for rr in recips:
+                try:
+                    await notifications.send_email(rr["email"], "Audit Room link expiring soon — Obserra SAP UAC", html)
+                except Exception:
+                    pass
+            await db.audit_rooms.update_one({"token": token}, {"$set": {"expiry_reminder_sent": nowiso}})
+        except Exception:
+            pass
 
 
 
