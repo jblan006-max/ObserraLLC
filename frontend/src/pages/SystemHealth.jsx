@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import {
   Activity, Database, Plug, Clock, ServerCog, ArrowUpCircle, DownloadCloud, Loader2,
   HardDriveDownload, RotateCcw, ShieldCheck, AlertTriangle, RefreshCw, Building2, Terminal, CheckCircle2,
-  Save, Mail, MessageSquare, Slack, Zap, Archive, Lock, Send,
+  Save, Mail, MessageSquare, Slack, Zap, Archive, Lock, Send, FileText, KeyRound, Eye,
 } from "lucide-react";
 
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
@@ -107,14 +107,18 @@ export default function SystemHealth() {
   const [savingCfg, setSavingCfg] = useState(false);
   const [savingAlerts, setSavingAlerts] = useState(false);
   const [testingAlert, setTestingAlert] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [reprobing, setReprobing] = useState(null);
   const logRef = useRef(null);
   const [restoreTarget, setRestoreTarget] = useState(null);
   const [confirmText, setConfirmText] = useState("");
   const [restorePass, setRestorePass] = useState("");
   const [restoring, setRestoring] = useState(false);
-  const [encModal, setEncModal] = useState(null); // 'enable' | 'disable'
+  const [preview, setPreview] = useState(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [encModal, setEncModal] = useState(null); // 'enable' | 'disable' | 'rotate'
   const [encPass, setEncPass] = useState("");
+  const [encNewPass, setEncNewPass] = useState("");
   const [encBusy, setEncBusy] = useState(false);
 
   const loadHealth = useCallback(async () => {
@@ -167,6 +171,13 @@ export default function SystemHealth() {
 
   useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight; }, [upgrade]);
 
+  const blobDownload = (data, name) => {
+    const url = URL.createObjectURL(data);
+    const a = document.createElement("a");
+    a.href = url; a.download = name; a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const backupNow = async () => {
     setBackingUp(true);
     try {
@@ -190,12 +201,15 @@ export default function SystemHealth() {
       if (encModal === "enable") {
         await api.put("/deploy/backup-encryption", { passphrase: encPass });
         toast.success("Snapshot encryption enabled", { description: "New backups are encrypted at rest. Keep this passphrase safe — it's required to restore." });
-      } else {
+      } else if (encModal === "disable") {
         await api.post("/deploy/backup-encryption/disable", { passphrase: encPass });
         toast.success("Snapshot encryption disabled");
+      } else {
+        const { data } = await api.post("/deploy/backup-encryption/rotate", { old_passphrase: encPass, new_passphrase: encNewPass });
+        toast.success("Passphrase rotated", { description: `${data.reencrypted} existing snapshot(s) re-encrypted with the new passphrase.` });
       }
-      setEncModal(null); setEncPass("");
-      await loadCfg();
+      setEncModal(null); setEncPass(""); setEncNewPass("");
+      await Promise.all([loadCfg(), loadBackups()]);
     } catch (e) { toast.error(e.response?.data?.detail || "Couldn't update encryption"); }
     setEncBusy(false);
   };
@@ -221,6 +235,16 @@ export default function SystemHealth() {
     setTestingAlert(false);
   };
 
+  const downloadCompliance = async () => {
+    setDownloadingPdf(true);
+    try {
+      const res = await api.get("/deploy/compliance-evidence", { responseType: "blob" });
+      blobDownload(res.data, `Obserra-Compliance-Evidence-${new Date().toISOString().slice(0, 10)}.pdf`);
+      toast.success("Compliance evidence PDF downloaded");
+    } catch { toast.error("Couldn't generate the evidence PDF"); }
+    setDownloadingPdf(false);
+  };
+
   const reprobe = async (cid) => {
     setReprobing(cid);
     try {
@@ -232,7 +256,19 @@ export default function SystemHealth() {
     setReprobing(null);
   };
 
-  const openRestore = (b) => { setRestoreTarget(b); setConfirmText(""); setRestorePass(""); };
+  const openRestore = (b) => { setRestoreTarget(b); setConfirmText(""); setRestorePass(""); setPreview(null); };
+  const runPreview = async () => {
+    if (!restoreTarget) return;
+    if (restoreTarget.encrypted && !restorePass) { toast.error("Enter the passphrase to preview an encrypted backup."); return; }
+    setPreviewing(true);
+    try {
+      const body = { file: restoreTarget.file };
+      if (restoreTarget.encrypted) body.passphrase = restorePass;
+      const { data } = await api.post("/deploy/restore-preview", body);
+      setPreview(data);
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't build preview"); }
+    setPreviewing(false);
+  };
   const doRestore = async () => {
     if (confirmText.trim().toUpperCase() !== "RESTORE" || !restoreTarget) return;
     if (restoreTarget.encrypted && !restorePass) return;
@@ -251,10 +287,7 @@ export default function SystemHealth() {
   const download = async (file) => {
     try {
       const res = await api.get(`/deploy/backup/download?file=${encodeURIComponent(file)}`, { responseType: "blob" });
-      const url = URL.createObjectURL(res.data);
-      const a = document.createElement("a");
-      a.href = url; a.download = file; a.click();
-      URL.revokeObjectURL(url);
+      blobDownload(res.data, file);
     } catch { toast.error("Download failed"); }
   };
 
@@ -292,13 +325,20 @@ export default function SystemHealth() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="font-head font-black text-3xl lg:text-4xl tracking-tight" data-testid="system-health-title">System Health</h1>
-          <p className="text-sm text-muted-foreground mt-1">Live platform vitals, uptime history, on-premise upgrades, encrypted backups and health-alert routing.</p>
+          <p className="text-sm text-muted-foreground mt-1">Live platform vitals, uptime history, on-premise upgrades, encrypted backups, alert routing and auditor evidence.</p>
         </div>
-        <div className="flex flex-col items-end gap-1">
-          <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-refresh" onClick={refreshAll} disabled={refreshing}>
-            <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />{refreshing ? "Refreshing…" : "Refresh"}
-          </Button>
-          <span className="text-[10px] font-mono text-muted-foreground">Auto-refreshing every 20s</span>
+        <div className="flex items-center gap-2">
+          {isAdmin && (
+            <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-compliance-pdf" onClick={downloadCompliance} disabled={downloadingPdf}>
+              {downloadingPdf ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />} Compliance PDF
+            </Button>
+          )}
+          <div className="flex flex-col items-end gap-1">
+            <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-refresh" onClick={refreshAll} disabled={refreshing}>
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />{refreshing ? "Refreshing…" : "Refresh"}
+            </Button>
+            <span className="text-[10px] font-mono text-muted-foreground">Auto-refreshing every 20s</span>
+          </div>
         </div>
       </div>
 
@@ -426,9 +466,12 @@ export default function SystemHealth() {
             <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${encEnabled ? "bg-low/15 text-low" : "bg-secondary text-muted-foreground"}`} data-testid="sh-encryption-status">
               {encEnabled ? "On — AES at rest" : "Off"}
             </span>
-            <span className="text-[11px] text-muted-foreground flex-1 min-w-[180px]">Encrypts every snapshot at rest; a passphrase is required to restore.</span>
+            <span className="text-[11px] text-muted-foreground flex-1 min-w-[160px]">Encrypts every snapshot at rest; a passphrase is required to restore.</span>
             {encEnabled ? (
-              <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-encryption-disable" onClick={() => { setEncModal("disable"); setEncPass(""); }}>Disable</Button>
+              <>
+                <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-encryption-rotate" onClick={() => { setEncModal("rotate"); setEncPass(""); setEncNewPass(""); }}><KeyRound className="w-3.5 h-3.5" /> Rotate passphrase</Button>
+                <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-encryption-disable" onClick={() => { setEncModal("disable"); setEncPass(""); }}>Disable</Button>
+              </>
             ) : (
               <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-encryption-enable" onClick={() => { setEncModal("enable"); setEncPass(""); }}><Lock className="w-3.5 h-3.5" /> Enable encryption</Button>
             )}
@@ -513,32 +556,42 @@ export default function SystemHealth() {
               </tbody>
             </table>
           </div>
-          <p className="text-[11px] text-muted-foreground mt-3">Slack/Teams use this org's configured webhooks; email notifies admins &amp; executives. In-app notifications are always recorded.</p>
+          <p className="text-[11px] text-muted-foreground mt-3">Degraded events are bundled into <b>one daily digest per channel</b> (no repeat pings). Slack/Teams use this org's webhooks; email notifies admins &amp; executives; in-app is always recorded.</p>
         </div>
       )}
 
-      {/* Encryption modal */}
+      {/* Encryption / rotate modal */}
       {encModal && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" data-testid="sh-encryption-modal" onClick={() => !encBusy && setEncModal(null)}>
           <div className="bg-card fact-border rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 mb-2">
-              <Lock className="w-5 h-5 text-primary" />
-              <h3 className="font-head font-bold text-lg">{encModal === "enable" ? "Enable snapshot encryption" : "Disable snapshot encryption"}</h3>
+              {encModal === "rotate" ? <KeyRound className="w-5 h-5 text-primary" /> : <Lock className="w-5 h-5 text-primary" />}
+              <h3 className="font-head font-bold text-lg">{encModal === "enable" ? "Enable snapshot encryption" : encModal === "disable" ? "Disable snapshot encryption" : "Rotate backup passphrase"}</h3>
             </div>
             <p className="text-sm text-muted-foreground mb-4">
               {encModal === "enable"
                 ? "Set a passphrase. Every new backup will be encrypted at rest, and this passphrase will be required to restore. Store it somewhere safe — it cannot be recovered."
-                : "Enter the current passphrase to turn off encryption for future backups."}
+                : encModal === "disable"
+                  ? "Enter the current passphrase to turn off encryption for future backups."
+                  : "Enter the current passphrase and a new one. All existing encrypted snapshots will be re-encrypted with the new passphrase in one step."}
             </p>
-            <label className="block text-xs font-medium text-muted-foreground mb-1.5">Passphrase{encModal === "enable" ? " (min 8 characters)" : ""}</label>
+            <label className="block text-xs font-medium text-muted-foreground mb-1.5">{encModal === "rotate" ? "Current passphrase" : `Passphrase${encModal === "enable" ? " (min 8 characters)" : ""}`}</label>
             <input type="password" data-testid="sh-encryption-passphrase" autoFocus value={encPass} onChange={(e) => setEncPass(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") submitEnc(); }}
               className="w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary transition-shadow mb-4" placeholder="••••••••" />
+            {encModal === "rotate" && (
+              <>
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5">New passphrase (min 8 characters)</label>
+                <input type="password" data-testid="sh-encryption-newpassphrase" value={encNewPass} onChange={(e) => setEncNewPass(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") submitEnc(); }}
+                  className="w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary transition-shadow mb-4" placeholder="••••••••" />
+              </>
+            )}
             <div className="flex items-center justify-end gap-2">
               <button data-testid="sh-encryption-cancel" onClick={() => setEncModal(null)} disabled={encBusy} className="px-3 py-2 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50">Cancel</button>
-              <button data-testid="sh-encryption-submit" onClick={submitEnc} disabled={encBusy || (encModal === "enable" ? encPass.trim().length < 8 : !encPass)}
+              <button data-testid="sh-encryption-submit" onClick={submitEnc}
+                disabled={encBusy || (encModal === "enable" ? encPass.trim().length < 8 : encModal === "disable" ? !encPass : (!encPass || encNewPass.trim().length < 8))}
                 className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-40">
-                {encBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}{encModal === "enable" ? "Enable" : "Disable"}
+                {encBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}{encModal === "enable" ? "Enable" : encModal === "disable" ? "Disable" : "Rotate"}
               </button>
             </div>
           </div>
@@ -548,7 +601,7 @@ export default function SystemHealth() {
       {/* Restore modal */}
       {restoreTarget && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" data-testid="sh-restore-modal" onClick={() => !restoring && setRestoreTarget(null)}>
-          <div className="bg-card fact-border rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-card fact-border rounded-2xl shadow-2xl w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center gap-2 mb-2">
               <AlertTriangle className="w-5 h-5 text-high" />
               <h3 className="font-head font-bold text-lg">Restore this snapshot?</h3>
@@ -564,13 +617,39 @@ export default function SystemHealth() {
             </div>
             {restoreTarget.encrypted && (
               <div className="mb-4">
-                <label className="block text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1.5"><Lock className="w-3.5 h-3.5 text-low" /> This backup is encrypted — enter its passphrase</label>
+                <label className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1.5"><Lock className="w-3.5 h-3.5 text-low" /> This backup is encrypted — enter its passphrase</label>
                 <input type="password" data-testid="sh-restore-passphrase" value={restorePass} onChange={(e) => setRestorePass(e.target.value)}
                   className="w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary transition-shadow" placeholder="Backup passphrase" />
               </div>
             )}
+            <div className="mb-4">
+              <Button size="sm" variant="outline" className="gap-1.5 w-full justify-center" data-testid="sh-restore-preview-btn" onClick={runPreview} disabled={previewing}>
+                {previewing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />} Preview changes
+              </Button>
+              {preview && (
+                <div className="mt-3 border border-border rounded-lg overflow-hidden" data-testid="sh-restore-preview">
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground px-3 py-2 bg-secondary/40 flex justify-between">
+                    <span>Collection</span><span>Current → Backup (Δ)</span>
+                  </div>
+                  <div className="max-h-48 overflow-y-auto">
+                    {preview.rows.map((r) => (
+                      <div key={r.collection} className="flex items-center justify-between px-3 py-1.5 text-xs border-t border-border/40" data-testid={`sh-preview-${r.collection}`}>
+                        <span className="font-mono truncate max-w-[220px]">{r.collection}</span>
+                        <span className="font-mono">
+                          {r.current} → {r.backup}
+                          <span className={`ml-2 ${r.delta > 0 ? "text-low" : r.delta < 0 ? "text-crit" : "text-muted-foreground"}`}>{r.delta > 0 ? `+${r.delta}` : r.delta}</span>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="text-[11px] text-muted-foreground px-3 py-2 bg-secondary/30 border-t border-border/40">
+                    {preview.collections} collection(s) · backup has {preview.total_backup} docs vs {preview.total_current} current. Collections not in the backup are left untouched.
+                  </div>
+                </div>
+              )}
+            </div>
             <label className="block text-xs font-medium text-muted-foreground mb-1.5">Type <span className="font-mono text-foreground">RESTORE</span> to confirm</label>
-            <input data-testid="sh-restore-confirm-input" autoFocus value={confirmText} onChange={(e) => setConfirmText(e.target.value)}
+            <input data-testid="sh-restore-confirm-input" value={confirmText} onChange={(e) => setConfirmText(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") doRestore(); }}
               className="w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-high transition-shadow mb-4" placeholder="RESTORE" />
             <div className="flex items-center justify-end gap-2">
@@ -586,7 +665,7 @@ export default function SystemHealth() {
 
       {!isAdmin && (
         <div className="bg-card fact-border rounded-xl p-5 text-sm text-muted-foreground" data-testid="sh-nonadmin-note">
-          Upgrades, backups, encryption and alert routing are managed by administrators. The vitals and uptime above reflect the live platform status.
+          Upgrades, backups, encryption, alert routing and compliance evidence are managed by administrators. The vitals and uptime above reflect the live platform status.
         </div>
       )}
     </div>

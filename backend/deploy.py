@@ -461,11 +461,11 @@ def _list_backup_files(org_id: str):
     return sorted(out, key=lambda x: x["file"], reverse=True)
 
 
-async def restore_org(org_id: str, filename: str, auto_backup: bool = True, passphrase: str = None) -> dict:
+def _read_backup(org_id: str, filename: str, passphrase: str = None):
+    """Read + decrypt (if needed) + parse a backup file; returns the payload dict."""
     import gzip
     import json
     from bson import json_util
-    from db import db
     fp = _safe_backup_path(filename)
     if not os.path.exists(fp) or f"-{org_id}-" not in filename:
         raise HTTPException(404, "Backup not found")
@@ -502,6 +502,12 @@ async def restore_org(org_id: str, filename: str, auto_backup: bool = True, pass
         raise HTTPException(400, "Backup file is corrupt or unreadable.")
     if payload.get("_meta", {}).get("org_id") != org_id:
         raise HTTPException(400, "Backup belongs to a different organization")
+    return payload
+
+
+async def restore_org(org_id: str, filename: str, auto_backup: bool = True, passphrase: str = None) -> dict:
+    from db import db
+    payload = _read_backup(org_id, filename, passphrase)
     # Snapshot the CURRENT state first so a restore can never lose live data.
     pre = None
     if auto_backup:
@@ -767,10 +773,11 @@ async def _record_health(org_id, h, min_gap_min=12):
 
 
 async def run_health_alerts():
-    """Folded into the daily cron: route Slack/Teams/email + in-app alerts per event type
-    (DB / connector / scheduler) when degraded, deduped once per day; records a health sample."""
+    """Folded into the daily cron: bundle all degraded events into ONE digest per channel per day
+    (respecting routing) instead of a separate ping per event; records a health sample."""
     import logging
     from datetime import datetime, timezone
+    from bson import ObjectId
     from kernel import notifications
     today = datetime.now(timezone.utc).date().isoformat()
     orgs = await db.organizations.find({}).to_list(1000)
@@ -779,14 +786,25 @@ async def run_health_alerts():
         try:
             h = await evaluate_org_health(oid)
             await _record_health(oid, h)
+            last_digest = (org.get("system_health") or {}).get("last_digest_date")
             if h["healthy"]:
+                if last_digest:
+                    await db.organizations.update_one({"_id": ObjectId(oid)},
+                                                      {"$unset": {"system_health.last_digest_date": ""}})
                 continue
-            routing = _alert_cfg(org)
-            for etype, msg in h.get("issue_types", []):
-                await _route_alert(org, routing.get(etype, {"slack": True, "teams": True, "email": False}),
-                                   f"⚠ System health — {etype}", msg + "\n\nOpen System Health to review.")
             await notifications.create(oid, "system", "System health degraded", " · ".join(h["issues"]),
                                        ref="system-health", dedupe_key=f"health-degraded:{today}")
+            if last_digest == today:
+                continue
+            routing = _alert_cfg(org)
+            for ch in ("slack", "teams", "email"):
+                evs = [msg for etype, msg in h.get("issue_types", []) if routing.get(etype, {}).get(ch)]
+                if not evs:
+                    continue
+                body = "Daily system health digest:\n- " + "\n- ".join(evs) + "\n\nOpen System Health to review."
+                await _route_alert(org, {ch: True}, "⚠ System health digest", body)
+            await db.organizations.update_one({"_id": ObjectId(oid)},
+                                              {"$set": {"system_health.last_digest_date": today}})
         except Exception as e:
             logging.getLogger("deploy").warning(f"health alert failed for org {oid}: {e}")
 
