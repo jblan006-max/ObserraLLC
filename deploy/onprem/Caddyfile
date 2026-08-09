@@ -1,10 +1,10 @@
-# Obserra EIOS — automatic HTTPS via Caddy (Let's Encrypt).
+# Obserra SAP UAC — automatic HTTPS via Caddy (Let's Encrypt).
 # DOMAIN and ACME_EMAIL are read from deploy/.env.
 # Caddy obtains + renews the certificate automatically and reverse-proxies to the
 # frontend container (nginx), which serves the SPA and proxies /api to the backend.
 
 {$DOMAIN} {
-	encode zstd gzip
-	reverse_proxy frontend:80
-	tls {$ACME_EMAIL}
+        encode zstd gzip
+        reverse_proxy frontend:80
+        tls {$ACME_EMAIL}
 }

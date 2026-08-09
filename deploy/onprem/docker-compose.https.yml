@@ -1,13 +1,13 @@
 version: "3.9"
 
-# Obserra EIOS — self-hosted with automatic HTTPS via Caddy (Let's Encrypt).
+# Obserra SAP UAC — self-hosted with automatic HTTPS via Caddy (Let's Encrypt).
 #
 # Prerequisites:
 #   • A public DNS A/AAAA record for $DOMAIN pointing at this host.
 #   • Ports 80 AND 443 open to the internet (Let's Encrypt validation).
 #   • In deploy/.env set:  DOMAIN=your.domain  ACME_EMAIL=you@company  PUBLIC_URL=https://your.domain
 #
-# Launch (from the project root that contains backend/ frontend/ deploy/):
+# Launch (from the package root that contains backend/ frontend/ deploy/):
 #   docker compose -f deploy/docker-compose.https.yml --env-file deploy/.env up -d --build
 #
 # Then open:  https://<DOMAIN>
@@ -17,12 +17,12 @@ services:
     image: mongo:7
     restart: unless-stopped
     volumes:
-      - obserra_mongo:/data/db
+      - obserra_uac_mongo:/data/db
     networks: [obserra]
 
   backend:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: ../deploy/backend.Dockerfile
     restart: unless-stopped
     env_file: ./.env
@@ -33,8 +33,8 @@ services:
 
   frontend:
     build:
-      context: ./frontend
-      dockerfile: ../deploy/frontend.Dockerfile
+      context: ..
+      dockerfile: deploy/frontend.Dockerfile
       args:
         # Browser reaches the backend at https://<DOMAIN>/api (Caddy -> frontend nginx -> backend).
         REACT_APP_BACKEND_URL: ${PUBLIC_URL}
@@ -60,7 +60,7 @@ services:
     networks: [obserra]
 
 volumes:
-  obserra_mongo:
+  obserra_uac_mongo:
   caddy_data:
   caddy_config:
 

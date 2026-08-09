@@ -1,8 +1,10 @@
 version: "3.9"
 
-# Obserra EIOS — self-hosted, on-premise deployment.
+# Obserra SAP UAC — self-hosted, on-premise deployment.
 # One command brings up MongoDB, the FastAPI backend and the React frontend behind nginx.
-#   docker compose up -d --build
+#   ./install.sh          (recommended)
+# or, from the package root:
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
 # Then open http://<this-machine-ip>:8080
 
 services:
@@ -10,12 +12,12 @@ services:
     image: mongo:7
     restart: unless-stopped
     volumes:
-      - obserra_mongo:/data/db
+      - obserra_uac_mongo:/data/db
     networks: [obserra]
 
   backend:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: ../deploy/backend.Dockerfile
     restart: unless-stopped
     env_file: ./.env
@@ -26,8 +28,8 @@ services:
 
   frontend:
     build:
-      context: ./frontend
-      dockerfile: ../deploy/frontend.Dockerfile
+      context: ..
+      dockerfile: deploy/frontend.Dockerfile
       args:
         # Browser talks to the backend through the same host on port 8080 (nginx proxies /api).
         REACT_APP_BACKEND_URL: ${PUBLIC_URL:-http://localhost:8080}
@@ -38,7 +40,7 @@ services:
     networks: [obserra]
 
 volumes:
-  obserra_mongo:
+  obserra_uac_mongo:
 
 networks:
   obserra:

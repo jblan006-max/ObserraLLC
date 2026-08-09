@@ -1,6 +1,6 @@
 version: "3.9"
 
-# Obserra EIOS — self-hosted with automatic HTTPS via Traefik v3 (Let's Encrypt).
+# Obserra SAP UAC — self-hosted with automatic HTTPS via Traefik v3 (Let's Encrypt).
 # Alternative to docker-compose.https.yml (Caddy). Traefik auto-provisions the cert
 # and redirects HTTP -> HTTPS.
 #
@@ -9,7 +9,7 @@ version: "3.9"
 #   • Ports 80 AND 443 open to the internet.
 #   • In deploy/.env set:  DOMAIN=your.domain  ACME_EMAIL=you@company  PUBLIC_URL=https://your.domain
 #
-# Launch (from the project root that contains backend/ frontend/ deploy/):
+# Launch (from the package root that contains backend/ frontend/ deploy/):
 #   docker compose -f deploy/docker-compose.traefik.yml --env-file deploy/.env up -d --build
 #
 # Then open:  https://<DOMAIN>
@@ -40,12 +40,12 @@ services:
     image: mongo:7
     restart: unless-stopped
     volumes:
-      - obserra_mongo:/data/db
+      - obserra_uac_mongo:/data/db
     networks: [obserra]
 
   backend:
     build:
-      context: ./backend
+      context: ../backend
       dockerfile: ../deploy/backend.Dockerfile
     restart: unless-stopped
     env_file: ./.env
@@ -56,8 +56,8 @@ services:
 
   frontend:
     build:
-      context: ./frontend
-      dockerfile: ../deploy/frontend.Dockerfile
+      context: ..
+      dockerfile: deploy/frontend.Dockerfile
       args:
         REACT_APP_BACKEND_URL: ${PUBLIC_URL}
     restart: unless-stopped
@@ -71,7 +71,7 @@ services:
       - "traefik.http.services.obserra.loadbalancer.server.port=80"
 
 volumes:
-  obserra_mongo:
+  obserra_uac_mongo:
   traefik_letsencrypt:
 
 networks:

@@ -1,4 +1,5 @@
-# Obserra EIOS backend — FastAPI + Uvicorn
+# Obserra SAP UAC backend — FastAPI + Uvicorn.
+# Build context is the package's backend/ directory.
 FROM python:3.11-slim
 
 WORKDIR /app

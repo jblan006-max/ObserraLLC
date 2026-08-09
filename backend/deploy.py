@@ -23,6 +23,31 @@ _GUIDE_ADMIN_DOCX = os.path.join(_DOCS, "Obserra-SAP-UAC-Admin-Operator-Guide.do
 _PDF_MT = "application/pdf"
 _DOCX_MT = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
+_PKG = "obserra-sap-uac"
+_ONPREM_ZIP_NAME = "Obserra-SAP-UAC-OnPrem.zip"
+_ZIP_SKIP_DIRS = {"node_modules", "__pycache__", ".git", "build", ".venv", "venv",
+                  ".emergent", ".ruff_cache", ".pytest_cache", "dist", ".yarn", ".idea", ".vscode"}
+_ZIP_SKIP_EXT = {".pyc", ".pyo", ".log"}
+_DOCKERIGNORE = (
+    "**/node_modules\n**/__pycache__\n**/*.pyc\n**/*.pyo\n**/.git\n**/.venv\n**/venv\n"
+    "frontend/build\nbackend/assets/docs\n**/.env\n**/.emergent\n**/.ruff_cache\n**/.pytest_cache\n"
+)
+
+
+def _add_tree(z, src_root, arc_prefix, skip_rel_prefixes=()):
+    if not os.path.isdir(src_root):
+        return
+    for root, dirs, files in os.walk(src_root):
+        dirs[:] = [d for d in dirs if d not in _ZIP_SKIP_DIRS]
+        for fn in files:
+            if fn == ".env" or os.path.splitext(fn)[1] in _ZIP_SKIP_EXT:
+                continue
+            fp = os.path.join(root, fn)
+            rel = os.path.relpath(fp, src_root)
+            if any(rel == p or rel.startswith(p + os.sep) for p in skip_rel_prefixes):
+                continue
+            z.write(fp, os.path.join(arc_prefix, rel))
+
 
 def _serve_guide(path, media, fname):
     if not os.path.exists(path):
@@ -40,7 +65,7 @@ async def onprem_package(user: dict = Depends(get_current_user)):
     return StreamingResponse(
         io.BytesIO(_build_onprem_zip()),
         media_type="application/zip",
-        headers={"Content-Disposition": 'attachment; filename="obserra-onprem-deploy.zip"'},
+        headers={"Content-Disposition": f'attachment; filename="{_ONPREM_ZIP_NAME}"'},
     )
 
 
@@ -97,10 +122,15 @@ async def guide_admin_docx(user: dict = Depends(get_current_user)):
 def _build_onprem_zip() -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        _add_tree(z, os.path.join(_ROOT, "backend"), f"{_PKG}/backend", skip_rel_prefixes=("assets/docs",))
+        _add_tree(z, os.path.join(_ROOT, "frontend"), f"{_PKG}/frontend")
         for root, _dirs, files in os.walk(_ONPREM):
             for fn in files:
                 fp = os.path.join(root, fn)
-                z.write(fp, os.path.join("obserra-onprem", os.path.relpath(fp, _ONPREM)))
+                rel = os.path.relpath(fp, _ONPREM)
+                arc = f"{_PKG}/install.sh" if rel == "install.sh" else f"{_PKG}/deploy/{rel}"
+                z.write(fp, arc)
+        z.writestr(f"{_PKG}/.dockerignore", _DOCKERIGNORE)
     return buf.getvalue()
 
 
@@ -208,7 +238,7 @@ def _doc_attachments():
             attachments.append({"filename": "Obserra-SAP-UAC-Install-and-User-Guide.pdf",
                                 "content": base64.b64encode(f.read()).decode()})
     if os.path.isdir(_ONPREM):
-        attachments.append({"filename": "obserra-onprem-deploy.zip",
+        attachments.append({"filename": _ONPREM_ZIP_NAME,
                             "content": base64.b64encode(_build_onprem_zip()).decode()})
     return attachments
 
