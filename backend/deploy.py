@@ -1410,7 +1410,15 @@ def _watermark_pdf(pdf_bytes: bytes, text: str = "VERIFIED COPY", subtext: str =
             c.save()
             buf.seek(0)
             page.merge_page(PdfReader(buf).pages[0])
+            try:
+                page.compress_content_streams()  # zlib-compress streams so the watermark doesn't bloat the download
+            except Exception:
+                pass
             writer.add_page(page)
+        try:
+            writer.compress_identical_objects(remove_identicals=True, remove_orphans=True)
+        except Exception:
+            pass
         out = BytesIO()
         writer.write(out)
         return out.getvalue()
@@ -1646,7 +1654,17 @@ async def evidence_share_revoke(body: TokenBody, user: dict = Depends(get_curren
     return {"revoked": res.deleted_count > 0}
 
 
+_FINDINGS_CACHE = {}   # org_id -> (expires_ts, findings) — the public portal path is unauthenticated & hot
+_FINDINGS_TTL = 60.0
+_EV_RAW_CACHE = {}     # evidence file path -> raw bytes (immutable; filenames are timestamped)
+
+
 async def _audit_findings(org_id: str):
+    import time
+    _ts = time.time()
+    _c = _FINDINGS_CACHE.get(org_id)
+    if _c and _c[0] > _ts:
+        return _c[1]
     from datetime import datetime, timezone, timedelta
     now = datetime.now(timezone.utc)
     h = await evaluate_org_health(org_id)
@@ -1678,7 +1696,7 @@ async def _audit_findings(org_id: str):
                 overdue_certs.append({"name": c.get("name") or c.get("ref"), "type": c.get("type", "—"), "due_date": due[:10]})
     except Exception:
         pass
-    return {
+    result = {
         "healthy": h["healthy"],
         "uptime_30d": await _period_uptime(org_id, (now - timedelta(days=30)).isoformat(), now.isoformat()),
         "degraded_connectors": len(h.get("degraded_connectors") or []),
@@ -1688,6 +1706,8 @@ async def _audit_findings(org_id: str):
         "top_conflicts": top_conflicts,
         "overdue_certs": overdue_certs[:8],
     }
+    _FINDINGS_CACHE[org_id] = (_ts + _FINDINGS_TTL, result)
+    return result
 
 
 def _room_branding_cfg(org):
@@ -1923,11 +1943,16 @@ async def audit_room_evidence(token: str, who: str = ""):
     if not latest:
         raise HTTPException(404, "No evidence has been generated yet.")
     fp = _safe_evidence_path(latest["file"])
-    with open(fp, "rb") as f:
-        content = f.read()
+    raw = _EV_RAW_CACHE.get(fp)
+    if raw is None:
+        with open(fp, "rb") as f:
+            raw = f.read()
+        if len(_EV_RAW_CACHE) > 32:
+            _EV_RAW_CACHE.clear()
+        _EV_RAW_CACHE[fp] = raw
     auditor = (who or "").strip()[:120] or "External auditor"
     access = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-    content = _watermark_pdf(content, "AUDIT ROOM COPY",
+    content = _watermark_pdf(raw, "AUDIT ROOM COPY",
                              f"Downloaded by {auditor} · {access} · expires {room.get('expires_at', '')[:10]}")
     await db.audit_rooms.update_one({"token": token},
                                     {"$inc": {"downloads": 1},
