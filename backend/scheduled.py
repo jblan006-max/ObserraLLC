@@ -393,8 +393,9 @@ async def daily_drift_digest(request: Request, background_tasks: BackgroundTasks
     from deploy import backup_all_orgs, run_health_alerts
     background_tasks.add_task(backup_all_orgs)
     background_tasks.add_task(run_health_alerts)
-    from deploy import _run_audit_room_expiry_reminders
+    from deploy import _run_audit_room_expiry_reminders, _run_overdue_request_digest
     background_tasks.add_task(_run_audit_room_expiry_reminders)
+    background_tasks.add_task(_run_overdue_request_digest)
     return {"status": "accepted"}
 
 

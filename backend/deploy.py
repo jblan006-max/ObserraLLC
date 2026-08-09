@@ -1819,20 +1819,19 @@ def _audit_room_html(org_name, room, findings, latest, branding=None, comments=N
         evidence_html = '<h2>Latest signed evidence</h2><p class="hint">No signed evidence report has been generated yet.</p>'
     # Existing exchange — auditor comments + governance-team replies + status
     comments = comments or []
-    if comments:
-        stbg = {"Open": "#b45309", "In Progress": "#2f6df6", "Resolved": "#12805c"}
-        items = []
-        for c in comments:
-            st = c.get("status", "Open")
-            reply_html = (f'<div class="reply"><strong>Governance team:</strong> {_esc_html(c["reply"])}</div>'
-                          if c.get("reply") else "")
-            items.append(
-                f'<div class="thread"><div class="thead"><span>{_esc_html(c.get("author", "Auditor"))}</span>'
-                f'<span class="sev" style="background:{stbg.get(st, "#6b7280")}">{_esc_html(st)}</span></div>'
-                f'<div class="ctext">{_esc_html(c.get("comment", ""))}</div>{reply_html}</div>')
-        thread_html = '<h2>Comment thread</h2>' + "".join(items)
-    else:
-        thread_html = ""
+    stbg = {"Open": "#b45309", "In Progress": "#2f6df6", "Resolved": "#12805c"}
+    items = []
+    for c in comments:
+        st = c.get("status", "Open")
+        reply_html = (f'<div class="reply"><strong>Governance team:</strong> {_esc_html(c["reply"])}</div>'
+                      if c.get("reply") else "")
+        items.append(
+            f'<div class="thread"><div class="thead"><span>{_esc_html(c.get("author", "Auditor"))}</span>'
+            f'<span class="sev" style="background:{stbg.get(st, "#6b7280")}">{_esc_html(st)}</span></div>'
+            f'<div class="ctext">{_esc_html(c.get("comment", ""))}</div>{reply_html}</div>')
+    _disp = "block" if comments else "none"
+    thread_html = (f'<h2 id="thread-h" style="display:{_disp}">Comment thread</h2>'
+                   f'<div id="thread-list">' + "".join(items) + '</div>')
     # Auditor comment box (posts back to the room comment endpoint)
     comment_html = (
         '<h2>Leave a comment</h2>'
@@ -1852,7 +1851,20 @@ def _audit_room_html(org_name, room, findings, latest, branding=None, comments=N
         'if(!t){m.textContent="Please enter a comment.";return;}'
         'document.getElementById("csend").disabled=true;'
         f'try{{var r=await fetch("/api/deploy/audit-room/{room["token"]}/comment",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{author:a,email:e2,comment:t}})}});'
-        'if(r.ok){document.getElementById("cbox").innerHTML="<p style=\\"color:#12805c;font-weight:600\\">Thank you — your comment was sent to the governance team.</p>";}'
+        'if(r.ok){'
+        'var li=document.createElement("div");li.className="thread";'
+        'var head=document.createElement("div");head.className="thead";'
+        'var nm=document.createElement("span");nm.textContent=(a||"You");'
+        'var bg=document.createElement("span");bg.className="sev";bg.style.background="#b45309";bg.textContent="Open";'
+        'head.appendChild(nm);head.appendChild(bg);'
+        'var ct=document.createElement("div");ct.className="ctext";ct.textContent=t;'
+        'li.appendChild(head);li.appendChild(ct);'
+        'document.getElementById("thread-list").appendChild(li);'
+        'document.getElementById("thread-h").style.display="block";'
+        'document.getElementById("ctext").value="";'
+        'm.style.color="#12805c";m.textContent="Thank you — your comment was sent to the governance team.";'
+        'document.getElementById("csend").disabled=false;'
+        '}'
         'else{m.textContent="Could not submit — the link may have expired.";document.getElementById("csend").disabled=false;}'
         '}catch(e){m.textContent="Network error, please try again.";document.getElementById("csend").disabled=false;}'
         '}</script>')
@@ -2191,6 +2203,61 @@ async def _run_audit_room_expiry_reminders(within_days: int = 3):
                 except Exception:
                     pass
             await db.audit_rooms.update_one({"token": token}, {"$set": {"expiry_reminder_sent": nowiso}})
+        except Exception:
+            pass
+
+
+async def _run_overdue_request_digest(sla_hours: int = 72):
+    """Folded into the daily cron: email admins/execs a daily summary of auditor requests open past SLA."""
+    from datetime import datetime, timezone, timedelta
+    from bson import ObjectId
+    from kernel import notifications
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(hours=sla_hours)).isoformat()
+    today = now.date().isoformat()
+    rows = await db.audit_room_comments.find(
+        {"status": {"$ne": "Resolved"}, "at": {"$lt": cutoff}}, {"_id": 0}).to_list(2000)
+    by_org = {}
+    for r in rows:
+        by_org.setdefault(r["org_id"], []).append(r)
+
+    def _age(iso):
+        try:
+            h = (now - datetime.fromisoformat(iso)).total_seconds() / 3600
+            return f"{int(h // 24)}d" if h >= 24 else f"{int(h)}h"
+        except Exception:
+            return "—"
+
+    for org_id, items in by_org.items():
+        try:
+            org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+            if ((org.get("system_health") or {}).get("overdue_digest_date")) == today:
+                continue
+            oname = org.get("name") or "your organization"
+            items.sort(key=lambda x: x.get("at", ""))
+            li = "".join(
+                f"<li><strong>{_esc_html(x.get('author', 'Auditor'))}</strong> — waiting {_age(x.get('at', ''))} · "
+                f"<span style='color:#6b7280'>{_esc_html((x.get('comment') or '')[:120])}</span></li>"
+                for x in items[:20])
+            link = (os.environ.get("FRONTEND_URL", "").rstrip("/")) + "/app/system-health"
+            html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
+                    f"<h2 style='color:#b45309'>{len(items)} auditor request(s) open past SLA</h2>"
+                    f"<p>These auditor requests for <strong>{_esc_html(oname)}</strong> have been open longer than {sla_hours // 24} day(s):</p>"
+                    f"<ul>{li}</ul>"
+                    f"<p style='margin:16px 0'><a href='{link}' style='background:#2f6df6;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600' target='_blank'>Open the Audit Requests inbox</a></p>"
+                    f"<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — System Health · Audit Requests</p></div>")
+            recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
+                                         {"_id": 0, "email": 1}).to_list(200)
+            for rr in recips:
+                try:
+                    await notifications.send_email(rr["email"], f"{len(items)} audit request(s) past SLA — Obserra SAP UAC", html)
+                except Exception:
+                    pass
+            await notifications.create(org_id, "system", "Audit requests past SLA",
+                                       f"{len(items)} auditor request(s) have been open longer than {sla_hours // 24} day(s).",
+                                       ref="system-health", dedupe_key=f"overdue-req:{today}")
+            await db.organizations.update_one({"_id": ObjectId(org_id)},
+                                              {"$set": {"system_health.overdue_digest_date": today}})
         except Exception:
             pass
 

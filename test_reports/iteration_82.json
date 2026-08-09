@@ -1,0 +1,33 @@
+{
+  "summary": "Tested the 5 new features on Obserra SAP UAC. Admin-side features all PASS: (1) Oldest Open Request banner renders correctly ('waiting 2d' + Marcus Webb text) and scrolls to comments panel on click; (2) Reply Templates chips render on every row and clicking 'Under review' populates sh-comment-reply-input-0 with the canned text; (3) Inbox Filters (status + room) work — Resolved shows 2 rows, Open shows 1 row, empty-note logic reachable; sh-comments-open-count stays at '1 open' regardless of filter (baseline correct). Room filter appears (>1 room seeded). System Health regression clean — all panels visible, no console errors, webpack clean. CRITICAL BUG: Portal Live Thread is BROKEN by the global CSP header — the inline onclick=\"sendComment()\" handler is blocked by 'default-src none' set in server.py security_headers middleware, so submissions never append client-side and the textarea never clears (backend POST likely still fires only if fetch was previously initialized, but the handler itself is blocked before that — no card added, ctext not cleared, no 'Open' badge appended).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Audit Room portal (deploy.py _audit_room_html)", "issue": "Submit comment button uses inline onclick=\"sendComment()\" handler which is blocked by the global CSP header 'default-src none' set in /app/backend/server.py security_headers middleware (line 98). Console error: 'Executing inline event handler violates the following Content Security Policy directive default-src none'. Result: comment does NOT appear instantly in #thread-list, textarea (#ctext) is NOT cleared, no 'Open' badge card appended. The dlEvidence() Download-PDF inline onclick is broken by the same CSP as well.", "selector": "#csend / #ctext / #thread-list", "priority": "HIGH"}
+    ],
+    "integration_issues": [
+      {"flow": "Portal Live Thread (unauthenticated /api/deploy/audit-room/<token>)", "issue": "CSP default-src 'none' with no script-src override blocks ALL inline handlers/scripts on the server-rendered HTML portal — Submit comment does nothing client-side; live-append flow never runs. Seeded 'Marcus Webb' and 'Sam Reviewer' cards do render (static HTML), thread-h and #cmail exist, but interactivity is dead.", "affected_selectors": ["#csend", "#ctext", "#thread-list", "#thread-h", "#dlbtn"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Fix Portal Live Thread CSP: either (a) override CSP header on the /api/deploy/audit-room/* HTML route to include 'script-src \\'self\\' \\'unsafe-inline\\'' (or nonce-based), or (b) refactor inline handlers into an external script served from same-origin with matching script-src, or (c) skip the default-src none CSP for HTML text/html responses (JSON APIs can keep the strict CSP). Verify Submit comment appends new card to #thread-list, clears #ctext, shows 'Thank you', and dlEvidence PDF download works.",
+    "After fix, re-verify: new card contains author name + 'Open' badge + comment text; thread-h remains visible; no page reload."
+  ],
+  "critical_code_review_comments": [
+    "server.py:98 sets 'Content-Security-Policy: default-src none; frame-ancestors none; base-uri none' globally on every response including HTML audit-portal responses. Since script-src is not explicitly set, default-src is inherited → ALL scripts (inline and external) blocked on portal HTML, breaking sendComment() and dlEvidence(). Strict CSP is correct for JSON APIs and admin app HTML (which is served by frontend, not backend), but the backend-rendered public audit portal HTML needs its own CSP with script-src that permits its inline handlers or a nonce.",
+    "deploy.py lines 1810 & 1843: inline onclick handlers should be replaced with addEventListener bindings in a nonce'd or 'self' script block for CSP-safe interactivity."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (per agent-to-agent note; no new backend tests run this iteration)", "frontend": "80% (4/5 features pass; Portal Live Thread FAIL)"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (worked via /api/auth/login; UI login form on /app/login accepted the credentials but the initial cookie-based flow via clicking Sign in appeared not to persist — programmatic POST to /api/auth/login worked reliably and set cookies)",
+  "seed_data_creation": "One TEST comment attempted via portal — but because the inline handler was CSP-blocked, no comment was actually submitted (verified thread-list card count 2 before/after). No cleanup required.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All admin System Health new features (banner, reply templates, filters, regression) verified PASS. Only remaining blocker is CSP on backend-rendered audit portal HTML — after main agent adjusts CSP (or removes inline onclicks) re-run the portal live-thread test at /api/deploy/audit-room/d6hUYZlup7KLlDnJVVVQMw. Programmatic login (fetch POST /api/auth/login) is the reliable way to authenticate for subsequent /app/system-health navigation.",
+  "rca of the issue": "Root cause: /app/backend/server.py line 98 sets global CSP 'default-src none' on every response. When the browser loads the server-rendered audit portal HTML (/api/deploy/audit-room/<token>), the inline <script> block that defines sendComment() and the inline onclick=\"sendComment()\" on the Submit button both violate 'default-src none' (script-src falls back to default-src). Chrome/Chromium blocks execution — the click therefore performs no fetch, no DOM append, no textarea clear. Reproduction: open portal URL unauthenticated → fill #cauth/#ctext → click Submit comment → observe console CSP violation and no new card in #thread-list. Mitigation: on the audit-portal route, override the CSP header to permit inline scripts (e.g., 'default-src \\'self\\'; script-src \\'self\\' \\'unsafe-inline\\'; style-src \\'self\\' \\'unsafe-inline\\'; img-src \\'self\\' data:'), OR replace inline handlers with an addEventListener block loaded via a nonce'd <script> tag whose nonce is included in a per-response CSP header."
+}

@@ -19,6 +19,12 @@ const slaAge = (s) => {
   const color = h >= 72 ? "bg-crit/15 text-crit" : h >= 24 ? "bg-high/15 text-high" : "bg-low/15 text-low";
   return { label, color };
 };
+const REPLY_TEMPLATES = [
+  { label: "Evidence attached", text: "The requested evidence is attached in the latest signed evidence pack — see the download on your portal." },
+  { label: "Under review", text: "Thanks — the governance team is reviewing this request and will follow up shortly." },
+  { label: "Please clarify", text: "Could you clarify the specific system, control or period this request relates to so we can provide the right evidence?" },
+  { label: "Resolved", text: "This has been addressed. Please let us know if you need anything further for your audit." },
+];
 const fmtBytes = (b) => (b == null ? "—" : b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`);
 const DOT_COLOR = { ok: "142 70% 45%", degraded: "35 90% 55%", down: "0 84% 60%" };
 const RANGES = [{ label: "24h", h: 24 }, { label: "7d", h: 168 }, { label: "30d", h: 720 }];
@@ -150,6 +156,8 @@ export default function SystemHealth() {
   const [savingBrand, setSavingBrand] = useState(false);
   const [revokingAll, setRevokingAll] = useState(false);
   const [replyDrafts, setReplyDrafts] = useState({});
+  const [inboxStatus, setInboxStatus] = useState("all");
+  const [inboxRoom, setInboxRoom] = useState("all");
 
   const loadHealth = useCallback(async () => {
     try { const { data } = await api.get("/health"); setHealth(data); } catch { setHealth((h) => h || { status: "degraded", checks: {} }); }
@@ -518,6 +526,23 @@ export default function SystemHealth() {
   const upRunning = upState === "running" || upState === "starting";
   const degraded = detail?.degraded_detail || [];
 
+  const roomLabel = {};
+  rooms.forEach((r, idx) => { roomLabel[r.token] = `Room ${idx + 1}`; });
+  const roomOptions = [];
+  const seenRooms = new Set();
+  comments.forEach((c) => {
+    if (c.token && !seenRooms.has(c.token)) { seenRooms.add(c.token); roomOptions.push({ token: c.token, label: roomLabel[c.token] || "Archived room" }); }
+  });
+  const filteredComments = comments.filter((c) => {
+    const st = c.status || "Open";
+    if (inboxStatus !== "all" && st !== inboxStatus) return false;
+    if (inboxRoom !== "all" && c.token !== inboxRoom) return false;
+    return true;
+  });
+  const openComments = comments.filter((c) => (c.status || "Open") !== "Resolved");
+  const oldestOpen = openComments.length ? openComments.reduce((a, b) => (new Date(a.at) <= new Date(b.at) ? a : b)) : null;
+  const oldestOpenBreach = oldestOpen && (Date.now() - new Date(oldestOpen.at).getTime()) / 3.6e6 >= 24;
+
   const ALERT_ROWS = [
     { key: "db", label: "Database", icon: Database },
     { key: "connector", label: "Connectors", icon: Plug },
@@ -550,6 +575,18 @@ export default function SystemHealth() {
           </div>
         </div>
       </div>
+
+      {isAdmin && oldestOpen && oldestOpenBreach && (
+        <button data-testid="sh-oldest-open-banner" onClick={() => document.querySelector('[data-testid="sh-comments-panel"]')?.scrollIntoView({ behavior: "smooth" })}
+          className="w-full flex items-center gap-3 bg-high/10 border border-high/40 rounded-xl px-4 py-3 text-left hover:bg-high/15 transition-colors">
+          <AlertTriangle className="w-5 h-5 text-high shrink-0" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-semibold text-high">Oldest open audit request has been waiting {slaAge(oldestOpen.at)?.label}</div>
+            <div className="text-xs text-muted-foreground truncate">{oldestOpen.author}: {oldestOpen.comment}</div>
+          </div>
+          <span className="text-xs font-mono text-high shrink-0">Review →</span>
+        </button>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-4" data-testid="sh-health-tiles">
         <HealthTile testid="sh-service" label="Service" value={svcOk ? "Healthy" : "Degraded"} sub={health.service} accent={svcOk ? "142 70% 45%" : "0 84% 60%"} icon={svcOk ? ShieldCheck : AlertTriangle} ok={svcOk} />
@@ -856,14 +893,31 @@ export default function SystemHealth() {
 
       {isAdmin && comments.length > 0 && (
         <div className="bg-card fact-border rounded-xl p-5" data-testid="sh-comments-panel">
-          <div className="flex items-center gap-2 mb-3">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
             <MessageCircle className="w-4 h-4 text-primary" />
             <h2 className="font-head font-bold text-lg">Audit Requests</h2>
             <span className="text-[11px] text-muted-foreground">Auditor comments — reply and track each through to resolved</span>
-            <span className="ml-auto text-[11px] font-mono text-muted-foreground" data-testid="sh-comments-open-count">{comments.filter((c) => c.status !== "Resolved").length} open</span>
+            <div className="flex items-center gap-2 ml-auto">
+              <select data-testid="sh-inbox-status-filter" value={inboxStatus} onChange={(e) => setInboxStatus(e.target.value)} className="h-7 rounded-md border border-border bg-secondary/40 px-2 text-[11px]">
+                <option value="all">All statuses</option>
+                <option value="Open">Open</option>
+                <option value="In Progress">In Progress</option>
+                <option value="Resolved">Resolved</option>
+              </select>
+              {roomOptions.length > 1 && (
+                <select data-testid="sh-inbox-room-filter" value={inboxRoom} onChange={(e) => setInboxRoom(e.target.value)} className="h-7 rounded-md border border-border bg-secondary/40 px-2 text-[11px]">
+                  <option value="all">All rooms</option>
+                  {roomOptions.map((r) => (<option key={r.token} value={r.token}>{r.label}</option>))}
+                </select>
+              )}
+              <span className="text-[11px] font-mono text-muted-foreground" data-testid="sh-comments-open-count">{comments.filter((c) => (c.status || "Open") !== "Resolved").length} open</span>
+            </div>
           </div>
           <div className="space-y-3">
-            {comments.map((c, i) => {
+            {filteredComments.length === 0 && (
+              <p className="text-xs text-muted-foreground" data-testid="sh-inbox-empty">No requests match the current filter.</p>
+            )}
+            {filteredComments.map((c, i) => {
               const st = c.status || "Open";
               const stColor = st === "Resolved" ? "text-low" : st === "In Progress" ? "text-primary" : "text-high";
               return (
@@ -892,6 +946,12 @@ export default function SystemHealth() {
                       <option value="In Progress">In Progress</option>
                       <option value="Resolved">Resolved</option>
                     </select>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 mt-2" data-testid={`sh-reply-templates-${i}`}>
+                    {REPLY_TEMPLATES.map((tpl) => (
+                      <button key={tpl.label} type="button" onClick={() => setReplyDrafts((d) => ({ ...d, [c.id]: tpl.text }))}
+                        className="text-[10px] px-2 py-0.5 rounded-full border border-border text-muted-foreground hover:bg-secondary/60 hover:text-foreground transition-colors">{tpl.label}</button>
+                    ))}
                   </div>
                   <div className="flex items-end gap-2 mt-2">
                     <textarea rows={1} data-testid={`sh-comment-reply-input-${i}`} value={replyDrafts[c.id] || ""}
