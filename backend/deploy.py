@@ -257,13 +257,57 @@ async def reset_demo(user: dict = Depends(get_current_user)):
     return {"ok": True, "reset": True, "persons": persons, "accounts": accounts}
 
 
-async def _upgrade_job(compose: str):
+def _now_iso():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
+async def _set_upgrade_status(org_id, state, stage=None, line=None):
+    from db import db
+    upd = {"state": state, "updated_at": _now_iso()}
+    if stage:
+        upd["stage"] = stage
+    op = {"$set": upd}
+    if line:
+        op["$push"] = {"lines": {"$each": [line], "$slice": -60}}
+    await db.deploy_status.update_one({"_id": f"upgrade:{org_id}"}, op, upsert=True)
+
+
+async def _upgrade_job(org_id: str, compose: str):
     import asyncio
     import subprocess
-    await asyncio.sleep(1.5)  # let the 202 flush before containers are recreated
-    for args in (["docker", "compose", "-f", compose, "pull"],
-                 ["docker", "compose", "-f", compose, "up", "-d"]):
-        subprocess.run(args, timeout=600, check=False)
+    from starlette.concurrency import run_in_threadpool
+    from db import db
+    await db.deploy_status.update_one({"_id": f"upgrade:{org_id}"},
+                                      {"$set": {"lines": [], "started_at": _now_iso()}}, upsert=True)
+    await _set_upgrade_status(org_id, "running", "Starting", "Preparing to pull the latest images…")
+    await asyncio.sleep(1.0)
+    try:
+        await _set_upgrade_status(org_id, "running", "Pulling images", f"$ docker compose -f {compose} pull")
+        r = await run_in_threadpool(lambda: subprocess.run(
+            ["docker", "compose", "-f", compose, "pull"], capture_output=True, text=True, timeout=900))
+        for ln in (r.stderr or r.stdout or "").splitlines()[-8:]:
+            if ln.strip():
+                await _set_upgrade_status(org_id, "running", "Pulling images", ln.strip())
+        if r.returncode != 0:
+            raise RuntimeError(f"pull failed (exit {r.returncode})")
+        await _set_upgrade_status(org_id, "running", "Recreating containers",
+                                  "$ docker compose up -d  (the app will briefly restart)")
+        subprocess.Popen(["docker", "compose", "-f", compose, "up", "-d"])
+        await _set_upgrade_status(org_id, "done", "Upgrade applied",
+                                  "New containers are starting — this view will reconnect shortly.")
+    except Exception as e:
+        await _set_upgrade_status(org_id, "error", "Upgrade failed", str(e)[:300])
+
+
+@deploy_router.get("/upgrade/status")
+async def upgrade_status(user: dict = Depends(get_current_user)):
+    from db import db
+    doc = await db.deploy_status.find_one({"_id": f"upgrade:{user['org_id']}"})
+    if not doc:
+        return {"state": "idle", "lines": []}
+    doc.pop("_id", None)
+    return doc
 
 
 @deploy_router.post("/upgrade")
@@ -279,8 +323,137 @@ async def upgrade(background_tasks: BackgroundTasks, user: dict = Depends(get_cu
                                  "ONPREM_UPGRADE=1 and mount the Docker socket + compose file, or run "
                                  "'docker compose -f deploy/docker-compose.ghcr.yml pull && up -d'.")
     compose = os.environ.get("ONPREM_COMPOSE", "/deploy/docker-compose.ghcr.yml")
-    background_tasks.add_task(_upgrade_job, compose)
+    background_tasks.add_task(_upgrade_job, user["org_id"], compose)
     return {"ok": True, "status": "upgrading", "compose": compose}
+
+
+# --- Backups (org-scoped Mongo export/restore; runs nightly from the daily cron) ---
+_BACKUP_DIR = os.environ.get("BACKUP_DIR", os.path.join(_ROOT, "backups"))
+
+
+def _safe_backup_path(filename: str) -> str:
+    name = os.path.basename(filename or "")
+    if not name.endswith(".json.gz") or name != (filename or ""):
+        raise HTTPException(400, "Invalid backup filename")
+    return os.path.join(_BACKUP_DIR, name)
+
+
+def _iso_from_mtime(fp):
+    from datetime import datetime, timezone
+    return datetime.fromtimestamp(os.path.getmtime(fp), tz=timezone.utc).isoformat()
+
+
+async def backup_org(org_id: str) -> dict:
+    import gzip
+    from bson import json_util
+    from db import db
+    os.makedirs(_BACKUP_DIR, exist_ok=True)
+    names = [n for n in await db.list_collection_names() if not n.startswith("system.")]
+    data, total = {}, 0
+    for n in names:
+        docs = await db[n].find({"org_id": org_id}).to_list(100000)
+        if docs:
+            data[n] = docs
+            total += len(docs)
+    ts = _now_iso().replace(":", "").replace("-", "").replace("T", "")[:14]
+    fname = f"obserra-backup-{org_id}-{ts}.json.gz"
+    payload = {"_meta": {"org_id": org_id, "created_at": _now_iso(), "collections": len(data), "docs": total},
+               "collections": data}
+    fp = os.path.join(_BACKUP_DIR, fname)
+    with gzip.open(fp, "wt", encoding="utf-8") as f:
+        f.write(json_util.dumps(payload))
+    return {"file": fname, "size": os.path.getsize(fp), "collections": len(data),
+            "docs": total, "created_at": payload["_meta"]["created_at"]}
+
+
+def _list_backup_files(org_id: str):
+    if not os.path.isdir(_BACKUP_DIR):
+        return []
+    out = []
+    for fn in os.listdir(_BACKUP_DIR):
+        if fn.startswith(f"obserra-backup-{org_id}-") and fn.endswith(".json.gz"):
+            fp = os.path.join(_BACKUP_DIR, fn)
+            out.append({"file": fn, "size": os.path.getsize(fp), "created_at": _iso_from_mtime(fp)})
+    return sorted(out, key=lambda x: x["file"], reverse=True)
+
+
+async def restore_org(org_id: str, filename: str) -> dict:
+    import gzip
+    from bson import json_util
+    from db import db
+    fp = _safe_backup_path(filename)
+    if not os.path.exists(fp) or f"-{org_id}-" not in filename:
+        raise HTTPException(404, "Backup not found")
+    with gzip.open(fp, "rt", encoding="utf-8") as f:
+        payload = json_util.loads(f.read())
+    if payload.get("_meta", {}).get("org_id") != org_id:
+        raise HTTPException(400, "Backup belongs to a different organization")
+    cols = payload.get("collections", {})
+    restored = 0
+    for name, docs in cols.items():
+        await db[name].delete_many({"org_id": org_id})
+        if docs:
+            await db[name].insert_many(docs)
+            restored += len(docs)
+    return {"ok": True, "restored_docs": restored, "collections": len(cols)}
+
+
+def _prune_backups(org_id: str, keep: int = 14):
+    for old in _list_backup_files(org_id)[keep:]:
+        try:
+            os.remove(os.path.join(_BACKUP_DIR, old["file"]))
+        except Exception:
+            pass
+
+
+async def backup_all_orgs():
+    """Nightly backup of every org (invoked from the daily cron); best-effort, keeps last 14."""
+    import logging
+    from db import db
+    orgs = await db.organizations.find({}, {"_id": 1}).to_list(1000)
+    for o in orgs:
+        oid = str(o["_id"])
+        try:
+            await backup_org(oid)
+            _prune_backups(oid)
+        except Exception as e:
+            logging.getLogger("deploy").warning(f"nightly backup failed for org {oid}: {e}")
+
+
+@deploy_router.post("/backup")
+async def backup_now(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can create backups")
+    res = await backup_org(user["org_id"])
+    _prune_backups(user["org_id"])
+    return res
+
+
+@deploy_router.get("/backups")
+async def list_backups(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can view backups")
+    return {"backups": _list_backup_files(user["org_id"]), "dir": _BACKUP_DIR}
+
+
+@deploy_router.post("/restore")
+async def restore_backup(body: dict, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can restore backups")
+    return await restore_org(user["org_id"], body.get("file", ""))
+
+
+@deploy_router.get("/backup/download")
+async def download_backup(file: str, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can download backups")
+    fp = _safe_backup_path(file)
+    if not os.path.exists(fp) or f"-{user['org_id']}-" not in file:
+        raise HTTPException(404, "Backup not found")
+    with open(fp, "rb") as f:
+        content = f.read()
+    return StreamingResponse(io.BytesIO(content), media_type="application/gzip",
+                             headers={"Content-Disposition": f'attachment; filename="{os.path.basename(fp)}"'})
 
 
 _TOUR_DIR = os.path.join(_ROOT, "frontend", "public", "tour")
