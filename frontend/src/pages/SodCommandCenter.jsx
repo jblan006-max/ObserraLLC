@@ -494,9 +494,24 @@ export default function SodCommandCenter() {
               <div className="flex items-center gap-1.5"><span className="text-[11px] font-mono text-crit">Critical</span><Input type="number" min={0} data-testid="sev-threshold-Critical" value={dcfgLocal.sev_thresholds?.Critical ?? ""} onChange={(e) => setDcfgLocal({ ...dcfgLocal, sev_thresholds: { ...(dcfgLocal.sev_thresholds || {}), Critical: e.target.value } })} className="w-16 h-8" /></div>
               <div className="flex items-center gap-1.5"><span className="text-[11px] font-mono text-amber">High</span><Input type="number" min={0} data-testid="sev-threshold-High" value={dcfgLocal.sev_thresholds?.High ?? ""} onChange={(e) => setDcfgLocal({ ...dcfgLocal, sev_thresholds: { ...(dcfgLocal.sev_thresholds || {}), High: e.target.value } })} className="w-16 h-8" /></div>
             </div>
+            {scoreMute.muted && (
+              <div className="mt-2 rounded-md border border-amber/40 bg-amber/[0.08] px-3 py-2 flex flex-wrap items-center gap-2" data-testid="score-mute-banner">
+                <BellRing className="w-3.5 h-3.5 text-amber" />
+                <span className="text-[11px] text-amber font-medium">Alerts snoozed until {new Date(scoreMute.mute_until).toLocaleString()}</span>
+                {scoreMute.mute_reason && <span className="text-[11px] text-muted-foreground">· {scoreMute.mute_reason}</span>}
+                <div className="flex-1" />
+                <Button size="sm" variant="ghost" className="h-7 text-[11px]" data-testid="score-unmute" onClick={unmuteAlert} disabled={muteBusy}>Un-mute now</Button>
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-2 mt-2">
               <span className="text-[11px] text-muted-foreground">Current governance score <b>{scorecard?.current?.governance_score ?? "—"}/100</b>. The daily sweep posts a one-time alert per week while any threshold stays breached.</span>
               <div className="flex-1" />
+              {!scoreMute.muted && (
+                <>
+                  <Button size="sm" variant="ghost" className="h-8 text-[11px]" data-testid="score-mute-24h" onClick={() => muteAlert(24)} disabled={muteBusy}>Snooze 24h</Button>
+                  <Button size="sm" variant="ghost" className="h-8 text-[11px]" data-testid="score-mute-7d" onClick={() => muteAlert(168)} disabled={muteBusy}>Snooze 7d</Button>
+                </>
+              )}
               <Button size="sm" variant="outline" className="h-8 gap-1.5" data-testid="score-alert-check" onClick={checkScoreAlert} disabled={scoreBusy}><BellRing className="w-3.5 h-3.5" />{scoreBusy ? "Checking…" : "Check & alert now"}</Button>
             </div>
             {scoreAlerts.length > 0 && (
