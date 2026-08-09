@@ -70,3 +70,10 @@
 - Apple + Enterprise OIDC + SAML in Settings (`SsoCard.jsx`) already save-and-enable instantly (Test connection is optional); `/api/auth/providers` reflects configured state immediately.
 - Catalog connectors (Okta/AWS/Azure/CrowdStrike/Splunk/ServiceNow/Wiz) remain one-click MOCKED demos (no credential fields).
 - Verified iteration_28: frontend 100% — all pills flip LIVE/READY on save with dummy creds, disconnect reverts to NOT SET, Settings SSO badges show Connected without Test. Owner org left clean.
+
+## Jun 2026 — Owner/Board crons + Ticket Deep-Link + "Assigned to me" lens + SoD state consolidation (iteration_72)
+- Backend crons verified: `run_sap_owner_digest` (weekly per-owner SoD email) + `run_sap_board_pack` (monthly exec pack + analytics PDF) — script `_t_crons.py` passed (log created, digest sent, no errors).
+- Ticket Deep-Link: watchlist ticket badge → modal with full ServiceNow stage timeline via `GET /api/sap/ticket/{number}`.
+- "Assigned to me" watchlist lens: `watchlist-mine-toggle` filters pinned areas to owner == logged-in email (`useAuth`).
+- State consolidation refactor: new `context/SodContext.jsx` (`SodProvider`/`useSod`) replaces 50+ prop pass-throughs to the 5 SoD cards. Regression clean (iteration_72 frontend 100%).
+
