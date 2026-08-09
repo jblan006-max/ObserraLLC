@@ -382,3 +382,10 @@ User directives: "make everything like Obserra — cards open with action button
 
 
 
+
+## SAP UAC — SapAnalytics drilldown crash fix (Jun 2026, iteration_70)
+- **P0 fix**: `SapAnalytics.jsx` called `useDeepDive()` but was missing `import { useDeepDive } from "@/context/DeepDiveContext";` — the page crashed on render (ReferenceError), which is why the earlier screenshot test timed out waiting for `an-sod-area-item-0`. Added the import (matching every other page). This completes **Phase B** (analytics chart drilldowns → universal deep-dive with grounded AI recommendations + Apply/Add-to-plan).
+- **VERIFIED**: login 200, `GET /api/sap/analytics` 200 (sod_by_area=6, top_roles=10); screenshot flow login → /app/analytics → click `an-sod-area-item-0` opens the deep-dive modal ("Basis / Security — 22 open SoD conflict(s)", Critical 99/100, compliance chips + recommended actions + Add to remediation plan). Frontend compiles clean; all services RUNNING.
+- The full "Obserra-parity / Apply-this-fix" batch (Phase A inline actions, Phase B analytics drilldowns, Phase C weekly Ask digest) is now COMPLETE and previously passed testing at iterations 68–69.
+- **P2 Component Refactoring** (split `SodCommandCenter.jsx` ~1,191 lines + `sap_digest.py` ~2,129 lines) — DEFERRED at user request (user chose to keep the app as-is and confirm green rather than refactor now). Still recommended for long-term maintainability.
+
