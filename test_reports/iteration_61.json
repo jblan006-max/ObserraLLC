@@ -1,0 +1,35 @@
+{
+  "summary": "Frontend UI validation for 4 governance features (SoD scorecard alerts, evidence exports, trend annotations, mover-rule report export). All 22 required data-testids are present and interactive. Score-alert-check toast, evidence send-now toast, PDF/CSV downloads (SoD evidence + mover autostrip log), filtered CSV export by 'Vikram' (1 record), scorecard-annotations block and scorecard-trend-tip custom tooltip all VERIFIED working. Prior chat webhook controls (digest-chat-toggle, digest-teams-url, digest-slack-url) NOT regressed. ONE CRITICAL BUG: PUT /api/sap/digest/config returns 500 because Pydantic DigestConfigBody model is missing the 5 new fields (score_alert, score_threshold, evidence_export, evidence_recipients, evidence_day) — save silently fails and the frontend shows the misleading toast 'Could not save (admin only)'. After reload, threshold reverted to 60 default and recipients were empty, confirming persistence is broken.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "PUT /api/sap/digest/config", "issue": "500 Internal Server Error. sap_digest.py line 160 accesses body.evidence_recipients but DigestConfigBody (line 127) only declares enabled/recipients/days/chat_alert/teams_url/slack_url. Missing: score_alert:bool, score_threshold:int, evidence_export:bool, evidence_recipients:list[str], evidence_day:str. Backend traceback: AttributeError: 'DigestConfigBody' object has no attribute 'evidence_recipients'. Consequently digest-save NEVER persists the new fields and reload restores defaults.", "priority": "CRITICAL"}
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "SodCommandCenter digest-save handler", "issue": "500 from PUT digest/config is surfaced to the user as 'Could not save (admin only)' — misleading, because the user IS admin. Handler should show a generic error toast or bubble the real error.", "selector": "[data-testid=digest-save]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Save digest schedule -> reload -> config persists", "issue": "Broken end-to-end because backend 500s (see backend critical). After reload, score-threshold reverted from 72 to 60, evidence-recipients empty, evidence-export-toggle stayed false despite being toggled on. score-alert-toggle happened to stay true only because it was already true from prior state.", "affected_selectors": ["[data-testid=digest-save]", "[data-testid=score-threshold]", "[data-testid=evidence-recipients]", "[data-testid=evidence-export-toggle]"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Add the 5 missing fields to DigestConfigBody in /app/backend/sap_digest.py: score_alert:bool=True, score_threshold:int=60, evidence_export:bool=False, evidence_recipients:list[str]=[], evidence_day:str='mon'. This will fix the 500 and unblock the persistence flow (Feature #4).",
+    "Improve error handling in the digest-save frontend handler so a 500 does not show the 'admin only' toast (which is normally reserved for 403)."
+  ],
+  "critical_code_review_comments": [
+    "DigestConfigBody Pydantic model is out of sync with the endpoint body access — introducing new PUT fields without extending the model is a common regression class. Consider a single source of truth (_DIGEST_DEFAULT) with a Pydantic model generated from it, or add a unit test that PUTs every documented field.",
+    "The generic 'Could not save (admin only)' toast masks real errors — check response.status before assuming 403."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only run)", "frontend": "95% — UI elements 100% present; only save-persistence flow fails due to backend model bug"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin) — verified working",
+  "seed_data_creation": "None. Mover auto-strip log was already populated when Lifecycle was opened (mover-log-search/days/export-csv/export-pdf all present without toggling).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "All 22 data-testids for the 4 new features are wired correctly. Downloads (sap-sod-evidence.pdf/csv, sap-mover-autostrip-log.csv/pdf) all trigger successfully. Filtered CSV export via mover-log-search='Vikram' correctly produced 1 record (CHG100569, Vikram Okafor). The ONLY blocker is the Pydantic DigestConfigBody missing 5 fields causing PUT /api/sap/digest/config to 500. After main agent fixes the model, retest persistence: set threshold=72, toggle both on, set day=Wednesday, recipients='auditor@example.com', save, reload, verify all persist.",
+  "rca of the issue": "New PUT /api/sap/digest/config handler code (sap_digest.py lines 160-165) accesses body.score_alert / body.score_threshold / body.evidence_export / body.evidence_recipients / body.evidence_day, but the DigestConfigBody Pydantic model (lines 127-133) was not extended to declare those attributes. Pydantic v2 raises AttributeError on undeclared attribute access, FastAPI converts that to a 500. Reproduction: log in as admin, open /app/sod, change any of the new fields, click digest-save; observe the frontend toast 'Could not save (admin only)' and the backend log 'AttributeError: DigestConfigBody object has no attribute evidence_recipients'. Fix: extend DigestConfigBody with score_alert:bool=True, score_threshold:int=60, evidence_export:bool=False, evidence_recipients:list[str]=[], evidence_day:str='mon' (defaults matching _DIGEST_DEFAULT at lines 81-82)."
+}

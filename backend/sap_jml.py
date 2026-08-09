@@ -196,3 +196,107 @@ async def run_mover_rule(user: dict = Depends(get_current_user)):
     await _ensure(org_id)
     created = await _run_mover_autostrip(org_id, user["email"])
     return {"ok": True, "stripped": len(created), "created": created}
+
+
+async def _filter_mover_log(org_id, q="", days=0):
+    query = {"org_id": org_id}
+    if days and days > 0:
+        query["at"] = {"$gte": (_now() - timedelta(days=days)).isoformat()}
+    log = await db.sap_mover_autostrip_log.find(query, {"_id": 0}).sort("at", -1).to_list(2000)
+    if q:
+        ql = q.lower()
+        log = [l for l in log if ql in (f"{l.get('name','')} {l.get('department','')} {l.get('ticket_number','')} "
+                                        f"{' '.join(l.get('stripped_names', []))}").lower()]
+    return log
+
+
+def _mover_log_pdf(rows, q="", days=0):
+    """Branded SOX-grade PDF of the mover auto-strip activity log (carried-over access removed)."""
+    import os
+    import io
+    from reportlab.lib.pagesizes import LETTER, landscape
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+    pw, ph = landscape(LETTER)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=(pw, ph), topMargin=0.6 * inch, bottomMargin=0.6 * inch,
+                            leftMargin=0.5 * inch, rightMargin=0.5 * inch)
+    ss = getSampleStyleSheet()
+    navy = colors.HexColor("#0f1e3d")
+    title_st = ParagraphStyle("t", parent=ss["Title"], textColor=navy, fontSize=18, spaceAfter=2)
+    sub_st = ParagraphStyle("s", parent=ss["Normal"], textColor=colors.HexColor("#64748b"), fontSize=9)
+    cell = ParagraphStyle("c", parent=ss["Normal"], fontSize=8, leading=10)
+    head = ParagraphStyle("h", parent=ss["Normal"], fontSize=8, leading=10, textColor=colors.white, fontName="Helvetica-Bold")
+    flt = []
+    if q:
+        flt.append(f'search "{q}"')
+    if days:
+        flt.append(f"last {days} day(s)")
+    flow = []
+    badge = "/app/backend/assets/brand-badge.png"
+    if os.path.exists(badge):
+        flow.append(RLImage(badge, width=34, height=34))
+    flow.append(Paragraph("SAP Access Governance — Mover Auto-Strip Evidence", title_st))
+    flow.append(Paragraph(f"Carried-over access automatically removed from in-flight transfers (movers) · "
+                          f"{len(rows)} record(s){' · Filter: ' + ', '.join(flt) if flt else ''} · "
+                          f"Generated {_now().strftime('%B %d, %Y %H:%M UTC')}", sub_st))
+    flow.append(Spacer(1, 10))
+    data = [[Paragraph(h, head) for h in ["Ticket", "Worker", "Department", "Roles stripped", "By", "When"]]]
+    for l in rows[:600]:
+        data.append([
+            Paragraph(l.get("ticket_number", ""), cell),
+            Paragraph(l.get("name", ""), cell),
+            Paragraph(l.get("department", ""), cell),
+            Paragraph(", ".join(l.get("stripped_names", [])) or "—", cell),
+            Paragraph(l.get("by", ""), cell),
+            Paragraph((l.get("at") or "")[:19].replace("T", " "), cell),
+        ])
+    tbl = Table(data, colWidths=[1.2 * inch, 1.7 * inch, 1.4 * inch, 2.9 * inch, 1.3 * inch, 1.5 * inch], repeatRows=1)
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), navy),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f1f5f9")]),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e2e8f0")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    flow.append(tbl)
+    flow.append(Spacer(1, 8))
+    flow.append(Paragraph("Obserra — Executive Protection &amp; Intelligence LLC · Confidential · "
+                          "Each cleanup opened a real ServiceNow change that fanned out to HR &#8594; SAP and auto-closed.", sub_st))
+    doc.build(flow)
+    buf.seek(0)
+    return buf
+
+
+@sap_router.get("/mover-rule/export")
+async def mover_rule_export(format: str = "csv", q: str = "", days: int = 0, user: dict = Depends(get_current_user)):
+    """Export the (filtered) mover auto-strip activity log as a CSV or branded PDF SOX evidence pack."""
+    import io as _io
+    import csv as _csv
+    from fastapi.responses import Response
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    if format not in ("csv", "pdf"):
+        raise HTTPException(status_code=400, detail="format must be csv or pdf")
+    rows = await _filter_mover_log(org_id, q, days)
+    fname = f"sap-mover-autostrip-log-{_now().strftime('%Y%m%d-%H%M')}"
+    if format == "csv":
+        sio = _io.StringIO()
+        w = _csv.writer(sio)
+        w.writerow(["Obserra — SAP Mover Auto-Strip Activity Log"])
+        w.writerow(["Generated", _now().isoformat(), "Records", len(rows),
+                    "Search", q or "—", "Window (days)", days or "all"])
+        w.writerow([])
+        w.writerow(["Ticket", "Worker", "Department", "Roles Stripped", "Role Refs", "By", "When"])
+        for l in rows:
+            w.writerow([l.get("ticket_number", ""), l.get("name", ""), l.get("department", ""),
+                        ", ".join(l.get("stripped_names", [])), ", ".join(l.get("stripped", [])),
+                        l.get("by", ""), l.get("at", "")])
+        return Response(content=sio.getvalue(), media_type="text/csv",
+                        headers={"Content-Disposition": f'attachment; filename="{fname}.csv"'})
+    pdf = _mover_log_pdf(rows, q, days)
+    return Response(content=pdf.getvalue(), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="{fname}.pdf"'})

@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send, Eye, Download, TrendingUp, FileText } from "lucide-react";
+import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send, Eye, Download, TrendingUp, FileText, BellRing, FileWarning } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 
 const SEV = { Critical: "0 84% 60%", High: "35 90% 55%", Medium: "190 90% 50%", Low: "142 70% 45%" };
@@ -22,6 +22,17 @@ const ScoreTile = ({ label, v, suffix = "", accent = "199 89% 48%", testid }) =>
   </div>
 );
 const ACTION_LABEL = { recertify: "Open recertification", revoke_all: "Revoke all roles", deactivate: "De-provision account", lock: "Emergency lock" };
+const TrendTip = ({ active, payload, label }) => {
+  if (!active || !payload?.length) return null;
+  const p = payload[0]?.payload || {};
+  return (
+    <div className="rounded-lg border border-border bg-card p-2.5 text-xs shadow-lg" style={{ maxWidth: 240 }} data-testid="scorecard-trend-tip">
+      <div className="font-bold mb-1">{label} · Gov {p.governance_score}/100</div>
+      <div className="text-muted-foreground">Open SoD {p.open_sod} · Auto-rem {p.autoremediated} · Movers {p.movers ?? 0} · Residual {p.residual}</div>
+      {p.note && <div className="mt-1.5 pt-1.5 border-t border-border text-[11px]">{p.note}</div>}
+    </div>
+  );
+};
 
 export default function SodCommandCenter() {
   const { openDeepDive } = useDeepDive();
@@ -51,6 +62,8 @@ export default function SodCommandCenter() {
   const [scorecard, setScorecard] = useState(null);
   const [preview, setPreview] = useState(null);
   const [previewBusy, setPreviewBusy] = useState(false);
+  const [scoreBusy, setScoreBusy] = useState(false);
+  const [evidBusy, setEvidBusy] = useState(false);
   const [nowTs, setNowTs] = useState(Date.now());
 
   const loadConflicts = useCallback(async () => {
@@ -62,7 +75,7 @@ export default function SodCommandCenter() {
     setData(data);
   }, [sev, area, status]);
   const loadArem = useCallback(async () => { const { data } = await api.get("/sap/autoremediation"); setArem(data); }, []);
-  const loadDcfg = useCallback(async () => { const { data } = await api.get("/sap/digest/config"); setDcfg(data); setDcfgLocal({ ...data.config, recipients: (data.config.recipients || []).join(", ") }); }, []);
+  const loadDcfg = useCallback(async () => { const { data } = await api.get("/sap/digest/config"); setDcfg(data); setDcfgLocal({ ...data.config, recipients: (data.config.recipients || []).join(", "), evidence_recipients: (data.config.evidence_recipients || []).join(", ") }); }, []);
   const loadScorecard = useCallback(async () => { const { data } = await api.get("/sap/scorecard"); setScorecard(data); }, []);
   useEffect(() => { loadConflicts(); }, [loadConflicts]);
   useEffect(() => { loadArem(); }, [loadArem]);
@@ -110,7 +123,8 @@ export default function SodCommandCenter() {
     setDcfgBusy(true);
     try {
       const recips = (dcfgLocal.recipients || "").split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
-      await api.put("/sap/digest/config", { ...dcfgLocal, recipients: recips });
+      const evid = (dcfgLocal.evidence_recipients || "").split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
+      await api.put("/sap/digest/config", { ...dcfgLocal, recipients: recips, evidence_recipients: evid, score_threshold: Number(dcfgLocal.score_threshold) || 60 });
       toast.success("Governance digest schedule saved");
       await loadDcfg();
     } catch (e) { toast.error(e?.response?.data?.detail || "Could not save (admin only)"); }
@@ -136,6 +150,32 @@ export default function SodCommandCenter() {
       const a = document.createElement("a"); a.href = url; a.download = `sap-governance-scorecard.${fmt}`; a.click();
       URL.revokeObjectURL(url);
       toast.success(`Governance scorecard exported (${fmt.toUpperCase()})`);
+    } catch { toast.error("Export failed"); }
+  };
+  const checkScoreAlert = async () => {
+    setScoreBusy(true);
+    try {
+      const { data } = await api.post("/sap/scorecard/alert-check");
+      if (data.below) toast[data.posted ? "success" : "info"](`Score ${data.score}/100 is below the ${data.threshold} target`, { description: data.posted ? "Alert posted to Slack / Teams" : "No chat webhook configured — add one above" });
+      else toast.success(`Score ${data.score}/100 is at/above the ${data.threshold} target — no alert needed`);
+    } catch (e) { toast.error(e?.response?.data?.detail || "Check failed (admin only)"); }
+    setScoreBusy(false);
+  };
+  const sendEvidence = async () => {
+    setEvidBusy(true);
+    try {
+      const { data } = await api.post("/sap/sod-evidence/send");
+      toast.success(`SoD evidence pack emailed to ${data.sent} recipient(s)`, { description: `${data.conflicts} conflict(s) documented` });
+    } catch (e) { toast.error(e?.response?.data?.detail || "Send failed (admin only)"); }
+    setEvidBusy(false);
+  };
+  const exportEvidence = async (fmt) => {
+    try {
+      const res = await api.get(`/sap/sod-evidence/export?format=${fmt}`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a"); a.href = url; a.download = `sap-sod-evidence.${fmt}`; a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`SoD evidence pack exported (${fmt.toUpperCase()})`);
     } catch { toast.error("Export failed"); }
   };
   const toggleSev = (s) => { const cur = arem.config.severities; const next = cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]; saveArem({ severities: next.length ? next : ["Critical"] }); };
@@ -244,13 +284,30 @@ export default function SodCommandCenter() {
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
                 <XAxis dataKey="label" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} width={36} />
-                <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }} />
+                <Tooltip content={<TrendTip />} />
                 <Area type="monotone" dataKey="open_sod" stroke="hsl(0 84% 60%)" strokeWidth={2} fill="url(#scOpen)" name="Open SoD" />
                 <Area type="monotone" dataKey="autoremediated" stroke="hsl(142 70% 45%)" strokeWidth={2} fill="url(#scAuto)" name="Auto-remediated" />
                 <Area type="monotone" dataKey="residual" stroke="hsl(35 90% 55%)" strokeWidth={2} fill="transparent" name="Residual leavers" />
               </AreaChart>
             </ResponsiveContainer>
           </div>
+          {scorecard.trend?.some((t) => (t.changes || []).length) && (
+            <div className="mt-3 border-t border-border pt-3" data-testid="scorecard-annotations">
+              <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2">What changed week-over-week</div>
+              <div className="space-y-1.5 max-h-[150px] overflow-y-auto pr-1">
+                {[...scorecard.trend].slice(1).reverse().map((t) => (
+                  <div key={t.week} data-testid={`scorecard-annotation-${t.week}`} className="flex items-start gap-2 text-[11px]">
+                    <span className="font-mono text-muted-foreground w-12 shrink-0">{t.label}</span>
+                    <div className="flex flex-wrap gap-1">
+                      {(t.changes || []).length ? (t.changes || []).map((c, j) => (
+                        <span key={j} className="px-1.5 py-0.5 rounded font-mono text-[10px]" style={{ background: c.tone === "up" ? "hsl(142 70% 45% / 0.12)" : "hsl(0 84% 60% / 0.12)", color: c.tone === "up" ? "hsl(142 70% 40%)" : "hsl(0 84% 55%)" }}>{c.label}</span>
+                      )) : <span className="text-muted-foreground">No material change</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -342,6 +399,50 @@ export default function SodCommandCenter() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div><div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Dedicated SAP Teams webhook (optional)</div><Input data-testid="digest-teams-url" value={dcfgLocal.teams_url} onChange={(e) => setDcfgLocal({ ...dcfgLocal, teams_url: e.target.value })} placeholder="https://outlook.office.com/webhook/…" /></div>
               <div><div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Dedicated SAP Slack webhook (optional)</div><Input data-testid="digest-slack-url" value={dcfgLocal.slack_url} onChange={(e) => setDcfgLocal({ ...dcfgLocal, slack_url: e.target.value })} placeholder="https://hooks.slack.com/services/…" /></div>
+            </div>
+          </div>
+
+          {/* Score-drop alert */}
+          <div className="mt-4 border-t border-border pt-3" data-testid="score-alert-config">
+            <div className="flex flex-wrap items-center gap-2">
+              <BellRing className="w-4 h-4 text-amber" />
+              <span className="text-sm font-medium">Governance score-drop alert</span>
+              <div className="flex-1" />
+              <span className="text-xs text-muted-foreground">Alert Slack/Teams when the score drops below</span>
+              <Input type="number" min={0} max={100} data-testid="score-threshold" value={dcfgLocal.score_threshold ?? 60} onChange={(e) => setDcfgLocal({ ...dcfgLocal, score_threshold: e.target.value })} className="w-20 h-8" />
+              <Switch data-testid="score-alert-toggle" checked={!!dcfgLocal.score_alert} onCheckedChange={(v) => setDcfgLocal({ ...dcfgLocal, score_alert: v })} />
+            </div>
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              <span className="text-[11px] text-muted-foreground">Current governance score <b>{scorecard?.current?.governance_score ?? "—"}/100</b>. The daily sweep posts a one-time alert per week while the score stays below target.</span>
+              <div className="flex-1" />
+              <Button size="sm" variant="outline" className="h-8 gap-1.5" data-testid="score-alert-check" onClick={checkScoreAlert} disabled={scoreBusy}><BellRing className="w-3.5 h-3.5" />{scoreBusy ? "Checking…" : "Check & alert now"}</Button>
+            </div>
+          </div>
+
+          {/* Weekly SoD evidence pack */}
+          <div className="mt-4 border-t border-border pt-3" data-testid="evidence-export-config">
+            <div className="flex flex-wrap items-center gap-2">
+              <FileWarning className="w-4 h-4 text-primary" />
+              <span className="text-sm font-medium">Weekly SoD evidence pack (auditors)</span>
+              <div className="flex-1" />
+              <Switch data-testid="evidence-export-toggle" checked={!!dcfgLocal.evidence_export} onCheckedChange={(v) => setDcfgLocal({ ...dcfgLocal, evidence_export: v })} />
+            </div>
+            <p className="text-[11px] text-muted-foreground mt-1">Auto-email a branded SOX-grade SoD evidence pack PDF — every conflict with its toxic function combination and remediation state — to your auditors on a set weekday.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+              <div>
+                <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Send on</div>
+                <Select value={dcfgLocal.evidence_day || "mon"} onValueChange={(v) => setDcfgLocal({ ...dcfgLocal, evidence_day: v })}><SelectTrigger data-testid="evidence-day" className="h-9"><SelectValue /></SelectTrigger>
+                  <SelectContent>{[["mon", "Monday"], ["tue", "Tuesday"], ["wed", "Wednesday"], ["thu", "Thursday"], ["fri", "Friday"], ["sat", "Saturday"], ["sun", "Sunday"]].map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent></Select>
+              </div>
+              <div>
+                <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Auditor recipients (comma-separated · blank = admins/execs)</div>
+                <Input data-testid="evidence-recipients" value={dcfgLocal.evidence_recipients || ""} onChange={(e) => setDcfgLocal({ ...dcfgLocal, evidence_recipients: e.target.value })} placeholder="auditor@company.com, soc@company.com" />
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2 mt-3">
+              <Button size="sm" variant="outline" className="h-8 gap-1.5" data-testid="evidence-send-now" onClick={sendEvidence} disabled={evidBusy}><Mail className="w-3.5 h-3.5" />{evidBusy ? "Sending…" : "Send evidence pack now"}</Button>
+              <Button size="sm" variant="outline" className="h-8 gap-1.5" data-testid="evidence-export-pdf" onClick={() => exportEvidence("pdf")}><FileText className="w-3.5 h-3.5" /> Download PDF</Button>
+              <Button size="sm" variant="outline" className="h-8 gap-1.5" data-testid="evidence-export-csv" onClick={() => exportEvidence("csv")}><Download className="w-3.5 h-3.5" /> Download CSV</Button>
             </div>
           </div>
 

@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { UserPlus, UserX, GitBranch, Ban, PauseCircle, PlayCircle, Power, ArrowLeftRight, Scissors, Zap } from "lucide-react";
+import { UserPlus, UserX, GitBranch, Ban, PauseCircle, PlayCircle, Power, ArrowLeftRight, Scissors, Zap, Download, FileText } from "lucide-react";
 
 const VERB = { activate: "reactivated", deactivate: "deactivated", suspend: "suspended" };
 const ACTION_META = {
@@ -99,6 +99,20 @@ export default function Lifecycle() {
       await loadRule(); window.dispatchEvent(new Event("sap-data-changed"));
     } catch (e) { toast.error(e?.response?.data?.detail || "Could not update rule (admin only)"); }
     setRuleBusy(false);
+  };
+
+  const exportRuleLog = async (fmt) => {
+    try {
+      const p = new URLSearchParams();
+      if (logQ) p.set("q", logQ);
+      if (logDays) p.set("days", String(logDays));
+      p.set("format", fmt);
+      const res = await api.get(`/sap/mover-rule/export?${p.toString()}`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a"); a.href = url; a.download = `sap-mover-autostrip-log.${fmt}`; a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Auto-strip log exported (${fmt.toUpperCase()})`);
+    } catch { toast.error("Export failed"); }
   };
 
   const rowActions = (ref, name) => (
@@ -243,6 +257,8 @@ export default function Lifecycle() {
                     <SelectItem value="90">Last 90 days</SelectItem>
                   </SelectContent>
                 </Select>
+                <Button size="sm" variant="outline" className="h-8 gap-1.5" data-testid="mover-log-export-csv" onClick={() => exportRuleLog("csv")}><Download className="w-3.5 h-3.5" /> CSV</Button>
+                <Button size="sm" variant="outline" className="h-8 gap-1.5" data-testid="mover-log-export-pdf" onClick={() => exportRuleLog("pdf")}><FileText className="w-3.5 h-3.5" /> PDF</Button>
               </>
             )}
           </div>
