@@ -21,8 +21,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from fastapi.responses import Response
 from pydantic import BaseModel
 
+from bson import ObjectId
+
 from db import db
-from auth import get_current_user
+from auth import get_current_user, require_roles
 
 sap_router = APIRouter(prefix="/api/sap")
 
@@ -661,6 +663,8 @@ async def run_autoremediation(user: dict = Depends(get_current_user)):
 async def jml(user: dict = Depends(get_current_user)):
     org_id = user["org_id"]
     await _ensure(org_id)
+    if (await _get_mover_rule(org_id))["enabled"]:
+        await _run_mover_autostrip(org_id, "auto-rule")
     persons, accounts, conflicts, pmap = await _correlate(org_id)
     joiners, movers, leavers = [], [], []
     for p in persons:
@@ -706,41 +710,132 @@ class MoverStripBody(BaseModel):
     reason: str = ""
 
 
+async def _strip_carried_over(org_id, p, by, reason=""):
+    """Strip every non-birthright (carried-over) role from a mover's accounts and open a
+    ServiceNow -> HR -> SAP least-privilege change. Returns None when there's nothing to strip."""
+    birthright = {rc["ref"] for rc in ROLE_CATALOG if rc.get("dept") == p["department"]}
+    acct_roles = sorted({r for a in p["accounts"] for r in a.get("roles", [])})
+    carried = [r for r in acct_roles if r not in birthright]
+    if not carried:
+        return None
+    for a in p["accounts"]:
+        await db.sap_accounts.update_one({"org_id": org_id, "ref": a["ref"]}, {"$pull": {"roles": {"$in": carried}}})
+    hr = p.get("hr_authority", "ADP")
+    names = [ROLE_BY_REF.get(r, {}).get("name", r) for r in carried]
+    steps = [
+        ("ServiceNow", f"Mover access-cleanup change opened for {p['name']}"),
+        ("ServiceNow", f"Auto-approved (least privilege / transfer) - {by}"),
+        (hr, "Recording transfer & access change against worker record"),
+        ("SAP", f"Stripping carried-over roles: {', '.join(names)}"),
+        ("ServiceNow", "Carried-over access removed; SoD re-evaluated; change closed"),
+    ]
+    ticket = await _snow_generic(org_id, "SAP Mover Access Cleanup", "mover_strip", steps, by, prefix="CHG",
+                                 person_ref=p["ref"], person_name=p["name"], email=p.get("email"),
+                                 hr_system=hr, reason=f"Strip {len(carried)} carried-over role(s) from {p['name']}",
+                                 work_note=reason)
+    await _audit(org_id, by, "sap.mover.strip_carried_over", f"{p['ref']} - stripped {', '.join(carried)} - {ticket['number']}")
+    return {"stripped": carried, "stripped_names": names, "stripped_count": len(carried), "ticket": ticket}
+
+
 @sap_router.post("/jml/{person_ref}/strip-carried-over")
 async def strip_carried_over(person_ref: str, body: MoverStripBody, user: dict = Depends(get_current_user)):
-    """Mover access-accumulation cleanup: strip the roles this worker carried over from their
-    previous position (everything not in their current department's birthright set) and open a
-    ServiceNow → HR → SAP least-privilege change end-to-end."""
+    """Mover access-accumulation cleanup: strip carried-over roles and open a ServiceNow -> HR -> SAP change."""
     org_id = user["org_id"]
     await _ensure(org_id)
     persons, accounts, conflicts, pmap = await _correlate(org_id)
     p = pmap.get(person_ref)
     if not p:
         raise HTTPException(status_code=404, detail="Identity not found")
-    birthright = {rc["ref"] for rc in ROLE_CATALOG if rc.get("dept") == p["department"]}
-    acct_roles = sorted({r for a in p["accounts"] for r in a.get("roles", [])})
-    carried = [r for r in acct_roles if r not in birthright]
-    if not carried:
+    res = await _strip_carried_over(org_id, p, user["email"], body.reason)
+    if not res:
         raise HTTPException(status_code=400, detail="No carried-over roles to strip — access already matches the current role's birthright set")
-    for a in p["accounts"]:
-        await db.sap_accounts.update_one({"org_id": org_id, "ref": a["ref"]}, {"$pull": {"roles": {"$in": carried}}})
-    by = user["email"]
-    hr = p.get("hr_authority", "ADP")
-    names = [ROLE_BY_REF.get(r, {}).get("name", r) for r in carried]
-    steps = [
-        ("ServiceNow", f"Mover access-cleanup change opened for {p['name']}"),
-        ("ServiceNow", f"Auto-approved (least privilege / transfer) · {by}"),
-        (hr, "Recording transfer & access change against worker record"),
-        ("SAP", f"Stripping carried-over roles: {', '.join(names)}"),
-        ("ServiceNow", "Carried-over access removed; SoD re-evaluated; change closed"),
-    ]
-    ticket = await _snow_generic(org_id, "SAP Mover Access Cleanup", "mover_strip", steps, by, prefix="CHG",
-                                 person_ref=person_ref, person_name=p["name"], email=p.get("email"),
-                                 hr_system=hr, reason=f"Strip {len(carried)} carried-over role(s) from {p['name']}",
-                                 work_note=body.reason)
-    await _audit(org_id, by, "sap.mover.strip_carried_over", f"{person_ref} · stripped {', '.join(carried)} · {ticket['number']}")
-    return {"ok": True, "stripped": carried, "stripped_names": names,
-            "stripped_count": len(carried), "ticket": _ticket_public(ticket)}
+    return {"ok": True, "stripped": res["stripped"], "stripped_names": res["stripped_names"],
+            "stripped_count": res["stripped_count"], "ticket": _ticket_public(res["ticket"])}
+
+
+# ── Mover Auto-Strip Rule Engine ──────────────────────────────────────────────
+def _is_mover(p):
+    return p["status"] == "Active" and any(
+        c["field"] in ("legal_entity", "manager", "job_title", "worker_type") for c in _hr_conflicts_for(p))
+
+
+async def _get_mover_rule(org_id):
+    cfg = await db.sap_mover_rule.find_one({"org_id": org_id}, {"_id": 0}) or {}
+    return {"enabled": bool(cfg.get("enabled")),
+            "last_cron_at": cfg.get("last_cron_at"), "last_cron_count": cfg.get("last_cron_count")}
+
+
+async def _run_mover_autostrip(org_id, by, persons=None):
+    """Auto-strip carried-over access for every in-flight mover (idempotent — a no-op once clean)."""
+    if persons is None:
+        persons, _, _, _ = await _correlate(org_id)
+    created = []
+    for p in persons:
+        if not _is_mover(p):
+            continue
+        res = await _strip_carried_over(org_id, p, by, "Auto-strip rule — mover access-accumulation cleanup")
+        if res:
+            entry = {"org_id": org_id, "person_ref": p["ref"], "name": p["name"], "department": p["department"],
+                     "stripped": res["stripped"], "stripped_names": res["stripped_names"],
+                     "ticket_number": res["ticket"]["number"], "by": by, "at": _now().isoformat()}
+            await db.sap_mover_autostrip_log.insert_one(entry)
+            entry.pop("_id", None)
+            created.append(entry)
+    return created
+
+
+async def run_sap_mover_autostrip_all():
+    """Unattended mover auto-strip sweep across every org that enabled the rule (folded into daily cron)."""
+    orgs = await db.sap_mover_rule.find({"enabled": True}, {"_id": 0, "org_id": 1}).to_list(1000)
+    for o in orgs:
+        org_id = o["org_id"]
+        try:
+            created = await _run_mover_autostrip(org_id, "cron:daily")
+            await db.sap_mover_rule.update_one(
+                {"org_id": org_id},
+                {"$set": {"last_cron_at": _now().isoformat(), "last_cron_count": len(created)}})
+        except Exception:
+            pass
+
+
+class MoverRuleBody(BaseModel):
+    enabled: bool
+
+
+@sap_router.get("/mover-rule")
+async def get_mover_rule(user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    cfg = await _get_mover_rule(org_id)
+    persons, _, _, _ = await _correlate(org_id)
+    movers = [p for p in persons if _is_mover(p)]
+    candidates = 0
+    for p in movers:
+        birthright = {rc["ref"] for rc in ROLE_CATALOG if rc.get("dept") == p["department"]}
+        if any(r not in birthright for a in p["accounts"] for r in a.get("roles", [])):
+            candidates += 1
+    log = await db.sap_mover_autostrip_log.find({"org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(50)
+    return {"config": cfg, "movers": len(movers), "candidates": candidates,
+            "log": log, "stripped_total": await db.sap_mover_autostrip_log.count_documents({"org_id": org_id})}
+
+
+@sap_router.put("/mover-rule")
+async def put_mover_rule(body: MoverRuleBody, user: dict = Depends(require_roles("admin"))):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    await db.sap_mover_rule.update_one({"org_id": org_id},
+                                       {"$set": {"org_id": org_id, "enabled": body.enabled}}, upsert=True)
+    await _audit(org_id, user["email"], "sap.mover_rule.config", f"enabled={body.enabled}")
+    created = await _run_mover_autostrip(org_id, user["email"]) if body.enabled else []
+    return {"ok": True, "config": await _get_mover_rule(org_id), "stripped": len(created)}
+
+
+@sap_router.post("/mover-rule/run")
+async def run_mover_rule(user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    created = await _run_mover_autostrip(org_id, user["email"])
+    return {"ok": True, "stripped": len(created), "created": created}
 
 
 class PrivActionBody(BaseModel):
@@ -2239,6 +2334,103 @@ def _governance_digest_html(d):
         'ServiceNow workflows that fan out to ADP/IZ8 HR → SAP → AD/Entra and auto-close end-to-end.</p></div></div>')
 
 
+# ── Governance Digest scheduling config + Slack/Teams alert ───────────────────
+_DIGEST_DEFAULT = {"enabled": True, "recipients": [], "days": "everyday", "chat_alert": True,
+                   "teams_url": "", "slack_url": ""}
+
+
+async def _get_digest_config(org_id):
+    cfg = await db.sap_digest_config.find_one({"org_id": org_id}, {"_id": 0}) or {"org_id": org_id}
+    for k, v in _DIGEST_DEFAULT.items():
+        cfg.setdefault(k, v)
+    return cfg
+
+
+def _digest_chat_text(d):
+    return (f"Open SoD conflicts: {d['open_sod']} "
+            f"(Critical {d['sev']['Critical']} · High {d['sev']['High']} · Medium {d['sev']['Medium']}) · "
+            f"Auto-remediated 24h: {d['autorem_24h']} · ServiceNow workflows 24h: {d['tickets_24h']} · "
+            f"Terminated w/ residual access: {d['residual_count']} · Avg SAP risk score: {d['avg_risk']}/100")
+
+
+async def _sap_post_chat(org_id, cfg, title, text):
+    """Post a SAP digest alert to the dedicated SAP webhook if set, else the org's scan_alerts / live Teams.
+    Real HTTP delivery (no mock) — returns True only when a webhook actually accepted the post."""
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    alerts = org.get("scan_alerts") or {}
+    teams = (cfg.get("teams_url") or "").strip() or alerts.get("teams_url") or (org.get("live_teams") or {}).get("webhook_url")
+    slack = (cfg.get("slack_url") or "").strip() or alerts.get("slack_url")
+    if not (teams or slack):
+        return False
+    posted = False
+    async with httpx.AsyncClient(timeout=15) as c:
+        if teams:
+            try:
+                r = await c.post(teams, json={"@type": "MessageCard", "@context": "https://schema.org/extensions",
+                                              "summary": title, "themeColor": "0f1e3d", "title": title, "text": text})
+                posted = posted or r.status_code < 400
+            except Exception:
+                pass
+        if slack:
+            try:
+                r = await c.post(slack, json={"text": f"*{title}*\n{text}"})
+                posted = posted or r.status_code < 400
+            except Exception:
+                pass
+    return posted
+
+
+class DigestConfigBody(BaseModel):
+    enabled: bool = True
+    recipients: list[str] = []
+    days: str = "everyday"
+    chat_alert: bool = True
+    teams_url: str = ""
+    slack_url: str = ""
+
+
+@sap_router.get("/digest/config")
+async def get_digest_config(user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    cfg = await _get_digest_config(org_id)
+    state = await db.sap_digest_state.find_one({"org_id": org_id}, {"_id": 0, "last_at": 1})
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    alerts = org.get("scan_alerts") or {}
+    fallback_chat = bool(alerts.get("teams_url") or (org.get("live_teams") or {}).get("webhook_url") or alerts.get("slack_url"))
+    default_recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
+                                         {"_id": 0, "email": 1}).to_list(200)
+    return {"config": {k: cfg[k] for k in _DIGEST_DEFAULT},
+            "last_at": (state or {}).get("last_at"),
+            "default_recipients": [r["email"] for r in default_recips],
+            "fallback_chat_configured": fallback_chat,
+            "next_window": "Daily 08:00 UTC · platform scheduler"}
+
+
+@sap_router.put("/digest/config")
+async def put_digest_config(body: DigestConfigBody, user: dict = Depends(require_roles("admin"))):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    days = body.days if body.days in ("everyday", "weekdays") else "everyday"
+    recips = [e.strip() for e in body.recipients if e.strip()]
+    doc = {"org_id": org_id, "enabled": body.enabled, "recipients": recips, "days": days,
+           "chat_alert": body.chat_alert, "teams_url": body.teams_url.strip(), "slack_url": body.slack_url.strip()}
+    await db.sap_digest_config.update_one({"org_id": org_id}, {"$set": doc}, upsert=True)
+    await _audit(org_id, user["email"], "sap.digest.config",
+                 f"enabled={body.enabled} days={days} chat={body.chat_alert} recipients={len(recips)}")
+    return {"ok": True, "config": {k: doc[k] for k in _DIGEST_DEFAULT}}
+
+
+@sap_router.post("/digest/test-chat")
+async def digest_test_chat(user: dict = Depends(require_roles("admin"))):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    cfg = await _get_digest_config(org_id)
+    posted = await _sap_post_chat(org_id, cfg, "✅ SAP Governance Digest — test alert",
+                                  "This is a live test of your SAP Access Governance Digest chat alert. Delivery is working.")
+    return {"ok": True, "posted": posted}
+
+
 async def run_sap_autoremediation_all():
     """Unattended SoD → ServiceNow auto-remediation sweep across every org that enabled the engine."""
     orgs = await db.sap_autoremediation.find({"enabled": True}, {"_id": 0, "org_id": 1}).to_list(1000)
@@ -2254,26 +2446,42 @@ async def run_sap_autoremediation_all():
 
 
 async def run_sap_governance_digest():
-    """Daily SAP Access Governance Digest email to admins/execs of every org with a live SAP model."""
+    """Daily SAP Access Governance Digest — honors each org's digest schedule config (enable / days /
+    recipients / Slack-Teams alert), emailing admins/execs (or the configured recipients)."""
     from kernel import notifications
-    today = _now().date().isoformat()
+    now = _now()
+    today = now.date().isoformat()
+    is_weekday = now.weekday() < 5
     orgs = await db.organizations.find({}).to_list(1000)
     for org in orgs:
         org_id = str(org["_id"])
         if not await db.sap_persons.find_one({"org_id": org_id}):
             continue
+        cfg = await _get_digest_config(org_id)
+        if not cfg.get("enabled"):
+            continue
+        if cfg.get("days") == "weekdays" and not is_weekday:
+            continue
         try:
             data = await _governance_digest_data(org_id)
             html = _governance_digest_html(data)
-            recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
-                                         {"_id": 0, "email": 1}).to_list(200)
-            for r in recips:
-                await notifications.send_email(r["email"], "SAP Access Governance Digest — Obserra UAC", html)
+            if cfg.get("recipients"):
+                emails = cfg["recipients"]
+            else:
+                recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
+                                             {"_id": 0, "email": 1}).to_list(200)
+                emails = [r["email"] for r in recips]
+            for e in emails:
+                await notifications.send_email(e, "SAP Access Governance Digest — Obserra UAC", html)
+            if cfg.get("chat_alert"):
+                await _sap_post_chat(org_id, cfg, "📊 SAP Access Governance Digest", _digest_chat_text(data))
             await notifications.create(
                 org_id, "report", "SAP Governance Digest delivered",
                 f"{data['open_sod']} open SoD conflict(s), {data['autorem_24h']} auto-remediated (24h), "
-                f"{data['residual_count']} residual-access leaver(s). Emailed to {len(recips)} recipient(s).",
+                f"{data['residual_count']} residual-access leaver(s). Emailed to {len(emails)} recipient(s).",
                 ref="sap-governance-digest", dedupe_key=f"sap-digest:{today}")
+            await db.sap_digest_state.update_one({"org_id": org_id},
+                                                 {"$set": {"org_id": org_id, "last_at": now.isoformat()}}, upsert=True)
         except Exception:
             pass
 

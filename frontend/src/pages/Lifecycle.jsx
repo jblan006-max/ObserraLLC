@@ -7,8 +7,9 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { UserPlus, UserX, GitBranch, Ban, PauseCircle, PlayCircle, Power, ArrowLeftRight, Scissors } from "lucide-react";
+import { UserPlus, UserX, GitBranch, Ban, PauseCircle, PlayCircle, Power, ArrowLeftRight, Scissors, Zap } from "lucide-react";
 
 const VERB = { activate: "reactivated", deactivate: "deactivated", suspend: "suspended" };
 const ACTION_META = {
@@ -32,13 +33,17 @@ export default function Lifecycle() {
   const [busy, setBusy] = useState(false);
   const [moverReview, setMoverReview] = useState(null);
   const [stripBusy, setStripBusy] = useState(false);
+  const [moverRule, setMoverRule] = useState(null);
+  const [ruleBusy, setRuleBusy] = useState(false);
   const load = useCallback(async () => { const { data } = await api.get("/sap/jml"); setD(data); }, []);
+  const loadRule = useCallback(async () => { try { const { data } = await api.get("/sap/mover-rule"); setMoverRule(data); } catch { /* ignore */ } }, []);
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { loadRule(); }, [loadRule]);
   useEffect(() => {
-    const h = () => load();
+    const h = () => { load(); loadRule(); };
     window.addEventListener("sap-data-changed", h);
     return () => window.removeEventListener("sap-data-changed", h);
-  }, [load]);
+  }, [load, loadRule]);
   if (!d) return <Spinner />;
 
   const askAction = (action, refs, names) => { setReason(""); setNotify(true); setConfirm({ action, refs, names }); };
@@ -71,6 +76,17 @@ export default function Lifecycle() {
       setMoverReview(null); window.dispatchEvent(new Event("sap-data-changed")); await load();
     } catch (e) { toast.error(e?.response?.data?.detail || "Strip failed"); }
     setStripBusy(false);
+  };
+
+  const toggleRule = async (v) => {
+    setRuleBusy(true);
+    try {
+      const { data } = await api.put("/sap/mover-rule", { enabled: v });
+      if (v && data.stripped) toast.success(`Auto-strip enabled — cleaned ${data.stripped} mover(s)`, { description: "ServiceNow cleanup workflows opened & auto-closed" });
+      else toast.success(v ? "Mover auto-strip rule enabled" : "Mover auto-strip rule disabled");
+      await loadRule(); window.dispatchEvent(new Event("sap-data-changed"));
+    } catch (e) { toast.error(e?.response?.data?.detail || "Could not update rule (admin only)"); }
+    setRuleBusy(false);
   };
 
   const rowActions = (ref, name) => (
@@ -166,8 +182,19 @@ export default function Lifecycle() {
 
       {/* Movers */}
       <div className="bg-card fact-border rounded-xl p-5" data-testid="jml-movers-panel">
-        <div className="flex items-center gap-2 mb-3"><ArrowLeftRight className="w-4 h-4 text-purple" /><h2 className="font-head font-bold text-lg">Movers — In-Flight Transfers</h2></div>
-        <p className="text-[11px] text-muted-foreground mb-3">Workers whose ADP and IZ8 HR records disagree on org attributes (legal entity, manager, job title) — a transfer in progress. Review for access carried over from the previous role.</p>
+        <div className="flex flex-wrap items-center gap-3 mb-2">
+          <div className="flex items-center gap-2"><ArrowLeftRight className="w-4 h-4 text-purple" /><h2 className="font-head font-bold text-lg">Movers — In-Flight Transfers</h2></div>
+          {moverRule && <span data-testid="mover-rule-state" className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${moverRule.config.enabled ? "bg-low/15 text-low" : "bg-secondary text-muted-foreground"}`}>{moverRule.config.enabled ? "AUTO-STRIP ON" : "AUTO-STRIP OFF"}</span>}
+          <div className="flex-1" />
+          {moverRule && (
+            <div className="flex items-center gap-2" title="When on, carried-over access is auto-stripped for every mover — zero-click least privilege.">
+              <Zap className="w-3.5 h-3.5 text-amber" />
+              <span className="text-xs text-muted-foreground">Auto-strip carried-over access</span>
+              <Switch data-testid="mover-rule-toggle" checked={moverRule.config.enabled} disabled={ruleBusy} onCheckedChange={toggleRule} />
+            </div>
+          )}
+        </div>
+        <p className="text-[11px] text-muted-foreground mb-3">Workers whose ADP and IZ8 HR records disagree on org attributes (legal entity, manager, job title) — a transfer in progress. Review for access carried over from the previous role.{moverRule?.config?.enabled && <span className="text-low"> Auto-strip rule active — carried-over roles are removed automatically via ServiceNow.</span>}{moverRule?.config?.last_cron_at && <span className="font-mono"> Last scheduled sweep {new Date(moverRule.config.last_cron_at).toLocaleDateString()} · {moverRule.config.last_cron_count ?? 0} cleaned.</span>}</p>
         <div className="space-y-2">
           {d.movers.map((m) => (
             <div key={m.ref} data-testid={`jml-mover-${m.ref}`} className="flex items-center gap-3 p-3 rounded-lg bg-purple/5 border border-purple/20">

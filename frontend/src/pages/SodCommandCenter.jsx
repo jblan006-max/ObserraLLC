@@ -9,7 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send } from "lucide-react";
 
 const SEV = { Critical: "0 84% 60%", High: "35 90% 55%", Medium: "190 90% 50%", Low: "142 70% 45%" };
 const Chip = ({ v, map = SEV }) => <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full" style={{ background: `hsl(${map[v] || "220 10% 55%"} / 0.15)`, color: `hsl(${map[v] || "220 10% 55%"})` }}>{v}</span>;
@@ -37,6 +38,9 @@ export default function SodCommandCenter() {
   const [arem, setArem] = useState(null);
   const [aremBusy, setAremBusy] = useState(false);
   const [digestBusy, setDigestBusy] = useState(false);
+  const [dcfg, setDcfg] = useState(null);
+  const [dcfgLocal, setDcfgLocal] = useState(null);
+  const [dcfgBusy, setDcfgBusy] = useState(false);
 
   const loadConflicts = useCallback(async () => {
     const p = new URLSearchParams();
@@ -47,8 +51,10 @@ export default function SodCommandCenter() {
     setData(data);
   }, [sev, area, status]);
   const loadArem = useCallback(async () => { const { data } = await api.get("/sap/autoremediation"); setArem(data); }, []);
+  const loadDcfg = useCallback(async () => { const { data } = await api.get("/sap/digest/config"); setDcfg(data); setDcfgLocal({ ...data.config, recipients: (data.config.recipients || []).join(", ") }); }, []);
   useEffect(() => { loadConflicts(); }, [loadConflicts]);
   useEffect(() => { loadArem(); }, [loadArem]);
+  useEffect(() => { loadDcfg(); }, [loadDcfg]);
   useEffect(() => {
     api.get("/sap/sod/rules").then((r) => setRules(r.data.rules));
     api.get("/sap/identities").then((r) => setPeople(r.data.identities));
@@ -83,6 +89,23 @@ export default function SodCommandCenter() {
     }
     catch (e) { toast.error(e?.response?.data?.detail || "Could not send digest"); }
     setDigestBusy(false);
+  };
+  const saveDcfg = async () => {
+    setDcfgBusy(true);
+    try {
+      const recips = (dcfgLocal.recipients || "").split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
+      await api.put("/sap/digest/config", { ...dcfgLocal, recipients: recips });
+      toast.success("Governance digest schedule saved");
+      await loadDcfg();
+    } catch (e) { toast.error(e?.response?.data?.detail || "Could not save (admin only)"); }
+    setDcfgBusy(false);
+  };
+  const testChat = async () => {
+    try {
+      const { data: res } = await api.post("/sap/digest/test-chat");
+      if (res.posted) toast.success("Test alert posted to Teams / Slack");
+      else toast.info("No chat webhook configured — add a dedicated SAP webhook or configure org alerts");
+    } catch (e) { toast.error(e?.response?.data?.detail || "Test failed (admin only)"); }
   };
   const toggleSev = (s) => { const cur = arem.config.severities; const next = cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]; saveArem({ severities: next.length ? next : ["Critical"] }); };
 
@@ -215,6 +238,49 @@ export default function SodCommandCenter() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Governance Digest schedule */}
+      {dcfgLocal && (
+        <div className="bg-card fact-border rounded-xl p-5" data-testid="sod-digest-schedule">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="flex items-center gap-2"><CalendarClock className="w-4 h-4 text-primary" /><h2 className="font-head font-bold text-base">Governance Digest Schedule</h2></div>
+            <span data-testid="digest-state" className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${dcfgLocal.enabled ? "bg-low/15 text-low" : "bg-secondary text-muted-foreground"}`}>{dcfgLocal.enabled ? "SCHEDULED" : "PAUSED"}</span>
+            <div className="flex-1" />
+            <div className="flex items-center gap-2"><span className="text-xs text-muted-foreground">Daily scheduled digest</span><Switch data-testid="digest-enable" checked={dcfgLocal.enabled} onCheckedChange={(v) => setDcfgLocal({ ...dcfgLocal, enabled: v })} /></div>
+          </div>
+          <p className="text-[11px] text-muted-foreground mt-1">Dispatched by the platform scheduler at <span className="font-mono">{dcfg?.next_window || "08:00 UTC"}</span>. Configure who receives it, on which days, and optionally post a summary to Teams/Slack. {dcfg?.last_at && <>Last sent <span className="font-mono">{new Date(dcfg.last_at).toLocaleString()}</span>.</>}</p>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+            <div>
+              <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1.5">Send on</div>
+              <Select value={dcfgLocal.days} onValueChange={(v) => setDcfgLocal({ ...dcfgLocal, days: v })}><SelectTrigger data-testid="digest-days" className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent><SelectItem value="everyday">Every day</SelectItem><SelectItem value="weekdays">Weekdays only (Mon–Fri)</SelectItem></SelectContent></Select>
+            </div>
+            <div>
+              <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1.5">Recipients (comma-separated · blank = all admins/execs)</div>
+              <Textarea data-testid="digest-recipients" rows={2} value={dcfgLocal.recipients} onChange={(e) => setDcfgLocal({ ...dcfgLocal, recipients: e.target.value })} placeholder={(dcfg?.default_recipients || []).join(", ") || "admin@company.com"} />
+            </div>
+          </div>
+
+          <div className="mt-4 border-t border-border pt-3">
+            <div className="flex flex-wrap items-center gap-2 mb-2">
+              <Switch data-testid="digest-chat-toggle" checked={dcfgLocal.chat_alert} onCheckedChange={(v) => setDcfgLocal({ ...dcfgLocal, chat_alert: v })} />
+              <span className="text-xs">Also post a summary to Slack / Microsoft Teams</span>
+              <span className="text-[10px] font-mono text-muted-foreground">{dcfg?.fallback_chat_configured ? "· org webhook available as fallback" : "· no org webhook — add a dedicated one below"}</span>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div><div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Dedicated SAP Teams webhook (optional)</div><Input data-testid="digest-teams-url" value={dcfgLocal.teams_url} onChange={(e) => setDcfgLocal({ ...dcfgLocal, teams_url: e.target.value })} placeholder="https://outlook.office.com/webhook/…" /></div>
+              <div><div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Dedicated SAP Slack webhook (optional)</div><Input data-testid="digest-slack-url" value={dcfgLocal.slack_url} onChange={(e) => setDcfgLocal({ ...dcfgLocal, slack_url: e.target.value })} placeholder="https://hooks.slack.com/services/…" /></div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 mt-4">
+            <Button size="sm" data-testid="digest-save" onClick={saveDcfg} disabled={dcfgBusy}>{dcfgBusy ? "Saving…" : "Save schedule"}</Button>
+            <Button size="sm" variant="outline" className="gap-1.5" data-testid="digest-test-chat" onClick={testChat}><Send className="w-3.5 h-3.5" /> Test chat alert</Button>
+            <Button size="sm" variant="outline" className="gap-1.5" data-testid="digest-send-now" onClick={sendDigest} disabled={digestBusy}><Mail className="w-3.5 h-3.5" />{digestBusy ? "Sending…" : "Send digest now"}</Button>
+          </div>
         </div>
       )}
 

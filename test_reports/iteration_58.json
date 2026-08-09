@@ -1,0 +1,40 @@
+{
+  "summary": "Iter58 tested all 4 governance features + regression. Backend pytest (test_iter58_governance.py): 15/15 passed. Verified: (a) GET /api/sap/systems returns systems + connectors with health/drift_note; POST /api/sap/systems/reprobe returns 200 and refreshes health so connector_health={healthy:43, stale:0, degraded:0}. (b) GET/PUT /api/sap/digest/config persist correctly (days=weekdays, chat_alert=true, recipients round-trip through {config:{...}}). POST /api/sap/digest/test-chat returns 200 with posted=true (live org webhook resolved). POST /api/sap/governance-digest/send returns 200 (ok:true). (c) GET /api/sap/mover-rule returns config+candidates; PUT /api/sap/mover-rule {enabled:true} returns 200 and auto-strips carried-over roles; subsequent GET returns candidates=0 as expected. (d) Regression: /api/sap/sod/conflicts, /api/sap/autoremediation, /api/sap/workflow/activity, /api/sap/identities, /api/sap/jml all 200. \n\nFrontend Playwright (cookie login via data-testid=auth-submit): /app/systems — sys-reprobe visible + clickable; POST /api/sap/systems/reprobe fires; sys-health-summary shows 43 Healthy / 0 Stale / 0 Degraded before AND after re-probe; 43 sys-conn-health-* badges and 43 sys-conn-drift-* notes render; sys-last-probe present. /app/sod (AFTER FIX) — sod-digest-schedule card + all 9 testids (digest-enable, digest-days, digest-recipients, digest-chat-toggle, digest-teams-url, digest-slack-url, digest-save, digest-test-chat, digest-send-now) render; PUT /sap/digest/config, POST /sap/digest/test-chat, POST /sap/governance-digest/send all return 200 from real UI clicks; autorem-toggle/autorem-run/autorem-digest regression intact. /app/lifecycle — jml-movers-panel + mover-rule-toggle + mover-rule-state ('AUTO-STRIP ON') render; 4 mover rows visible incl. Vikram Okafor (P-0045) and James Fischer/Rossi; jml-mover-open-* opens jml-mover-dialog with jml-mover-strip-btn (correctly disabled after strip since carried_over_count now 0 — expected because backend PUT /mover-rule already consumed carried-over roles per test sequence).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "SodCommandCenter.jsx", "issue": "Uncaught ReferenceError: CalendarClock is not defined, Input is not defined, Send is not defined — the new Governance Digest Schedule card used <CalendarClock>, <Input>, <Send> icons/components but none of them were imported. This crashed the ENTIRE /app/sod page via ErrorBoundary, hiding sod-digest-schedule AND the existing autorem-toggle/autorem-run/autorem-digest controls. Fixed here by (1) adding CalendarClock + Send to the lucide-react import, (2) adding 'import { Input } from \"@/components/ui/input\";'. After fix all testids render and all 3 API actions (save/test-chat/send-now) return 200.", "selector": "[data-testid=\"sod-digest-schedule\"]", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter58_governance.py",
+    "/app/test_reports/pytest/iter58.xml"
+  ],
+  "action_items": [
+    "Review the two imports I added to /app/frontend/src/pages/SodCommandCenter.jsx (CalendarClock+Send in lucide-react line, and 'import { Input } from \"@/components/ui/input\";'). This is a repeat class of bug from iter57 (missing digestBusy hook) — please add a pre-commit/build smoke render for SodCommandCenter to catch missing imports before ship.",
+    "Sequence caveat for future test runs: enabling mover-rule via PUT (backend or UI) permanently consumes the carried-over roles for P-0045/P-0046 in the seed. If future testing needs the strip-btn to be enabled, re-seed the mover-accumulation demo data first, then verify the manual strip dialog BEFORE toggling the auto-strip rule.",
+    "Consider surfacing a toast/state chip when /governance-digest/send returns throttled=true (per iter57 backoff) so users understand a returned 200 with sent:0 is expected within the 60s window."
+  ],
+  "critical_code_review_comments": [
+    "SodCommandCenter.jsx shipped again with undeclared references (CalendarClock, Input, Send). This is the 2nd consecutive iter (iter57=digestBusy, iter58=three icons/components) where the SoD page crashes on first render because a new block was added without wiring imports/hooks. Very small smoke test would catch this.",
+    "sap_uac.py is now 2522 lines. Time to split into workflow.py / jml.py / digest.py / autoremediation.py / systems.py — new /digest/config + /mover-rule endpoints could have lived in their own module cleanly.",
+    "GET /api/sap/digest/config returns config nested under {config: {...}} but PUT accepts the flat schema and returns {ok:true, config:{...}} — asymmetric shapes tend to confuse clients; consider making PUT accept either flat or nested for consistency.",
+    "PUT /api/sap/mover-rule silently coerces unknown 'days' values to 'everyday' but doesn't return a validation warning; consider raising 400 on invalid values instead of silently defaulting."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/SodCommandCenter.jsx (added CalendarClock+Send to lucide-react import, added Input import from @/components/ui/input)",
+    "/app/backend/tests/test_iter58_governance.py"
+  ],
+  "success_rate": {"backend": "15/15 (100%)", "frontend": "3/3 flows verified after fix — Connector Health (re-probe + 43 healthy summary + 43 badges + 43 drift notes + last-probe stamp), Digest Schedule (all 9 testids + save/test-chat/send-now round-trip real API 200), Mover Auto-Strip (toggle+state chip AUTO-STRIP ON + jml-mover-dialog + strip-btn state)"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (cookie-based via data-testid=auth-submit)",
+  "seed_data_creation": "Backend test suite fired PUT /mover-rule {enabled:true} which auto-stripped the 2 remaining carried-over roles on P-0045 and P-0046 and opened ServiceNow workflows. Also fired PUT /digest/config (days=weekdays, chat_alert=true), POST /digest/test-chat (live org webhook post — real HTTP), and POST /governance-digest/send (real Emergent Resend). Frontend clicks fired the same PUT/POSTs a second time. Consequence: candidates=0 for mover-rule in this fork until seed is restored.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "1) SodCommandCenter.jsx is now correctly importing CalendarClock+Send from lucide-react and Input from @/components/ui/input (lines 11+13). 2) Both P-0045 and P-0046 have had their carried-over roles stripped by the mover-rule enable during this run, so candidates count is 0 and the strip-btn in jml-mover-dialog will render disabled ('No carried-over access'). Re-seed sap_engine mover-accumulation before re-testing the strip flow. 3) Digest config in this org is now enabled=true, days=weekdays, recipients=[jblan2026@gmail.com]. 4) The org webhook resolves for chat alerts so digest-test-chat returns posted=true even without dedicated SAP webhook. 5) test_iter58_governance.py is the regression suite going forward.",
+  "rca of the issue": "SoD page crash RCA (iter58): /app/frontend/src/pages/SodCommandCenter.jsx introduced the Governance Digest Schedule card (data-testid=sod-digest-schedule) which uses <CalendarClock/> (header icon), <Input/> (recipients + webhook URL fields), and <Send/> (Send digest now button icon). None of these three symbols were imported. React threw ReferenceError sequentially (CalendarClock, then Input, then Send) — each one crashed the whole SodCommandCenter component tree, hiding the new digest card AND the pre-existing autorem-* controls. Repro: login → /app/sod → Uncaught runtime errors banner. Fix applied by adding all three imports (CalendarClock+Send in lucide-react named import; Input from @/components/ui/input). Verified: page renders, all 9 digest testids visible, PUT /sap/digest/config → 200, POST /sap/digest/test-chat → 200, POST /sap/governance-digest/send → 200, autorem-toggle/autorem-run/autorem-digest all present again."
+}
