@@ -41,6 +41,7 @@ const SapSystems = lazyWithRetry(() => import("@/pages/SapSystems"));
 const UserActivation = lazyWithRetry(() => import("@/pages/UserActivation"));
 const SapAnalytics = lazyWithRetry(() => import("@/pages/SapAnalytics"));
 const WorkflowActivity = lazyWithRetry(() => import("@/pages/WorkflowActivity"));
+const SystemHealth = lazyWithRetry(() => import("@/pages/SystemHealth"));
 // Reused platform pages (identical to Obserra).
 const AuditLog = lazyWithRetry(() => import("@/pages/AuditLog"));
 const Team = lazyWithRetry(() => import("@/pages/Team"));
@@ -98,6 +99,7 @@ function AppRoutes() {
           <Route path="activation" element={<UserActivation />} />
           <Route path="analytics" element={<SapAnalytics />} />
           <Route path="workflow" element={<WorkflowActivity />} />
+          <Route path="system-health" element={<SystemHealth />} />
           <Route path="audit" element={<AuditLog />} />
           <Route path="team" element={<Team />} />
           <Route path="settings" element={<Settings />} />

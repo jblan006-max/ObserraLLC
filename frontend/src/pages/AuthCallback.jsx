@@ -20,8 +20,10 @@ export default function AuthCallback() {
         const { data } = await api.post("/auth/google/session", {}, { headers: { "X-Session-ID": sid } });
         setUser(data);
         navigate("/app", { replace: true });
-      } catch {
-        navigate("/?google_error=1", { replace: true });
+      } catch (e) {
+        const reason = e?.response?.data?.detail
+          || "Google sign-in didn't complete. Please try again.";
+        navigate(`/?auth_error=${encodeURIComponent(reason)}`, { replace: true });
       }
     })();
   }, [location, navigate, setUser]);

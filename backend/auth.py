@@ -176,7 +176,9 @@ async def google_session(request: Request, response: Response):
     email = (r.json().get("email") or "").lower()
     user = await db.users.find_one({"email": email})
     if not user:
-        raise HTTPException(status_code=403, detail="No Obserra account for this Google email. Ask your admin to invite you.")
+        raise HTTPException(status_code=403, detail=(
+            f"No Obserra account is linked to the Google address “{email}”. Sign in with the "
+            f"Google account that matches your Obserra login, or ask your admin to invite “{email}”."))
     uid = str(user["_id"])
     set_auth_cookies(response, create_access_token(uid, email), create_refresh_token(uid))
     await _log_audit(user["org_id"], email, "auth.google_login", "Signed in with Google")

@@ -12,8 +12,9 @@ import { DeepDiveProvider } from "@/context/DeepDiveContext";
 import { InstallButton } from "@/components/InstallButton";
 import {
   LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
-  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp, ToggleRight,
+  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp, ToggleRight, Activity,
 } from "lucide-react";
+import { api } from "@/lib/api";
 
 // Per-route accent so each dashboard has its own colour identity.
 const ROUTE_ACCENT = [
@@ -31,6 +32,7 @@ const ROUTE_ACCENT = [
   ["/app/systems", "210 92% 62%"],
   ["/app/audit", "35 90% 55%"],
   ["/app/team", "200 85% 56%"],
+  ["/app/system-health", "160 84% 45%"],
   ["/app/settings", "220 15% 60%"],
   ["/app/billing", "150 60% 50%"],
   ["/app/marketplace", "265 80% 66%"],
@@ -86,6 +88,7 @@ const NAV_SECTIONS = [
     { to: "/app/audit", label: "Audit Log", icon: ScrollText },
     { to: "/app/team", label: "Team", icon: Building2 },
     { to: "/app/settings", label: "Settings", icon: Settings },
+    { to: "/app/system-health", label: "System Health", icon: Activity },
     { to: "/app/billing", label: "Billing", icon: CreditCard },
     { to: "/app/marketplace", label: "Marketplace", icon: Store },
   ]},
@@ -116,6 +119,23 @@ const CAT_STYLE = {
   med: { text: "text-med", dot: "bg-med", border: "border-med/30", glow: "bg-med/5" },
   low: { text: "text-low", dot: "bg-low", border: "border-low/30", glow: "bg-low/5" },
 };
+
+function VersionBadge({ user, onNav }) {
+  const [v, setV] = useState(null);
+  useEffect(() => { api.get("/deploy/version").then(({ data }) => setV(data)).catch(() => {}); }, []);
+  if (!v) return null;
+  const inner = (
+    <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-secondary/40 text-[10px] font-mono" data-testid="version-badge">
+      <span className={`w-1.5 h-1.5 rounded-full ${v.update_available ? "bg-ai animate-pulse" : "bg-low"}`} />
+      <span className="uppercase text-muted-foreground">v{v.current}</span>
+      {v.update_available && <span className="ml-auto text-ai">update →</span>}
+    </div>
+  );
+  if (user?.role === "admin") {
+    return <NavLink to="/app/system-health" onClick={onNav} data-testid="version-badge-link" className="block mb-2 hover:opacity-80 transition-opacity">{inner}</NavLink>;
+  }
+  return <div className="mb-2">{inner}</div>;
+}
 
 function SidebarInner({ user, sub, owns, doLogout, onNav, onClose }) {
   const [collapsed, setCollapsed] = useState(() => {
@@ -192,6 +212,7 @@ function SidebarInner({ user, sub, owns, doLogout, onNav, onClose }) {
         })}
       </nav>
       <div className="p-3 border-t border-border shrink-0">
+        <VersionBadge user={user} onNav={onNav} />
         {sub && (
           <div className="mb-2 px-2 py-1.5 rounded-md bg-secondary/40 text-[10px] font-mono flex items-center gap-1.5">
             <span className={`w-1.5 h-1.5 rounded-full ${sub.active ? "bg-low" : "bg-crit"}`} />

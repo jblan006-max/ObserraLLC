@@ -3,7 +3,7 @@ import { useAuth } from "@/context/AuthContext";
 import { formatApiErrorDetail, API, api } from "@/lib/api";
 import { QRLogin } from "@/components/QRLogin";
 import { NetworkBackground } from "@/components/NetworkBackground";
-import { ShieldHalf, Loader2, Apple, KeyRound, QrCode, ArrowLeft } from "lucide-react";
+import { ShieldHalf, Loader2, Apple, KeyRound, QrCode, ArrowLeft, AlertTriangle } from "lucide-react";
 
 export default function Auth() {
   const { login, register } = useAuth();
@@ -13,8 +13,23 @@ export default function Auth() {
   const [busy, setBusy] = useState(false);
   const [showQR, setShowQR] = useState(false);
   const [providers, setProviders] = useState({ google: true, passwordless: true, apple: false, sso: false });
+  const [notice, setNotice] = useState("");
 
   useEffect(() => { api.get("/auth/providers").then((r) => setProviders(r.data)).catch(() => {}); }, []);
+
+  // Surface a clear reason when returning from a failed OAuth (Google) sign-in — otherwise
+  // the user is bounced back to this screen with no explanation.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    const reason = p.get("auth_error")
+      || (p.get("google_error")
+        ? "Google sign-in didn't complete. Use the Google account linked to your Obserra login, or ask your admin to invite this email."
+        : "");
+    if (reason) {
+      setNotice(reason);
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+  }, []);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -63,6 +78,15 @@ export default function Auth() {
 
       <div className="flex items-center justify-center p-6">
         <div className="w-full max-w-sm rise">
+          {notice && (
+            <div data-testid="auth-oauth-error" className="mb-5 rounded-md border border-crit/40 bg-crit/10 px-3 py-3 text-xs text-crit flex items-start gap-2">
+              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+              <div className="space-y-1">
+                <p className="font-semibold">Sign-in couldn't be completed</p>
+                <p className="text-crit/90 leading-relaxed">{notice}</p>
+              </div>
+            </div>
+          )}
           <div className="lg:hidden mb-8 flex flex-col items-center text-center gap-4">
             <img src="/brand-mark.png" alt="Obserra mark" className="h-24 w-auto object-contain drop-shadow-[0_6px_20px_rgba(86,184,233,0.25)]" />
             <img src="/brand-wordmark.png" alt="OBSERRA — Executive Protection & Intelligence LLC" className="h-14 w-auto object-contain" />
