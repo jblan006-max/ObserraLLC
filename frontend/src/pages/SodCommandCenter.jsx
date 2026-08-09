@@ -686,6 +686,8 @@ export default function SodCommandCenter() {
             <Button size="sm" variant="outline" className="gap-1.5" data-testid="digest-preview" onClick={openPreview} disabled={previewBusy}><Eye className="w-3.5 h-3.5" />{previewBusy ? "Loading…" : "Preview email"}</Button>
             <Button size="sm" variant="outline" className="gap-1.5" data-testid="digest-test-chat" onClick={testChat}><Send className="w-3.5 h-3.5" /> Test chat alert</Button>
             <Button size="sm" variant="outline" className="gap-1.5 border-primary/40 text-primary hover:bg-primary/[0.06]" data-testid="digest-ask-open" onClick={openAsk}><MessagesSquare className="w-3.5 h-3.5" /> Ask AI about this digest</Button>
+            <Button size="sm" variant="outline" className="gap-1.5" data-testid="digest-share" onClick={createShare} disabled={shareBusy}><Share2 className="w-3.5 h-3.5" />{shareBusy ? "Creating…" : "Copy share link"}</Button>
+            <Button size="sm" variant="outline" className="gap-1.5" data-testid="digest-voice" onClick={playVoice} disabled={voiceBusy}><Volume2 className="w-3.5 h-3.5" />{voiceBusy ? "Generating…" : "Listen to digest"}</Button>
             <Button size="sm" variant="outline" className="gap-1.5" data-testid="digest-send-now" onClick={sendDigest} disabled={digestBusy || cooldownRemain > 0}><Mail className="w-3.5 h-3.5" />{digestBusy ? "Sending…" : cooldownRemain > 0 ? `Send again in ${cooldownRemain}s` : "Send digest now"}</Button>
           </div>
           {voiceUrl && (
