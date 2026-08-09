@@ -475,3 +475,12 @@ Final audit-workflow batch + optimization. All P0/backlog for the auditor experi
 - **Performance**: route-chunk prefetch on nav hover (`src/lib/routePrefetch.js`); client-side logo downscale (≤512px) before upload; on-prem zip build cached by source mtime; guide downloads carry cache headers (ingress-overridden in hosted). Backend reads already ~90–130ms + gzip.
 - Backlog after this: none outstanding for the auditor/System-Health workstream. Optional tech-debt: split `deploy.py` (~2790 lines) and `SystemHealth.jsx` (~1430 lines) into modules; clean the pre-existing span-in-option hydration warning in SodWatchlist.
 
+
+## SAP UAC — Escalation + Heatmap + Digest Schedule + code split (Jun 2026, iteration_86 — backend 22/22, frontend 100%)
+Follow-up batch complete. Auditor/System-Health workstream is fully delivered.
+- **SLA Escalation** (`escalation-config`): overdue requests past 1.5× SLA escalate to org contacts (email + Slack/Teams), deduped.
+- **SLA Heatmap** (`audit-request-analytics` + `SlaHeatmap`): per-room on-time/breached/pending with on-time %.
+- **Digest Scheduling** (`digest-schedule`): per-org enable + days-of-week (Mon–Sun). Runs on the daily 08:00 UTC platform cron — per-hour not possible (platform 5-cron cap already reached).
+- **Code split**: `deploy.py` → `deploy.py` (core) + `deploy_audit.py` (auditor governance); `SystemHealth.jsx` presentational pieces + `SlaHeatmap` → `src/components/systemhealth/panels.jsx`.
+- Backlog / P2 (optional): deeper `SystemHealth.jsx` state-level split (deferred — audit & evidence share panels/modals); clean pre-existing span-in-option hydration warning in SodWatchlist; add per-hour digest scheduling if a cron slot is freed.
+

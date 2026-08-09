@@ -633,7 +633,7 @@ async def set_escalation_config(body: EscalationBody, user: dict = Depends(get_c
     from bson import ObjectId
     contacts = []
     for e in body.contacts:
-        e = (e or "").strip()
+        e = (e or "").strip().lower()
         if re.match(_EMAIL_RE, e) and e not in contacts:
             contacts.append(e)
     cfg = {"enabled": bool(body.enabled), "contacts": contacts,
