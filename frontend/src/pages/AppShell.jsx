@@ -1,5 +1,6 @@
 import { Suspense, useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate, useLocation, Navigate } from "react-router-dom";
+import { prefetchRoute } from "@/lib/routePrefetch";
 import { useAuth } from "@/context/AuthContext";
 import { SapAdvisor } from "@/components/SapAdvisor";
 import { OnboardingTour } from "@/components/OnboardingTour";
@@ -223,6 +224,7 @@ function SidebarInner({ user, sub, owns, doLogout, onNav, onClose }) {
                     const locked = !owns(ent);
                     return (
                       <NavLink key={n.to} to={n.to} end={n.end} onClick={onNav}
+                        onMouseEnter={() => prefetchRoute(n.to)} onFocus={() => prefetchRoute(n.to)} onTouchStart={() => prefetchRoute(n.to)}
                         data-testid={`nav-${n.label.toLowerCase().replace(/ &/g, "").replace(/ /g, "-")}`}
                         className={({ isActive }) => `flex items-center justify-between gap-3 px-3 py-2.5 rounded-md text-sm transition-colors duration-200 ${
                           isActive && !locked ? "bg-primary/15 text-foreground border border-primary/30" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}`}>

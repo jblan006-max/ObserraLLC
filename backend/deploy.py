@@ -30,10 +30,15 @@ onprem_pack = _ilu.module_from_spec(_pack_spec)
 _pack_spec.loader.exec_module(onprem_pack)
 
 
+_DL_CACHE_HEADERS = {"Cache-Control": "private, max-age=300"}
+
+
 def _serve_guide(path, media, fname):
     if not os.path.exists(path):
         raise HTTPException(404, "Guide not generated yet")
-    return FileResponse(path, media_type=media, filename=fname)
+    # Cache-Control + FileResponse's ETag/Last-Modified let the browser 304-revalidate large
+    # guides (2.6MB PDF) instead of re-transferring on every download.
+    return FileResponse(path, media_type=media, filename=fname, headers=dict(_DL_CACHE_HEADERS))
 
 
 @deploy_router.get("/onprem-package")
@@ -57,7 +62,8 @@ async def guide_pdf(user: dict = Depends(get_current_user)):
     if not os.path.exists(_GUIDE_PDF):
         raise HTTPException(404, "Guide not generated yet")
     return FileResponse(_GUIDE_PDF, media_type="application/pdf",
-                        filename="Obserra-SAP-UAC-Install-and-User-Guide.pdf")
+                        filename="Obserra-SAP-UAC-Install-and-User-Guide.pdf",
+                        headers=dict(_DL_CACHE_HEADERS))
 
 
 @deploy_router.get("/guide.docx")
@@ -69,7 +75,8 @@ async def guide_docx(user: dict = Depends(get_current_user)):
     return FileResponse(
         _GUIDE_DOCX,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename="Obserra-SAP-UAC-Install-and-User-Guide.docx")
+        filename="Obserra-SAP-UAC-Install-and-User-Guide.docx",
+        headers=dict(_DL_CACHE_HEADERS))
 
 
 @deploy_router.get("/guide-exec.pdf")
@@ -100,7 +107,27 @@ async def guide_admin_docx(user: dict = Depends(get_current_user)):
     return _serve_guide(_GUIDE_ADMIN_DOCX, _DOCX_MT, "Obserra-SAP-UAC-Admin-Operator-Guide.docx")
 
 
+_ONPREM_ZIP_CACHE = {"key": None, "data": None}
+
+
+def _onprem_source_key() -> str:
+    """Fingerprint the package sources so the 6.6MB zip is rebuilt only when something changes."""
+    try:
+        mt = 0.0
+        for src, _arc in onprem_pack.iter_files():
+            try:
+                mt = max(mt, os.path.getmtime(src))
+            except OSError:
+                pass
+        return f"{onprem_pack.read_version()}:{mt:.0f}"
+    except Exception:
+        return "nokey"
+
+
 def _build_onprem_zip() -> bytes:
+    key = _onprem_source_key()
+    if _ONPREM_ZIP_CACHE["key"] == key and _ONPREM_ZIP_CACHE["data"] is not None:
+        return _ONPREM_ZIP_CACHE["data"]
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for src, arc in onprem_pack.iter_files():
@@ -108,7 +135,9 @@ def _build_onprem_zip() -> bytes:
         z.writestr(f"{onprem_pack.PKG}/.dockerignore", onprem_pack.DOCKERIGNORE)
         z.writestr(f"{onprem_pack.PKG}/VERSION", onprem_pack.read_version() + "\n")
         z.writestr(f"{onprem_pack.PKG}/BUILD_INFO", onprem_pack.build_info())
-    return buf.getvalue()
+    data = buf.getvalue()
+    _ONPREM_ZIP_CACHE.update(key=key, data=data)
+    return data
 
 
 def regenerate_guides(capture: bool = False):
@@ -2551,42 +2580,54 @@ async def _run_audit_room_expiry_reminders(within_days: int = 3):
             pass
 
 
-async def _run_overdue_request_digest(sla_hours: int = 72):
-    """Folded into the daily cron: email admins/execs a daily summary of auditor requests open past SLA."""
+async def _run_overdue_request_digest(sla_hours: int | None = None):
+    """Folded into the daily cron: email + Slack/Teams a summary of auditor requests open past their CONFIGURED SLA (org-wide target with per-room overrides)."""
     from datetime import datetime, timezone, timedelta
     from bson import ObjectId
     from kernel import notifications
+    import secrets as _secrets
     now = datetime.now(timezone.utc)
-    cutoff = (now - timedelta(hours=sla_hours)).isoformat()
     today = now.date().isoformat()
     rows = await db.audit_room_comments.find(
-        {"status": {"$ne": "Resolved"}, "at": {"$lt": cutoff}}, {"_id": 0}).to_list(2000)
+        {"status": {"$ne": "Resolved"}}, {"_id": 0}).to_list(5000)
     by_org = {}
     for r in rows:
         by_org.setdefault(r["org_id"], []).append(r)
 
-    def _age(iso):
+    def _hours(iso):
         try:
-            h = (now - datetime.fromisoformat(iso)).total_seconds() / 3600
-            return f"{int(h // 24)}d" if h >= 24 else f"{int(h)}h"
+            return (now - datetime.fromisoformat(iso)).total_seconds() / 3600
         except Exception:
-            return "—"
+            return 0.0
 
-    for org_id, items in by_org.items():
+    def _age(h):
+        return f"{int(h // 24)}d" if h >= 24 else f"{int(h)}h"
+
+    for org_id, all_items in by_org.items():
         try:
             org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+            base, smap = await _sla_map(org_id, org)
+            items = []
+            for x in all_items:
+                sla = smap.get(x.get("token"), base)
+                age = _hours(x.get("at", ""))
+                if age >= sla:
+                    x["_age_h"], x["_sla"] = age, sla
+                    items.append(x)
+            if not items:
+                continue
             if ((org.get("system_health") or {}).get("overdue_digest_date")) == today:
                 continue
             oname = org.get("name") or "your organization"
             items.sort(key=lambda x: x.get("at", ""))
             li = "".join(
-                f"<li><strong>{_esc_html(x.get('author', 'Auditor'))}</strong> — waiting {_age(x.get('at', ''))} · "
-                f"<span style='color:#6b7280'>{_esc_html((x.get('comment') or '')[:120])}</span></li>"
+                f"<li><strong>{_esc_html(x.get('author', 'Auditor'))}</strong> — waiting {_age(x['_age_h'])} "
+                f"(SLA {x['_sla']}h) · <span style='color:#6b7280'>{_esc_html((x.get('comment') or '')[:120])}</span></li>"
                 for x in items[:20])
             link = (os.environ.get("FRONTEND_URL", "").rstrip("/")) + "/app/system-health"
             html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
-                    f"<h2 style='color:#b45309'>{len(items)} auditor request(s) open past SLA</h2>"
-                    f"<p>These auditor requests for <strong>{_esc_html(oname)}</strong> have been open longer than {sla_hours // 24} day(s):</p>"
+                    f"<h2 style='color:#b45309'>{len(items)} auditor request(s) past SLA</h2>"
+                    f"<p>These auditor requests for <strong>{_esc_html(oname)}</strong> have been open past their SLA target (org default {base}h, with per-room overrides):</p>"
                     f"<ul>{li}</ul>"
                     f"<p style='margin:16px 0'><a href='{link}' style='background:#2f6df6;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600' target='_blank'>Open the Audit Requests inbox</a></p>"
                     f"<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — System Health · Audit Requests</p></div>")
@@ -2598,22 +2639,30 @@ async def _run_overdue_request_digest(sla_hours: int = 72):
                 except Exception:
                     pass
             try:
-                import secrets as _secrets
-                base = os.environ.get("FRONTEND_URL", "").rstrip("/")
+                base_url = os.environ.get("FRONTEND_URL", "").rstrip("/")
                 slines = []
                 for x in items[:10]:
+                    cid = x.get("id")
+                    if not cid:
+                        continue
                     tok = x.get("action_token")
-                    if not tok:
+                    if not tok or _action_expired(x):
                         tok = _secrets.token_urlsafe(16)
-                        await db.audit_room_comments.update_one({"id": x["id"], "org_id": org_id}, {"$set": {"action_token": tok}})
-                    slines.append(f"• {x.get('author', 'Auditor')} — waiting {_age(x.get('at', ''))}: {(x.get('comment') or '')[:90]}\n   Resolve/reply: {base}/api/deploy/req-action/{tok}")
-                body = (f"{len(items)} auditor request(s) have been open longer than {sla_hours // 24} day(s):\n"
-                        + "\n".join(slines) + "\n\nOr open System Health → Audit Requests.")
-                await _route_alert(org, {"slack": True, "teams": True}, f"⚠ {len(items)} audit request(s) past SLA", body)
+                        exp = (now + timedelta(days=_ACTION_TTL_DAYS)).isoformat()
+                        await db.audit_room_comments.update_one(
+                            {"id": cid, "org_id": org_id},
+                            {"$set": {"action_token": tok, "action_expires_at": exp}})
+                    slines.append(
+                        f"• {x.get('author', 'Auditor')} — waiting {_age(x['_age_h'])} (SLA {x['_sla']}h): {(x.get('comment') or '')[:90]}\n"
+                        f"   Resolve/reply (link expires in {_ACTION_TTL_DAYS}d): {base_url}/api/deploy/req-action/{tok}")
+                if slines:
+                    body = (f"{len(items)} auditor request(s) are open past their SLA target:\n"
+                            + "\n".join(slines) + "\n\nOr open System Health → Audit Requests.")
+                    await _route_alert(org, {"slack": True, "teams": True}, f"⚠ {len(items)} audit request(s) past SLA", body)
             except Exception:
                 pass
             await notifications.create(org_id, "system", "Audit requests past SLA",
-                                       f"{len(items)} auditor request(s) have been open longer than {sla_hours // 24} day(s).",
+                                       f"{len(items)} auditor request(s) are open past their SLA target.",
                                        ref="system-health", dedupe_key=f"overdue-req:{today}")
             await db.organizations.update_one({"_id": ObjectId(org_id)},
                                               {"$set": {"system_health.overdue_digest_date": today}})

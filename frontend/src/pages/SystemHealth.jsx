@@ -9,6 +9,7 @@ import {
   HardDriveDownload, RotateCcw, ShieldCheck, AlertTriangle, RefreshCw, Building2, Terminal, CheckCircle2,
   Save, Mail, MessageSquare, Slack, Zap, Archive, Lock, Send, FileText, KeyRound, Eye, History, FileCheck2,
   Share2, Copy, X, Trash2, DoorOpen, Link2, Palette, MessageCircle, Ban, Download, Pencil, Plus,
+  TrendingUp, Timer,
 } from "lucide-react";
 
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
@@ -102,6 +103,27 @@ function UptimeStrip({ points, range, setRange }) {
   );
 }
 
+function Sparkline({ points, testid }) {
+  const vals = (points || []).map((p) => (p.median_hours == null ? null : p.median_hours));
+  const nums = vals.filter((v) => v != null);
+  if (nums.length < 2) return <span className="text-[11px] text-muted-foreground" data-testid={testid}>Not enough history yet</span>;
+  const max = Math.max(...nums, 1);
+  const w = 128, h = 26, n = vals.length;
+  const step = n > 1 ? w / (n - 1) : w;
+  const y = (v) => (h - (v / max) * (h - 4) - 2);
+  const line = vals.map((v, i) => (v == null ? null : `${(i * step).toFixed(1)},${y(v).toFixed(1)}`)).filter(Boolean).join(" ");
+  const last = nums[nums.length - 1];
+  return (
+    <span className="inline-flex items-center gap-2" data-testid={testid} title="Weekly median response time (hours)">
+      <svg width={w} height={h} className="overflow-visible" aria-hidden="true">
+        <polyline points={line} fill="none" stroke="hsl(var(--primary))" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+        {vals.map((v, i) => (v == null ? null : <circle key={i} cx={(i * step).toFixed(1)} cy={y(v).toFixed(1)} r="1.6" fill="hsl(var(--primary))" />))}
+      </svg>
+      <span className="text-[11px] font-mono text-muted-foreground">{last}h latest</span>
+    </span>
+  );
+}
+
 export default function SystemHealth() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
@@ -166,6 +188,9 @@ export default function SystemHealth() {
   const [bulkStatus, setBulkStatus] = useState("Resolved");
   const [exporting, setExporting] = useState(false);
   const [reqStats, setReqStats] = useState(null);
+  const [slaCfg, setSlaCfg] = useState(null);
+  const [savingSla, setSavingSla] = useState(false);
+  const [selectAcross, setSelectAcross] = useState(false);
 
   const loadHealth = useCallback(async () => {
     try { const { data } = await api.get("/health"); setHealth(data); } catch { setHealth((h) => h || { status: "degraded", checks: {} }); }
@@ -215,6 +240,10 @@ export default function SystemHealth() {
     if (!isAdmin) return;
     try { const { data } = await api.get("/deploy/audit-request-analytics"); setReqStats(data); } catch { /* ignore */ }
   }, [isAdmin]);
+  const loadSla = useCallback(async () => {
+    if (!isAdmin) return;
+    try { const { data } = await api.get("/deploy/sla-config"); setSlaCfg(data); } catch { /* ignore */ }
+  }, [isAdmin]);
   const loadCfg = useCallback(async () => {
     if (!isAdmin) return;
     try {
@@ -225,9 +254,9 @@ export default function SystemHealth() {
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([loadHealth(), loadDetail(), loadVer(), loadHistory(), loadBackups(), loadUpgrade(), loadCfg(), loadEvidence(), loadPreviews(), loadShares(), loadRooms(), loadComments(), loadTemplates(), loadAnalytics()]);
+    await Promise.all([loadHealth(), loadDetail(), loadVer(), loadHistory(), loadBackups(), loadUpgrade(), loadCfg(), loadEvidence(), loadPreviews(), loadShares(), loadRooms(), loadComments(), loadTemplates(), loadAnalytics(), loadSla()]);
     setRefreshing(false);
-  }, [loadHealth, loadDetail, loadVer, loadHistory, loadBackups, loadUpgrade, loadCfg, loadEvidence, loadPreviews, loadShares, loadRooms, loadComments, loadTemplates, loadAnalytics]);
+  }, [loadHealth, loadDetail, loadVer, loadHistory, loadBackups, loadUpgrade, loadCfg, loadEvidence, loadPreviews, loadShares, loadRooms, loadComments, loadTemplates, loadAnalytics, loadSla]);
 
   useEffect(() => { refreshAll(); }, [refreshAll]);
 
@@ -422,7 +451,27 @@ export default function SystemHealth() {
     if (!file) return;
     if (file.size > 1400000) { toast.error("Logo too large (max ~1.4MB)"); return; }
     const reader = new FileReader();
-    reader.onload = () => setBrandLogo(reader.result);
+    reader.onload = () => {
+      const raw = reader.result;
+      if (file.type === "image/svg+xml") { setBrandLogo(raw); return; }
+      // Downscale raster logos client-side (max 512px) so the upload payload is small + fast.
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const max = 512;
+          const scale = Math.min(1, max / Math.max(img.width, img.height));
+          const w = Math.max(1, Math.round(img.width * scale));
+          const h = Math.max(1, Math.round(img.height * scale));
+          const canvas = document.createElement("canvas");
+          canvas.width = w; canvas.height = h;
+          canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+          const out = canvas.toDataURL(file.type === "image/png" ? "image/png" : "image/jpeg", 0.85);
+          setBrandLogo(out && out.length < raw.length ? out : raw);
+        } catch { setBrandLogo(raw); }
+      };
+      img.onerror = () => setBrandLogo(raw);
+      img.src = raw;
+    };
     reader.readAsDataURL(file);
   };
   const saveRoomBranding = async () => {
@@ -467,6 +516,38 @@ export default function SystemHealth() {
       setSelectedIds(new Set());
       await Promise.all([loadComments(), loadAnalytics()]);
     } catch (e) { toast.error(e.response?.data?.detail || "Bulk update failed"); }
+  };
+  const bulkSetStatusAcross = async () => {
+    try {
+      const { data } = await api.post("/deploy/audit-room-comments/bulk-status-filter", {
+        status: bulkStatus,
+        filter_status: inboxStatus === "all" ? null : inboxStatus,
+        room_token: inboxRoom === "all" ? null : inboxRoom,
+      });
+      toast.success(`${data.updated} request(s) set to ${bulkStatus}`, { description: "Applied to every request matching this filter." });
+      setSelectedIds(new Set()); setSelectAcross(false);
+      await Promise.all([loadComments(), loadAnalytics()]);
+    } catch (e) { toast.error(e.response?.data?.detail || "Bulk update failed"); }
+  };
+  const saveOrgSla = async () => {
+    setSavingSla(true);
+    try {
+      const v = Math.max(1, Math.min(720, parseInt(slaCfg.org_sla_hours, 10) || 72));
+      const { data } = await api.put("/deploy/sla-config", { sla_hours: v });
+      toast.success(`Response SLA set to ${data.sla_hours}h`);
+      await loadSla();
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't save SLA"); }
+    setSavingSla(false);
+  };
+  const saveRoomSla = async (token, val, current) => {
+    const raw = String(val ?? "").trim();
+    const num = raw === "" ? null : Math.max(1, Math.min(720, parseInt(raw, 10) || 0));
+    if (num === (current ?? null)) return;
+    try {
+      await api.put(`/deploy/audit-room/${token}/sla`, { sla_hours: num });
+      toast.success(num == null ? "Room now uses the org default SLA" : `Room SLA set to ${num}h`);
+      await loadSla();
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't save room SLA"); }
   };
   const exportComments = async () => {
     setExporting(true);
@@ -947,6 +1028,51 @@ export default function SystemHealth() {
         </div>
       )}
 
+      {isAdmin && slaCfg && (
+        <div className="bg-card fact-border rounded-xl p-5" data-testid="sh-sla-panel">
+          <div className="flex items-center gap-2 mb-3">
+            <Timer className="w-4 h-4 text-primary" />
+            <h2 className="font-head font-bold text-lg">Response SLA Targets</h2>
+            <span className="text-[11px] text-muted-foreground">How long an auditor request may stay open before it's flagged overdue (email + Slack/Teams)</span>
+          </div>
+          <div className="flex flex-wrap items-end gap-3 mb-3">
+            <div>
+              <label className="block text-[11px] text-muted-foreground mb-1">Organization default (hours)</label>
+              <input type="number" min="1" max="720" data-testid="sh-sla-org-input" value={slaCfg.org_sla_hours ?? ""}
+                onChange={(e) => setSlaCfg((s) => ({ ...s, org_sla_hours: e.target.value }))}
+                onKeyDown={(e) => { if (e.key === "Enter") saveOrgSla(); }}
+                className="h-8 w-28 rounded-md border border-border bg-secondary/40 px-2 text-sm outline-none focus:ring-1 focus:ring-primary" />
+            </div>
+            <Button size="sm" className="gap-1.5 h-8" data-testid="sh-sla-org-save" onClick={saveOrgSla} disabled={savingSla}>
+              {savingSla ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save
+            </Button>
+            <span className="text-[11px] text-muted-foreground">Platform default {slaCfg.default}h · applies to every room unless overridden below</span>
+          </div>
+          {slaCfg.rooms?.length > 0 ? (
+            <div className="space-y-1.5">
+              {slaCfg.rooms.map((r) => (
+                <div key={r.token} className="flex flex-wrap items-center gap-2 bg-secondary/25 rounded-lg px-3 py-2" data-testid={`sh-sla-room-${r.token}`}>
+                  <DoorOpen className="w-3.5 h-3.5 text-ai shrink-0" />
+                  <span className="text-xs font-medium">{r.label}</span>
+                  <span className="text-[11px] text-muted-foreground">effective {r.effective}h{r.override ? " (override)" : " (org default)"}</span>
+                  <input key={`${r.token}-${r.override}`} type="number" min="1" max="720" placeholder={`default ${slaCfg.org_sla_hours}h`} data-testid={`sh-sla-room-input-${r.token}`}
+                    defaultValue={r.override || ""}
+                    onBlur={(e) => saveRoomSla(r.token, e.target.value, r.override)}
+                    onKeyDown={(e) => { if (e.key === "Enter") e.target.blur(); }}
+                    className="h-7 w-28 rounded-md border border-border bg-secondary/40 px-2 text-[11px] ml-auto outline-none focus:ring-1 focus:ring-primary" />
+                  {r.override && (
+                    <Button size="sm" variant="ghost" className="h-7 px-2 text-[11px] text-muted-foreground" data-testid={`sh-sla-room-clear-${r.token}`}
+                      onClick={() => saveRoomSla(r.token, "", r.override)}>Use default</Button>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted-foreground" data-testid="sh-sla-no-rooms">No active audit rooms — the org default applies to all requests. Create an Audit Room to set per-room overrides.</p>
+          )}
+        </div>
+      )}
+
       {isAdmin && comments.length > 0 && (
         <div className="bg-card fact-border rounded-xl p-5" data-testid="sh-comments-panel">
           <div className="flex flex-wrap items-center gap-2 mb-3">
@@ -958,14 +1084,14 @@ export default function SystemHealth() {
                 <input type="checkbox" data-testid="sh-select-all" checked={filteredComments.length > 0 && filteredComments.every((c) => selectedIds.has(c.id))} onChange={(e) => toggleSelectAll(e.target.checked)} className="w-3.5 h-3.5 accent-primary" />
                 Select all
               </label>
-              <select data-testid="sh-inbox-status-filter" value={inboxStatus} onChange={(e) => setInboxStatus(e.target.value)} className="h-7 rounded-md border border-border bg-secondary/40 px-2 text-[11px]">
+              <select data-testid="sh-inbox-status-filter" value={inboxStatus} onChange={(e) => { setInboxStatus(e.target.value); setSelectedIds(new Set()); setSelectAcross(false); }} className="h-7 rounded-md border border-border bg-secondary/40 px-2 text-[11px]">
                 <option value="all">All statuses</option>
                 <option value="Open">Open</option>
                 <option value="In Progress">In Progress</option>
                 <option value="Resolved">Resolved</option>
               </select>
               {roomOptions.length > 1 && (
-                <select data-testid="sh-inbox-room-filter" value={inboxRoom} onChange={(e) => setInboxRoom(e.target.value)} className="h-7 rounded-md border border-border bg-secondary/40 px-2 text-[11px]">
+                <select data-testid="sh-inbox-room-filter" value={inboxRoom} onChange={(e) => { setInboxRoom(e.target.value); setSelectedIds(new Set()); setSelectAcross(false); }} className="h-7 rounded-md border border-border bg-secondary/40 px-2 text-[11px]">
                   <option value="all">All rooms</option>
                   {roomOptions.map((r) => (<option key={r.token} value={r.token}>{r.label}</option>))}
                 </select>
@@ -994,6 +1120,12 @@ export default function SystemHealth() {
                   </div>
                 )}
               </div>
+              {reqStats.trend?.length > 0 && (
+                <div className="flex items-center gap-2 mt-2" data-testid="sh-request-trend">
+                  <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1"><TrendingUp className="w-3 h-3" /> Weekly median</span>
+                  <Sparkline points={reqStats.trend} testid="sh-request-trend-spark" />
+                </div>
+              )}
               {reqStats.rooms?.length > 1 && (
                 <div className="flex flex-wrap gap-2 mt-2 text-[11px]" data-testid="sh-request-analytics-rooms">
                   {reqStats.rooms.map((r) => (
@@ -1005,14 +1137,24 @@ export default function SystemHealth() {
           )}
           {selectedIds.size > 0 && (
             <div className="flex flex-wrap items-center gap-2 mb-2 bg-primary/10 border border-primary/30 rounded-lg px-3 py-2" data-testid="sh-bulk-bar">
-              <span className="text-xs font-semibold">{selectedIds.size} selected</span>
+              <span className="text-xs font-semibold">{selectAcross ? "All matching requests selected" : `${selectedIds.size} selected`}</span>
+              {!selectAcross && filteredComments.length > 0 && filteredComments.every((c) => selectedIds.has(c.id)) && (
+                <button type="button" data-testid="sh-select-across" className="text-[11px] text-primary underline underline-offset-2 hover:opacity-80"
+                  onClick={() => setSelectAcross(true)}>
+                  Select all requests matching this filter{(inboxStatus !== "all" || inboxRoom !== "all") ? " (across pages)" : ""}
+                </button>
+              )}
+              {selectAcross && (
+                <button type="button" data-testid="sh-select-across-clear" className="text-[11px] text-muted-foreground underline underline-offset-2"
+                  onClick={() => setSelectAcross(false)}>only the {selectedIds.size} shown</button>
+              )}
               <select value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)} data-testid="sh-bulk-status" className="h-7 rounded-md border border-border bg-secondary/40 px-2 text-[11px] ml-auto">
                 <option value="Open">Open</option>
                 <option value="In Progress">In Progress</option>
                 <option value="Resolved">Resolved</option>
               </select>
-              <Button size="sm" className="h-7 px-3 text-[11px]" data-testid="sh-bulk-apply" onClick={bulkSetStatus}>Apply</Button>
-              <Button size="sm" variant="outline" className="h-7 px-3 text-[11px]" data-testid="sh-bulk-clear" onClick={() => setSelectedIds(new Set())}>Clear</Button>
+              <Button size="sm" className="h-7 px-3 text-[11px]" data-testid="sh-bulk-apply" onClick={selectAcross ? bulkSetStatusAcross : bulkSetStatus}>Apply</Button>
+              <Button size="sm" variant="outline" className="h-7 px-3 text-[11px]" data-testid="sh-bulk-clear" onClick={() => { setSelectedIds(new Set()); setSelectAcross(false); }}>Clear</Button>
             </div>
           )}
           <div className="space-y-3">

@@ -1,0 +1,26 @@
+{
+  "summary": "Iteration 85 – tested the 3 new System Health features (SLA Targets, Analytics Trend sparkline, Select Across Filters) plus optimization regressions (nav prefetch, branding upload, admin downloads) for Obserra SAP UAC. Backend: 13/13 pytest cases passing (SLA config GET/PUT, per-room SLA PUT+clear, analytics trend, bulk-status-filter, 4 admin downloads, auth gating). Frontend: SLA panel org save persists (48→verified via GET), room override 24 shows 'effective 24h (override)' + Use default reverts to 'effective 48h (org default)'. Trend row renders with 'Weekly median: Not enough history yet' and sparkline element present. Select all reveals bulk bar ('3 selected'), Select across link switches to 'All matching requests selected' and Apply -> POST bulk-status-filter returns 200 {updated:1}. Filter change clears selection. Normal bulk-status works too. Branding modal opens, image upload + Save returns 200 (toast 'Audit Room branding saved'). Left-nav clicks navigate correctly to SoD, Identities, Workflow Activity, System Health (hover-prefetch does not block clicks). Final state restored: org_sla_hours=72, both room overrides null, at least 1 open audit request retained.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "SoD Command Center (SodWatchlist)", "issues": ["React hydration warning: <span> rendered as child of <option> in watchlist select. Pre-existing, unrelated to this batch, but should be cleaned up (remove data-ve span from option label)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_sla_and_bulk.py",
+    "/app/test_reports/pytest/iter85.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Consider suppressing/removing the ve tooling <span style=display:contents> injected inside <option> in SodWatchlist to eliminate the hydration warning noise."
+  ],
+  "updated_files": ["/app/backend/tests/test_sla_and_bulk.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (cookie login; must submit via Enter key or click auth-submit)",
+  "seed_data_creation": "None — used existing demo org (2 rooms, 3 auditor comments). Restored org SLA=72, room overrides cleared, and set one comment back to Open at the end.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest suite lives at /app/backend/tests/test_sla_and_bulk.py; run with `REACT_APP_BACKEND_URL=<url> pytest -o addopts='' backend/tests/test_sla_and_bulk.py`. Valid statuses for bulk-status endpoints are capitalized: 'Open' | 'In Progress' | 'Resolved'. SLA config response fields are 'org_sla_hours','default','rooms[].{token,label,override,effective}'. For Playwright login, page.press('input[type=password]','Enter') is more reliable than clicking the submit button (there are 2 buttons with text 'Sign in' — the tab and the submit)."
+}
