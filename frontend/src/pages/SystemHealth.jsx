@@ -7,11 +7,13 @@ import { toast } from "sonner";
 import {
   Activity, Database, Plug, Clock, ServerCog, ArrowUpCircle, DownloadCloud, Loader2,
   HardDriveDownload, RotateCcw, ShieldCheck, AlertTriangle, RefreshCw, Building2, Terminal, CheckCircle2,
-  Save, Mail, MessageSquare, Slack, Zap, Archive,
+  Save, Mail, MessageSquare, Slack, Zap, Archive, Lock, Send,
 } from "lucide-react";
 
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
 const fmtBytes = (b) => (b == null ? "—" : b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`);
+const DOT_COLOR = { ok: "142 70% 45%", degraded: "35 90% 55%", down: "0 84% 60%" };
+const RANGES = [{ label: "24h", h: 24 }, { label: "7d", h: 168 }, { label: "30d", h: 720 }];
 
 function HealthTile({ label, value, sub, accent, icon: Icon, ok, testid }) {
   return (
@@ -31,26 +33,52 @@ function HealthTile({ label, value, sub, accent, icon: Icon, ok, testid }) {
   );
 }
 
-const DOT_COLOR = { ok: "142 70% 45%", degraded: "35 90% 55%", down: "0 84% 60%" };
+function bucketize(points, hours) {
+  const now = Date.now();
+  const start = now - hours * 3600 * 1000;
+  const cols = hours <= 24 ? 48 : hours <= 168 ? 84 : 60;
+  const width = (now - start) / cols;
+  const rank = { ok: 0, degraded: 1, down: 2 };
+  const buckets = Array.from({ length: cols }, (_, i) => ({ status: null, count: 0, start: start + i * width }));
+  (points || []).forEach((p) => {
+    const t = new Date(p.at).getTime();
+    if (t < start || t > now) return;
+    const idx = Math.min(cols - 1, Math.max(0, Math.floor((t - start) / width)));
+    const b = buckets[idx];
+    b.count++;
+    if (b.status === null || rank[p.status] > rank[b.status]) b.status = p.status;
+  });
+  return buckets;
+}
 
-function UptimeStrip({ points }) {
+function UptimeStrip({ points, range, setRange }) {
   const pts = points || [];
   const upPct = pts.length ? Math.round((pts.filter((p) => p.healthy).length / pts.length) * 100) : null;
+  const buckets = bucketize(pts, range);
   return (
     <div className="bg-card fact-border rounded-xl p-5" data-testid="sh-uptime-panel">
-      <div className="flex items-center justify-between gap-2 mb-3">
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
         <div className="flex items-center gap-2">
           <Activity className="w-4 h-4 text-primary" />
-          <h2 className="font-head font-bold text-lg">Uptime — last 24 hours</h2>
+          <h2 className="font-head font-bold text-lg">Uptime</h2>
+          {upPct != null && <span className="text-xs font-mono text-muted-foreground" data-testid="sh-uptime-pct">{upPct}% healthy · {pts.length} samples</span>}
         </div>
-        {upPct != null && <span className="text-xs font-mono text-muted-foreground" data-testid="sh-uptime-pct">{upPct}% healthy · {pts.length} samples</span>}
+        <div className="flex items-center gap-1 bg-secondary/50 rounded-lg p-0.5" data-testid="sh-uptime-range">
+          {RANGES.map((r) => (
+            <button key={r.h} data-testid={`sh-range-${r.label}`} onClick={() => setRange(r.h)}
+              className={`px-2.5 py-1 rounded-md text-xs font-mono transition-colors ${range === r.h ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+              {r.label}
+            </button>
+          ))}
+        </div>
       </div>
       {pts.length ? (
-        <div className="flex items-end gap-[3px] flex-wrap" data-testid="sh-uptime-dots">
-          {pts.map((p, i) => (
-            <span key={i} title={`${fmtDT(p.at)} — ${p.status}${p.degraded_count ? ` (${p.degraded_count} connector issues)` : ""}`}
+        <div className="flex items-end gap-[2px] flex-wrap" data-testid="sh-uptime-dots">
+          {buckets.map((b, i) => (
+            <span key={i} title={`${fmtDT(new Date(b.start).toISOString())} — ${b.status || "no data"}`}
               className="w-2 h-6 rounded-sm transition-transform hover:scale-125"
-              style={{ background: `hsl(${DOT_COLOR[p.status] || DOT_COLOR.degraded})` }} data-testid={`sh-uptime-dot-${i}`} />
+              style={{ background: b.status ? `hsl(${DOT_COLOR[b.status]})` : "hsl(var(--muted-foreground) / 0.15)" }}
+              data-testid={`sh-uptime-dot-${i}`} />
           ))}
         </div>
       ) : (
@@ -69,18 +97,25 @@ export default function SystemHealth() {
   const [backups, setBackups] = useState([]);
   const [upgrade, setUpgrade] = useState(null);
   const [history, setHistory] = useState([]);
+  const [range, setRange] = useState(24);
   const [bcfg, setBcfg] = useState(null);
   const [acfg, setAcfg] = useState(null);
+  const [encEnabled, setEncEnabled] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
   const [upgrading, setUpgrading] = useState(false);
   const [savingCfg, setSavingCfg] = useState(false);
   const [savingAlerts, setSavingAlerts] = useState(false);
+  const [testingAlert, setTestingAlert] = useState(false);
   const [reprobing, setReprobing] = useState(null);
   const logRef = useRef(null);
   const [restoreTarget, setRestoreTarget] = useState(null);
   const [confirmText, setConfirmText] = useState("");
+  const [restorePass, setRestorePass] = useState("");
   const [restoring, setRestoring] = useState(false);
+  const [encModal, setEncModal] = useState(null); // 'enable' | 'disable'
+  const [encPass, setEncPass] = useState("");
+  const [encBusy, setEncBusy] = useState(false);
 
   const loadHealth = useCallback(async () => {
     try { const { data } = await api.get("/health"); setHealth(data); } catch { setHealth((h) => h || { status: "degraded", checks: {} }); }
@@ -92,8 +127,8 @@ export default function SystemHealth() {
     try { const { data } = await api.get("/deploy/version"); setVer(data); } catch { /* ignore */ }
   }, []);
   const loadHistory = useCallback(async () => {
-    try { const { data } = await api.get("/deploy/health-history?hours=24"); setHistory(data.points || []); } catch { /* ignore */ }
-  }, []);
+    try { const { data } = await api.get(`/deploy/health-history?hours=${range}`); setHistory(data.points || []); } catch { /* ignore */ }
+  }, [range]);
   const loadBackups = useCallback(async () => {
     if (!isAdmin) return;
     try { const { data } = await api.get("/deploy/backups"); setBackups(data.backups || []); } catch { /* ignore */ }
@@ -105,8 +140,8 @@ export default function SystemHealth() {
   const loadCfg = useCallback(async () => {
     if (!isAdmin) return;
     try {
-      const [b, a] = await Promise.all([api.get("/deploy/backup-config"), api.get("/deploy/health-config")]);
-      setBcfg(b.data); setAcfg(a.data.alerts);
+      const [b, a, e] = await Promise.all([api.get("/deploy/backup-config"), api.get("/deploy/health-config"), api.get("/deploy/backup-encryption")]);
+      setBcfg(b.data); setAcfg(a.data.alerts); setEncEnabled(!!e.data.enabled);
     } catch { /* ignore */ }
   }, [isAdmin]);
 
@@ -136,7 +171,7 @@ export default function SystemHealth() {
     setBackingUp(true);
     try {
       const { data } = await api.post("/deploy/backup");
-      toast.success("Backup created", { description: `${data.docs} document(s) across ${data.collections} collection(s) · ${fmtBytes(data.size)}` });
+      toast.success(`Backup created${data.encrypted ? " (encrypted)" : ""}`, { description: `${data.docs} document(s) across ${data.collections} collection(s) · ${fmtBytes(data.size)}` });
       await loadBackups();
     } catch (e) { toast.error(e.response?.data?.detail || "Backup failed"); }
     setBackingUp(false);
@@ -144,25 +179,46 @@ export default function SystemHealth() {
 
   const saveBackupCfg = async () => {
     setSavingCfg(true);
-    try {
-      const { data } = await api.put("/deploy/backup-config", bcfg);
-      setBcfg(data);
-      toast.success("Backup schedule saved");
-    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't save schedule"); }
+    try { const { data } = await api.put("/deploy/backup-config", bcfg); setBcfg(data); toast.success("Backup schedule saved"); }
+    catch (e) { toast.error(e.response?.data?.detail || "Couldn't save schedule"); }
     setSavingCfg(false);
   };
 
-  const toggleAlert = (event, channel) => {
-    setAcfg((prev) => ({ ...prev, [event]: { ...prev[event], [channel]: !prev[event][channel] } }));
+  const submitEnc = async () => {
+    setEncBusy(true);
+    try {
+      if (encModal === "enable") {
+        await api.put("/deploy/backup-encryption", { passphrase: encPass });
+        toast.success("Snapshot encryption enabled", { description: "New backups are encrypted at rest. Keep this passphrase safe — it's required to restore." });
+      } else {
+        await api.post("/deploy/backup-encryption/disable", { passphrase: encPass });
+        toast.success("Snapshot encryption disabled");
+      }
+      setEncModal(null); setEncPass("");
+      await loadCfg();
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't update encryption"); }
+    setEncBusy(false);
   };
+
+  const toggleAlert = (event, channel) => setAcfg((prev) => ({ ...prev, [event]: { ...prev[event], [channel]: !prev[event][channel] } }));
   const saveAlertCfg = async () => {
     setSavingAlerts(true);
-    try {
-      const { data } = await api.put("/deploy/health-config", acfg);
-      setAcfg(data.alerts);
-      toast.success("Alert routing saved");
-    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't save routing"); }
+    try { const { data } = await api.put("/deploy/health-config", acfg); setAcfg(data.alerts); toast.success("Alert routing saved"); }
+    catch (e) { toast.error(e.response?.data?.detail || "Couldn't save routing"); }
     setSavingAlerts(false);
+  };
+  const testAlert = async () => {
+    setTestingAlert(true);
+    try {
+      const { data } = await api.post("/deploy/health-alert-test");
+      const parts = [];
+      if (data.slack_configured) parts.push("Slack");
+      if (data.teams_configured) parts.push("Teams");
+      parts.push("Email (admins/execs)");
+      const noChat = !data.slack_configured && !data.teams_configured;
+      toast.success("Test alert dispatched", { description: `Attempted: ${parts.join(", ")}.${noChat ? " Add Slack/Teams webhooks in Settings to page chat channels." : " Check those channels now."}` });
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't send test alert"); }
+    setTestingAlert(false);
   };
 
   const reprobe = async (cid) => {
@@ -176,12 +232,15 @@ export default function SystemHealth() {
     setReprobing(null);
   };
 
-  const openRestore = (b) => { setRestoreTarget(b); setConfirmText(""); };
+  const openRestore = (b) => { setRestoreTarget(b); setConfirmText(""); setRestorePass(""); };
   const doRestore = async () => {
     if (confirmText.trim().toUpperCase() !== "RESTORE" || !restoreTarget) return;
+    if (restoreTarget.encrypted && !restorePass) return;
     setRestoring(true);
     try {
-      const { data } = await api.post("/deploy/restore", { file: restoreTarget.file, confirm: "RESTORE" });
+      const body = { file: restoreTarget.file, confirm: "RESTORE" };
+      if (restoreTarget.encrypted) body.passphrase = restorePass;
+      const { data } = await api.post("/deploy/restore", body);
       toast.success("Restore complete", { description: `${data.restored_docs} document(s) restored · current data was snapshotted to ${data.pre_restore_backup || "a pre-restore backup"}.` });
       setRestoreTarget(null);
       await Promise.all([loadHealth(), loadDetail(), loadBackups()]);
@@ -201,13 +260,8 @@ export default function SystemHealth() {
 
   const doUpgrade = async () => {
     setUpgrading(true);
-    try {
-      await api.post("/deploy/upgrade");
-      toast.success("Upgrade started — pulling the latest images and restarting.");
-      await loadUpgrade();
-    } catch (e) {
-      toast.error(e.response?.data?.detail || "Automatic upgrade isn't enabled on this deployment.");
-    }
+    try { await api.post("/deploy/upgrade"); toast.success("Upgrade started — pulling the latest images and restarting."); await loadUpgrade(); }
+    catch (e) { toast.error(e.response?.data?.detail || "Automatic upgrade isn't enabled on this deployment."); }
     setUpgrading(false);
   };
 
@@ -238,7 +292,7 @@ export default function SystemHealth() {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="font-head font-black text-3xl lg:text-4xl tracking-tight" data-testid="system-health-title">System Health</h1>
-          <p className="text-sm text-muted-foreground mt-1">Live platform vitals, 24h uptime, on-premise upgrades, scheduled backups and health-alert routing.</p>
+          <p className="text-sm text-muted-foreground mt-1">Live platform vitals, uptime history, on-premise upgrades, encrypted backups and health-alert routing.</p>
         </div>
         <div className="flex flex-col items-end gap-1">
           <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-refresh" onClick={refreshAll} disabled={refreshing}>
@@ -256,7 +310,6 @@ export default function SystemHealth() {
         <HealthTile testid="sh-orgs" label="Organizations" value={c.organizations ?? "—"} sub="Tenants live" accent="266 85% 66%" icon={Building2} />
       </div>
 
-      {/* Degraded drill-down */}
       {degraded.length > 0 && (
         <div className="bg-card rounded-xl p-5 border border-crit/40" data-testid="sh-degraded-panel">
           <div className="flex items-center gap-2 mb-3">
@@ -283,10 +336,8 @@ export default function SystemHealth() {
         </div>
       )}
 
-      {/* 24h uptime strip */}
-      <UptimeStrip points={history} />
+      <UptimeStrip points={history} range={range} setRange={setRange} />
 
-      {/* Version & Upgrade */}
       <div className="bg-card fact-border rounded-xl p-5" data-testid="sh-version-panel">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
@@ -332,7 +383,6 @@ export default function SystemHealth() {
         )}
       </div>
 
-      {/* Backups + schedule */}
       {isAdmin && (
         <div className="bg-card fact-border rounded-xl p-5" data-testid="sh-backups-panel">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -345,9 +395,8 @@ export default function SystemHealth() {
             </Button>
           </div>
 
-          {/* Schedule control */}
           {bcfg && (
-            <div className="flex flex-wrap items-end gap-4 mb-5 p-3 rounded-lg bg-secondary/30 border border-border/50" data-testid="sh-backup-schedule">
+            <div className="flex flex-wrap items-end gap-4 mb-3 p-3 rounded-lg bg-secondary/30 border border-border/50" data-testid="sh-backup-schedule">
               <label className="flex items-center gap-2 text-sm cursor-pointer select-none">
                 <input type="checkbox" data-testid="sh-schedule-enabled" checked={bcfg.enabled} onChange={(e) => setBcfg({ ...bcfg, enabled: e.target.checked })} className="w-4 h-4 accent-primary" />
                 <span className="font-medium">Automatic backups</span>
@@ -371,6 +420,20 @@ export default function SystemHealth() {
             </div>
           )}
 
+          <div className="flex flex-wrap items-center gap-3 mb-5 p-3 rounded-lg bg-secondary/30 border border-border/50" data-testid="sh-encryption-row">
+            <Lock className={`w-4 h-4 ${encEnabled ? "text-low" : "text-muted-foreground"}`} />
+            <span className="text-sm font-medium">Snapshot encryption</span>
+            <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${encEnabled ? "bg-low/15 text-low" : "bg-secondary text-muted-foreground"}`} data-testid="sh-encryption-status">
+              {encEnabled ? "On — AES at rest" : "Off"}
+            </span>
+            <span className="text-[11px] text-muted-foreground flex-1 min-w-[180px]">Encrypts every snapshot at rest; a passphrase is required to restore.</span>
+            {encEnabled ? (
+              <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-encryption-disable" onClick={() => { setEncModal("disable"); setEncPass(""); }}>Disable</Button>
+            ) : (
+              <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-encryption-enable" onClick={() => { setEncModal("enable"); setEncPass(""); }}><Lock className="w-3.5 h-3.5" /> Enable encryption</Button>
+            )}
+          </div>
+
           {backups.length ? (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -380,7 +443,8 @@ export default function SystemHealth() {
                     <tr key={b.file} className="border-b border-border/50" data-testid={`sh-backup-row-${b.file}`}>
                       <td className="p-2 font-mono text-xs">
                         <div className="flex items-center gap-2">
-                          <span className="truncate max-w-[190px]">{b.file}</span>
+                          {b.encrypted && <Lock className="w-3 h-3 text-low shrink-0" data-testid={`sh-backup-lock-${b.file}`} />}
+                          <span className="truncate max-w-[175px]">{b.file}</span>
                           {b.tag && <span className={`shrink-0 text-[9px] font-mono px-1.5 py-0.5 rounded ${b.tag === "pre-restore" ? "bg-high/15 text-high" : b.tag === "nightly" ? "bg-ai/15 text-ai" : "bg-secondary text-muted-foreground"}`} data-testid={`sh-backup-tag-${b.file}`}>{b.tag}</span>}
                         </div>
                       </td>
@@ -390,7 +454,7 @@ export default function SystemHealth() {
                       <td className="p-2 text-xs text-muted-foreground">{fmtDT(b.created_at)}</td>
                       <td className="p-2">
                         <div className="flex items-center justify-end gap-1.5">
-                          <button data-testid={`sh-backup-download-${b.file}`} onClick={() => download(b.file)} className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-secondary/60 transition-colors" title={`Download ${b.org_name || ""}${b.docs != null ? ` · ${b.docs} docs` : ""}`}><DownloadCloud className="w-4 h-4" /></button>
+                          <button data-testid={`sh-backup-download-${b.file}`} onClick={() => download(b.file)} className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-secondary/60 transition-colors" title={`Download ${b.org_name || ""}${b.docs != null ? ` · ${b.docs} docs` : ""}${b.encrypted ? " (encrypted)" : ""}`}><DownloadCloud className="w-4 h-4" /></button>
                           <button data-testid={`sh-backup-restore-${b.file}`} onClick={() => openRestore(b)} className="p-1.5 rounded-md text-muted-foreground hover:text-high hover:bg-secondary/60 transition-colors" title="Restore"><RotateCcw className="w-4 h-4" /></button>
                         </div>
                       </td>
@@ -408,7 +472,6 @@ export default function SystemHealth() {
         </div>
       )}
 
-      {/* Alert routing */}
       {isAdmin && acfg && (
         <div className="bg-card fact-border rounded-xl p-5" data-testid="sh-alert-routing-panel">
           <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
@@ -417,9 +480,14 @@ export default function SystemHealth() {
               <h2 className="font-head font-bold text-lg">Health Alert Routing</h2>
               <span className="text-[11px] text-muted-foreground">Choose where each degraded event pages</span>
             </div>
-            <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-alerts-save" onClick={saveAlertCfg} disabled={savingAlerts}>
-              {savingAlerts ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save routing
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-alerts-test" onClick={testAlert} disabled={testingAlert}>
+                {testingAlert ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Send test alert
+              </Button>
+              <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-alerts-save" onClick={saveAlertCfg} disabled={savingAlerts}>
+                {savingAlerts ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save routing
+              </Button>
+            </div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -449,6 +517,35 @@ export default function SystemHealth() {
         </div>
       )}
 
+      {/* Encryption modal */}
+      {encModal && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" data-testid="sh-encryption-modal" onClick={() => !encBusy && setEncModal(null)}>
+          <div className="bg-card fact-border rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center gap-2 mb-2">
+              <Lock className="w-5 h-5 text-primary" />
+              <h3 className="font-head font-bold text-lg">{encModal === "enable" ? "Enable snapshot encryption" : "Disable snapshot encryption"}</h3>
+            </div>
+            <p className="text-sm text-muted-foreground mb-4">
+              {encModal === "enable"
+                ? "Set a passphrase. Every new backup will be encrypted at rest, and this passphrase will be required to restore. Store it somewhere safe — it cannot be recovered."
+                : "Enter the current passphrase to turn off encryption for future backups."}
+            </p>
+            <label className="block text-xs font-medium text-muted-foreground mb-1.5">Passphrase{encModal === "enable" ? " (min 8 characters)" : ""}</label>
+            <input type="password" data-testid="sh-encryption-passphrase" autoFocus value={encPass} onChange={(e) => setEncPass(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") submitEnc(); }}
+              className="w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary transition-shadow mb-4" placeholder="••••••••" />
+            <div className="flex items-center justify-end gap-2">
+              <button data-testid="sh-encryption-cancel" onClick={() => setEncModal(null)} disabled={encBusy} className="px-3 py-2 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50">Cancel</button>
+              <button data-testid="sh-encryption-submit" onClick={submitEnc} disabled={encBusy || (encModal === "enable" ? encPass.trim().length < 8 : !encPass)}
+                className="px-4 py-2 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-40">
+                {encBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}{encModal === "enable" ? "Enable" : "Disable"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Restore modal */}
       {restoreTarget && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" data-testid="sh-restore-modal" onClick={() => !restoring && setRestoreTarget(null)}>
           <div className="bg-card fact-border rounded-2xl shadow-2xl w-full max-w-md p-6" onClick={(e) => e.stopPropagation()}>
@@ -465,13 +562,20 @@ export default function SystemHealth() {
               <HardDriveDownload className="w-4 h-4 mt-0.5 shrink-0" />
               <span>A <b>pre-restore backup</b> of the current data is taken automatically first, so you can always roll back.</span>
             </div>
+            {restoreTarget.encrypted && (
+              <div className="mb-4">
+                <label className="block text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1.5"><Lock className="w-3.5 h-3.5 text-low" /> This backup is encrypted — enter its passphrase</label>
+                <input type="password" data-testid="sh-restore-passphrase" value={restorePass} onChange={(e) => setRestorePass(e.target.value)}
+                  className="w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary transition-shadow" placeholder="Backup passphrase" />
+              </div>
+            )}
             <label className="block text-xs font-medium text-muted-foreground mb-1.5">Type <span className="font-mono text-foreground">RESTORE</span> to confirm</label>
             <input data-testid="sh-restore-confirm-input" autoFocus value={confirmText} onChange={(e) => setConfirmText(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") doRestore(); }}
               className="w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-high transition-shadow mb-4" placeholder="RESTORE" />
             <div className="flex items-center justify-end gap-2">
               <button data-testid="sh-restore-cancel" onClick={() => setRestoreTarget(null)} disabled={restoring} className="px-3 py-2 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50">Cancel</button>
-              <button data-testid="sh-restore-confirm" onClick={doRestore} disabled={restoring || confirmText.trim().toUpperCase() !== "RESTORE"}
+              <button data-testid="sh-restore-confirm" onClick={doRestore} disabled={restoring || confirmText.trim().toUpperCase() !== "RESTORE" || (restoreTarget.encrypted && !restorePass)}
                 className="px-4 py-2 rounded-md bg-high text-white font-head font-bold text-sm flex items-center gap-2 disabled:opacity-40">
                 {restoring ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />} Restore now
               </button>
@@ -482,7 +586,7 @@ export default function SystemHealth() {
 
       {!isAdmin && (
         <div className="bg-card fact-border rounded-xl p-5 text-sm text-muted-foreground" data-testid="sh-nonadmin-note">
-          Upgrades, backups and alert routing are managed by administrators. The vitals and uptime above reflect the live platform status.
+          Upgrades, backups, encryption and alert routing are managed by administrators. The vitals and uptime above reflect the live platform status.
         </div>
       )}
     </div>

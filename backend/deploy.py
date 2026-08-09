@@ -371,9 +371,32 @@ def _iso_from_mtime(fp):
     return datetime.fromtimestamp(os.path.getmtime(fp), tz=timezone.utc).isoformat()
 
 
+# --- Backup encryption (per-org passphrase; the data key is wrapped with a JWT_SECRET-derived
+#     master so nightly backups encrypt unattended, while restore still requires the passphrase) ---
+def _derive_key(passphrase: str, salt_hex: str) -> bytes:
+    import hashlib
+    import base64
+    raw = hashlib.pbkdf2_hmac("sha256", (passphrase or "").encode("utf-8"), bytes.fromhex(salt_hex), 200000, dklen=32)
+    return base64.urlsafe_b64encode(raw)
+
+
+def _master_fernet():
+    import hashlib
+    import base64
+    from cryptography.fernet import Fernet
+    secret = os.environ.get("JWT_SECRET", "obserra-backup-fallback")
+    raw = hashlib.pbkdf2_hmac("sha256", secret.encode("utf-8"), b"obserra-backup-master-v1", 100000, dklen=32)
+    return Fernet(base64.urlsafe_b64encode(raw))
+
+
+def _enc_cfg(org):
+    return (((org or {}).get("system_health") or {}).get("backup") or {}).get("encryption") or {}
+
+
 async def backup_org(org_id: str, tag: str = "manual") -> dict:
     import gzip
     import json
+    import uuid
     from bson import json_util, ObjectId
     from db import db
     os.makedirs(_BACKUP_DIR, exist_ok=True)
@@ -386,19 +409,32 @@ async def backup_org(org_id: str, tag: str = "manual") -> dict:
         if docs:
             data[n] = docs
             total += len(docs)
-    import uuid
     stamp = _now_iso().replace(":", "").replace("-", "").replace("T", "").replace(".", "").replace("+", "")[:20]
     fname = f"obserra-backup-{org_id}-{stamp}-{uuid.uuid4().hex[:6]}.json.gz"
     meta = {"org_id": org_id, "org_name": org_name, "created_at": _now_iso(),
             "collections": len(data), "docs": total, "tag": tag}
     payload = {"_meta": meta, "collections": data}
+    gz = gzip.compress(json_util.dumps(payload).encode("utf-8"))
+    enc = _enc_cfg(org)
+    encrypt = bool(enc.get("enabled") and enc.get("wrapped_key"))
+    if encrypt:
+        from cryptography.fernet import Fernet
+        data_key = _master_fernet().decrypt(enc["wrapped_key"].encode("utf-8"))
+        blob = Fernet(data_key).encrypt(gz)
+        meta["encrypted"] = True
+        meta["salt"] = enc["salt"]
+        meta["wrapped_key"] = enc["wrapped_key"]
+    else:
+        blob = gz
+        meta["encrypted"] = False
     fp = os.path.join(_BACKUP_DIR, fname)
-    with gzip.open(fp, "wt", encoding="utf-8") as f:
-        f.write(json_util.dumps(payload))
+    with open(fp, "wb") as f:
+        f.write(blob)
     with open(_meta_path(fname), "w", encoding="utf-8") as f:
         json.dump({**meta, "size": os.path.getsize(fp), "file": fname}, f)
     return {"file": fname, "size": os.path.getsize(fp), "collections": len(data),
-            "docs": total, "org_name": org_name, "tag": tag, "created_at": meta["created_at"]}
+            "docs": total, "org_name": org_name, "tag": tag, "encrypted": encrypt,
+            "created_at": meta["created_at"]}
 
 
 def _list_backup_files(org_id: str):
@@ -410,29 +446,60 @@ def _list_backup_files(org_id: str):
         if fn.startswith(f"obserra-backup-{org_id}-") and fn.endswith(".json.gz"):
             fp = os.path.join(_BACKUP_DIR, fn)
             info = {"file": fn, "size": os.path.getsize(fp), "created_at": _iso_from_mtime(fp),
-                    "collections": None, "docs": None, "org_name": None, "tag": None}
+                    "collections": None, "docs": None, "org_name": None, "tag": None, "encrypted": False}
             mp = _meta_path(fn)
             if os.path.exists(mp):
                 try:
                     with open(mp, encoding="utf-8") as f:
                         m = json.load(f)
                     info.update(collections=m.get("collections"), docs=m.get("docs"),
-                                org_name=m.get("org_name"), tag=m.get("tag"))
+                                org_name=m.get("org_name"), tag=m.get("tag"),
+                                encrypted=bool(m.get("encrypted")))
                 except Exception:
                     pass
             out.append(info)
     return sorted(out, key=lambda x: x["file"], reverse=True)
 
 
-async def restore_org(org_id: str, filename: str, auto_backup: bool = True) -> dict:
+async def restore_org(org_id: str, filename: str, auto_backup: bool = True, passphrase: str = None) -> dict:
     import gzip
+    import json
     from bson import json_util
     from db import db
     fp = _safe_backup_path(filename)
     if not os.path.exists(fp) or f"-{org_id}-" not in filename:
         raise HTTPException(404, "Backup not found")
-    with gzip.open(fp, "rt", encoding="utf-8") as f:
-        payload = json_util.loads(f.read())
+    meta = {}
+    mp = _meta_path(filename)
+    if os.path.exists(mp):
+        try:
+            with open(mp, encoding="utf-8") as f:
+                meta = json.load(f)
+        except Exception:
+            meta = {}
+    with open(fp, "rb") as f:
+        blob = f.read()
+    if meta.get("encrypted"):
+        import hashlib
+        from cryptography.fernet import Fernet
+        if not passphrase:
+            raise HTTPException(400, "This backup is encrypted — enter its passphrase to restore.")
+        try:
+            actual_key = _master_fernet().decrypt(meta["wrapped_key"].encode("utf-8"))
+        except Exception:
+            raise HTTPException(500, "Unable to unwrap the backup key on this server.")
+        if hashlib.sha256(_derive_key(passphrase, meta["salt"])).hexdigest() != hashlib.sha256(actual_key).hexdigest():
+            raise HTTPException(403, "Incorrect passphrase for this encrypted backup.")
+        try:
+            gz = Fernet(actual_key).decrypt(blob)
+        except Exception:
+            raise HTTPException(400, "Could not decrypt this backup.")
+    else:
+        gz = blob
+    try:
+        payload = json_util.loads(gzip.decompress(gz).decode("utf-8"))
+    except Exception:
+        raise HTTPException(400, "Backup file is corrupt or unreadable.")
     if payload.get("_meta", {}).get("org_id") != org_id:
         raise HTTPException(400, "Backup belongs to a different organization")
     # Snapshot the CURRENT state first so a restore can never lose live data.
@@ -525,6 +592,54 @@ async def put_backup_config(body: BackupConfig, user: dict = Depends(get_current
     return cfg
 
 
+class EncryptionBody(BaseModel):
+    passphrase: str
+
+
+@deploy_router.get("/backup-encryption")
+async def get_backup_encryption(user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    return {"enabled": bool(_enc_cfg(org).get("enabled"))}
+
+
+@deploy_router.put("/backup-encryption")
+async def set_backup_encryption(body: EncryptionBody, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    import os as _os
+    import hashlib
+    from bson import ObjectId
+    if len((body.passphrase or "").strip()) < 8:
+        raise HTTPException(400, "Passphrase must be at least 8 characters.")
+    salt = _os.urandom(16).hex()
+    key = _derive_key(body.passphrase, salt)
+    verifier = hashlib.sha256(key).hexdigest()
+    wrapped = _master_fernet().encrypt(key).decode("utf-8")
+    await db.organizations.update_one(
+        {"_id": ObjectId(user["org_id"])},
+        {"$set": {"system_health.backup.encryption":
+                  {"enabled": True, "salt": salt, "verifier": verifier, "wrapped_key": wrapped}}})
+    return {"enabled": True}
+
+
+@deploy_router.post("/backup-encryption/disable")
+async def disable_backup_encryption(body: EncryptionBody, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    import hashlib
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    enc = _enc_cfg(org)
+    if not enc.get("enabled"):
+        return {"enabled": False}
+    if hashlib.sha256(_derive_key(body.passphrase, enc["salt"])).hexdigest() != enc.get("verifier"):
+        raise HTTPException(403, "Incorrect passphrase.")
+    await db.organizations.update_one({"_id": ObjectId(user["org_id"])},
+                                      {"$set": {"system_health.backup.encryption.enabled": False}})
+    return {"enabled": False}
+
+
 @deploy_router.get("/backups")
 async def list_backups(user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
@@ -539,7 +654,7 @@ async def restore_backup(body: dict, user: dict = Depends(get_current_user)):
     if (body.get("confirm") or "").strip().upper() != "RESTORE":
         raise HTTPException(400, "Type RESTORE to confirm — restoring replaces the current data "
                                  "(a pre-restore backup is taken automatically first).")
-    return await restore_org(user["org_id"], body.get("file", ""))
+    return await restore_org(user["org_id"], body.get("file", ""), passphrase=body.get("passphrase"))
 
 
 @deploy_router.get("/backup/download")
@@ -647,7 +762,7 @@ async def _record_health(org_id, h, min_gap_min=12):
         "healthy": h.get("healthy"), "db_ok": h.get("db"),
         "scheduler_armed": h.get("scheduler_armed"),
         "degraded_count": len(h.get("degraded_connectors") or [])})
-    cutoff = (now - timedelta(days=7)).isoformat()
+    cutoff = (now - timedelta(days=30)).isoformat()
     await db.health_history.delete_many({"org_id": org_id, "at": {"$lt": cutoff}})
 
 
@@ -706,7 +821,7 @@ async def put_health_config(body: HealthAlertConfig, user: dict = Depends(get_cu
 @deploy_router.get("/health-history")
 async def get_health_history(hours: int = 24, user: dict = Depends(get_current_user)):
     from datetime import datetime, timezone, timedelta
-    cutoff = (datetime.now(timezone.utc) - timedelta(hours=max(1, min(168, hours)))).isoformat()
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=max(1, min(720, hours)))).isoformat()
     pts = await db.health_history.find({"org_id": user["org_id"], "at": {"$gte": cutoff}},
                                        {"_id": 0}).sort("at", 1).to_list(2000)
     return {"points": pts, "hours": hours}
@@ -742,6 +857,22 @@ async def health_alert_run(user: dict = Depends(get_current_user)):
                                f"⚠ System health — {etype}", msg)
         alerted = True
     return {**h, "webhook_configured": has_webhook, "alerted": alerted, "routing": routing}
+
+
+@deploy_router.post("/health-alert-test")
+async def health_alert_test(user: dict = Depends(get_current_user)):
+    """Admin: fire a sample alert to Slack/Teams/email so webhooks can be verified before an incident."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    alerts = org.get("scan_alerts") or {}
+    teams_cfg = bool(alerts.get("teams_url") or (org.get("live_teams") or {}).get("webhook_url"))
+    slack_cfg = bool(alerts.get("slack_url"))
+    await _route_alert(org, {"slack": True, "teams": True, "email": True},
+                       "✅ Obserra SAP UAC — test alert",
+                       "This is a test of your System Health alert routing. If you received this, the channel is working correctly.")
+    return {"slack_configured": slack_cfg, "teams_configured": teams_cfg, "email_attempted": True}
 
 
 _TOUR_DIR = os.path.join(_ROOT, "frontend", "public", "tour")
