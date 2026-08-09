@@ -20,6 +20,7 @@ import { SodConflictsTable } from "@/components/sod/SodConflictsTable";
 import { SodWatchlist } from "@/components/SodWatchlist";
 import { GovernanceDigestCard } from "@/components/sod/GovernanceDigestCard";
 import { SEV, Chip, ScoreTile, ACTION_LABEL, TrendTip } from "@/components/sod/sodPrimitives";
+import { SodProvider } from "@/context/SodContext";
 
 export default function SodCommandCenter() {
   const { openDeepDive } = useDeepDive();
@@ -455,7 +456,19 @@ export default function SodCommandCenter() {
     } catch (e) { toast.error(e?.response?.data?.detail || "Simulation failed"); }
   };
 
+  const sodCtx = {
+    addScope, addSimRole, approveBusy, approveEvidence, area, arem, aremBusy, briefingBusy, checkScoreAlert,
+    cooldownRemain, createShare, data, dcfg, dcfgBusy, dcfgLocal, digestBusy, evidBusy, evidPreviewBusy,
+    exportEvidence, exportScorecard, loadWhy, muteAlert, muteBusy, openAsk, openConflict, openEvidPreview,
+    openPreview, openRule, people, playVoice, preview, previewBusy, previewRecap, previewVoice, removeScope,
+    roles, rules, runArem, runSim, runSlackTest, runTeamsTest, saveArem, saveDcfg, scoreAlerts, scoreBusy,
+    scoreMute, scorecard, sendDigest, sendEvidence, setArea, setControl, setDcfgLocal, setMit, setMitStatus,
+    setScope, setSev, setSimPerson, setSimRole, setStatus, sev, shareBriefing, shareBusy, shares, simPerson,
+    simResult, simRole, simRoles, slackAskUrl, slackTest, slackTestBusy, status, teamsAskUrl, teamsTest,
+    teamsTestBusy, testChat, toggleSev, unapproveEvidence, unmuteAlert, voiceBusy, voiceUrl, why, whyBusy,
+  };
   return (
+    <SodProvider value={sodCtx}>
     <div className="space-y-6" data-testid="sod-command-center">
       <div>
         <h1 className="font-head font-black text-3xl lg:text-4xl tracking-tight" data-testid="sod-title">SoD Command Center</h1>
@@ -473,17 +486,17 @@ export default function SodCommandCenter() {
         <StatCard label="Total rows" value={data.total} sub={`${rules.length} rules in library`} accent="142 70% 45%" icon={ShieldCheck} testid="sod-total" />
       </div>
 
-      {scorecard && <SodScorecardCard {...{ data, exportScorecard, loadWhy, scorecard, why, whyBusy }} />}
+      {scorecard && <SodScorecardCard />}
 
       {/* SoD → ServiceNow Auto-Remediation Rule Engine */}
       {arem && <SodAutoRemCard {...{ arem, aremBusy, data, digestBusy, rules, runArem, saveArem, sendDigest, sev, toggleSev }} />}
 
       {/* Governance Digest schedule */}
-      {dcfgLocal && <GovernanceDigestCard {...{ addScope, approveBusy, approveEvidence, briefingBusy, checkScoreAlert, cooldownRemain, createShare, data, dcfg, dcfgBusy, dcfgLocal, digestBusy, evidBusy, evidPreviewBusy, exportEvidence, muteAlert, muteBusy, openAsk, openEvidPreview, openPreview, playVoice, preview, previewBusy, previewRecap, previewVoice, removeScope, runSlackTest, runTeamsTest, saveDcfg, scoreAlerts, scoreBusy, scoreMute, scorecard, sendDigest, sendEvidence, setDcfgLocal, setScope, sev, shareBriefing, shareBusy, shares, slackAskUrl, slackTest, slackTestBusy, status, teamsAskUrl, teamsTest, teamsTestBusy, testChat, unapproveEvidence, unmuteAlert, voiceBusy, voiceUrl }} />}
+      {dcfgLocal && <GovernanceDigestCard />}
 
-      <SodToolsRow {...{ addSimRole, area, data, openRule, people, roles, rules, runSim, setSimPerson, setSimRole, simPerson, simResult, simRole, simRoles }} />
+      <SodToolsRow />
 
-      <SodConflictsTable {...{ area, data, openConflict, setArea, setControl, setMit, setMitStatus, setSev, setStatus, sev, status }} />
+      <SodConflictsTable />
 
       <Dialog open={!!mit} onOpenChange={(o) => !o && setMit(null)}>
         <DialogContent data-testid="sod-mitigate-dialog">
@@ -636,5 +649,6 @@ export default function SodCommandCenter() {
         </DialogContent>
       </Dialog>
     </div>
+    </SodProvider>
   );
 }

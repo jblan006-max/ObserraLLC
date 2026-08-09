@@ -3,9 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { FlaskConical, ScrollText } from "lucide-react";
 import { Chip } from "@/components/sod/sodPrimitives";
+import { useSod } from "@/context/SodContext";
 
-export function SodToolsRow(props) {
-  const { addSimRole, area, data, openRule, people, roles, rules, runSim, setSimPerson, setSimRole, simPerson, simResult, simRole, simRoles } = props;
+export function SodToolsRow() {
+  const { addSimRole, area, data, openRule, people, roles, rules, runSim, setSimPerson, setSimRole, simPerson, simResult, simRole, simRoles } = useSod();
   return (
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         {/* Simulator */}

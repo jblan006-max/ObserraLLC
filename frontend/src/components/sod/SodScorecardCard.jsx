@@ -3,9 +3,10 @@ import { Button } from "@/components/ui/button";
 import { Download, TrendingUp, FileText, Sparkles } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 import { ScoreTile, TrendTip } from "@/components/sod/sodPrimitives";
+import { useSod } from "@/context/SodContext";
 
-export function SodScorecardCard(props) {
-  const { data, exportScorecard, loadWhy, scorecard, why, whyBusy } = props;
+export function SodScorecardCard() {
+  const { data, exportScorecard, loadWhy, scorecard, why, whyBusy } = useSod();
   return (
         <div className="bg-card fact-border rounded-xl p-5" data-testid="sod-scorecard">
           <div className="flex flex-wrap items-center gap-3 mb-3">

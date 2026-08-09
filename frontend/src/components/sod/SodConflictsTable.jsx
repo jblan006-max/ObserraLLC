@@ -3,9 +3,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Wrench } from "lucide-react";
 import { Area } from "recharts";
 import { Chip } from "@/components/sod/sodPrimitives";
+import { useSod } from "@/context/SodContext";
 
-export function SodConflictsTable(props) {
-  const { area, data, openConflict, setArea, setControl, setMit, setMitStatus, setSev, setStatus, sev, status } = props;
+export function SodConflictsTable() {
+  const { area, data, openConflict, setArea, setControl, setMit, setMitStatus, setSev, setStatus, sev, status } = useSod();
   return (
       <div className="bg-card fact-border rounded-xl">
         <div className="flex flex-wrap items-center gap-2 p-3 border-b border-border">

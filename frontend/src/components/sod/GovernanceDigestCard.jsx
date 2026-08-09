@@ -5,12 +5,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send, Eye, Download, TrendingUp, FileText, BellRing, FileWarning, Sparkles, MessagesSquare, Share2, Volume2, History, Slack, Copy } from "lucide-react";
+import { useSod } from "@/context/SodContext";
 
 // Governance Digest Schedule card — digest scheduling, score-drop alerts, weekly SoD evidence
 // pack, Slack/Teams Ask, voice briefing & shareable digest. Extracted from SodCommandCenter for
 // maintainability; the parent owns all state and passes it (plus handlers) down as props.
-export function GovernanceDigestCard(props) {
-  const { addScope, approveBusy, approveEvidence, briefingBusy, checkScoreAlert, cooldownRemain, createShare, data, dcfg, dcfgBusy, dcfgLocal, digestBusy, evidBusy, evidPreviewBusy, exportEvidence, muteAlert, muteBusy, openAsk, openEvidPreview, openPreview, playVoice, preview, previewBusy, previewRecap, previewVoice, removeScope, runSlackTest, runTeamsTest, saveDcfg, scoreAlerts, scoreBusy, scoreMute, scorecard, sendDigest, sendEvidence, setDcfgLocal, setScope, sev, shareBriefing, shareBusy, shares, slackAskUrl, slackTest, slackTestBusy, status, teamsAskUrl, teamsTest, teamsTestBusy, testChat, unapproveEvidence, unmuteAlert, voiceBusy, voiceUrl } = props;
+export function GovernanceDigestCard() {
+  const { addScope, approveBusy, approveEvidence, briefingBusy, checkScoreAlert, cooldownRemain, createShare, data, dcfg, dcfgBusy, dcfgLocal, digestBusy, evidBusy, evidPreviewBusy, exportEvidence, muteAlert, muteBusy, openAsk, openEvidPreview, openPreview, playVoice, preview, previewBusy, previewRecap, previewVoice, removeScope, runSlackTest, runTeamsTest, saveDcfg, scoreAlerts, scoreBusy, scoreMute, scorecard, sendDigest, sendEvidence, setDcfgLocal, setScope, sev, shareBriefing, shareBusy, shares, slackAskUrl, slackTest, slackTestBusy, status, teamsAskUrl, teamsTest, teamsTestBusy, testChat, unapproveEvidence, unmuteAlert, voiceBusy, voiceUrl } = useSod();
   return (
         <div className="bg-card fact-border rounded-xl p-5" data-testid="sod-digest-schedule">
           <div className="flex flex-wrap items-center gap-3">

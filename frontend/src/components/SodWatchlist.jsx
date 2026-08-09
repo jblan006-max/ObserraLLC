@@ -1,14 +1,16 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { useDeepDive } from "@/context/DeepDiveContext";
+import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
-import { Star, ShieldAlert, Loader2, Flame, Bell, BellOff, Ticket, UserPlus } from "lucide-react";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Star, ShieldAlert, Loader2, Flame, Bell, BellOff, Ticket, UserPlus, UserCheck } from "lucide-react";
 
 const SEV = { Critical: "0 84% 60%", High: "35 90% 55%", Medium: "199 89% 48%", Low: "142 70% 45%" };
 
 // One pinned SoD area: hot-spot count + severity, a Critical-threshold nudge toggle, and a one-tap
 // "assign owner + open ServiceNow remediation ticket". Holds its own owner-input/threshold state.
-function WatchlistCard({ s, idx, onOpen, onUnpin, onAlert, onRemediate }) {
+function WatchlistCard({ s, idx, onOpen, onUnpin, onAlert, onRemediate, onTicket }) {
   const [thr, setThr] = useState(s.threshold || 1);
   const [showAssign, setShowAssign] = useState(false);
   const [owner, setOwner] = useState(s.owner || "");
@@ -66,7 +68,7 @@ function WatchlistCard({ s, idx, onOpen, onUnpin, onAlert, onRemediate }) {
       <div className="mt-2 pt-2 border-t border-border/60" onClick={stop}>
         {s.ticket ? (
           <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-            <span data-testid={`watchlist-ticket-${idx}`} className="inline-flex items-center gap-1 font-mono px-1.5 py-0.5 rounded-full bg-low/15 text-low"><Ticket className="w-3 h-3" />{s.ticket.number}</span>
+            <button type="button" data-testid={`watchlist-ticket-${idx}`} onClick={(e) => { stop(e); onTicket(s.ticket.number); }} className="inline-flex items-center gap-1 font-mono px-1.5 py-0.5 rounded-full bg-low/15 text-low hover:bg-low/25 transition-colors" title="View ServiceNow change timeline"><Ticket className="w-3 h-3" />{s.ticket.number}</button>
             <span className="text-muted-foreground truncate">→ {s.owner || "unassigned"}</span>
             <button type="button" data-testid={`watchlist-reassign-${idx}`} onClick={() => setShowAssign((v) => !v)} className="text-primary hover:underline ml-auto">Reassign</button>
           </div>
@@ -89,8 +91,13 @@ function WatchlistCard({ s, idx, onOpen, onUnpin, onAlert, onRemediate }) {
 // across pages via a `sap-watchlist-changed` window event.
 export function SodWatchlist() {
   const { openDeepDive } = useDeepDive();
+  const { user } = useAuth();
+  const myEmail = (user?.email || "").toLowerCase();
   const [wl, setWl] = useState(null);
   const [add, setAdd] = useState("");
+  const [myOnly, setMyOnly] = useState(false);
+  const [ticket, setTicket] = useState(null);
+  const [ticketBusy, setTicketBusy] = useState(false);
 
   const load = useCallback(async () => {
     const { data } = await api.get("/sap/watchlist");
@@ -112,6 +119,12 @@ export function SodWatchlist() {
     changed();
     return data.ticket;
   };
+  const openTicket = async (number) => {
+    setTicket({ number }); setTicketBusy(true);
+    try { const { data } = await api.get(`/sap/ticket/${encodeURIComponent(number)}`); setTicket(data); }
+    catch { toast.error("Could not load the ticket timeline"); setTicket(null); }
+    setTicketBusy(false);
+  };
 
   const totalOpen = wl ? wl.available.reduce((s, a) => s + a.open, 0) : 0;
   const openArea = (s) => openDeepDive({
@@ -125,6 +138,9 @@ export function SodWatchlist() {
 
   const pinnedAreas = new Set((wl?.pinned || []).map((p) => p.area));
   const addable = (wl?.available || []).filter((a) => !pinnedAreas.has(a.area));
+  const pinned = wl?.pinned || [];
+  const mineCount = pinned.filter((p) => myEmail && (p.owner || "").toLowerCase() === myEmail).length;
+  const shownPinned = myOnly ? pinned.filter((p) => myEmail && (p.owner || "").toLowerCase() === myEmail) : pinned;
 
   return (
     <div className="bg-card fact-border rounded-xl p-5" data-testid="sod-watchlist">
@@ -134,10 +150,15 @@ export function SodWatchlist() {
           <h2 className="font-head font-bold text-base">SoD Risk Watchlist</h2>
         </div>
         {wl && (
-          <select data-testid="watchlist-add" value={add} onChange={(e) => pin(e.target.value)} className="h-8 rounded-md bg-secondary/50 border border-border text-xs px-2 focus:outline-none focus:ring-1 focus:ring-primary">
-            <option value="">+ Pin an area…</option>
-            {addable.map((a) => <option key={a.area} value={a.area}>{a.area} ({a.open} open)</option>)}
-          </select>
+          <div className="flex items-center gap-2">
+            <button type="button" data-testid="watchlist-mine-toggle" onClick={() => setMyOnly((v) => !v)} title="Show only the areas assigned to me" className={`inline-flex items-center gap-1.5 h-8 px-2.5 rounded-md border text-xs transition-colors ${myOnly ? "border-primary/60 bg-primary/10 text-primary" : "border-border text-muted-foreground hover:border-primary/40"}`}>
+              <UserCheck className="w-3.5 h-3.5" /> Assigned to me{mineCount > 0 ? ` (${mineCount})` : ""}
+            </button>
+            <select data-testid="watchlist-add" value={add} onChange={(e) => pin(e.target.value)} className="h-8 rounded-md bg-secondary/50 border border-border text-xs px-2 focus:outline-none focus:ring-1 focus:ring-primary">
+              <option value="">+ Pin an area…</option>
+              {addable.map((a) => <option key={a.area} value={a.area}>{a.area} ({a.open} open)</option>)}
+            </select>
+          </div>
         )}
       </div>
       <p className="text-[11px] text-muted-foreground mb-3">Your pinned SoD business areas — hottest first. Click to drill in; toggle the bell to get nudged when a hot spot crosses your Critical threshold; open a remediation ticket in one tap.</p>
@@ -148,13 +169,63 @@ export function SodWatchlist() {
           <p className="text-xs text-muted-foreground">No areas pinned yet. Pin the SoD areas you own so their hot spots surface here every login.</p>
         </div>
       )}
-      {wl && wl.pinned.length > 0 && (
+      {wl && pinned.length > 0 && myOnly && shownPinned.length === 0 && (
+        <div className="text-center py-6" data-testid="watchlist-mine-empty">
+          <UserCheck className="w-6 h-6 mx-auto text-muted-foreground mb-2" />
+          <p className="text-xs text-muted-foreground">None of your pinned areas are assigned to {myEmail || "your account"} yet. Open a remediation ticket with your email as the owner to see it here.</p>
+        </div>
+      )}
+      {wl && shownPinned.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3" data-testid="watchlist-pinned">
-          {wl.pinned.map((s, idx) => (
-            <WatchlistCard key={s.area} s={s} idx={idx} onOpen={openArea} onUnpin={unpin} onAlert={setAlert} onRemediate={remediate} />
+          {shownPinned.map((s, idx) => (
+            <WatchlistCard key={s.area} s={s} idx={idx} onOpen={openArea} onUnpin={unpin} onAlert={setAlert} onRemediate={remediate} onTicket={openTicket} />
           ))}
         </div>
       )}
+
+      <Dialog open={!!ticket} onOpenChange={(o) => !o && setTicket(null)}>
+        <DialogContent className="max-w-lg" data-testid="watchlist-ticket-dialog">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><Ticket className="w-4 h-4 text-primary" /> {ticket?.number} — ServiceNow change</DialogTitle>
+          </DialogHeader>
+          {ticketBusy ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground py-8 justify-center" data-testid="watchlist-ticket-loading"><Loader2 className="w-4 h-4 animate-spin" /> Loading timeline…</div>
+          ) : ticket?.stages ? (
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2 text-[11px]" data-testid="watchlist-ticket-meta">
+                <span className="px-2 py-0.5 rounded-full font-mono bg-low/15 text-low">{ticket.state}</span>
+                <span className="text-muted-foreground">{ticket.type}</span>
+                {ticket.person_name && <span className="text-muted-foreground">· {ticket.person_name}</span>}
+                {ticket.systems_touched?.length ? <span className="text-muted-foreground">· {ticket.systems_touched.join(" → ")}</span> : null}
+              </div>
+              {ticket.reason && <p className="text-xs text-muted-foreground">{ticket.reason}</p>}
+              <div className="relative pl-4">
+                <div className="absolute left-[6px] top-1 bottom-1 w-px bg-border" />
+                <div className="space-y-3">
+                  {ticket.stages.map((st, i) => (
+                    <div key={i} className="relative" data-testid={`watchlist-ticket-stage-${i}`}>
+                      <div className="absolute -left-[11px] top-1.5 w-2.5 h-2.5 rounded-full" style={{ background: (st.state === "Closed" || st.state === "Resolved") ? "hsl(142 70% 45%)" : st.state === "New" ? "hsl(199 89% 48%)" : "hsl(35 90% 55%)" }} />
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono uppercase px-1.5 py-0.5 rounded bg-secondary text-muted-foreground">{st.state}</span>
+                        <span className="text-[11px] font-medium">{st.system}</span>
+                        <span className="text-[10px] text-muted-foreground ml-auto shrink-0">{st.at ? new Date(st.at).toLocaleString() : ""}</span>
+                      </div>
+                      <p className="text-xs text-foreground/90 mt-0.5">{st.note}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {ticket.duration_sec != null && (
+                <div className="text-[10px] font-mono text-muted-foreground pt-2 border-t border-border" data-testid="watchlist-ticket-duration">
+                  Opened {ticket.opened_at ? new Date(ticket.opened_at).toLocaleString() : "—"} · closed end-to-end in {ticket.duration_sec}s
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="text-sm text-muted-foreground py-8 text-center" data-testid="watchlist-ticket-empty">No timeline available for this ticket.</div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

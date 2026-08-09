@@ -4,9 +4,10 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Bot, Mail } from "lucide-react";
 import { SEV, Chip, ACTION_LABEL } from "@/components/sod/sodPrimitives";
+import { useSod } from "@/context/SodContext";
 
-export function SodAutoRemCard(props) {
-  const { arem, aremBusy, data, digestBusy, rules, runArem, saveArem, sendDigest, sev, toggleSev } = props;
+export function SodAutoRemCard() {
+  const { arem, aremBusy, data, digestBusy, rules, runArem, saveArem, sendDigest, sev, toggleSev } = useSod();
   return (
         <div className="bg-card fact-border rounded-xl p-5" data-testid="sod-autorem">
           <div className="flex flex-wrap items-center gap-3">
