@@ -107,6 +107,8 @@ export default function SodCommandCenter() {
   const teamsAskUrl = `${process.env.REACT_APP_BACKEND_URL || ""}/api/sap/teams/ask`;
   const [slackTest, setSlackTest] = useState(null);
   const [slackTestBusy, setSlackTestBusy] = useState(false);
+  const [teamsTest, setTeamsTest] = useState(null);
+  const [teamsTestBusy, setTeamsTestBusy] = useState(false);
   const loadScorecard = useCallback(async () => { const { data } = await api.get("/sap/scorecard"); setScorecard(data); }, []);
   const loadAlerts = useCallback(async () => { try { const { data } = await api.get("/sap/scorecard/alerts"); setScoreAlerts(data.log || []); setScoreMute({ muted: data.muted, mute_until: data.mute_until, mute_reason: data.mute_reason }); } catch { /* noop */ } }, []);
   const loadWhy = useCallback(async () => { setWhyBusy(true); try { const { data } = await api.get("/sap/scorecard/why"); setWhy(data); } catch { /* noop */ } setWhyBusy(false); }, []);
@@ -179,6 +181,17 @@ export default function SodCommandCenter() {
       else toast.success("Slack Ask is working — sample answer generated");
     } catch (e) { toast.error(e?.response?.data?.detail || (e?.response?.status === 403 ? "Admin access required" : "Test failed")); }
     setSlackTestBusy(false);
+  };
+  const runTeamsTest = async () => {
+    setTeamsTestBusy(true); setTeamsTest(null);
+    try {
+      const { data } = await api.post("/sap/teams/test", { question: "top risks" });
+      setTeamsTest(data);
+      if (!data.secret_set) toast.warning("Answer generated — but save an HMAC secret so inbound Teams verifies.");
+      else if (data.webhook_posted) toast.success("Test answer posted to your Teams webhook");
+      else toast.success("Teams Ask is working — sample answer generated");
+    } catch (e) { toast.error(e?.response?.data?.detail || (e?.response?.status === 403 ? "Admin access required" : "Test failed")); }
+    setTeamsTestBusy(false);
   };
   const testChat = async () => {
     try {
@@ -879,6 +892,17 @@ export default function SodCommandCenter() {
                   <p className="text-[11px] text-muted-foreground leading-relaxed">
                     In Teams, create an Outgoing Webhook pointing at the callback URL above, paste the security token here, then Save. @mention the webhook with a question (e.g. <span className="font-mono">@Governance top risks</span>) — the AI replies in the channel, grounded in the live SAP access snapshot.
                   </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button type="button" size="sm" variant="outline" className="gap-1.5" data-testid="teams-ask-test" onClick={runTeamsTest} disabled={teamsTestBusy}><Send className="w-3.5 h-3.5" />{teamsTestBusy ? "Testing…" : "Send a test question"}</Button>
+                    <span className="text-[11px] text-muted-foreground">Runs the full round-trip; if a Teams webhook is set, posts the answer to Teams.</span>
+                  </div>
+                  {teamsTest && (
+                    <div className="rounded-lg border border-primary/25 bg-primary/[0.04] p-3 text-xs" data-testid="teams-ask-test-result">
+                      <div className="font-mono text-[10px] uppercase text-muted-foreground mb-1">Test answer · {teamsTest.model}{teamsTest.webhook_posted ? " · posted to Teams" : teamsTest.webhook_configured ? " · webhook post failed" : " · no Teams webhook set"}</div>
+                      <div className="text-foreground/90 leading-relaxed">{teamsTest.answer}</div>
+                      {!teamsTest.secret_set && <div className="text-amber mt-1.5">Save an HMAC secret above so inbound Teams requests verify.</div>}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

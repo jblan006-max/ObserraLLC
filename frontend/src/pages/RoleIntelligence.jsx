@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
 import { SapInsight } from "@/components/SapInsight";
+import { SapAIFix } from "@/components/SapAIFix";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -93,6 +94,7 @@ export default function RoleIntelligence() {
                 <Button size="sm" variant="outline" data-testid="role-recertify" disabled={acting} onClick={() => roleAction("recertify")} className="h-8 gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> Recertify role</Button>
                 {detail.internal_sod.length > 0 && <Button size="sm" data-testid="role-remediate" disabled={acting} onClick={() => roleAction("remediate")} className="h-8 gap-1.5 bg-amber hover:bg-amber/90 text-[#050810]"><Wrench className="w-3.5 h-3.5" /> Remediate toxic role</Button>}
               </div>
+              <div className="mb-3"><SapAIFix entity="role" refId={detail.role.ref} accent="35 90% 55%" /></div>
               {detail.internal_sod.length > 0 && (
                 <div className="mb-3"><h3 className="font-head font-bold text-sm mb-1">Internal SoD Conflicts</h3>{detail.internal_sod.map((s) => <div key={s.ref} className="text-sm flex items-center gap-2 mb-1"><Chip v={s.severity} />{s.name}</div>)}</div>
               )}

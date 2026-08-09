@@ -1364,6 +1364,28 @@ async def digest_ask(body: DigestAskBody, user: dict = Depends(get_current_user)
     return await _run_digest_ask(user["org_id"], body.question, body.session_id, actor=user["email"])
 
 
+_ASK_RL = {}
+_ASK_RESET_WORDS = {"reset", "new", "clear", "restart", "start over"}
+
+
+def _rate_limited(bucket, limit=20, window=60):
+    """Light in-memory per-org sliding-window guard for the public ask endpoints (HMAC is still required first)."""
+    import time as _t
+    now = _t.time()
+    hits = [t for t in _ASK_RL.get(bucket, []) if now - t < window]
+    if len(hits) >= limit:
+        _ASK_RL[bucket] = hits
+        return True
+    hits.append(now)
+    _ASK_RL[bucket] = hits
+    return False
+
+
+async def _reset_ask_session(org_id, session_id):
+    """Start a fresh multi-turn thread for a Slack/Teams conversation."""
+    await db.sap_digest_chat.delete_one({"org_id": org_id, "session_id": session_id})
+
+
 # ── Slack Ask — inbound slash command (e.g. /askdigest) grounded in the live digest ──
 def _verify_slack_sig(secret, ts, body_bytes, signature):
     """Real Slack HMAC-SHA256 request verification (No-Mock)."""
@@ -1391,10 +1413,11 @@ async def _resolve_slack_org(ts, body_bytes, signature):
     return None
 
 
-async def _slack_answer_and_respond(org_id, question, response_url, user_name):
+async def _slack_answer_and_respond(org_id, question, response_url, user_name, session_id=None):
     """Compute the grounded answer and POST it back to Slack's response_url (delayed response)."""
     try:
-        res = await _run_digest_ask(org_id, question, actor=f"slack:{user_name}", channel="slack")
+        res = await _run_digest_ask(org_id, question, session_id=session_id, actor=f"slack:{user_name}", channel="slack")
+        await _log_ask(org_id, "slack", user_name, question, res["answer"], res["model"])
         payload = {"response_type": "in_channel",
                    "blocks": [
                        {"type": "section", "text": {"type": "mrkdwn",
@@ -1432,23 +1455,32 @@ async def slack_ask(request: Request, background: BackgroundTasks):
                         "Ask an admin to enable Slack Ask on the SoD Command Center and paste the app's signing secret."}
     from urllib.parse import parse_qs
     form = {k: v[0] for k, v in parse_qs(raw.decode()).items()}
-    question = _expand_shortcut((form.get("text") or "").strip())
-    response_url = form.get("response_url", "")
+    if _rate_limited(f"slack:{org_id}"):
+        return {"response_type": "ephemeral", "text": ":hourglass: You're asking a lot at once — give it a few seconds and try again."}
+    raw_text = (form.get("text") or "").strip()
     user_name = form.get("user_name", "leader")
     team_id = form.get("team_id", "")
+    channel_id = form.get("channel_id", "")
+    user_id = form.get("user_id", "")
+    response_url = form.get("response_url", "")
+    session_id = f"slack:{team_id}:{channel_id}:{user_id}"
     if team_id:
         await db.sap_digest_config.update_one({"org_id": org_id}, {"$set": {"slack_team_id": team_id}})
+    if raw_text.lower() in _ASK_RESET_WORDS:
+        await _reset_ask_session(org_id, session_id)
+        return {"response_type": "ephemeral", "text": ":arrows_counterclockwise: Started a new conversation — your next question begins a fresh thread."}
+    question = _expand_shortcut(raw_text)
     if not question:
         shortcuts = " · ".join(f"`{k}`" for k in list(_ASK_SHORTCUTS)[:5])
         ctx = await _digest_ai_context(org_id)
         sugg = "\n".join(f"• {s}" for s in _digest_ask_suggestions(ctx))
         return {"response_type": "ephemeral",
-                "text": f"Ask me about the SAP Access Governance digest. One-tap shortcuts: {shortcuts}\n{sugg}"}
+                "text": f"Ask me about the SAP Access Governance digest. Follow-ups continue the thread — say `reset` to start over. Shortcuts: {shortcuts}\n{sugg}"}
     if response_url:
-        background.add_task(_slack_answer_and_respond, org_id, question, response_url, user_name)
+        background.add_task(_slack_answer_and_respond, org_id, question, response_url, user_name, session_id)
         return {"response_type": "ephemeral",
                 "text": ":hourglass_flowing_sand: Analyzing the live SAP access governance digest…"}
-    res = await _run_digest_ask(org_id, question, actor=f"slack:{user_name}", channel="slack")
+    res = await _run_digest_ask(org_id, question, session_id=session_id, actor=f"slack:{user_name}", channel="slack")
     await _log_ask(org_id, "slack", user_name, question, res["answer"], res["model"])
     return {"response_type": "in_channel", "text": res["answer"]}
 
@@ -1498,6 +1530,30 @@ async def sap_ask_log(source: str = "", limit: int = 50, user: dict = Depends(ge
     return {"entries": rows, "total": total, "by_source": by_source}
 
 
+@sap_router.get("/ask-analytics")
+async def sap_ask_analytics(user: dict = Depends(get_current_user)):
+    """Most-asked questions and busiest askers across Slack/Teams — leadership self-service analytics."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    total = await db.sap_ask_log.count_documents({"org_id": org_id})
+    src = await db.sap_ask_log.aggregate([
+        {"$match": {"org_id": org_id}},
+        {"$group": {"_id": "$source", "n": {"$sum": 1}}}]).to_list(20)
+    tq = await db.sap_ask_log.aggregate([
+        {"$match": {"org_id": org_id}},
+        {"$group": {"_id": {"$toLower": {"$trim": {"input": "$question"}}}, "n": {"$sum": 1},
+                    "sample": {"$first": "$question"}}},
+        {"$sort": {"n": -1}}, {"$limit": 8}]).to_list(8)
+    ta = await db.sap_ask_log.aggregate([
+        {"$match": {"org_id": org_id}},
+        {"$group": {"_id": "$user_name", "n": {"$sum": 1}, "last": {"$max": "$at"}}},
+        {"$sort": {"n": -1}}, {"$limit": 8}]).to_list(8)
+    return {"total": total,
+            "by_source": {(a["_id"] or "?"): a["n"] for a in src},
+            "top_questions": [{"question": (t.get("sample") or t["_id"]), "count": t["n"]} for t in tq],
+            "top_askers": [{"user": (a["_id"] or "leader"), "count": a["n"], "last": a.get("last")} for a in ta]}
+
+
 # ── Teams Ask — inbound Microsoft Teams Outgoing Webhook (HMAC) grounded in the digest ──
 def _verify_teams_sig(secret_b64, body_bytes, auth_header):
     """Verify a Microsoft Teams Outgoing Webhook HMAC signature (Authorization: HMAC <base64>)."""
@@ -1541,19 +1597,53 @@ async def teams_ask(request: Request):
         return {"type": "message",
                 "text": "This Teams webhook isn't linked to a SAP UAC workspace yet, or the HMAC secret doesn't match. "
                         "Ask an admin to enable Teams Ask on the SoD Command Center and paste the outgoing-webhook secret."}
+    if _rate_limited(f"teams:{org_id}"):
+        return {"type": "message", "text": "You're asking a lot at once — give it a few seconds and try again."}
     try:
         payload = _json.loads(raw.decode() or "{}")
     except Exception:
         payload = {}
-    text = _expand_shortcut(_re.sub(r"<at>.*?</at>", "", (payload.get("text") or "")).strip())
+    text_raw = _re.sub(r"<at>.*?</at>", "", (payload.get("text") or "")).strip()
     user_name = ((payload.get("from") or {}).get("name")) or "leader"
+    conv_id = ((payload.get("conversation") or {}).get("id")) or ((payload.get("from") or {}).get("id")) or "default"
+    session_id = f"teams:{conv_id}"
+    if text_raw.lower() in _ASK_RESET_WORDS:
+        await _reset_ask_session(org_id, session_id)
+        return {"type": "message", "text": "Started a new conversation — your next question begins a fresh thread."}
+    text = _expand_shortcut(text_raw)
     if not text:
         ctx = await _digest_ai_context(org_id)
         sugg = "\n".join(f"- {s}" for s in _digest_ask_suggestions(ctx))
-        return {"type": "message", "text": f"Ask me about the SAP Access Governance digest. For example:\n{sugg}"}
-    res = await _run_digest_ask(org_id, text, actor=f"teams:{user_name}", channel="teams", timeout=8)
+        return {"type": "message", "text": f"Ask me about the SAP Access Governance digest (follow-ups continue the thread; say 'reset' to start over). For example:\n{sugg}"}
+    res = await _run_digest_ask(org_id, text, session_id=session_id, actor=f"teams:{user_name}", channel="teams", timeout=8)
     await _log_ask(org_id, "teams", user_name, text, res["answer"], res["model"])
     return {"type": "message", "text": res["answer"]}
+
+
+@sap_router.post("/teams/test")
+async def teams_ask_test(body: SlackTestBody, user: dict = Depends(require_roles("admin"))):
+    """Admin round-trip check for Teams Ask: runs the grounded ask and (if a dedicated SAP Teams
+    webhook is set) posts the answer to Teams so the admin can confirm right after setup."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    cfg = await _get_digest_config(org_id)
+    q = _expand_shortcut((body.question or "").strip() or "What are the top risks in this digest right now?")
+    res = await _run_digest_ask(org_id, q, actor=f"teams-test:{user['email']}", channel="teams-test")
+    await _log_ask(org_id, "test", user["email"], q, res["answer"], res["model"])
+    teams_url = (cfg.get("teams_url") or "").strip()
+    posted = False
+    if teams_url:
+        try:
+            async with httpx.AsyncClient(timeout=15) as c:
+                r = await c.post(teams_url, json={"@type": "MessageCard", "@context": "https://schema.org/extensions",
+                                                  "summary": "SAP Access Governance — Teams Ask test", "themeColor": "0f1e3d",
+                                                  "title": "SAP Access Governance — Teams Ask test", "text": f"**{q}**\n\n{res['answer']}"})
+                posted = r.status_code < 400
+        except Exception:
+            posted = False
+    return {"ok": True, "question": q, "answer": res["answer"], "model": res["model"],
+            "secret_set": bool((cfg.get("teams_ask_secret") or "").strip()),
+            "webhook_configured": bool(teams_url), "webhook_posted": posted}
 
 
 # ── Chat Export (PDF + email the AI Q&A thread, stamped to the audit trail) ────

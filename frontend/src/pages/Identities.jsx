@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
 import { SapInsight } from "@/components/SapInsight";
+import { SapAIFix } from "@/components/SapAIFix";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -168,6 +169,8 @@ export default function Identities() {
                 <div><span className="text-muted-foreground text-xs">Legal entity</span><div>{detail.person.legal_entity_name} ({detail.person.country})</div></div>
                 <div><span className="text-muted-foreground text-xs">HR authority</span><div>{detail.person.hr_authority} · match {Math.round(detail.person.match_confidence * 100)}%</div></div>
               </div>
+
+              <div className="mb-4"><SapAIFix entity="identity" refId={detail.person.ref} accent="190 90% 50%" /></div>
 
               <Section title="Access Risk Factors" icon={ShieldAlert}>
                 <div className="space-y-1.5">{detail.risk.factors.map((f, i) => (

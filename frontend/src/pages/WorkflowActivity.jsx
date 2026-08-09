@@ -22,6 +22,7 @@ export default function WorkflowActivity() {
   const [days, setDays] = useState("0");
   const [detail, setDetail] = useState(null);
   const [askLog, setAskLog] = useState(null);
+  const [askAn, setAskAn] = useState(null);
 
   const load = useCallback(async () => {
     const p = new URLSearchParams();
@@ -33,7 +34,10 @@ export default function WorkflowActivity() {
     setD(data);
   }, [q, prefix, system, days]);
   useEffect(() => { load(); }, [load]);
-  useEffect(() => { api.get("/sap/ask-log?limit=25").then((r) => setAskLog(r.data)).catch(() => {}); }, []);
+  useEffect(() => {
+    api.get("/sap/ask-log?limit=25").then((r) => setAskLog(r.data)).catch(() => {});
+    api.get("/sap/ask-analytics").then((r) => setAskAn(r.data)).catch(() => {});
+  }, []);
   useEffect(() => {
     const h = () => load();
     window.addEventListener("sap-data-changed", h);
@@ -92,6 +96,32 @@ export default function WorkflowActivity() {
             <span className="text-[10px] font-mono text-muted-foreground">{askLog.total} asked · {Object.entries(askLog.by_source || {}).map(([k, v]) => `${v} ${k}`).join(" · ")}</span>
           </div>
           <p className="text-[11px] text-muted-foreground mb-3">Every governance question leaders asked from Slack or Microsoft Teams, answered live from the SAP access snapshot.</p>
+          {askAn && ((askAn.top_questions || []).length > 0 || (askAn.top_askers || []).length > 0) && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3" data-testid="ask-analytics">
+              <div className="rounded-lg border border-border/60 bg-background/40 p-3">
+                <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1.5">Most-asked questions</div>
+                <div className="space-y-1">
+                  {(askAn.top_questions || []).slice(0, 5).map((q, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs" data-testid={`ask-top-q-${i}`}>
+                      <span className="font-mono text-[10px] text-primary w-7 shrink-0">{q.count}×</span>
+                      <span className="truncate text-foreground/90">{q.question}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className="rounded-lg border border-border/60 bg-background/40 p-3">
+                <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1.5">Busiest askers</div>
+                <div className="space-y-1">
+                  {(askAn.top_askers || []).slice(0, 5).map((a, i) => (
+                    <div key={i} className="flex items-center gap-2 text-xs" data-testid={`ask-top-user-${i}`}>
+                      <span className="font-mono text-[10px] text-primary w-7 shrink-0">{a.count}×</span>
+                      <span className="truncate text-foreground/90">{a.user}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
           <div className="space-y-2 max-h-[360px] overflow-y-auto" data-testid="ask-log-list">
             {askLog.entries.map((e, i) => (
               <div key={i} className="rounded-lg border border-border/60 bg-background/40 p-2.5" data-testid={`ask-log-${i}`}>

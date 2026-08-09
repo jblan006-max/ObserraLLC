@@ -1782,6 +1782,170 @@ async def sap_insight(focus: str = "", user: dict = Depends(get_current_user)):
         return _sap_insight_fallback(ctx)
 
 
+# ── SAP AI Fix — grounded per-entity risk rating + AI "how to fix" (Obserra-standard,
+#    mirrors /advisor/fix). Drops into every SAP detail view. ────────────────────
+class SapFixReq(BaseModel):
+    entity: str
+    ref: str
+
+
+_SAP_FIX_CACHE = {}
+_SAP_SEV_SCORE = {"Critical": 92, "High": 68, "Medium": 42, "Low": 20}
+
+
+async def _sap_fix_grounding(org_id, entity, ref):
+    """Compute a grounded risk rating + rationale + LLM context for a single SAP entity."""
+    persons, accounts, conflicts, pmap = await _correlate(org_id)
+    ctx = {"entity": entity, "ref": ref}
+    if entity == "identity":
+        p = pmap.get(ref)
+        if not p:
+            return None
+        r = p.get("risk") or {}
+        score, rating, title = int(r.get("score", 0)), r.get("rating", "Low"), p["name"]
+        factors = [f"{f['factor']}: {f['detail']}" for f in (r.get("factors") or [])]
+        rationale = factors[:6] or ["No elevated risk factors detected for this identity."]
+        pconf = [c for c in conflicts if c.get("person_ref") == ref and c.get("status") == "Open"]
+        flags = {}
+        for a in p.get("accounts", []):
+            for kk, vv in (a.get("flags") or {}).items():
+                if vv:
+                    flags[kk] = flags.get(kk, 0) + 1
+        term_access = p["status"] == "Terminated" and any(a.get("lock_state") == "unlocked" for a in p.get("accounts", []))
+        ctx.update({"name": p["name"], "status": p["status"], "department": p["department"],
+                    "worker_type": p.get("worker_type"), "mfa": p.get("mfa"), "account_flags": flags,
+                    "open_conflicts": [{"rule": c["rule_name"], "severity": c["severity"], "area": c["area"]} for c in pconf[:8]],
+                    "risk_factors": factors, "terminated_with_access": term_access})
+    elif entity == "conflict":
+        c = next((x for x in conflicts if x.get("conflict_ref") == ref), None)
+        if not c:
+            return None
+        rating, score, title = c["severity"], _SAP_SEV_SCORE.get(c["severity"], 40), c["rule_name"]
+        person = pmap.get(c.get("person_ref"))
+        rationale = [f"Toxic combination '{c['rule_name']}' in {c['area']} — severity {c['severity']}.",
+                     f"Held by {person['name'] if person else c['sap_user']} via {', '.join(c.get('a_via_roles', []))} ✕ {', '.join(c.get('b_via_roles', []))}.",
+                     f"Status: {c.get('status')}. {c.get('business_risk') or 'Enables end-to-end transaction control that must be segregated.'}"]
+        ctx.update({"rule": c["rule_name"], "area": c["area"], "severity": c["severity"], "status": c.get("status"),
+                    "holder": person["name"] if person else c["sap_user"], "system": c.get("system"),
+                    "a_via_roles": c.get("a_via_roles"), "b_via_roles": c.get("b_via_roles")})
+    elif entity == "role":
+        role = ROLE_BY_REF.get(ref)
+        if not role:
+            return None
+        holders = sum(1 for a in accounts if ref in a.get("roles", []))
+        funcs = [FUNCTIONS[f]["label"] for f in role.get("functions", []) if f in FUNCTIONS]
+        priv = bool(role.get("privileged")) or role.get("type") == "sap_all" or "SAP_ALL" in (role.get("name", "").upper())
+        score = 78 if priv else min(70, 20 + holders)
+        rating = "Critical" if priv else "High" if holders > 40 else "Medium" if holders > 10 else "Low"
+        title = role.get("name", ref)
+        rationale = [f"Role '{role.get('name')}' grants {len(funcs)} sensitive function(s): {', '.join(funcs[:6]) or '—'}.",
+                     f"Assigned to {holders} account(s)." + (" Privileged / wide-authority role." if priv else "")]
+        ctx.update({"name": role.get("name"), "type": role.get("type"), "functions": funcs, "holders": holders, "privileged": priv})
+    elif entity == "account":
+        a = next((x for x in accounts if x.get("ref") == ref), None)
+        if not a:
+            return None
+        person = pmap.get(a.get("person_ref"))
+        flags = [k for k, v in (a.get("flags") or {}).items() if v]
+        priv = "sap_all" in flags or "privileged" in flags
+        score = 85 if "sap_all" in flags else 62 if (priv or "dormant" in flags) else 30
+        rating = "Critical" if "sap_all" in flags else "High" if priv else "Medium" if flags else "Low"
+        title = a.get("sap_user", ref)
+        rationale = [f"SAP account {a.get('sap_user')} on {a.get('system')}/{a.get('client')} — {a.get('lock_state')}.",
+                     ("Elevated flags: " + ", ".join(flags)) if flags else "No elevated account flags."]
+        ctx.update({"sap_user": a.get("sap_user"), "system": a.get("system"), "flags": flags,
+                    "lock_state": a.get("lock_state"), "owner": person["name"] if person else None,
+                    "roles": [ROLE_BY_REF.get(r, {}).get("name", r) for r in a.get("roles", [])][:12]})
+    else:
+        return None
+    return {"rating": rating, "score": int(score), "rationale": rationale, "title": title, "ctx": ctx}
+
+
+def _sap_fix_fallback(entity, g):
+    ctx = g["ctx"]
+    if entity == "identity":
+        if ctx.get("terminated_with_access"):
+            return ("Terminated worker still holds live SAP access — deactivate immediately to close residual access.",
+                    ["Run the Deactivate workflow (ServiceNow → HR → SAP → AD/Entra) to lock all accounts and revoke roles.",
+                     "Reconcile the ADP/IZ8 termination date and clear the HR security hold.",
+                     "Recertify any delegated access that referenced this identity."])
+        if ctx.get("open_conflicts"):
+            return ("Resolve the open SoD conflicts by removing one side of each toxic role pair or applying a monitored control.",
+                    ["Open each SoD conflict and remove the conflicting role, or record a compensating control with owner + review date.",
+                     "Enable auto-remediation for Critical conflicts on this population.",
+                     "Recertify the remaining entitlements with the line manager."])
+        return ("Right-size this identity's access to least privilege and enforce MFA.",
+                ["Recertify SAP roles against job function.", "Enforce MFA / conditional access.", "Remove dormant or wide-authority roles."])
+    if entity == "conflict":
+        return (f"Remediate the {ctx.get('severity')} '{ctx.get('rule')}' conflict by splitting duties across two users or applying a monitored control.",
+                [f"Remove either {', '.join(ctx.get('a_via_roles') or [])} or {', '.join(ctx.get('b_via_roles') or [])} from {ctx.get('holder')}.",
+                 "If business-required, record a mitigating control (owner, monitoring frequency, review date).",
+                 "Open a ServiceNow remediation task and recertify after the change."])
+    if entity == "role":
+        return ("Restrict this role to least privilege and tighten who can hold it.",
+                ["Split the sensitive functions into narrower roles where possible.",
+                 "Recertify all current holders against job need.",
+                 ("Treat as firefighter/privileged with time-boxed, logged access." if ctx.get("privileged") else "Add the role to continuous SoD monitoring.")])
+    if entity == "account":
+        return ("Lock or right-size this account and remove wide-authority entitlements.",
+                [("Revoke SAP_ALL and assign scoped roles." if "sap_all" in (ctx.get("flags") or []) else "Remove unused roles to least privilege."),
+                 "Recertify the account owner; lock if dormant or orphaned.",
+                 "Enforce MFA and monitor privileged transactions."])
+    return ("Review this entity and apply least-privilege access.", ["Recertify access.", "Remove unused entitlements."])
+
+
+@sap_router.post("/fix")
+async def sap_fix(body: SapFixReq, user: dict = Depends(get_current_user)):
+    """Grounded per-entity SAP access risk rating + AI 'how to fix' recommendation (Obserra-standard).
+    Used inside every SAP detail view; cached 180s per entity."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    key = (org_id, body.entity, body.ref)
+    hit = _SAP_FIX_CACHE.get(key)
+    if hit and (_now() - hit["ts"]).total_seconds() < 180:
+        return hit["data"]
+    g = await _sap_fix_grounding(org_id, body.entity, body.ref)
+    if not g:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    result = {"rating": g["rating"], "score": g["score"], "rationale": g["rationale"],
+              "recommendation": "", "steps": [], "model": "deterministic"}
+    try:
+        import asyncio
+        import re
+        from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
+        system = ("You are the Obserra SAP UAC Advisor. Given a SAP access entity (identity, SoD conflict, role or "
+                  "account) with its live risk drivers, write a SHORT concrete remediation grounded ONLY in the data "
+                  "(cite role names, SoD rule names, systems, figures). Return STRICT JSON only, no markdown: "
+                  '{"recommendation": string (<=220 chars, imperative), "steps": [string] (2-4 concrete governance steps)}.')
+        chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"sap-fix-{org_id}-{body.entity}-{body.ref}",
+                       system_message=system).with_model("openai", "gpt-5.4")
+        prompt = (f"ENTITY CONTEXT (JSON):\n{json.dumps({**g['ctx'], 'rating': g['rating'], 'score': g['score']}, default=str)[:6000]}"
+                  "\n\nProduce the remediation JSON now.")
+        collected = []
+
+        async def _run():
+            async for ev in chat.stream_message(UserMessage(text=prompt)):
+                if isinstance(ev, TextDelta):
+                    collected.append(ev.content)
+                elif isinstance(ev, StreamDone):
+                    break
+        await asyncio.wait_for(_run(), timeout=14)
+        raw = "".join(collected).strip()
+        m = re.search(r"\{.*\}", raw, re.S)
+        parsed = json.loads(m.group(0)) if m else {}
+        result["recommendation"] = parsed.get("recommendation") or ""
+        result["steps"] = parsed.get("steps") or []
+        if result["recommendation"]:
+            result["model"] = "openai/gpt-5.4"
+    except Exception:
+        pass
+    if not result["recommendation"]:
+        result["recommendation"], result["steps"] = _sap_fix_fallback(body.entity, g)
+        result["model"] = "deterministic"
+    _SAP_FIX_CACHE[key] = {"ts": _now(), "data": result}
+    return result
+
+
 # ── Agentic advisor: resolve a natural-language instruction into an executable
 #    activation workflow plan (the advisor can ACT, not just answer). ───────────
 class AdvisorPlanBody(BaseModel):
