@@ -465,3 +465,13 @@ Continued from the docs work; all curl + screenshot verified on the live app.
 ---
 ## Status update — Jun 2026 (System Health suite complete)
 System Health admin page (`/app/system-health`) now ships: deep-health tiles + amber/green header pill, one-click on-prem upgrade w/ streaming log, nightly backups (schedule: enabled/daily-weekly/keep) with **AES-at-rest encryption** (org passphrase, JWT_SECRET-wrapped key; passphrase required to restore), pre-restore auto-backup + typed-RESTORE confirm, backup download guardrail (org/contents/tag/lock), degraded-connector drill-down w/ one-click re-probe, 24h/7d/30d uptime strip, and health-alert routing matrix (DB/Connector/Scheduler × Slack/Teams/Email) with a Send-test-alert button. Backend in `deploy.py`; alerts fold into the daily cron. See CHANGELOG.md for details.
+
+## SAP UAC — SLA targets + audit-request analytics/bulk + perf pass (Jun 2026, iteration_85 — backend 13/13, frontend 100%)
+Final audit-workflow batch + optimization. All P0/backlog for the auditor experience is now DONE.
+- Configurable **Response SLA** (org default `system_health.sla_hours` + per-room override) drives the overdue-request digest (was hardcoded 72h) and a new `sh-sla-panel` UI. Endpoints: `GET/PUT /api/deploy/sla-config`, `PUT /api/deploy/audit-room/{token}/sla`.
+- **Action-link expiry**: digest-minted Slack/Teams resolve/reply tokens expire after 7 days (`action_expires_at` + `_action_expired`).
+- **Weekly-median response-time sparkline** in the Audit Requests analytics strip (`sh-request-trend`, from `/audit-request-analytics` `trend[]`).
+- **Select-across-filters** bulk action (`sh-select-across` → `POST /api/deploy/audit-room-comments/bulk-status-filter`, `update_many` across the whole matching set).
+- **Performance**: route-chunk prefetch on nav hover (`src/lib/routePrefetch.js`); client-side logo downscale (≤512px) before upload; on-prem zip build cached by source mtime; guide downloads carry cache headers (ingress-overridden in hosted). Backend reads already ~90–130ms + gzip.
+- Backlog after this: none outstanding for the auditor/System-Health workstream. Optional tech-debt: split `deploy.py` (~2790 lines) and `SystemHealth.jsx` (~1430 lines) into modules; clean the pre-existing span-in-option hydration warning in SodWatchlist.
+
