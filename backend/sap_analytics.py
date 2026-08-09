@@ -399,3 +399,130 @@ async def remediate_watchlist_area(body: WatchlistRemediateBody, user: dict = De
                  f"{area} · {ticket['number']} · owner {owner or '—'}")
     return {"ok": True, "ticket": _ticket_public(ticket), "owner": owner, "area": area,
             "watchlist": await get_watchlist(user)}
+
+
+# ── ServiceNow ticket timeline (deep-link from the watchlist ticket badge) ────
+@sap_router.get("/ticket/{number}")
+async def get_ticket(number: str, user: dict = Depends(get_current_user)):
+    """Full ServiceNow-orchestrated change record + its stage-by-stage timeline."""
+    t = await db.sap_snow_tickets.find_one({"org_id": user["org_id"], "number": number}, {"_id": 0})
+    if not t:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    return t
+
+
+# ── Owner Digest (weekly: each owner gets just the SoD areas assigned to them) ─
+def _owner_digest_html(owner, rows, total_open, total_crit):
+    body = "".join(
+        f'<tr><td style="padding:7px 10px;border-bottom:1px solid #eef0f4">{r["area"]}</td>'
+        f'<td style="padding:7px 10px;border-bottom:1px solid #eef0f4;text-align:center;color:#b91c1c;font-weight:700">{r["Critical"]}</td>'
+        f'<td style="padding:7px 10px;border-bottom:1px solid #eef0f4;text-align:center">{r["open"]}</td>'
+        f'<td style="padding:7px 10px;border-bottom:1px solid #eef0f4;font:600 11px monospace;color:#0369a1">{(r.get("ticket") or {}).get("number", "—")}</td></tr>'
+        for r in rows)
+    return (
+        '<table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:auto;background:#fff">'
+        '<tr><td style="padding:22px">'
+        '<div style="font:800 18px Arial;color:#0f1e3d">Your SAP SoD areas this week</div>'
+        '<div style="font:400 12px Arial;color:#6b7280;margin-bottom:12px">Obserra SAP UAC — assigned to ' + owner + '</div>'
+        f'<div style="font:400 13px Arial;color:#1f2937;margin-bottom:12px">You own <b>{len(rows)}</b> SoD area(s): '
+        f'<b style="color:#b91c1c">{total_crit}</b> open Critical, <b>{total_open}</b> open total.</div>'
+        '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font:400 12px Arial">'
+        '<tr style="background:#0f1e3d;color:#fff"><td style="padding:7px 10px">Business area</td>'
+        '<td style="padding:7px 10px;text-align:center">Critical</td><td style="padding:7px 10px;text-align:center">Open</td>'
+        '<td style="padding:7px 10px">Ticket</td></tr>' + body + '</table>'
+        '<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:10px;font:400 10px Arial;color:#9ca3af">'
+        'Sign in to Obserra SAP UAC → SoD Command Center → Risk Watchlist to remediate.</div>'
+        '</td></tr></table>')
+
+
+async def run_sap_owner_digest():
+    """Weekly: email each watchlist owner the SoD areas assigned to them with live counts + tickets."""
+    from kernel import notifications
+    orgs = await db.organizations.find({}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        try:
+            docs = await db.sap_watchlist.find({"org_id": org_id, "owner": {"$nin": [None, ""]}}).to_list(2000)
+            if not docs:
+                continue
+            stats = await _area_stats(org_id)
+            by_owner = {}
+            for d in docs:
+                owner = (d.get("owner") or "").strip()
+                if "@" not in owner:
+                    continue
+                s = stats.get(d["area"], {"area": d["area"], "open": 0, "Critical": 0})
+                by_owner.setdefault(owner, []).append({**s, "ticket": d.get("ticket")})
+            for owner, rows in by_owner.items():
+                rows.sort(key=lambda r: (-r.get("Critical", 0), -r.get("open", 0), r["area"]))
+                to = sum(r["open"] for r in rows)
+                tc = sum(r["Critical"] for r in rows)
+                await notifications.send_email(owner, f"Your SAP SoD areas — {tc} Critical, {to} open",
+                                               _owner_digest_html(owner, rows, to, tc))
+            await notifications.create(org_id, "sap", "SoD owner digest sent",
+                                       f"Weekly SoD owner digest emailed to {len(by_owner)} owner(s).", ref="sap-owner-digest")
+            logger.info(f"Owner digest sent for org {org_id}: {len(by_owner)} owner(s)")
+        except Exception as e:
+            logger.error(f"Owner digest failed for org {org_id}: {e}")
+
+
+# ── Board Pack (monthly: exec access-governance summary + analytics PDF) ──────
+def _board_pack_html(d, wins, month):
+    k = d["kpis"]
+    areas = "".join(f'<li style="margin:3px 0">{r["name"]} — <b style="color:#b91c1c">{r["value"]}</b> open</li>' for r in d["sod_by_area"][:5])
+    movers = "".join(f'<li style="margin:3px 0">{r["name"]} ({r["department"]}) — {r["rating"]} · {r["score"]}/100</li>' for r in d["top_risk"][:5])
+    return (
+        '<table width="100%" cellpadding="0" cellspacing="0" style="max-width:680px;margin:auto;background:#fff">'
+        '<tr><td style="background:#0f1e3d;padding:20px 24px"><div style="font:800 20px Arial;color:#fff">SAP Access Governance — Board Pack</div>'
+        f'<div style="font:400 12px Arial;color:#c7d2fe">{month} · Obserra SAP UAC</div></td></tr>'
+        '<tr><td style="padding:22px 24px">'
+        '<div style="font:700 14px Arial;color:#0f1e3d;margin-bottom:6px">Executive summary</div>'
+        f'<div style="font:400 13px Arial;color:#1f2937;margin-bottom:14px">{k["identities"]} identities · {k["accounts"]} accounts · '
+        f'<b style="color:#b91c1c">{k["open_sod"]}</b> open SoD ({k["critical_sod"]} Critical) · avg risk {k["avg_risk"]}/100 · '
+        f'{k["license_usage_pct"]}% license usage.</div>'
+        f'<div style="font:700 13px Arial;color:#0f1e3d;margin:10px 0 4px">Hottest SoD areas</div><ul style="font:400 12px Arial;color:#1f2937;margin:0;padding-left:18px">{areas}</ul>'
+        f'<div style="font:700 13px Arial;color:#0f1e3d;margin:12px 0 4px">Risk movers</div><ul style="font:400 12px Arial;color:#1f2937;margin:0;padding-left:18px">{movers}</ul>'
+        '<div style="font:700 13px Arial;color:#0f1e3d;margin:12px 0 4px">Remediation wins (last 30 days)</div>'
+        f'<div style="font:400 13px Arial;color:#065f46"><b>{wins["remediation_tickets"]}</b> remediation change(s) processed · <b>{wins["mitigated"]}</b> conflict(s) under mitigating control.</div>'
+        '<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:10px;font:400 10px Arial;color:#9ca3af">Full metrics attached (SAP analytics PDF). Generated by Obserra SAP UAC.</div>'
+        '</td></tr></table>')
+
+
+async def run_sap_board_pack():
+    """Monthly (1st): email the SAP access-governance board pack to the digest recipients (opt-in via
+    digest config `board_pack`), with the analytics PDF attached. Sent once per calendar month."""
+    import base64
+    from datetime import timedelta
+    from kernel import notifications
+    from sap_digest import _get_digest_config
+    month = _now().strftime("%Y-%m")
+    orgs = await db.organizations.find({}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        try:
+            cfg = await _get_digest_config(org_id)
+            recips = [e.strip() for e in (cfg.get("recipients") or []) if e and "@" in e]
+            if not cfg.get("board_pack") or not recips:
+                continue
+            if await db.sap_board_pack_log.find_one({"org_id": org_id, "month": month}):
+                continue
+            await _ensure(org_id)
+            d = await _analytics_data(org_id)
+            _, _, conflicts, _ = await _correlate(org_id)
+            since = (_now() - timedelta(days=30)).isoformat()
+            wins = {
+                "remediation_tickets": await db.sap_snow_tickets.count_documents(
+                    {"org_id": org_id, "type": {"$regex": "SoD|Remediation|Role", "$options": "i"}, "opened_at": {"$gte": since}}),
+                "mitigated": sum(1 for c in conflicts if c.get("status") == "Mitigated"),
+            }
+            html = _board_pack_html(d, wins, month)
+            att = [{"filename": f"sap-board-pack-{month}.pdf",
+                    "content": base64.b64encode(_analytics_pdf(d, "All regions & departments", "Board Pack")).decode()}]
+            for to in recips:
+                await notifications.send_email(to, f"SAP Access Governance — Board Pack {month}", html, attachments=att)
+            await db.sap_board_pack_log.insert_one({"org_id": org_id, "month": month, "at": _now().isoformat(), "recipients": recips})
+            await notifications.create(org_id, "sap", "Board pack emailed",
+                                       f"Monthly SAP board pack sent to {len(recips)} recipient(s).", ref="sap-board-pack")
+            logger.info(f"Board pack sent for org {org_id} to {len(recips)}")
+        except Exception as e:
+            logger.error(f"Board pack failed for org {org_id}: {e}")

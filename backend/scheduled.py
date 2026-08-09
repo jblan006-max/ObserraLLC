@@ -113,6 +113,8 @@ async def monthly_board_report(request: Request, background_tasks: BackgroundTas
         raise HTTPException(status_code=401, detail="Unauthorized")
     background_tasks.add_task(_run_monthly_board_reports)
     background_tasks.add_task(_run_access_review)
+    from sap_uac import run_sap_board_pack
+    background_tasks.add_task(run_sap_board_pack)
     return {"status": "accepted"}
 
 
@@ -302,6 +304,8 @@ async def weekly_drift_digest(request: Request, background_tasks: BackgroundTask
     background_tasks.add_task(_run_teams_digest)
     background_tasks.add_task(_run_momentum_digest)
     background_tasks.add_task(_run_connector_digest)
+    from sap_uac import run_sap_owner_digest
+    background_tasks.add_task(run_sap_owner_digest)
     from ai_advisor import _run_weekly_fair_air_refresh
     background_tasks.add_task(_run_weekly_fair_air_refresh)
     return {"status": "accepted"}

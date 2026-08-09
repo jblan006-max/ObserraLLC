@@ -1994,6 +1994,6 @@ import sap_analytics  # noqa: E402,F401
 # Re-export background jobs so the scheduler keeps importing them from sap_uac.
 from sap_autoremediation import run_sap_autoremediation_all  # noqa: E402,F401
 from sap_jml import run_sap_mover_autostrip_all  # noqa: E402,F401
-from sap_analytics import run_sap_watchlist_alerts  # noqa: E402,F401
+from sap_analytics import run_sap_watchlist_alerts, run_sap_owner_digest, run_sap_board_pack  # noqa: E402,F401
 from sap_digest import (run_sap_governance_digest, record_sap_scorecard_all, run_sap_weekly_scorecard,
                         run_sap_scorecard_alerts, run_sap_sod_evidence_export, run_sap_weekly_recap)  # noqa: E402,F401

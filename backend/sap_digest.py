@@ -95,7 +95,8 @@ _DIGEST_DEFAULT = {"enabled": True, "recipients": [], "days": "everyday", "chat_
                    "recap_enabled": False, "recap_day": "mon",
                    "voice_intro": "", "brand_logo_url": "", "brand_accent": "",
                    "slack_ask": False, "slack_signing_secret": "", "slack_team_id": "",
-                   "teams_ask": False, "teams_ask_secret": "", "teams_ask_id": ""}
+                   "teams_ask": False, "teams_ask_secret": "", "teams_ask_id": "",
+                   "board_pack": False}
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 _TTS_VOICES = {"onyx", "alloy", "nova", "shimmer", "echo", "ash", "coral", "fable", "sage"}
 
@@ -174,6 +175,7 @@ class DigestConfigBody(BaseModel):
     slack_signing_secret: str = ""
     teams_ask: bool = False
     teams_ask_secret: str = ""
+    board_pack: bool = False
 
 
 @sap_router.get("/digest/config")
@@ -248,6 +250,7 @@ async def put_digest_config(body: DigestConfigBody, user: dict = Depends(require
            "recap_enabled": bool(body.recap_enabled),
            "recap_day": body.recap_day if body.recap_day in _WEEKDAYS else "mon",
            "voice_intro": (body.voice_intro or "").strip()[:140],
+           "board_pack": bool(body.board_pack),
            "brand_logo_url": (body.brand_logo_url or "").strip()[:500],
            "brand_accent": _valid_hex(body.brand_accent),
            "slack_ask": bool(body.slack_ask), "slack_signing_secret": new_secret,
