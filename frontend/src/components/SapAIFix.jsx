@@ -1,25 +1,48 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { Sparkles, Loader2, ShieldAlert } from "lucide-react";
+import { Sparkles, Loader2, ShieldAlert, Wrench } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { toast } from "sonner";
 
 const RATE = { Critical: "0 84% 60%", High: "35 90% 55%", Medium: "199 89% 48%", Low: "142 70% 45%" };
 
 // Reusable AI risk-rating + "how to fix" block for any SAP entity (identity, SoD conflict, role,
 // account). Rating is grounded server-side in the live access model; the recommendation is AI-written.
-// Drops into any SAP detail view — Obserra-standard, mirrors components/AIFix.jsx.
-export function SapAIFix({ entity, refId, accent = "266 85% 66%" }) {
+// When the fix maps to a real remediation workflow, a one-tap "Apply this fix" button runs it.
+// Obserra-standard — mirrors components/AIFix.jsx.
+export function SapAIFix({ entity, refId, accent = "266 85% 66%", onApplied }) {
   const [d, setD] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [reason, setReason] = useState("");
+  const [applying, setApplying] = useState(false);
 
-  useEffect(() => {
+  const fetchFix = () => {
     if (!refId) { setD(null); return; }
-    let ok = true; setLoading(true);
+    setLoading(true);
     api.post("/sap/fix", { entity, ref: refId })
-      .then((r) => { if (ok) setD(r.data); })
-      .catch(() => { if (ok) setD(null); })
-      .finally(() => { if (ok) setLoading(false); });
-    return () => { ok = false; };
-  }, [entity, refId]);
+      .then((r) => setD(r.data)).catch(() => setD(null)).finally(() => setLoading(false));
+  };
+  useEffect(() => { setConfirming(false); setReason(""); fetchFix(); /* eslint-disable-next-line */ }, [entity, refId]);
+
+  const apply = async () => {
+    if (!d?.fix_action) return;
+    setApplying(true);
+    try {
+      const fa = d.fix_action;
+      const note = reason || "One-tap remediation applied from the AI fix recommendation";
+      const { data } = await api.post(fa.endpoint, { ...fa.payload, reason: note, work_note: note });
+      const ticket = data?.ticket?.number || data?.tickets?.[0]?.number;
+      toast.success(`${fa.label} applied`, { description: ticket ? `ServiceNow ${ticket} opened & auto-closed` : "Recorded to the audit trail" });
+      setConfirming(false); setReason("");
+      onApplied?.();
+      fetchFix();
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Could not apply the fix");
+    }
+    setApplying(false);
+  };
 
   const rc = d ? RATE[d.rating] || accent : accent;
   return (
@@ -48,6 +71,24 @@ export function SapAIFix({ entity, refId, accent = "266 85% 66%" }) {
               </ul>
             )}
           </div>
+          {d.fix_action && (
+            <div className="pt-1" data-testid="sap-ai-fix-apply-wrap">
+              {!confirming ? (
+                <Button size="sm" className="h-8 gap-1.5" data-testid="sap-ai-fix-apply" onClick={() => setConfirming(true)}>
+                  <Wrench className="w-3.5 h-3.5" /> Apply this fix — {d.fix_action.label}
+                </Button>
+              ) : (
+                <div className="space-y-2 rounded-md border border-border/60 p-2" data-testid="sap-ai-fix-confirm">
+                  <p className="text-[11px] text-muted-foreground">{d.fix_action.confirm}</p>
+                  <Textarea data-testid="sap-ai-fix-reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="ServiceNow work note (optional)…" rows={2} className="text-xs" />
+                  <div className="flex gap-2">
+                    <Button size="sm" className="h-8 gap-1.5" data-testid="sap-ai-fix-confirm-btn" disabled={applying} onClick={apply}>{applying ? "Applying…" : "Confirm & run workflow"}</Button>
+                    <Button size="sm" variant="outline" className="h-8" onClick={() => setConfirming(false)} disabled={applying}>Cancel</Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
           {d.model && <div className="text-[9px] font-mono text-muted-foreground pt-1">{d.model} · grounded in the live SAP access snapshot</div>}
         </div>
       )}

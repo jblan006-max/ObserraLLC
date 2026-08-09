@@ -1894,6 +1894,37 @@ def _sap_fix_fallback(entity, g):
     return ("Review this entity and apply least-privilege access.", ["Recertify access.", "Remove unused entitlements."])
 
 
+def _sap_fix_action(entity, ref, g):
+    """Map a fix to the REAL single-click remediation workflow it recommends (or None)."""
+    ctx = g["ctx"]
+    if entity == "identity":
+        if ctx.get("terminated_with_access"):
+            return {"kind": "deactivate", "label": "Deactivate & revoke all access",
+                    "endpoint": "/sap/activation/set", "payload": {"person_refs": [ref], "action": "deactivate"},
+                    "confirm": "Runs the ServiceNow → HR (ADP/IZ8) → SAP → AD/Entra workflow to lock every account, revoke roles and deactivate this worker."}
+        return None
+    if entity == "conflict":
+        return {"kind": "mitigate", "label": "Apply monitored mitigating control",
+                "endpoint": "/sap/sod/conflicts/mitigate",
+                "payload": {"conflict_ref": ref, "control": "Compensating control applied via one-tap remediation — periodic access review & transaction monitoring",
+                            "status": "Mitigated", "residual": "Reduced"},
+                "confirm": "Records a monitored mitigating control against this SoD conflict, marks it Mitigated and stamps the audit trail."}
+    if entity == "role":
+        return {"kind": "recertify", "label": "Recertify role",
+                "endpoint": f"/sap/roles/{ref}/action", "payload": {"action": "recertify"},
+                "confirm": "Opens a ServiceNow role recertification task with current holders and entitlement evidence."}
+    if entity == "account":
+        flags = ctx.get("flags") or []
+        if "sap_all" in flags or "privileged" in flags:
+            return {"kind": "revoke_all", "label": "Revoke all roles & lock",
+                    "endpoint": f"/sap/accounts/{ref}/action", "payload": {"action": "revoke_all"},
+                    "confirm": "Locks the account, revokes all roles and frees the licence via the ServiceNow de-provisioning workflow."}
+        return {"kind": "lock", "label": "Lock account",
+                "endpoint": f"/sap/accounts/{ref}/action", "payload": {"action": "lock"},
+                "confirm": "Locks the SAP account, terminates sessions and disables directory sign-in via ServiceNow."}
+    return None
+
+
 @sap_router.post("/fix")
 async def sap_fix(body: SapFixReq, user: dict = Depends(get_current_user)):
     """Grounded per-entity SAP access risk rating + AI 'how to fix' recommendation (Obserra-standard).
@@ -1942,6 +1973,7 @@ async def sap_fix(body: SapFixReq, user: dict = Depends(get_current_user)):
     if not result["recommendation"]:
         result["recommendation"], result["steps"] = _sap_fix_fallback(body.entity, g)
         result["model"] = "deterministic"
+    result["fix_action"] = _sap_fix_action(body.entity, body.ref, g)
     _SAP_FIX_CACHE[key] = {"ts": _now(), "data": result}
     return result
 

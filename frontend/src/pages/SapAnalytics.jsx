@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
 import { SapInsight } from "@/components/SapInsight";
+import { useDeepDive } from "@/context/DeepDiveContext";
 import {
   PieChart, Pie, Cell, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
 } from "recharts";
@@ -10,21 +11,28 @@ import { Users, Gauge, ShieldAlert, KeyRound, Activity, BarChart3, Globe, Layers
 const CHART_TT = { background: "hsl(215 38% 10%)", border: "1px solid hsl(215 30% 18%)", borderRadius: 8, fontSize: 12 };
 const REGION_COLORS = ["#3b6ef5", "#42c98e", "#f5a623", "#a06cf0", "#e0574a"];
 
-const BarList = ({ items, color = "hsl(210 92% 62%)", testid }) => {
+const BarList = ({ items, color = "hsl(210 92% 62%)", testid, onItemClick }) => {
   const max = Math.max(1, ...items.map((i) => i.value));
   return (
     <div className="space-y-2.5" data-testid={testid}>
-      {items.map((i) => (
-        <div key={i.name}>
-          <div className="flex items-center justify-between text-xs mb-1">
-            <span className="truncate pr-2">{i.name}</span>
-            <span className="font-mono text-muted-foreground shrink-0">{i.value}</span>
-          </div>
-          <div className="h-2.5 rounded-full bg-secondary/60 overflow-hidden">
-            <div className="h-full rounded-full" style={{ width: `${(i.value / max) * 100}%`, background: i.privileged ? "hsl(266 85% 66%)" : color }} />
-          </div>
-        </div>
-      ))}
+      {items.map((i, idx) => {
+        const inner = (
+          <>
+            <div className="flex items-center justify-between text-xs mb-1">
+              <span className="truncate pr-2">{i.name}</span>
+              <span className="font-mono text-muted-foreground shrink-0">{i.value}</span>
+            </div>
+            <div className="h-2.5 rounded-full bg-secondary/60 overflow-hidden">
+              <div className="h-full rounded-full" style={{ width: `${(i.value / max) * 100}%`, background: i.privileged ? "hsl(266 85% 66%)" : color }} />
+            </div>
+          </>
+        );
+        return onItemClick ? (
+          <button key={i.name} type="button" onClick={() => onItemClick(i)} className="w-full text-left cursor-pointer hover:opacity-80 transition-opacity" data-testid={`${testid}-item-${idx}`}>{inner}</button>
+        ) : (
+          <div key={i.name}>{inner}</div>
+        );
+      })}
     </div>
   );
 };
@@ -39,12 +47,41 @@ const Panel = ({ title, sub, icon: Icon, children, className = "" }) => (
 
 export default function SapAnalytics() {
   const [d, setD] = useState(null);
+  const { openDeepDive } = useDeepDive();
   const load = useCallback(async () => { const { data } = await api.get("/sap/analytics"); setD(data); }, []);
   useEffect(() => { load(); }, [load]);
   if (!d) return <Spinner />;
   const k = d.kpis;
   const riskPie = ["Critical", "High", "Medium", "Low"].map((r) => ({ name: r, value: d.risk_distribution[r] || 0 }));
   const RISK_COLORS = { Critical: "#e0574a", High: "#f5a623", Medium: "#3b6ef5", Low: "#42c98e" };
+  const openRole = (i) => openDeepDive({
+    accent: i.privileged ? "266 85% 66%" : "210 92% 62%", refLabel: `Role · ${i.name}`, title: `${i.name} — ${i.value} holder(s)`,
+    rating: i.privileged ? "High" : i.value > 40 ? "Medium" : "Low", score: i.privileged ? 72 : Math.min(70, 20 + i.value),
+    facets: [{ label: "Role", value: i.name }, { label: "Holders", value: i.value }, { label: "Type", value: i.privileged ? "Privileged / wide-authority" : "Standard" }],
+    recommendedActions: [`Review the ${i.value} holder(s) of ${i.name} for least privilege${i.privileged ? " — treat as firefighter/privileged with time-boxed, logged access" : ""}.`, "Recertify all holders against job need and add the role to continuous SoD monitoring."],
+    complianceRefs: ["SOX ITGC", "NIST AC-6", "ISO 27001 A.5.18"],
+    explainTitle: `${i.name} — role assignment concentration`, explainKind: "SAP role least-privilege review", explainContext: { role: i.name, holders: i.value, privileged: !!i.privileged },
+  });
+  const openSodArea = (i) => openDeepDive({
+    accent: "0 84% 60%", refLabel: `SoD · ${i.name}`, title: `${i.name} — ${i.value} open SoD conflict(s)`,
+    rating: i.value > 10 ? "Critical" : i.value > 3 ? "High" : "Medium", score: Math.min(99, 40 + i.value * 4),
+    facets: [{ label: "Business area", value: i.name }, { label: "Open conflicts", value: i.value }, { label: "Share of open", value: `${Math.round((i.value / Math.max(1, k.open_sod)) * 100)}%` }],
+    recommendedActions: [`Prioritise remediating the ${i.value} open SoD conflict(s) in ${i.name} — remove one side of each toxic role pair or apply a monitored mitigating control.`, "Enable auto-remediation for Critical conflicts in this area, then recertify the affected roles."],
+    complianceRefs: ["SOX ITGC", "NIST AC-5", "ISO 27001 A.5.3"],
+    explainTitle: `${i.name} — SoD conflict concentration`, explainKind: "SAP SoD conflict area remediation", explainContext: { area: i.name, open_conflicts: i.value, total_open: k.open_sod },
+  });
+  const openDept = (i) => openDeepDive({
+    accent: "190 90% 50%", refLabel: `Dept · ${i.name}`, title: `${i.name} — ${i.value} SAP user(s)`, rating: "Medium", score: Math.min(80, 30 + Math.round(i.value / 2)),
+    facets: [{ label: "Department", value: i.name }, { label: "SAP users", value: i.value }],
+    recommendedActions: [`Run an access recertification campaign for ${i.name} to confirm least-privilege across its ${i.value} SAP user(s).`, "Investigate any dormant or terminated-with-access identities in this department first."],
+    complianceRefs: ["SOX ITGC", "NIST AC-2"], explainTitle: `${i.name} — departmental SAP access`, explainKind: "SAP department access recertification", explainContext: { department: i.name, users: i.value },
+  });
+  const openLicense = (i) => openDeepDive({
+    accent: "142 70% 45%", refLabel: `License · ${i.name}`, title: `${i.name} — ${i.value} assignment(s)`, rating: "Low", score: 30,
+    facets: [{ label: "License type", value: i.name }, { label: "Assignments", value: i.value }],
+    recommendedActions: [`Right-size ${i.name} licences — reclaim assignments from dormant or deactivated accounts to cut spend.`, "Reconcile license type against actual SAP usage and downgrade over-provisioned users."],
+    explainTitle: `${i.name} — SAP license optimisation`, explainKind: "SAP license right-sizing", explainContext: { license_type: i.name, count: i.value },
+  });
 
   return (
     <div className="space-y-6" data-testid="sap-analytics">
@@ -69,20 +106,20 @@ export default function SapAnalytics() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
-        <Panel title="Top 10 Roles by Assignment" sub="Most-assigned SAP roles (purple = privileged)." icon={Layers} className="lg:col-span-6">
-          <BarList items={d.top_roles} testid="an-top-roles" />
+        <Panel title="Top 10 Roles by Assignment" sub="Most-assigned SAP roles (purple = privileged). Click a role to drill in." icon={Layers} className="lg:col-span-6">
+          <BarList items={d.top_roles} testid="an-top-roles" onItemClick={openRole} />
         </Panel>
-        <Panel title="Open SoD Conflicts by Area" sub="Toxic combinations grouped by business process." icon={ShieldAlert} className="lg:col-span-6">
-          <BarList items={d.sod_by_area} color="hsl(0 84% 60%)" testid="an-sod-area" />
+        <Panel title="Open SoD Conflicts by Area" sub="Toxic combinations grouped by business process. Click an area to drill in." icon={ShieldAlert} className="lg:col-span-6">
+          <BarList items={d.sod_by_area} color="hsl(0 84% 60%)" testid="an-sod-area" onItemClick={openSodArea} />
         </Panel>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-5">
         <Panel title="Users by Department" icon={Users} className="lg:col-span-5">
-          <BarList items={d.by_department} color="hsl(190 90% 50%)" testid="an-by-dept" />
+          <BarList items={d.by_department} color="hsl(190 90% 50%)" testid="an-by-dept" onItemClick={openDept} />
         </Panel>
         <Panel title="License Type Breakdown" icon={Gauge} className="lg:col-span-4">
-          <BarList items={d.license_breakdown} color="hsl(142 70% 45%)" testid="an-license-breakdown" />
+          <BarList items={d.license_breakdown} color="hsl(142 70% 45%)" testid="an-license-breakdown" onItemClick={openLicense} />
         </Panel>
         <Panel title="Users by Region" icon={Globe} className="lg:col-span-3">
           <ResponsiveContainer width="100%" height={200}>

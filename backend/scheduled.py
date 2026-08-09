@@ -225,12 +225,80 @@ async def _run_momentum_digest():
             logger.error(f"Momentum digest failed for org {org_id}: {e}")
 
 
+def _ask_recap_html(total, by_source, top_q, top_u, samples):
+    def esc(s):
+        return (s or "").replace("<", "&lt;").replace(">", "&gt;")
+    srcline = " · ".join(f"{v} {k}" for k, v in by_source.items()) or "—"
+    ql = "".join(
+        f'<tr><td style="padding:6px 0;border-bottom:1px solid #eee;font:400 13px Arial;color:#1f2937">'
+        f'<b style="color:#0f1e3d">{n}&times;</b> {esc(q)}</td></tr>' for q, n in top_q
+    ) or '<tr><td style="font:400 13px Arial;color:#6b7280">No questions this week</td></tr>'
+    ul = " · ".join(f"{esc(u)} ({n})" for u, n in top_u) or "—"
+    sl = "".join(
+        f'<tr><td style="padding:8px 0;border-bottom:1px solid #f1f1f1;font:400 12px Arial;color:#374151">'
+        f'<b>Q:</b> {esc(q)}<br><span style="color:#6b7280"><b>A:</b> {esc(a)}</span></td></tr>' for q, a in samples)
+    return (
+        '<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:auto;background:#fff">'
+        '<tr><td style="padding:24px">'
+        '<div style="font:800 18px Arial;color:#0f1e3d">Weekly Ask-the-Digest Recap</div>'
+        '<div style="font:400 12px Arial;color:#6b7280;margin-bottom:14px">Obserra SAP UAC — SAP Access Governance</div>'
+        f'<div style="font:700 15px Arial;color:#0f1e3d;margin-bottom:2px">{total} question(s) asked from Slack / Teams this week</div>'
+        f'<div style="font:400 12px Arial;color:#6b7280;margin-bottom:14px">{srcline} · Busiest: {ul}</div>'
+        '<div style="font:700 13px Arial;color:#0f1e3d;margin-bottom:4px">Most-asked</div>'
+        f'<table width="100%">{ql}</table>'
+        + ('<div style="font:700 13px Arial;color:#0f1e3d;margin:14px 0 4px">Recent answers</div>'
+           f'<table width="100%">{sl}</table>' if samples else '')
+        + '<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:10px;font:400 10px Arial;color:#9ca3af">'
+        'Sign in to Obserra SAP UAC &rarr; Workflow Activity for the full Ask log and analytics.</div>'
+        '</td></tr></table>')
+
+
+async def _run_ask_recap_digest():
+    import datetime as _dt
+    cutoff = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=7)).isoformat()
+    orgs = await db.organizations.find({}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        try:
+            rows = await db.sap_ask_log.find(
+                {"org_id": org_id, "at": {"$gte": cutoff}}, {"_id": 0}).sort("at", -1).to_list(1000)
+            if not rows:
+                continue
+            by_source, qc, uc = {}, {}, {}
+            for r in rows:
+                src = r.get("source", "?")
+                by_source[src] = by_source.get(src, 0) + 1
+                qk = (r.get("question") or "").strip().lower()
+                if qk not in qc:
+                    qc[qk] = [0, r.get("question", "")]
+                qc[qk][0] += 1
+                un = r.get("user_name", "leader")
+                uc[un] = uc.get(un, 0) + 1
+            top_q = [(v[1], v[0]) for v in sorted(qc.values(), key=lambda x: -x[0])[:6]]
+            top_u = sorted(uc.items(), key=lambda x: -x[1])[:5]
+            samples = [(r.get("question", ""), (r.get("answer", "") or "")[:220]) for r in rows[:4]]
+            recipients = await db.users.find(
+                {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
+            if not recipients:
+                continue
+            html = _ask_recap_html(len(rows), by_source, top_q, top_u, samples)
+            for r in recipients:
+                await notifications.send_email(r["email"], f"Weekly Ask recap — {len(rows)} SAP governance question(s)", html)
+            await notifications.create(
+                org_id, "report", "Weekly Ask-the-Digest recap sent",
+                f"Emailed {len(rows)} Slack/Teams question(s) to {len(recipients)} recipient(s).", ref="ask-recap")
+            logger.info(f"Ask recap sent for org {org_id}: {len(rows)} questions")
+        except Exception as e:
+            logger.error(f"Ask recap failed for org {org_id}: {e}")
+
+
 @scheduled_router.post("/cron/weekly-drift-digest")
 async def weekly_drift_digest(request: Request, background_tasks: BackgroundTasks):
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     if not _authorized(request):
         raise HTTPException(status_code=401, detail="Unauthorized")
     background_tasks.add_task(_run_drift_digest, {"weekly"}, "Weekly")
+    background_tasks.add_task(_run_ask_recap_digest)
     background_tasks.add_task(_run_teams_digest)
     background_tasks.add_task(_run_momentum_digest)
     background_tasks.add_task(_run_connector_digest)

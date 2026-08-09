@@ -14,7 +14,7 @@ crons:
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     enabled: true
   - name: weekly-drift-digest
-    description: "Weekly control-drift email + Teams risk summary + executive remediation-momentum digest, Monday 08:00 UTC"
+    description: "Weekly control-drift email + Teams risk summary + exec remediation-momentum + SAP Slack/Teams Ask recap, Monday 08:00 UTC"
     cron: "0 8 * * 1"
     endpoint: "{{BASE_URL}}/api/cron/weekly-drift-digest"
     method: POST

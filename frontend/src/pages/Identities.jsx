@@ -170,7 +170,7 @@ export default function Identities() {
                 <div><span className="text-muted-foreground text-xs">HR authority</span><div>{detail.person.hr_authority} · match {Math.round(detail.person.match_confidence * 100)}%</div></div>
               </div>
 
-              <div className="mb-4"><SapAIFix entity="identity" refId={detail.person.ref} accent="190 90% 50%" /></div>
+              <div className="mb-4"><SapAIFix entity="identity" refId={detail.person.ref} accent="190 90% 50%" onApplied={() => { open(detail.person.ref); load(); }} /></div>
 
               <Section title="Access Risk Factors" icon={ShieldAlert}>
                 <div className="space-y-1.5">{detail.risk.factors.map((f, i) => (
