@@ -213,6 +213,30 @@ export default function Lifecycle() {
         </div>
       </div>
 
+      {moverRule && (
+        <div className="bg-card fact-border rounded-xl p-5" data-testid="mover-rule-report">
+          <div className="flex flex-wrap items-center gap-2 mb-3">
+            <Scissors className="w-4 h-4 text-amber" /><h2 className="font-head font-bold text-lg">Auto-Strip Activity Log</h2>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-secondary text-muted-foreground" data-testid="mover-rule-total">{moverRule.stripped_total} mover(s) cleaned total</span>
+          </div>
+          {moverRule.log?.length ? (
+            <div className="space-y-2 max-h-[260px] overflow-y-auto pr-1">
+              {moverRule.log.map((l, i) => (
+                <div key={i} data-testid={`mover-log-${i}`} className="flex flex-wrap items-center gap-x-3 gap-y-1 p-2.5 rounded-lg bg-secondary/30 text-xs">
+                  <span className="font-mono text-primary shrink-0">{l.ticket_number}</span>
+                  <span className="font-medium">{l.name}</span>
+                  <span className="text-muted-foreground">{l.department}</span>
+                  <span className="flex-1 min-w-0 truncate text-crit">− {(l.stripped_names || []).join(", ")}</span>
+                  <span className="font-mono text-muted-foreground shrink-0">{new Date(l.at).toLocaleString()}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground py-2" data-testid="mover-rule-empty">No auto-strip activity yet. Enable the auto-strip rule above to automatically remove carried-over access from movers — every cleanup is logged here with its ServiceNow ticket.</p>
+          )}
+        </div>
+      )}
+
       {/* Joiners */}
       <div className="bg-card fact-border rounded-xl p-5" data-testid="jml-joiners-panel">
         <div className="flex items-center gap-2 mb-3"><UserPlus className="w-4 h-4 text-low" /><h2 className="font-head font-bold text-lg">Recent Joiners</h2></div>

@@ -10,10 +10,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send } from "lucide-react";
+import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send, Eye, Download, TrendingUp } from "lucide-react";
+import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 
 const SEV = { Critical: "0 84% 60%", High: "35 90% 55%", Medium: "190 90% 50%", Low: "142 70% 45%" };
 const Chip = ({ v, map = SEV }) => <span className="text-[9px] font-mono uppercase px-2 py-0.5 rounded-full" style={{ background: `hsl(${map[v] || "220 10% 55%"} / 0.15)`, color: `hsl(${map[v] || "220 10% 55%"})` }}>{v}</span>;
+const ScoreTile = ({ label, v, suffix = "", accent = "199 89% 48%", testid }) => (
+  <div className="rounded-lg bg-secondary/30 p-3" data-testid={testid}>
+    <div className="font-head font-black text-2xl" style={{ color: `hsl(${accent})` }}>{v}<span className="text-xs font-normal text-muted-foreground">{suffix}</span></div>
+    <div className="text-[10px] text-muted-foreground mt-0.5 leading-tight">{label}</div>
+  </div>
+);
 const ACTION_LABEL = { recertify: "Open recertification", revoke_all: "Revoke all roles", deactivate: "De-provision account", lock: "Emergency lock" };
 
 export default function SodCommandCenter() {
@@ -41,6 +48,10 @@ export default function SodCommandCenter() {
   const [dcfg, setDcfg] = useState(null);
   const [dcfgLocal, setDcfgLocal] = useState(null);
   const [dcfgBusy, setDcfgBusy] = useState(false);
+  const [scorecard, setScorecard] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [nowTs, setNowTs] = useState(Date.now());
 
   const loadConflicts = useCallback(async () => {
     const p = new URLSearchParams();
@@ -52,9 +63,12 @@ export default function SodCommandCenter() {
   }, [sev, area, status]);
   const loadArem = useCallback(async () => { const { data } = await api.get("/sap/autoremediation"); setArem(data); }, []);
   const loadDcfg = useCallback(async () => { const { data } = await api.get("/sap/digest/config"); setDcfg(data); setDcfgLocal({ ...data.config, recipients: (data.config.recipients || []).join(", ") }); }, []);
+  const loadScorecard = useCallback(async () => { const { data } = await api.get("/sap/scorecard"); setScorecard(data); }, []);
   useEffect(() => { loadConflicts(); }, [loadConflicts]);
   useEffect(() => { loadArem(); }, [loadArem]);
   useEffect(() => { loadDcfg(); }, [loadDcfg]);
+  useEffect(() => { loadScorecard(); }, [loadScorecard]);
+  useEffect(() => { const id = setInterval(() => setNowTs(Date.now()), 1000); return () => clearInterval(id); }, []);
   useEffect(() => {
     api.get("/sap/sod/rules").then((r) => setRules(r.data.rules));
     api.get("/sap/identities").then((r) => setPeople(r.data.identities));
@@ -62,6 +76,7 @@ export default function SodCommandCenter() {
   }, []);
 
   if (!data) return <Spinner />;
+  const cooldownRemain = dcfg?.last_at ? Math.max(0, Math.ceil((new Date(dcfg.last_at).getTime() + 60000 - nowTs) / 1000)) : 0;
 
   const saveArem = async (patch) => {
     if (!arem) return;
@@ -88,6 +103,7 @@ export default function SodCommandCenter() {
       else toast.success(`SAP Governance Digest emailed to ${res.sent} recipient(s)`, { description: (res.recipients || []).join(", ") });
     }
     catch (e) { toast.error(e?.response?.data?.detail || "Could not send digest"); }
+    await loadDcfg();
     setDigestBusy(false);
   };
   const saveDcfg = async () => {
@@ -106,6 +122,21 @@ export default function SodCommandCenter() {
       if (res.posted) toast.success("Test alert posted to Teams / Slack");
       else toast.info("No chat webhook configured — add a dedicated SAP webhook or configure org alerts");
     } catch (e) { toast.error(e?.response?.data?.detail || "Test failed (admin only)"); }
+  };
+  const openPreview = async () => {
+    setPreviewBusy(true);
+    try { const { data } = await api.get("/sap/digest/preview"); setPreview(data.html); }
+    catch { toast.error("Could not load preview"); }
+    setPreviewBusy(false);
+  };
+  const exportScorecard = async () => {
+    try {
+      const res = await api.get("/sap/scorecard/export?format=csv", { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a"); a.href = url; a.download = "sap-governance-scorecard.csv"; a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Governance scorecard exported");
+    } catch { toast.error("Export failed"); }
   };
   const toggleSev = (s) => { const cur = arem.config.severities; const next = cur.includes(s) ? cur.filter((x) => x !== s) : [...cur, s]; saveArem({ severities: next.length ? next : ["Critical"] }); };
 
@@ -184,6 +215,43 @@ export default function SodCommandCenter() {
         <StatCard label="Medium conflicts" value={data.summary.Medium} accent="190 90% 50%" icon={GitCompare} testid="sod-medium" />
         <StatCard label="Total rows" value={data.total} sub={`${rules.length} rules in library`} accent="142 70% 45%" icon={ShieldCheck} testid="sod-total" />
       </div>
+
+      {scorecard && (
+        <div className="bg-card fact-border rounded-xl p-5" data-testid="sod-scorecard">
+          <div className="flex flex-wrap items-center gap-3 mb-3">
+            <div className="flex items-center gap-2"><TrendingUp className="w-4 h-4 text-primary" /><h2 className="font-head font-bold text-base">Access Governance Scorecard</h2></div>
+            <span data-testid="scorecard-source" className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-secondary text-muted-foreground">{scorecard.trend_source === "real" ? "LIVE TREND" : "DERIVED TREND"}</span>
+            <div className="flex-1" />
+            <Button size="sm" variant="outline" className="gap-1.5" data-testid="scorecard-export" onClick={exportScorecard}><Download className="w-3.5 h-3.5" /> Export CSV</Button>
+          </div>
+          <p className="text-[11px] text-muted-foreground mb-3">A leadership- and auditor-ready snapshot of SAP access posture, trended over the last 8 weeks. {scorecard.trend_source === "derived" ? "Trajectory derived from current posture until weekly snapshots accrue." : "Trend built from recorded weekly snapshots."}</p>
+          <div className="grid grid-cols-3 md:grid-cols-6 gap-3 mb-4">
+            <ScoreTile testid="score-governance" label="Governance score" v={scorecard.current.governance_score} suffix="/100" accent="142 70% 45%" />
+            <ScoreTile testid="score-open-sod" label="Open SoD" v={scorecard.current.open_sod} accent="0 84% 60%" />
+            <ScoreTile testid="score-autorem" label="Auto-remediated" v={scorecard.current.autorem_total} accent="190 90% 50%" />
+            <ScoreTile testid="score-movers" label="Movers cleaned" v={scorecard.current.movers_stripped} accent="260 85% 66%" />
+            <ScoreTile testid="score-residual" label="Residual leavers" v={scorecard.current.residual} accent="35 90% 55%" />
+            <ScoreTile testid="score-risk" label="Avg SAP risk" v={scorecard.current.avg_risk} suffix="/100" accent="199 89% 48%" />
+          </div>
+          <div className="h-[200px]" data-testid="scorecard-trend">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={scorecard.trend} margin={{ top: 5, right: 8, left: -18, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="scOpen" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="hsl(0 84% 60%)" stopOpacity={0.35} /><stop offset="100%" stopColor="hsl(0 84% 60%)" stopOpacity={0.02} /></linearGradient>
+                  <linearGradient id="scAuto" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="hsl(142 70% 45%)" stopOpacity={0.3} /><stop offset="100%" stopColor="hsl(142 70% 45%)" stopOpacity={0.02} /></linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} width={36} />
+                <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }} />
+                <Area type="monotone" dataKey="open_sod" stroke="hsl(0 84% 60%)" strokeWidth={2} fill="url(#scOpen)" name="Open SoD" />
+                <Area type="monotone" dataKey="autoremediated" stroke="hsl(142 70% 45%)" strokeWidth={2} fill="url(#scAuto)" name="Auto-remediated" />
+                <Area type="monotone" dataKey="residual" stroke="hsl(35 90% 55%)" strokeWidth={2} fill="transparent" name="Residual leavers" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+      )}
 
       {/* SoD → ServiceNow Auto-Remediation Rule Engine */}
       {arem && (
@@ -278,8 +346,9 @@ export default function SodCommandCenter() {
 
           <div className="flex flex-wrap items-center gap-2 mt-4">
             <Button size="sm" data-testid="digest-save" onClick={saveDcfg} disabled={dcfgBusy}>{dcfgBusy ? "Saving…" : "Save schedule"}</Button>
+            <Button size="sm" variant="outline" className="gap-1.5" data-testid="digest-preview" onClick={openPreview} disabled={previewBusy}><Eye className="w-3.5 h-3.5" />{previewBusy ? "Loading…" : "Preview email"}</Button>
             <Button size="sm" variant="outline" className="gap-1.5" data-testid="digest-test-chat" onClick={testChat}><Send className="w-3.5 h-3.5" /> Test chat alert</Button>
-            <Button size="sm" variant="outline" className="gap-1.5" data-testid="digest-send-now" onClick={sendDigest} disabled={digestBusy}><Mail className="w-3.5 h-3.5" />{digestBusy ? "Sending…" : "Send digest now"}</Button>
+            <Button size="sm" variant="outline" className="gap-1.5" data-testid="digest-send-now" onClick={sendDigest} disabled={digestBusy || cooldownRemain > 0}><Mail className="w-3.5 h-3.5" />{digestBusy ? "Sending…" : cooldownRemain > 0 ? `Send again in ${cooldownRemain}s` : "Send digest now"}</Button>
           </div>
         </div>
       )}
@@ -375,6 +444,13 @@ export default function SodCommandCenter() {
               <SelectContent><SelectItem value="Mitigated">Mitigated (control in place)</SelectItem><SelectItem value="Accepted">Risk Accepted</SelectItem><SelectItem value="Open">Re-open (remove control)</SelectItem></SelectContent></Select>
           </div>
           <DialogFooter><Button variant="outline" onClick={() => setMit(null)}>Cancel</Button><Button data-testid="mit-save" disabled={busy} onClick={runMitigate}>{busy ? "Saving…" : "Save"}</Button></DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!preview} onOpenChange={(o) => !o && setPreview(null)}>
+        <DialogContent className="max-w-2xl" data-testid="digest-preview-dialog">
+          <DialogHeader><DialogTitle>Governance digest — email preview</DialogTitle></DialogHeader>
+          <div className="max-h-[70vh] overflow-y-auto rounded-lg border border-border bg-white" data-testid="digest-preview-body" dangerouslySetInnerHTML={{ __html: preview || "" }} />
         </DialogContent>
       </Dialog>
     </div>

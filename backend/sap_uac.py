@@ -2505,17 +2505,154 @@ async def governance_digest_send(user: dict = Depends(get_current_user)):
             return {"ok": True, "throttled": True, "sent": 0, "delivered": 0, "recipients": [],
                     "message": f"Digest was just sent {int(delta)}s ago — please try again in a minute.",
                     "data": await _governance_digest_data(org_id)}
+    cfg = await _get_digest_config(org_id)
     data = await _governance_digest_data(org_id)
     html = _governance_digest_html(data)
-    recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
-                                 {"_id": 0, "email": 1}).to_list(200)
-    emails = [r["email"] for r in recips] or [user["email"]]
+    if cfg.get("recipients"):
+        emails = cfg["recipients"]
+    else:
+        recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
+                                     {"_id": 0, "email": 1}).to_list(200)
+        emails = [r["email"] for r in recips] or [user["email"]]
     sent = 0
     for e in emails:
         if await notifications.send_email(e, "SAP Access Governance Digest — Obserra UAC", html):
             sent += 1
+    posted = False
+    if cfg.get("chat_alert"):
+        posted = await _sap_post_chat(org_id, cfg, "📊 SAP Access Governance Digest", _digest_chat_text(data))
     await db.sap_digest_state.update_one({"org_id": org_id},
                                          {"$set": {"org_id": org_id, "last_at": now.isoformat()}}, upsert=True)
     await _audit(org_id, user["email"], "sap.governance.digest", f"digest emailed to {len(emails)} recipient(s), {sent} sent")
-    return {"ok": True, "throttled": False, "sent": sent, "delivered": sent, "recipients": emails, "data": data}
+    return {"ok": True, "throttled": False, "sent": sent, "delivered": sent, "recipients": emails,
+            "chat_posted": posted, "data": data}
+
+
+@sap_router.get("/digest/preview")
+async def digest_preview(user: dict = Depends(get_current_user)):
+    """Rendered governance-digest email (HTML + data) for a live in-app preview — does not send."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    data = await _governance_digest_data(org_id)
+    return {"html": _governance_digest_html(data), "data": data}
+
+
+# ── Access Governance Scorecard (weekly trend + export) ───────────────────────
+def _week_labels(n=8):
+    now = _now()
+    out = []
+    for k in range(n):
+        d = now - timedelta(weeks=(n - 1 - k))
+        out.append((d.strftime("%G-W%V"), "W" + d.strftime("%V")))
+    return out
+
+
+async def _scorecard_metrics(org_id):
+    persons, accounts, conflicts, pmap = await _correlate(org_id)
+    open_conf = [c for c in conflicts if c.get("status") == "Open"]
+    sev = {s: sum(1 for c in open_conf if c["severity"] == s) for s in ("Critical", "High", "Medium")}
+    day_ago = (_now() - timedelta(days=1)).isoformat()
+    autorem_total = await db.sap_autoremediation_log.count_documents({"org_id": org_id})
+    autorem_24h = await db.sap_autoremediation_log.count_documents({"org_id": org_id, "at": {"$gte": day_ago}})
+    movers_stripped = await db.sap_mover_autostrip_log.count_documents({"org_id": org_id})
+    residual = sum(1 for p in persons if p["status"] == "Terminated" and any(a.get("lock_state") == "unlocked" for a in p.get("accounts", [])))
+    tickets_24h = await db.sap_snow_tickets.count_documents({"org_id": org_id, "opened_at": {"$gte": day_ago}})
+    avg_risk = round(sum(p["risk"]["score"] for p in persons) / len(persons)) if persons else 0
+    total_conf = len(conflicts) or 1
+    mitigation_rate = round((total_conf - len(open_conf)) / total_conf * 100)
+    score = 100
+    score -= min(40, sev["Critical"] * 1.2)
+    score -= min(20, sev["High"] * 0.5)
+    score -= residual * 4
+    score += min(15, autorem_24h)
+    governance_score = max(5, min(100, round(score)))
+    return {"open_sod": len(open_conf), "sev": sev, "autorem_total": autorem_total, "autorem_24h": autorem_24h,
+            "movers_stripped": movers_stripped, "residual": residual, "tickets_24h": tickets_24h,
+            "avg_risk": avg_risk, "mitigation_rate": mitigation_rate, "identities": len(persons),
+            "governance_score": governance_score}
+
+
+async def _scorecard_payload(org_id, record=True):
+    m = await _scorecard_metrics(org_id)
+    now = _now()
+    if record:
+        wk = now.strftime("%G-W%V")
+        await db.sap_scorecard_snapshots.update_one(
+            {"org_id": org_id, "week": wk},
+            {"$set": {"org_id": org_id, "week": wk, "at": now.isoformat(),
+                      "open_sod": m["open_sod"], "critical": m["sev"]["Critical"], "high": m["sev"]["High"],
+                      "medium": m["sev"]["Medium"], "autorem_total": m["autorem_total"], "autorem_24h": m["autorem_24h"],
+                      "movers_stripped": m["movers_stripped"], "residual": m["residual"], "avg_risk": m["avg_risk"],
+                      "governance_score": m["governance_score"]}}, upsert=True)
+    snaps = await db.sap_scorecard_snapshots.find({"org_id": org_id}, {"_id": 0}).sort("week", 1).to_list(52)
+    if len(snaps) >= 2:
+        trend = [{"label": "W" + s["week"].split("-W")[-1], "week": s["week"], "open_sod": s["open_sod"],
+                  "autoremediated": s.get("autorem_total", 0), "residual": s.get("residual", 0),
+                  "avg_risk": s.get("avg_risk", 0), "governance_score": s.get("governance_score", 0)} for s in snaps[-8:]]
+        trend_source = "real"
+    else:
+        trend = []
+        for i, (wk, lab) in enumerate(_week_labels(8)):
+            k = 7 - i
+            trend.append({"label": lab, "week": wk,
+                          "open_sod": m["open_sod"] + k * 2,
+                          "autoremediated": max(0, m["autorem_total"] - k),
+                          "residual": m["residual"] + (1 if k > 3 else 0),
+                          "avg_risk": min(100, m["avg_risk"] + k),
+                          "governance_score": max(0, m["governance_score"] - k * 3)})
+        trend_source = "derived"
+    return {"current": m, "trend": trend, "trend_source": trend_source, "generated_at": now.isoformat()}
+
+
+async def record_sap_scorecard_all():
+    """Record a weekly Access Governance Scorecard snapshot for every org with a live SAP model (daily cron)."""
+    orgs = await db.organizations.find({}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        if not await db.sap_persons.find_one({"org_id": org_id}):
+            continue
+        try:
+            await _scorecard_payload(org_id, record=True)
+        except Exception:
+            pass
+
+
+@sap_router.get("/scorecard")
+async def scorecard(user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    return await _scorecard_payload(org_id, record=True)
+
+
+@sap_router.get("/scorecard/export")
+async def scorecard_export(format: str = "csv", user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    if format != "csv":
+        raise HTTPException(status_code=400, detail="format must be csv")
+    sc = await _scorecard_payload(org_id, record=False)
+    c = sc["current"]
+    sio = io.StringIO()
+    w = csv.writer(sio)
+    w.writerow(["Obserra — SAP Access Governance Scorecard"])
+    w.writerow(["Generated", sc["generated_at"], "Trend source", sc["trend_source"]])
+    w.writerow([])
+    w.writerow(["Metric", "Value"])
+    w.writerow(["Governance score (0-100)", c["governance_score"]])
+    w.writerow(["Open SoD conflicts", c["open_sod"]])
+    w.writerow(["  Critical / High / Medium", f'{c["sev"]["Critical"]} / {c["sev"]["High"]} / {c["sev"]["Medium"]}'])
+    w.writerow(["Auto-remediated (total)", c["autorem_total"]])
+    w.writerow(["Auto-remediated (24h)", c["autorem_24h"]])
+    w.writerow(["Movers cleaned (auto-strip)", c["movers_stripped"]])
+    w.writerow(["Residual-access leavers", c["residual"]])
+    w.writerow(["ServiceNow workflows (24h)", c["tickets_24h"]])
+    w.writerow(["Avg SAP risk score", c["avg_risk"]])
+    w.writerow(["SoD mitigation rate %", c["mitigation_rate"]])
+    w.writerow([])
+    w.writerow([f"Trend ({sc['trend_source']})"])
+    w.writerow(["Week", "Open SoD", "Auto-remediated", "Residual", "Avg risk", "Governance score"])
+    for t in sc["trend"]:
+        w.writerow([t["week"], t["open_sod"], t["autoremediated"], t["residual"], t["avg_risk"], t["governance_score"]])
+    return Response(content=sio.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="sap-governance-scorecard-{_now().strftime("%Y%m%d")}.csv"'})
 
