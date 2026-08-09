@@ -271,8 +271,20 @@ Delivered the approved 4-feature functional batch (Task 1). All connections are 
 - **Seed/demo note**: the mover-accumulation scenario (P-0045 Procurement holds Sales role `Z_SD_BILLING`; P-0046 Finance holds Procurement role `Z_MM_PO_APPROVER`) is re-injected for the demo org after testing so the Mover Role Diff + strip button + auto-strip toggle stay demonstrable (candidates=2, rule OFF by default).
 - iter58 fix (by testing agent): `SodCommandCenter.jsx` was missing `CalendarClock`/`Send` (lucide) + `Input` imports — added; page + all 9 digest testids render, all 3 digest API actions return 200. Backend pytest `tests/test_iter58_governance.py` 15/15.
 
-## SAP UAC — REMAINING (P1): backend modularization of sap_uac.py
-- `sap_uac.py` is now ~2,520 lines. Recommended split into `sap_workflow.py` / `sap_jml.py` / `sap_digest.py` / `sap_autoremediation.py` / `sap_systems.py` (keep `server.py` import stable via re-export). Requires rigorous regression via testing_agent. NOT yet started — awaiting user greenlight before the refactor.
+## SAP UAC — Digest Preview + Mover Rule Report + Throttle Hint + Governance Scorecard (Jun 2026, iteration_59 — backend 12/12, frontend 4/4)
+- Digest Preview: GET /api/sap/digest/preview + in-app dialog (SoD Command Center).
+- Mover Rule Report: auto-strip activity-log card on Lifecycle (uses GET /api/sap/mover-rule log).
+- Throttle Hint: countdown on 'Send digest now' from digest last_at + 60s backoff.
+- Access Governance Scorecard: GET /api/sap/scorecard (weekly trend, real≥2 snapshots else derived) + GET /api/sap/scorecard/export?format=csv + recharts card + record_sap_scorecard_all folded into daily cron. Governance score rebalanced (weighted, ~53 for demo org — not flatlined).
+
+## SAP UAC — Backend modularization of sap_uac.py (DONE, Jun 2026)
+- Split the 2,658-line `sap_uac.py` monolith into domain modules (shared core stays in `sap_uac.py`: router, `_correlate`, `_snow_generic`, `_run_account_action`, `_audit`, `_ensure`, `_ticket_public`, data). `sap_uac.py` is now 1,860 lines.
+  - `sap_autoremediation.py` (122 lines): SoD→ServiceNow auto-remediation engine + `run_sap_autoremediation_all`.
+  - `sap_jml.py` (190): Joiner/Mover/Leaver + Mover Auto-Strip rule + `run_sap_mover_autostrip_all`.
+  - `sap_workflow.py` (165): ServiceNow workflow activity stream + CSV/PDF evidence export.
+  - `sap_digest.py` (383): Governance digest (email + Slack/Teams) + Access Governance Scorecard + `run_sap_governance_digest` + `record_sap_scorecard_all`.
+- Pattern: domain modules import the shared `sap_router` + core helpers from `sap_uac`; `sap_uac` imports the domain modules at the END (routes register + background jobs re-exported so `scheduled.py` still imports them from `sap_uac` unchanged). Kept `sod/conflicts` uses a function-local import of the auto-remediation helpers to avoid a circular import.
+- Verified: 56 SAP routes register, all endpoints return 200 live, both pytest suites (27 tests) pass, `server`/`scheduled` import cleanly.
 
 
 
