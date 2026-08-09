@@ -1,0 +1,29 @@
+{
+  "summary": "Tested the 3 new SoD Command Center features (Chat Export, Shareable Link, Voice Digest) plus regression on prior 4 features. SoD page renders cleanly with zero runtime errors. Chat Export (PDF + Email) works end-to-end (application/pdf 200, email 200, correct toast). Public /share/digest/:token page renders fully without auth with all expected data-testids (share-content, share-score, share-open-sod, share-sev, share-why-text, share-areas, share-systems). Backend endpoints for share/voice verified 200 via curl. CRITICAL FRONTEND BUG: the `digest-share` and `digest-voice` buttons are NOT rendered in the digest actions row in SodCommandCenter.jsx — the handlers exist (createShare @L226, playVoice @L235) and the audio player block (digest-voice-player @L692) exists but the two trigger buttons themselves are missing from the actions row (lines 684–690 only contain digest-save/digest-preview/digest-test-chat/digest-ask-open/digest-send-now). This matches the reviewer's suspicion that earlier silent edit failures occurred — the state was re-applied but the button JSX was not. As a result users cannot invoke Copy share link or Listen to digest from the UI at all.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "SodCommandCenter — Governance Digest actions row (lines 684–690)", "issue": "digest-share button (Copy share link) is missing from JSX. Handler createShare() at line 226 is orphaned/unused. Users cannot invoke share-link creation from the UI.", "selector": "[data-testid='digest-share']", "priority": "CRITICAL"},
+      {"component": "SodCommandCenter — Governance Digest actions row (lines 684–690)", "issue": "digest-voice button (Listen to digest) is missing from JSX. Handler playVoice() at line 235 is orphaned/unused. Voice player container exists but there is no trigger button to populate voiceUrl, so digest-voice-player / digest-voice-audio / digest-voice-download never appear.", "selector": "[data-testid='digest-voice']", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Add the two missing buttons to the Governance Digest actions row (around line 688 next to digest-ask-open) in /app/frontend/src/pages/SodCommandCenter.jsx: <Button data-testid='digest-share' onClick={createShare} disabled={shareBusy}>Copy share link</Button> and <Button data-testid='digest-voice' onClick={playVoice} disabled={voiceBusy}>Listen to digest</Button>. Handlers already exist — just wire the buttons.",
+    "After adding, re-verify: (a) digest-share click shows toast 'Read-only share link copied' with the /share/digest/<token> URL and POST /api/sap/digest/share returns 200, (b) digest-voice click shows toast 'Voice briefing ready' and renders digest-voice-player with audio and Download .mp3 link."
+  ],
+  "critical_code_review_comments": [
+    "Silent edit-failure pattern is recurring on SodCommandCenter.jsx (state decls previously, button JSX now). Main agent should re-open the file and confirm the button JSX diff is actually present before marking the feature complete.",
+    "createShare and playVoice handlers exist but are unreferenced — lint should flag this. Consider adding a lint rule / CI check for unused handlers to catch these silent-edit failures earlier."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (verified via curl: login 200, share 200, public share 200, ask export application/pdf 200, ask email 200)", "frontend": "60% — Chat Export works, Public Share page works; Share Link + Voice Digest cannot be invoked because their trigger buttons are missing from the actions row"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None. Created one share token via API for public page verification (pYMZtRRNctc59C-epAT07w) — expires 2026-08-23, safe to leave.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend is 100% for all 3 features. Public /share/digest/:token page is 100%. Chat Export PDF + Email are 100%. ONLY remaining work is adding the two <Button> elements (digest-share, digest-voice) to the digest actions row in SodCommandCenter.jsx around line 688 — handlers createShare / playVoice already exist. After main agent adds buttons, retest: click digest-share (toast + POST /api/sap/digest/share 200), click digest-voice (toast + digest-voice-player appears with audio and Download .mp3 link, GET /api/sap/digest/voice returns audio/mpeg).",
+  "rca of the issue": "During the multi-edit that introduced the 3 new features, the state variables (voiceUrl, shareBusy, askExportBusy, askEmailBusy, voiceBusy) and handlers (createShare, playVoice, exportAsk, emailAsk) were successfully written. The voice-player conditional block (line 691–697) was also written. However, the edit that was supposed to insert the two <Button data-testid='digest-share'> and <Button data-testid='digest-voice'> elements into the actions row (line 684–690) never landed — grep for 'digest-share' or 'digest-voice' (without -player/-audio/-download suffix) returns zero button matches. This matches the reviewer's note that 'two earlier state-declaration edits silently failed and were re-applied' — the same silent-failure happened to the button JSX but was not caught/re-applied. Reproduction: open /app/sod, inspect DOM under the Governance Digest Schedule card → the actions row contains only Save schedule / Preview email / Test chat alert / Ask AI about this digest / Send digest now. Fix: add the two buttons; handlers are ready."
+}

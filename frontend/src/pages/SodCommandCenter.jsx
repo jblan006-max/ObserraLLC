@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send, Eye, Download, TrendingUp, FileText, BellRing, FileWarning, Sparkles, MessagesSquare } from "lucide-react";
+import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send, Eye, Download, TrendingUp, FileText, BellRing, FileWarning, Sparkles, MessagesSquare, Share2, Volume2 } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 
 const SEV = { Critical: "0 84% 60%", High: "35 90% 55%", Medium: "190 90% 50%", Low: "142 70% 45%" };
@@ -79,6 +79,11 @@ export default function SodCommandCenter() {
   const [askInput, setAskInput] = useState("");
   const [askBusy, setAskBusy] = useState(false);
   const [askSuggestions, setAskSuggestions] = useState([]);
+  const [askExportBusy, setAskExportBusy] = useState(false);
+  const [askEmailBusy, setAskEmailBusy] = useState(false);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const [voiceUrl, setVoiceUrl] = useState("");
+  const [shareBusy, setShareBusy] = useState(false);
 
   const loadConflicts = useCallback(async () => {
     const p = new URLSearchParams();
@@ -108,6 +113,7 @@ export default function SodCommandCenter() {
 
   if (!data) return <Spinner />;
   const cooldownRemain = dcfg?.last_at ? Math.max(0, Math.ceil((new Date(dcfg.last_at).getTime() + 60000 - nowTs) / 1000)) : 0;
+  const askHasThread = askMsgs.some((m) => m.role === "user");
 
   const saveArem = async (patch) => {
     if (!arem) return;
@@ -191,6 +197,51 @@ export default function SodCommandCenter() {
       setAskMsgs((m) => [...m, { role: "assistant", text: "Sorry — I couldn't analyze that just now. Please try again." }]);
     }
     setAskBusy(false);
+  };
+  const exportAsk = async () => {
+    if (!askSession) return;
+    setAskExportBusy(true);
+    try {
+      const res = await api.get(`/sap/digest/ask/export?session_id=${encodeURIComponent(askSession)}`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a"); a.href = url; a.download = "sap-digest-ai-qa.pdf"; a.click();
+      URL.revokeObjectURL(url);
+      toast.success("AI Q&A note downloaded (PDF)");
+    } catch (e) { toast.error(e?.response?.data?.detail || "Export failed"); }
+    setAskExportBusy(false);
+  };
+  const emailAsk = async () => {
+    if (!askSession) return;
+    const def = (dcfgLocal?.recipients || "").split(/[,\n]/).map((s) => s.trim()).filter(Boolean).join(", ");
+    const raw = window.prompt("Email the AI Q&A note to (comma-separated):", def || "");
+    if (raw === null) return;
+    const recipients = raw.split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
+    setAskEmailBusy(true);
+    try {
+      const { data } = await api.post("/sap/digest/ask/email", { session_id: askSession, recipients });
+      toast.success(`AI Q&A note emailed to ${data.sent} recipient(s)`, { description: (data.recipients || []).join(", ") });
+    } catch (e) { toast.error(e?.response?.data?.detail || "Email failed"); }
+    setAskEmailBusy(false);
+  };
+  const createShare = async () => {
+    setShareBusy(true);
+    try {
+      const { data } = await api.post("/sap/digest/share");
+      try { await navigator.clipboard.writeText(data.url); } catch { /* clipboard blocked */ }
+      toast.success("Read-only share link copied", { description: data.url });
+    } catch (e) { toast.error(e?.response?.data?.detail || "Could not create share link"); }
+    setShareBusy(false);
+  };
+  const playVoice = async () => {
+    setVoiceBusy(true);
+    try {
+      const res = await api.get("/sap/digest/voice", { responseType: "blob" });
+      if (voiceUrl) URL.revokeObjectURL(voiceUrl);
+      const url = URL.createObjectURL(res.data);
+      setVoiceUrl(url);
+      toast.success("Voice briefing ready");
+    } catch (e) { toast.error(e?.response?.data?.detail || "Voice generation unavailable right now"); }
+    setVoiceBusy(false);
   };
   const exportScorecard = async (fmt = "csv") => {
     try {
@@ -637,6 +688,13 @@ export default function SodCommandCenter() {
             <Button size="sm" variant="outline" className="gap-1.5 border-primary/40 text-primary hover:bg-primary/[0.06]" data-testid="digest-ask-open" onClick={openAsk}><MessagesSquare className="w-3.5 h-3.5" /> Ask AI about this digest</Button>
             <Button size="sm" variant="outline" className="gap-1.5" data-testid="digest-send-now" onClick={sendDigest} disabled={digestBusy || cooldownRemain > 0}><Mail className="w-3.5 h-3.5" />{digestBusy ? "Sending…" : cooldownRemain > 0 ? `Send again in ${cooldownRemain}s` : "Send digest now"}</Button>
           </div>
+          {voiceUrl && (
+            <div className="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-primary/25 bg-primary/[0.04] p-3" data-testid="digest-voice-player">
+              <Volume2 className="w-4 h-4 text-primary shrink-0" />
+              <audio controls src={voiceUrl} className="h-9 flex-1 min-w-[220px]" data-testid="digest-voice-audio" />
+              <a href={voiceUrl} download="sap-governance-digest.mp3" data-testid="digest-voice-download" className="text-[11px] text-primary hover:underline">Download .mp3</a>
+            </div>
+          )}
         </div>
       )}
 
@@ -817,6 +875,14 @@ export default function SodCommandCenter() {
               <Input data-testid="digest-ask-input" value={askInput} onChange={(e) => setAskInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") sendAsk(); }} placeholder="e.g. Which area needs attention first?" />
               <Button size="sm" data-testid="digest-ask-send" onClick={() => sendAsk()} disabled={askBusy || !askInput.trim()}><Send className="w-3.5 h-3.5" /></Button>
             </div>
+            {askHasThread && (
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-border/60" data-testid="digest-ask-actions">
+                <span className="text-[10px] font-mono uppercase text-muted-foreground">Save thread</span>
+                <div className="flex-1" />
+                <Button size="sm" variant="outline" className="h-7 text-[11px] gap-1" data-testid="digest-ask-export" onClick={exportAsk} disabled={askExportBusy}><FileText className="w-3 h-3" />{askExportBusy ? "…" : "Download PDF"}</Button>
+                <Button size="sm" variant="outline" className="h-7 text-[11px] gap-1" data-testid="digest-ask-email" onClick={emailAsk} disabled={askEmailBusy}><Mail className="w-3 h-3" />{askEmailBusy ? "…" : "Email thread"}</Button>
+              </div>
+            )}
           </div>
         </DialogContent>
       </Dialog>

@@ -43,7 +43,7 @@ async def _governance_digest_data(org_id):
     }
 
 
-def _governance_digest_html(d):
+def _governance_digest_html(d, share_url=""):
     def row(label, value, color="#0f1e3d"):
         return (f'<tr><td style="padding:6px 10px;color:#64748b;font-size:13px">{label}</td>'
                 f'<td style="padding:6px 10px;text-align:right;font-weight:700;font-size:15px;color:{color}">{value}</td></tr>')
@@ -70,7 +70,12 @@ def _governance_digest_html(d):
         f'<ul style="margin:0;padding-left:18px;font-size:13px;color:#334155">{residual}</ul>'
         f'<h3 style="font-size:14px;color:#0f1e3d;margin:14px 0 4px">Top access-risk identities</h3>'
         f'<ul style="margin:0;padding-left:18px;font-size:13px;color:#334155">{top}</ul>'
-        '<p style="font-size:11px;color:#9ca3af;margin-top:18px;border-top:1px solid #e2e8f0;padding-top:10px">'
+        + (f'<div style="margin-top:16px;text-align:center"><a href="{share_url}" '
+           'style="display:inline-block;background:#0f1e3d;color:#fff;text-decoration:none;padding:10px 18px;'
+           'border-radius:8px;font-size:13px;font-weight:700">View the live governance snapshot &rarr;</a>'
+           '<div style="font-size:11px;color:#9ca3af;margin-top:6px">Read-only · no login required</div></div>'
+           if share_url else '')
+        + '<p style="font-size:11px;color:#9ca3af;margin-top:18px;border-top:1px solid #e2e8f0;padding-top:10px">'
         'Obserra — Executive Protection &amp; Intelligence LLC · Confidential. Auto-remediation opens real '
         'ServiceNow workflows that fan out to ADP/IZ8 HR → SAP → AD/Entra and auto-close end-to-end.</p></div></div>')
 
@@ -232,7 +237,8 @@ async def run_sap_governance_digest():
             continue
         try:
             data = await _governance_digest_data(org_id)
-            html = _governance_digest_html(data)
+            share = await _create_digest_share(org_id)
+            html = _governance_digest_html(data, share["url"])
             att = _digest_attachment(await _scorecard_payload(org_id, record=False))
             if cfg.get("recipients"):
                 emails = cfg["recipients"]
@@ -276,7 +282,8 @@ async def governance_digest_send(user: dict = Depends(get_current_user)):
                     "data": await _governance_digest_data(org_id)}
     cfg = await _get_digest_config(org_id)
     data = await _governance_digest_data(org_id)
-    html = _governance_digest_html(data)
+    share = await _create_digest_share(org_id)
+    html = _governance_digest_html(data, share["url"])
     att = _digest_attachment(await _scorecard_payload(org_id, record=False))
     if cfg.get("recipients"):
         emails = cfg["recipients"]
@@ -1254,3 +1261,215 @@ async def digest_ask(body: DigestAskBody, user: dict = Depends(get_current_user)
     await _audit(org_id, user["email"], "sap.digest.ask", q[:120])
     return {"session_id": session_id, "answer": answer[:1200], "model": model,
             "suggestions": _digest_ask_suggestions(ctx)}
+
+
+# ── Chat Export (PDF + email the AI Q&A thread, stamped to the audit trail) ────
+class DigestAskEmailBody(BaseModel):
+    session_id: str
+    recipients: list[str] = []
+
+
+def _chat_pdf(messages, meta):
+    """Branded PDF of an AI Q&A thread (leadership note)."""
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import inch
+    from reportlab.lib import colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
+    import html as _h
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=LETTER, topMargin=0.6 * inch, bottomMargin=0.6 * inch,
+                            leftMargin=0.7 * inch, rightMargin=0.7 * inch)
+    ss = getSampleStyleSheet()
+    navy = colors.HexColor("#0f1e3d")
+    title_st = ParagraphStyle("t", parent=ss["Title"], textColor=navy, fontSize=17, spaceAfter=2)
+    sub_st = ParagraphStyle("s", parent=ss["Normal"], textColor=colors.HexColor("#64748b"), fontSize=9)
+    q_st = ParagraphStyle("q", parent=ss["Normal"], fontSize=10.5, leading=14, textColor=navy,
+                          fontName="Helvetica-Bold", spaceBefore=10, spaceAfter=2)
+    a_st = ParagraphStyle("a", parent=ss["Normal"], fontSize=10, leading=14,
+                          textColor=colors.HexColor("#1f2937"), leftIndent=10, spaceAfter=4)
+    flow = []
+    badge = "/app/backend/assets/brand-badge.png"
+    if os.path.exists(badge):
+        flow.append(RLImage(badge, width=32, height=32))
+    flow.append(Paragraph("SAP Access Governance — AI Q&amp;A Note", title_st))
+    flow.append(Paragraph(_h.escape(meta), sub_st))
+    flow.append(Spacer(1, 8))
+    for m in messages:
+        txt = _h.escape(m.get("text", "")).replace("\n", "<br/>")
+        flow.append(Paragraph(("Q · " + txt) if m.get("role") == "user" else ("A · " + txt),
+                              q_st if m.get("role") == "user" else a_st))
+    flow.append(Spacer(1, 12))
+    flow.append(Paragraph("Obserra — Executive Protection &amp; Intelligence LLC · Confidential · "
+                          "Answers grounded in the live SAP access snapshot at time of asking.", sub_st))
+    doc.build(flow)
+    buf.seek(0)
+    return buf
+
+
+def _ask_email_html(msgs, meta):
+    import html as _h
+    body = ""
+    for m in msgs:
+        t = _h.escape(m.get("text", "")).replace("\n", "<br/>")
+        if m.get("role") == "user":
+            body += f'<div style="margin:12px 0 2px;font-weight:700;color:#0f1e3d;font-size:14px">Q · {t}</div>'
+        else:
+            body += f'<div style="margin:0 0 8px;color:#334155;font-size:13px;line-height:1.5">A · {t}</div>'
+    return ('<div style="font:400 14px Arial,Helvetica,sans-serif;color:#1f2937;max-width:640px;margin:auto">'
+            '<div style="background:#0f1e3d;color:#fff;padding:18px 22px;border-radius:12px 12px 0 0">'
+            '<div style="font-size:11px;letter-spacing:2px;opacity:.7">OBSERRA SAP UAC</div>'
+            '<h2 style="margin:4px 0 0;font-size:20px">AI Q&amp;A Note</h2>'
+            f'<div style="font-size:12px;opacity:.75;margin-top:2px">{_h.escape(meta)}</div></div>'
+            '<div style="border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;padding:14px 18px">'
+            + body +
+            '<p style="font-size:11px;color:#9ca3af;margin-top:18px;border-top:1px solid #e2e8f0;padding-top:10px">'
+            'Obserra — Executive Protection &amp; Intelligence LLC · Confidential · Grounded in the live SAP access '
+            'snapshot. A branded PDF copy is attached.</p></div></div>')
+
+
+async def _get_ask_thread(org_id, session_id):
+    convo = await db.sap_digest_chat.find_one({"org_id": org_id, "session_id": session_id},
+                                              {"_id": 0, "messages": 1}) or {}
+    return convo.get("messages") or []
+
+
+@sap_router.get("/digest/ask/export")
+async def digest_ask_export(session_id: str, user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    msgs = await _get_ask_thread(org_id, session_id)
+    if not msgs:
+        raise HTTPException(status_code=404, detail="No Q&A thread to export yet — ask a question first.")
+    qn = len([m for m in msgs if m.get("role") == "user"])
+    meta = f"{qn} question(s) · Exported {_now().strftime('%B %d, %Y %H:%M UTC')} · by {user['email']}"
+    pdf = _chat_pdf(msgs, meta)
+    await _audit(org_id, user["email"], "sap.digest.ask.export", f"AI Q&A note exported ({qn} Q, session {session_id[:8]})")
+    ts = _now().strftime("%Y%m%d-%H%M")
+    return Response(content=pdf.getvalue(), media_type="application/pdf",
+                    headers={"Content-Disposition": f'attachment; filename="sap-digest-ai-qa-{ts}.pdf"'})
+
+
+@sap_router.post("/digest/ask/email")
+async def digest_ask_email(body: DigestAskEmailBody, user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    from kernel import notifications
+    import base64
+    msgs = await _get_ask_thread(org_id, body.session_id)
+    if not msgs:
+        raise HTTPException(status_code=404, detail="No Q&A thread to email yet — ask a question first.")
+    emails = [e.strip() for e in body.recipients if e.strip()] or [user["email"]]
+    qn = len([m for m in msgs if m.get("role") == "user"])
+    meta = f"AI Q&A note · {qn} question(s) · {_now().strftime('%B %d, %Y')} · by {user['email']}"
+    pdf = _chat_pdf(msgs, meta)
+    att = [{"filename": f"sap-digest-ai-qa-{_now().strftime('%Y%m%d')}.pdf",
+            "content": base64.b64encode(pdf.getvalue()).decode()}]
+    html = _ask_email_html(msgs, meta)
+    sent = 0
+    for e in emails:
+        if await notifications.send_email(e, "SAP Governance — AI Q&A Note — Obserra UAC", html, attachments=att):
+            sent += 1
+    await _audit(org_id, user["email"], "sap.digest.ask.email",
+                 f"AI Q&A note emailed to {len(emails)} recipient(s), {sent} sent ({qn} Q)")
+    return {"ok": True, "sent": sent, "recipients": emails}
+
+
+# ── Shareable read-only digest snapshot (tokenised, no login) ─────────────────
+async def _build_digest_snapshot(org_id):
+    ctx = await _digest_ai_context(org_id)
+    why = _score_why_fallback({"trend": ctx["scorecard"].get("trend") or []})
+    return {"digest": ctx["digest"], "scorecard": ctx["scorecard"],
+            "open_conflicts_by_area": ctx["open_conflicts_by_area"],
+            "open_conflicts_by_system": ctx["open_conflicts_by_system"],
+            "top_open_rules": ctx["top_open_rules"], "why": why, "generated_at": _now().isoformat()}
+
+
+async def _create_digest_share(org_id):
+    import secrets
+    snap = await _build_digest_snapshot(org_id)
+    token = secrets.token_urlsafe(16)
+    expires = (_now() + timedelta(days=14)).isoformat()
+    await db.sap_digest_shares.insert_one({"token": token, "org_id": org_id, "snapshot": snap,
+                                           "created_at": _now().isoformat(), "expires_at": expires})
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    return {"token": token, "url": f"{frontend}/share/digest/{token}", "expires_at": expires}
+
+
+@sap_router.post("/digest/share")
+async def digest_share(user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    res = await _create_digest_share(org_id)
+    await _audit(org_id, user["email"], "sap.digest.share", f"read-only share link created (expires {res['expires_at'][:10]})")
+    return res
+
+
+@sap_router.get("/public/digest-share/{token}")
+async def public_digest_share(token: str):
+    """Public, unauthenticated read-only governance snapshot opened from the digest email."""
+    doc = await db.sap_digest_shares.find_one({"token": token}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="This shared digest link is invalid.")
+    if doc.get("expires_at") and _now().isoformat() > doc["expires_at"]:
+        raise HTTPException(status_code=410, detail="This shared digest link has expired.")
+    return {"snapshot": doc["snapshot"], "created_at": doc.get("created_at"), "expires_at": doc.get("expires_at")}
+
+
+# ── Voice Digest (spoken briefing via OpenAI TTS through the Emergent LLM key) ─
+def _digest_voice_script(ctx):
+    d = ctx["digest"]
+    cur = ctx["scorecard"]["current"]
+    fc = ctx["scorecard"].get("forecast") or {}
+    areas = list(ctx["open_conflicts_by_area"].items())
+    top_areas = ", ".join(f"{a} with {n}" for a, n in areas[:3]) or "no open areas"
+    fc_txt = ""
+    if fc.get("next_week_score"):
+        dd = fc.get("delta", 0)
+        move = "rise" if dd > 0 else "fall" if dd < 0 else "hold steady"
+        fc_txt = f" The governance score is projected to {move} to {fc['next_week_score']} out of 100 next week."
+    return (f"Here is your S A P access governance briefing. "
+            f"There are {d['open_sod']} open segregation of duties conflicts, "
+            f"including {d['sev']['Critical']} critical and {d['sev']['High']} high severity. "
+            f"The overall governance score is {cur['governance_score']} out of 100. "
+            f"The biggest risk areas are {top_areas}. "
+            f"{d['residual_count']} terminated employees still retain access and need clearing. "
+            f"In the last twenty four hours, {d['autorem_24h']} conflicts were auto remediated.{fc_txt} "
+            f"That concludes your briefing from Obserra S A P User Access Control.")
+
+
+@sap_router.get("/digest/voice/script")
+async def digest_voice_script(user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    ctx = await _digest_ai_context(org_id)
+    return {"script": _digest_voice_script(ctx)}
+
+
+@sap_router.get("/digest/voice")
+async def digest_voice(user: dict = Depends(get_current_user)):
+    """Spoken governance briefing (mp3) — cached per script hash to avoid regenerating unchanged audio."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    import hashlib
+    import base64
+    ctx = await _digest_ai_context(org_id)
+    script = _digest_voice_script(ctx)
+    h = hashlib.sha256(script.encode()).hexdigest()[:16]
+    cached = await db.sap_digest_voice.find_one({"org_id": org_id, "hash": h}, {"_id": 0, "audio_b64": 1})
+    if cached and cached.get("audio_b64"):
+        audio = base64.b64decode(cached["audio_b64"])
+    else:
+        try:
+            from emergentintegrations.llm.openai import OpenAITextToSpeech
+            tts = OpenAITextToSpeech(api_key=os.environ["EMERGENT_LLM_KEY"])
+            audio = await tts.generate_speech(text=script[:4000], model="tts-1-hd", voice="onyx")
+        except Exception:
+            raise HTTPException(status_code=503, detail="Voice generation is unavailable right now — please try again shortly.")
+        await db.sap_digest_voice.update_one({"org_id": org_id, "hash": h},
+            {"$set": {"org_id": org_id, "hash": h, "audio_b64": base64.b64encode(audio).decode(),
+                      "script": script, "at": _now().isoformat()}}, upsert=True)
+    await _audit(org_id, user["email"], "sap.digest.voice", "voice briefing generated")
+    return Response(content=audio, media_type="audio/mpeg",
+                    headers={"Content-Disposition": 'inline; filename="sap-governance-digest.mp3"'})
+
