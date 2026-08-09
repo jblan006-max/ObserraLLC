@@ -1275,7 +1275,8 @@ def _prune_evidence(org_id: str, keep: int = 60):
 def _evidence_cfg(org):
     c = ((org or {}).get("system_health") or {}).get("evidence") or {}
     return {"monthly_email": bool(c.get("monthly_email", True)),
-            "keep": max(1, min(365, int(c.get("keep") or 60)))}
+            "keep": max(1, min(365, int(c.get("keep") or 60))),
+            "quarterly_pack": bool(c.get("quarterly_pack", True))}
 
 
 async def _make_and_archive_evidence(org_id: str, generated_by: str, source: str, period: dict = None):
@@ -1333,6 +1334,7 @@ async def evidence_download(file: str, user: dict = Depends(get_current_user)):
 class EvidenceConfig(BaseModel):
     monthly_email: bool = True
     keep: int = 60
+    quarterly_pack: bool = True
 
 
 @deploy_router.get("/evidence-config")
@@ -1347,7 +1349,8 @@ async def put_evidence_config(body: EvidenceConfig, user: dict = Depends(get_cur
     if user.get("role") != "admin":
         raise HTTPException(403, "Admins only")
     from bson import ObjectId
-    cfg = {"monthly_email": bool(body.monthly_email), "keep": max(1, min(365, int(body.keep)))}
+    cfg = {"monthly_email": bool(body.monthly_email), "keep": max(1, min(365, int(body.keep))),
+           "quarterly_pack": bool(body.quarterly_pack)}
     await db.organizations.update_one({"_id": ObjectId(user["org_id"])},
                                       {"$set": {"system_health.evidence": cfg}})
     return cfg
@@ -1379,6 +1382,42 @@ async def evidence_share(body: EvidenceShareBody, user: dict = Depends(get_curre
             "expires_at": expires, "ttl_days": ttl}
 
 
+def _watermark_pdf(pdf_bytes: bytes, text: str = "VERIFIED COPY", subtext: str = "") -> bytes:
+    """Overlay a faint diagonal watermark on every page (used for shared / audit-room copies).
+    Fails open: returns the original bytes if watermarking is unavailable."""
+    try:
+        from io import BytesIO
+        from pypdf import PdfReader, PdfWriter
+        from reportlab.pdfgen import canvas
+        from reportlab.lib import colors
+        reader = PdfReader(BytesIO(pdf_bytes))
+        writer = PdfWriter()
+        for page in reader.pages:
+            w = float(page.mediabox.width)
+            h = float(page.mediabox.height)
+            buf = BytesIO()
+            c = canvas.Canvas(buf, pagesize=(w, h))
+            c.saveState()
+            c.translate(w / 2, h / 2)
+            c.rotate(38)
+            c.setFillColor(colors.Color(0.55, 0.6, 0.72, alpha=0.13))
+            c.setFont("Helvetica-Bold", 52)
+            c.drawCentredString(0, 18, text)
+            if subtext:
+                c.setFont("Helvetica", 12)
+                c.drawCentredString(0, -24, subtext)
+            c.restoreState()
+            c.save()
+            buf.seek(0)
+            page.merge_page(PdfReader(buf).pages[0])
+            writer.add_page(page)
+        out = BytesIO()
+        writer.write(out)
+        return out.getvalue()
+    except Exception:
+        return pdf_bytes
+
+
 @deploy_router.get("/evidence/shared/{token}")
 async def evidence_shared(token: str):
     """Public, unauthenticated read-only download of a shared evidence PDF."""
@@ -1395,6 +1434,8 @@ async def evidence_shared(token: str):
                                         {"$inc": {"opens": 1}, "$set": {"last_opened_at": _now_iso()}})
     with open(fp, "rb") as f:
         content = f.read()
+    content = _watermark_pdf(content, "VERIFIED COPY",
+                             f"Shared {doc.get('created_at', '')[:10]} · expires {doc.get('expires_at', '')[:10]}")
     return StreamingResponse(io.BytesIO(content), media_type=_PDF_MT,
                              headers={"Content-Disposition": f'inline; filename="{os.path.basename(fp)}"'})
 
@@ -1512,6 +1553,232 @@ async def _run_monthly_evidence_email():
                                        ref="compliance-evidence")
         except Exception as e:
             logging.getLogger("deploy").warning(f"monthly evidence email failed for org {oid}: {e}")
+
+
+async def _run_quarterly_evidence_pack():
+    """On the 1st of a quarter-start month (Jan/Apr/Jul/Oct), email each org a signed evidence pack
+    for the just-ended quarter. Folded into the monthly-board-report cron."""
+    import base64
+    import logging
+    from datetime import datetime, timezone
+    from kernel import notifications
+    now = datetime.now(timezone.utc)
+    if now.month not in (1, 4, 7, 10):
+        return
+    pq_month, pq_year = now.month - 3, now.year
+    if pq_month <= 0:
+        pq_month += 12
+        pq_year -= 1
+    pq = (pq_month - 1) // 3 + 1
+    period = {"kind": "quarter", "value": f"{pq_year}-Q{pq}"}
+    for org in await db.organizations.find({}).to_list(1000):
+        oid = str(org["_id"])
+        if not _evidence_cfg(org).get("quarterly_pack", True):
+            continue
+        try:
+            pdf, meta = await _make_and_archive_evidence(oid, "scheduler@obserra", "quarterly-cron", period=period)
+            recips = await db.users.find({"org_id": oid, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
+            emails = {r["email"] for r in recips} | {e for e in (org.get("deploy_recipients") or []) if e}
+            if not emails:
+                continue
+            html = ("<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
+                    f"<h2 style='color:#0f1e3d'>Quarter-End SAP Access Compliance Pack — {period['value']}</h2>"
+                    "<p>Attached is the signed compliance-evidence pack for the just-ended quarter, covering system "
+                    "health &amp; controls, access-governance coverage, quarter uptime, backup/encryption posture and a "
+                    "document-integrity signature with a QR verification link.</p>"
+                    "<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — Enterprise SAP Access Governance</p></div>")
+            attachments = [{"filename": f"Obserra-Quarter-End-{period['value']}.pdf", "content": base64.b64encode(pdf).decode()}]
+            for to in emails:
+                await notifications.send_email(to, f"Quarter-End SAP Access Compliance Pack — {period['value']}", html, attachments=attachments)
+            await notifications.create(oid, "report", "Quarterly compliance pack delivered",
+                                       f"Signed {period['value']} evidence archived and emailed to {len(emails)} recipient(s).", ref="compliance-evidence")
+        except Exception as e:
+            logging.getLogger("deploy").warning(f"quarterly pack failed for org {oid}: {e}")
+
+
+class DigestTestEmail(BaseModel):
+    email: str
+
+
+@deploy_router.post("/health-digest-test-email")
+async def health_digest_test_email(body: DigestTestEmail, user: dict = Depends(get_current_user)):
+    """Send a one-off health digest to a single email so admins can preview it before wiring a channel."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from kernel import notifications
+    email = (body.email or "").strip()
+    if "@" not in email or "." not in email.split("@")[-1]:
+        raise HTTPException(400, "Enter a valid email address.")
+    h = await evaluate_org_health(user["org_id"])
+    lines = (h.get("issues") or []) if not h["healthy"] else \
+        ["All monitored systems are healthy — this is a sample digest so you can preview the format."]
+    html = ("<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
+            "<h2 style='color:#0f1e3d'>System Health Digest (test)</h2><ul>"
+            + "".join(f"<li>{ln}</li>" for ln in lines)
+            + "</ul><p style='font-size:11px;color:#9ca3af'>Sent as a one-off test from Obserra SAP UAC — no channel was changed.</p></div>")
+    await notifications.send_email(email, "System Health Digest (test) — Obserra SAP UAC", html)
+    return {"email": email, "healthy": h["healthy"]}
+
+
+class TokenBody(BaseModel):
+    token: str
+
+
+@deploy_router.get("/evidence/shares")
+async def evidence_shares_list(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    rows = await db.evidence_shares.find({"org_id": user["org_id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    for r in rows:
+        r["expired"] = bool(r.get("expires_at") and now > r["expires_at"])
+        r["url"] = f"{frontend}/api/deploy/evidence/shared/{r['token']}"
+    return {"shares": rows}
+
+
+@deploy_router.post("/evidence/share/revoke")
+async def evidence_share_revoke(body: TokenBody, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    res = await db.evidence_shares.delete_one({"token": body.token, "org_id": user["org_id"]})
+    return {"revoked": res.deleted_count > 0}
+
+
+async def _audit_findings(org_id: str):
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    h = await evaluate_org_health(org_id)
+    return {
+        "healthy": h["healthy"],
+        "uptime_30d": await _period_uptime(org_id, (now - timedelta(days=30)).isoformat(), now.isoformat()),
+        "degraded_connectors": len(h.get("degraded_connectors") or []),
+        "sod_violations": await db.risks.count_documents({"org_id": org_id}),
+        "servicenow_tickets": await db.sap_snow_tickets.count_documents({"org_id": org_id}),
+        "certifications": await db.sap_certifications.count_documents({"org_id": org_id}),
+    }
+
+
+def _audit_wrap(inner, badge):
+    return (f'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
+            '<title>Obserra SAP UAC — Audit Room</title>'
+            '<style>body{font:400 15px/1.6 -apple-system,Segoe UI,Arial;background:#0f1e3d;color:#e5e7eb;margin:0;padding:40px 16px}'
+            f'.card{{max-width:720px;margin:auto;background:#fff;color:#111827;border-radius:16px;padding:32px 30px;border-top:6px solid {badge}}}'
+            'h1{font-size:22px;margin:6px 0 2px;color:#0f1e3d}h2{font-size:15px;color:#0f1e3d;margin:22px 0 6px}'
+            '.pill{display:inline-block;color:#fff;font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;text-transform:uppercase;letter-spacing:.05em}'
+            '.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:16px 0}'
+            '.tile{background:#f4f6fb;border-radius:10px;padding:14px 12px;text-align:center}'
+            '.tv{font-size:22px;font-weight:700;color:#0f1e3d}.tl{font-size:11px;color:#6b7280;margin-top:2px}'
+            '.btn{display:inline-block;background:#2f6df6;color:#fff;text-decoration:none;padding:10px 16px;border-radius:8px;font-size:14px;font-weight:600}'
+            '.hint{font-size:12px;color:#6b7280}'
+            '.brand{max-width:720px;margin:14px auto 0;text-align:center;color:#94a3b8;font-size:12px}</style></head>'
+            f'<body><div class="card">{inner}</div><div class="brand">Obserra SAP UAC · Enterprise SAP Access Governance</div></body></html>')
+
+
+def _audit_room_html(org_name, room, findings, latest):
+    if org_name is None:
+        return _audit_wrap("<h1>Audit room not found</h1><p>This link is invalid or has been revoked.</p>", "#c2410c")
+    if org_name == "expired":
+        return _audit_wrap("<h1>Audit room expired</h1><p>Ask your Obserra administrator for a fresh link.</p>", "#b45309")
+    up = findings.get("uptime_30d")
+    tiles = [("Uptime (30d)", f"{up}%" if up is not None else "—"),
+             ("Degraded connectors", findings["degraded_connectors"]),
+             ("SoD violations", findings["sod_violations"]),
+             ("ServiceNow tickets", findings["servicenow_tickets"]),
+             ("Certifications", findings["certifications"])]
+    status = "Healthy" if findings["healthy"] else "Degraded"
+    scolor = "#12805c" if findings["healthy"] else "#c2410c"
+    tile_html = "".join(f'<div class="tile"><div class="tv">{v}</div><div class="tl">{ln}</div></div>' for ln, v in tiles)
+    evidence_btn = (f'<a class="btn" href="/api/deploy/audit-room/{room["token"]}/evidence" target="_blank" rel="noreferrer">Download latest signed evidence (PDF)</a>'
+                    if latest else '<p class="hint">No signed evidence report has been generated yet.</p>')
+    period = latest.get("period_label") if latest else "—"
+    inner = (f'<div class="pill" style="background:{scolor}">{status}</div>'
+             f'<h1>SAP Access Compliance — {org_name}</h1>'
+             f'<p>Read-only audit portal · expires {room.get("expires_at", "")[:10]}</p>'
+             f'<div class="tiles">{tile_html}</div>'
+             f'<h2>Latest signed evidence</h2><p class="hint">Reporting period: {period}</p>{evidence_btn}')
+    return _audit_wrap(inner, "#2f6df6")
+
+
+class AuditRoomBody(BaseModel):
+    ttl_days: int = 14
+
+
+@deploy_router.post("/audit-room")
+async def create_audit_room(body: AuditRoomBody, user: dict = Depends(get_current_user)):
+    """Create a branded, expiring public portal bundling the latest evidence PDF + live findings."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    import secrets
+    from datetime import datetime, timezone, timedelta
+    ttl = max(1, min(90, int(body.ttl_days)))
+    token = secrets.token_urlsafe(16)
+    expires = (datetime.now(timezone.utc) + timedelta(days=ttl)).isoformat()
+    await db.audit_rooms.insert_one({"token": token, "org_id": user["org_id"], "created_by": user["email"],
+                                     "created_at": _now_iso(), "expires_at": expires, "opens": 0})
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    return {"token": token, "url": f"{frontend}/api/deploy/audit-room/{token}", "expires_at": expires, "ttl_days": ttl}
+
+
+@deploy_router.get("/audit-rooms")
+async def list_audit_rooms(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    rows = await db.audit_rooms.find({"org_id": user["org_id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+    for r in rows:
+        r["expired"] = bool(r.get("expires_at") and now > r["expires_at"])
+        r["url"] = f"{frontend}/api/deploy/audit-room/{r['token']}"
+    return {"rooms": rows}
+
+
+@deploy_router.post("/audit-room/revoke")
+async def revoke_audit_room(body: TokenBody, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    res = await db.audit_rooms.delete_one({"token": body.token, "org_id": user["org_id"]})
+    return {"revoked": res.deleted_count > 0}
+
+
+@deploy_router.get("/audit-room/{token}")
+async def view_audit_room(token: str):
+    """Public, unauthenticated audit portal."""
+    from fastapi.responses import HTMLResponse
+    from datetime import datetime, timezone
+    from bson import ObjectId
+    room = await db.audit_rooms.find_one({"token": token})
+    if not room:
+        return HTMLResponse(_audit_room_html(None, None, None, None), status_code=404)
+    if room.get("expires_at") and datetime.now(timezone.utc).isoformat() > room["expires_at"]:
+        return HTMLResponse(_audit_room_html("expired", None, None, None), status_code=410)
+    await db.audit_rooms.update_one({"token": token}, {"$inc": {"opens": 1}, "$set": {"last_opened_at": _now_iso()}})
+    org = await db.organizations.find_one({"_id": ObjectId(room["org_id"])}) or {}
+    findings = await _audit_findings(room["org_id"])
+    latest = (_list_evidence_files(room["org_id"]) or [None])[0]
+    return HTMLResponse(_audit_room_html(org.get("name") or "Organization", room, findings, latest))
+
+
+@deploy_router.get("/audit-room/{token}/evidence")
+async def audit_room_evidence(token: str):
+    """Public download of the latest evidence PDF for an audit room (watermarked)."""
+    from datetime import datetime, timezone
+    room = await db.audit_rooms.find_one({"token": token})
+    if not room:
+        raise HTTPException(404, "Audit room not found.")
+    if room.get("expires_at") and datetime.now(timezone.utc).isoformat() > room["expires_at"]:
+        raise HTTPException(410, "This audit room has expired.")
+    latest = (_list_evidence_files(room["org_id"]) or [None])[0]
+    if not latest:
+        raise HTTPException(404, "No evidence has been generated yet.")
+    fp = _safe_evidence_path(latest["file"])
+    with open(fp, "rb") as f:
+        content = f.read()
+    content = _watermark_pdf(content, "AUDIT ROOM COPY", f"Audit room · expires {room.get('expires_at', '')[:10]}")
+    return StreamingResponse(io.BytesIO(content), media_type=_PDF_MT,
+                             headers={"Content-Disposition": f'inline; filename="{os.path.basename(fp)}"'})
 
 
 _TOUR_DIR = os.path.join(_ROOT, "frontend", "public", "tour")

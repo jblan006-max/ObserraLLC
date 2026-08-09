@@ -115,6 +115,8 @@ async def monthly_board_report(request: Request, background_tasks: BackgroundTas
     background_tasks.add_task(_run_access_review)
     from deploy import _run_monthly_evidence_email
     background_tasks.add_task(_run_monthly_evidence_email)
+    from deploy import _run_quarterly_evidence_pack
+    background_tasks.add_task(_run_quarterly_evidence_pack)
     from sap_uac import run_sap_board_pack
     background_tasks.add_task(run_sap_board_pack)
     return {"status": "accepted"}

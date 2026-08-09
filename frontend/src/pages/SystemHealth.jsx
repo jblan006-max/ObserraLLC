@@ -8,7 +8,7 @@ import {
   Activity, Database, Plug, Clock, ServerCog, ArrowUpCircle, DownloadCloud, Loader2,
   HardDriveDownload, RotateCcw, ShieldCheck, AlertTriangle, RefreshCw, Building2, Terminal, CheckCircle2,
   Save, Mail, MessageSquare, Slack, Zap, Archive, Lock, Send, FileText, KeyRound, Eye, History, FileCheck2,
-  Share2, Copy, X,
+  Share2, Copy, X, Trash2, DoorOpen, Link2,
 } from "lucide-react";
 
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
@@ -131,6 +131,11 @@ export default function SystemHealth() {
   const [shareModal, setShareModal] = useState(null);
   const [sharingFile, setSharingFile] = useState(null);
   const [sendingDigest, setSendingDigest] = useState(false);
+  const [shares, setShares] = useState([]);
+  const [rooms, setRooms] = useState([]);
+  const [creatingRoom, setCreatingRoom] = useState(false);
+  const [digestTestEmail, setDigestTestEmail] = useState("");
+  const [sendingTestEmail, setSendingTestEmail] = useState(false);
 
   const loadHealth = useCallback(async () => {
     try { const { data } = await api.get("/health"); setHealth(data); } catch { setHealth((h) => h || { status: "degraded", checks: {} }); }
@@ -160,6 +165,14 @@ export default function SystemHealth() {
     if (!isAdmin) return;
     try { const { data } = await api.get("/deploy/restore-previews"); setPreviews(data.previews || []); } catch { /* ignore */ }
   }, [isAdmin]);
+  const loadShares = useCallback(async () => {
+    if (!isAdmin) return;
+    try { const { data } = await api.get("/deploy/evidence/shares"); setShares(data.shares || []); } catch { /* ignore */ }
+  }, [isAdmin]);
+  const loadRooms = useCallback(async () => {
+    if (!isAdmin) return;
+    try { const { data } = await api.get("/deploy/audit-rooms"); setRooms(data.rooms || []); } catch { /* ignore */ }
+  }, [isAdmin]);
   const loadCfg = useCallback(async () => {
     if (!isAdmin) return;
     try {
@@ -170,9 +183,9 @@ export default function SystemHealth() {
 
   const refreshAll = useCallback(async () => {
     setRefreshing(true);
-    await Promise.all([loadHealth(), loadDetail(), loadVer(), loadHistory(), loadBackups(), loadUpgrade(), loadCfg(), loadEvidence(), loadPreviews()]);
+    await Promise.all([loadHealth(), loadDetail(), loadVer(), loadHistory(), loadBackups(), loadUpgrade(), loadCfg(), loadEvidence(), loadPreviews(), loadShares(), loadRooms()]);
     setRefreshing(false);
-  }, [loadHealth, loadDetail, loadVer, loadHistory, loadBackups, loadUpgrade, loadCfg, loadEvidence, loadPreviews]);
+  }, [loadHealth, loadDetail, loadVer, loadHistory, loadBackups, loadUpgrade, loadCfg, loadEvidence, loadPreviews, loadShares, loadRooms]);
 
   useEffect(() => { refreshAll(); }, [refreshAll]);
 
@@ -301,11 +314,12 @@ export default function SystemHealth() {
     } catch { toast.error("Download failed"); }
   };
   const saveEvidenceCfg = async (patch) => {
-    const next = { monthly_email: !!evCfg?.monthly_email, keep: parseInt(evCfg?.keep || 60, 10), ...patch };
+    const next = { monthly_email: !!evCfg?.monthly_email, keep: parseInt(evCfg?.keep || 60, 10), quarterly_pack: evCfg?.quarterly_pack !== false, ...patch };
     try {
       const { data } = await api.put("/deploy/evidence-config", next);
       setEvCfg(data);
       if (patch.monthly_email !== undefined) toast.success(data.monthly_email ? "Monthly evidence email on" : "Monthly evidence email paused", { description: data.monthly_email ? "Auditors & admins receive the signed PDF on the 1st of each month." : "The scheduled evidence email is paused." });
+      else if (patch.quarterly_pack !== undefined) toast.success(data.quarterly_pack ? "Quarter-end pack on" : "Quarter-end pack paused", { description: data.quarterly_pack ? "A signed quarter-end evidence pack is emailed at each quarter start." : "The quarterly pack is paused." });
       else toast.success("Retention updated", { description: `Keeping the latest ${data.keep} report(s); older ones roll off.` });
     } catch (e) { toast.error(e.response?.data?.detail || "Couldn't update"); }
   };
@@ -314,10 +328,38 @@ export default function SystemHealth() {
     try {
       const { data } = await api.post("/deploy/evidence/share", { file, ttl_days: 7 });
       setShareModal({ file, url: data.url, expires_at: data.expires_at });
+      await loadShares();
       try { await navigator.clipboard.writeText(data.url); toast.success("Share link copied", { description: `Read-only, expires ${new Date(data.expires_at).toLocaleDateString()}.` }); }
       catch { toast.success("Share link created"); }
     } catch (e) { toast.error(e.response?.data?.detail || "Couldn't create link"); }
     setSharingFile(null);
+  };
+  const createAuditRoom = async () => {
+    setCreatingRoom(true);
+    try {
+      const { data } = await api.post("/deploy/audit-room", { ttl_days: 14 });
+      setShareModal({ title: "Audit Room link", url: data.url, expires_at: data.expires_at });
+      await loadRooms();
+      try { await navigator.clipboard.writeText(data.url); toast.success("Audit Room created", { description: `Link copied · expires ${new Date(data.expires_at).toLocaleDateString()}.` }); }
+      catch { toast.success("Audit Room created"); }
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't create audit room"); }
+    setCreatingRoom(false);
+  };
+  const revokeShare = async (token) => {
+    try { await api.post("/deploy/evidence/share/revoke", { token }); toast.success("Share link revoked"); await loadShares(); }
+    catch (e) { toast.error(e.response?.data?.detail || "Couldn't revoke"); }
+  };
+  const revokeRoom = async (token) => {
+    try { await api.post("/deploy/audit-room/revoke", { token }); toast.success("Audit room revoked"); await loadRooms(); }
+    catch (e) { toast.error(e.response?.data?.detail || "Couldn't revoke"); }
+  };
+  const sendTestDigest = async () => {
+    const email = digestTestEmail.trim();
+    if (!email.includes("@")) { toast.error("Enter a valid email address"); return; }
+    setSendingTestEmail(true);
+    try { await api.post("/deploy/health-digest-test-email", { email }); toast.success("Test digest sent", { description: `Emailed to ${email}.` }); setDigestTestEmail(""); }
+    catch (e) { toast.error(e.response?.data?.detail || "Couldn't send test digest"); }
+    setSendingTestEmail(false);
   };
   const sendDigestNow = async () => {
     setSendingDigest(true);
@@ -619,6 +661,9 @@ export default function SystemHealth() {
               <select data-testid="sh-evidence-period" value={period} onChange={(e) => setPeriod(e.target.value)} className="h-9 rounded-md border border-border bg-secondary/40 px-2 text-xs" title="Reporting period">
                 {periodOpts().map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
               </select>
+              <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-audit-room-create" onClick={createAuditRoom} disabled={creatingRoom}>
+                {creatingRoom ? <Loader2 className="w-4 h-4 animate-spin" /> : <DoorOpen className="w-4 h-4" />} Audit Room
+              </Button>
               <Button size="sm" className="gap-1.5" data-testid="sh-evidence-generate" onClick={generateEvidence} disabled={genEvidence}>
                 {genEvidence ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4" />}{genEvidence ? "Generating…" : "Generate & archive"}
               </Button>
@@ -630,6 +675,10 @@ export default function SystemHealth() {
               <label className="flex items-center gap-2.5 cursor-pointer select-none">
                 <input type="checkbox" data-testid="sh-evidence-monthly" checked={!!evCfg.monthly_email} onChange={(e) => saveEvidenceCfg({ monthly_email: e.target.checked })} className="w-4 h-4 accent-primary" />
                 <span className="text-sm font-medium">Email monthly evidence</span>
+              </label>
+              <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                <input type="checkbox" data-testid="sh-evidence-quarterly" checked={!!evCfg.quarterly_pack} onChange={(e) => saveEvidenceCfg({ quarterly_pack: e.target.checked })} className="w-4 h-4 accent-primary" />
+                <span className="text-sm font-medium">Quarter-end pack</span>
               </label>
               <span className="text-[11px] text-muted-foreground flex-1 min-w-[160px]">On the 1st of each month the signed PDF is archived here and emailed to admins, executives and your saved IT/audit recipients.</span>
               <label className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -673,6 +722,45 @@ export default function SystemHealth() {
               <p className="text-xs text-muted-foreground max-w-xs">No archived evidence yet — click "Generate &amp; archive" to capture a signed snapshot, or leave the monthly email on for automatic records.</p>
             </div>
           )}
+        </div>
+      )}
+
+      {isAdmin && (shares.length > 0 || rooms.length > 0) && (
+        <div className="bg-card fact-border rounded-xl p-5" data-testid="sh-links-panel">
+          <div className="flex items-center gap-2 mb-3">
+            <Link2 className="w-4 h-4 text-primary" />
+            <h2 className="font-head font-bold text-lg">Shared Access Links</h2>
+            <span className="text-[11px] text-muted-foreground">Active auditor links &amp; rooms — open counts and one-tap revoke</span>
+          </div>
+          <div className="space-y-2">
+            {rooms.map((r) => (
+              <div key={r.token} className="flex flex-wrap items-center justify-between gap-2 bg-secondary/25 rounded-lg px-3 py-2" data-testid={`sh-room-row-${r.token}`}>
+                <div className="min-w-0 flex items-center gap-2">
+                  <DoorOpen className="w-4 h-4 text-ai shrink-0" />
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium flex items-center gap-2">Audit Room{r.expired && <span className="text-[9px] uppercase text-crit font-mono">expired</span>}</div>
+                    <div className="text-[11px] text-muted-foreground">by {r.created_by} · expires {fmtDT(r.expires_at)} · {r.opens} open(s)</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                  <a href={r.url} target="_blank" rel="noreferrer" className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-secondary/60" title="Open portal"><DoorOpen className="w-4 h-4" /></a>
+                  <button data-testid={`sh-room-revoke-${r.token}`} onClick={() => revokeRoom(r.token)} className="p-1.5 rounded-md text-muted-foreground hover:text-crit hover:bg-secondary/60" title="Revoke room"><Trash2 className="w-4 h-4" /></button>
+                </div>
+              </div>
+            ))}
+            {shares.map((s) => (
+              <div key={s.token} className="flex flex-wrap items-center justify-between gap-2 bg-secondary/25 rounded-lg px-3 py-2" data-testid={`sh-share-row-${s.token}`}>
+                <div className="min-w-0 flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <div className="min-w-0">
+                    <div className="text-xs font-mono truncate max-w-[280px] flex items-center gap-2">{s.file}{s.expired && <span className="text-[9px] uppercase text-crit font-mono">expired</span>}</div>
+                    <div className="text-[11px] text-muted-foreground">by {s.created_by} · expires {fmtDT(s.expires_at)} · {s.opens} open(s)</div>
+                  </div>
+                </div>
+                <button data-testid={`sh-share-revoke-${s.token}`} onClick={() => revokeShare(s.token)} className="p-1.5 rounded-md text-muted-foreground hover:text-crit hover:bg-secondary/60 shrink-0" title="Revoke link"><Trash2 className="w-4 h-4" /></button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
 
@@ -745,6 +833,13 @@ export default function SystemHealth() {
             </table>
           </div>
           <p className="text-[11px] text-muted-foreground mt-3">Degraded events are bundled into <b>one daily digest per channel</b> (no repeat pings). Slack/Teams use this org's webhooks; email notifies admins &amp; executives; in-app is always recorded.</p>
+          <div className="mt-3 flex flex-wrap items-center gap-2" data-testid="sh-digest-test-row">
+            <span className="text-xs text-muted-foreground">Preview it — send a one-off test digest to:</span>
+            <input type="email" data-testid="sh-digest-test-email" value={digestTestEmail} onChange={(e) => setDigestTestEmail(e.target.value)} placeholder="auditor@company.com" className="h-8 w-56 rounded-md border border-border bg-background px-2 text-xs text-foreground" />
+            <Button size="sm" variant="outline" className="gap-1.5" data-testid="sh-digest-test-send" onClick={sendTestDigest} disabled={sendingTestEmail}>
+              {sendingTestEmail ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />} Send test
+            </Button>
+          </div>
           {digest && (
             <div className="mt-3 rounded-lg border border-border bg-secondary/25 p-3" data-testid="sh-digest-preview-result">
               {digest.healthy ? (
@@ -780,7 +875,7 @@ export default function SystemHealth() {
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" data-testid="sh-share-modal" onClick={() => setShareModal(null)}>
           <div className="bg-card border border-border rounded-xl p-5 w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-3">
-              <h3 className="font-head font-bold text-lg flex items-center gap-2"><Share2 className="w-4 h-4 text-primary" /> Share evidence</h3>
+              <h3 className="font-head font-bold text-lg flex items-center gap-2"><Share2 className="w-4 h-4 text-primary" /> {shareModal.title || "Share evidence"}</h3>
               <button data-testid="sh-share-close" onClick={() => setShareModal(null)} className="p-1 rounded-md text-muted-foreground hover:bg-secondary/60"><X className="w-4 h-4" /></button>
             </div>
             <p className="text-xs text-muted-foreground mb-3">Read-only link — no Obserra account required. Expires {new Date(shareModal.expires_at).toLocaleDateString()}.</p>
