@@ -2092,7 +2092,10 @@ async def list_audit_room_comments(user: dict = Depends(get_current_user)):
         await db.audit_room_comments.update_one(
             {"_id": c["_id"]}, {"$set": {"id": secrets.token_urlsafe(9), "status": "Open"}})
     rows = await db.audit_room_comments.find({"org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(200)
-    return {"comments": rows}
+    base, smap = await _sla_map(org_id)
+    for r in rows:
+        r["sla_hours"] = smap.get(r.get("token"), base)
+    return {"comments": rows, "sla_hours": base}
 
 
 class CommentReplyBody(BaseModel):
@@ -2170,6 +2173,105 @@ async def renew_audit_room(body: RenewRoomBody, user: dict = Depends(get_current
     if res.matched_count == 0:
         raise HTTPException(404, "Audit room not found.")
     return {"ok": True, "expires_at": expires, "ttl_days": ttl}
+
+
+_DEFAULT_SLA_HOURS = 72
+_ACTION_TTL_DAYS = 7
+
+
+def _org_sla(org):
+    try:
+        return max(1, min(720, int(((org or {}).get("system_health") or {}).get("sla_hours") or _DEFAULT_SLA_HOURS)))
+    except Exception:
+        return _DEFAULT_SLA_HOURS
+
+
+async def _sla_map(org_id, org=None):
+    from bson import ObjectId
+    if org is None:
+        org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    base = _org_sla(org)
+    m = {}
+    for r in await db.audit_rooms.find({"org_id": org_id}, {"_id": 0, "token": 1, "sla_hours": 1}).to_list(1000):
+        ov = r.get("sla_hours")
+        try:
+            m[r["token"]] = max(1, min(720, int(ov))) if ov else base
+        except Exception:
+            m[r["token"]] = base
+    return base, m
+
+
+def _action_expired(c):
+    from datetime import datetime, timezone
+    return bool(c.get("action_expires_at")) and datetime.now(timezone.utc).isoformat() > c["action_expires_at"]
+
+
+class SlaConfigBody(BaseModel):
+    sla_hours: int
+
+
+@deploy_router.get("/sla-config")
+async def get_sla_config(user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    base = _org_sla(org)
+    docs = await db.audit_rooms.find({"org_id": user["org_id"]}, {"_id": 0, "token": 1, "sla_hours": 1}).to_list(1000)
+    rooms = []
+    for i, d in enumerate(docs):
+        ov = d.get("sla_hours")
+        eff = max(1, min(720, int(ov))) if ov else base
+        rooms.append({"token": d["token"], "label": f"Room {i + 1}", "override": ov, "effective": eff})
+    return {"org_sla_hours": base, "default": _DEFAULT_SLA_HOURS, "rooms": rooms}
+
+
+@deploy_router.put("/sla-config")
+async def set_sla_config(body: SlaConfigBody, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from bson import ObjectId
+    v = max(1, min(720, int(body.sla_hours or _DEFAULT_SLA_HOURS)))
+    await db.organizations.update_one({"_id": ObjectId(user["org_id"])}, {"$set": {"system_health.sla_hours": v}})
+    return {"ok": True, "sla_hours": v}
+
+
+class RoomSlaBody(BaseModel):
+    sla_hours: int | None = None
+
+
+@deploy_router.put("/audit-room/{token}/sla")
+async def set_room_sla(token: str, body: RoomSlaBody, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    if body.sla_hours is None:
+        await db.audit_rooms.update_one({"token": token, "org_id": user["org_id"]}, {"$unset": {"sla_hours": ""}})
+    else:
+        v = max(1, min(720, int(body.sla_hours)))
+        await db.audit_rooms.update_one({"token": token, "org_id": user["org_id"]}, {"$set": {"sla_hours": v}})
+    return {"ok": True}
+
+
+class BulkFilterBody(BaseModel):
+    status: str
+    filter_status: str | None = None
+    room_token: str | None = None
+
+
+@deploy_router.post("/audit-room-comments/bulk-status-filter")
+async def bulk_status_filter(body: BulkFilterBody, user: dict = Depends(get_current_user)):
+    """Apply a status to ALL requests matching the current filter (spans beyond the loaded rows)."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    if body.status not in ("Open", "In Progress", "Resolved"):
+        raise HTTPException(400, "Invalid status")
+    q = {"org_id": user["org_id"]}
+    if body.filter_status in ("Open", "In Progress", "Resolved"):
+        q["status"] = body.filter_status
+    if body.room_token:
+        q["token"] = body.room_token
+    res = await db.audit_room_comments.update_many(q, {"$set": {"status": body.status}})
+    return {"ok": True, "updated": res.modified_count}
 
 
 _DEFAULT_REPLY_TEMPLATES = [
@@ -2292,16 +2394,30 @@ async def audit_request_analytics(user: dict = Depends(get_current_user)):
             "median_response_hours": _median(rh),
         }
 
+    from collections import defaultdict
+    wk = defaultdict(list)
+    for c in rows:
+        h = _resp_h(c)
+        if h is not None and c.get("reply_at"):
+            try:
+                d = datetime.fromisoformat(c["reply_at"])
+                wk[(d.isocalendar()[0], d.isocalendar()[1])].append(h)
+            except Exception:
+                pass
+    trend = [{"week": f"{y}-W{w:02d}", "median_hours": _median(wk[(y, w)])} for (y, w) in sorted(wk.keys())[-8:]]
+
     per_room = {}
     for c in rows:
         per_room.setdefault(c.get("token"), []).append(c)
     rooms_out = [{"label": label.get(tok, "Archived room"), **_bucket(items)}
                  for tok, items in per_room.items()]
     rooms_out.sort(key=lambda r: (r["open"] == 0, r["label"]))
-    return {"org": _bucket(rows), "rooms": rooms_out}
+    return {"org": _bucket(rows), "rooms": rooms_out, "trend": trend}
 
 
 def _req_action_html(comment, org_name, done=None):
+    if comment == "expired":
+        return _audit_wrap("<h1>Link expired</h1><p>This action link has expired for security. Open System Health to respond.</p>", "#b45309")
     if comment is None:
         return _audit_wrap("<h1>Request not found</h1><p>This action link is invalid or has expired.</p>", "#c2410c")
     if done == "resolved":
@@ -2341,15 +2457,20 @@ async def req_action_page(token: str):
     c = await db.audit_room_comments.find_one({"action_token": token}, {"_id": 0})
     if not c:
         return HTMLResponse(_req_action_html(None, ""))
+    if _action_expired(c):
+        return HTMLResponse(_req_action_html("expired", ""))
     org = await db.organizations.find_one({"_id": ObjectId(c["org_id"])}) or {}
     return HTMLResponse(_req_action_html(c, org.get("name") or "Organization"))
 
 
 @deploy_router.post("/req-action/{token}/resolve")
 async def req_action_resolve(token: str):
-    res = await db.audit_room_comments.update_one({"action_token": token}, {"$set": {"status": "Resolved"}})
-    if res.matched_count == 0:
+    c = await db.audit_room_comments.find_one({"action_token": token})
+    if not c:
         raise HTTPException(404, "Invalid action link.")
+    if _action_expired(c):
+        raise HTTPException(410, "This action link has expired.")
+    await db.audit_room_comments.update_one({"action_token": token}, {"$set": {"status": "Resolved"}})
     return {"ok": True}
 
 
@@ -2366,6 +2487,8 @@ async def req_action_reply(token: str, body: ActionReplyBody):
     c = await db.audit_room_comments.find_one({"action_token": token})
     if not c:
         raise HTTPException(404, "Invalid action link.")
+    if _action_expired(c):
+        raise HTTPException(410, "This action link has expired.")
     await db.audit_room_comments.update_one(
         {"action_token": token},
         {"$set": {"reply": reply[:2000], "reply_by": "Slack/Teams action", "reply_at": _now_iso(), "status": "Resolved"}})
