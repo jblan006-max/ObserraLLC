@@ -646,6 +646,64 @@ async def disable_backup_encryption(body: EncryptionBody, user: dict = Depends(g
     return {"enabled": False}
 
 
+class RotateEncryptionBody(BaseModel):
+    old_passphrase: str
+    new_passphrase: str
+
+
+@deploy_router.post("/backup-encryption/rotate")
+async def rotate_backup_passphrase(body: RotateEncryptionBody, user: dict = Depends(get_current_user)):
+    """Re-key snapshot encryption: verify the current passphrase, derive a new data key and
+    re-encrypt every existing encrypted snapshot with it so old backups stay restorable."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    import os as _os
+    import json
+    import hashlib
+    from cryptography.fernet import Fernet
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    enc = _enc_cfg(org)
+    if not enc.get("enabled"):
+        raise HTTPException(400, "Encryption isn't enabled — nothing to rotate.")
+    if hashlib.sha256(_derive_key(body.old_passphrase, enc["salt"])).hexdigest() != enc.get("verifier"):
+        raise HTTPException(403, "Incorrect current passphrase.")
+    if len((body.new_passphrase or "").strip()) < 8:
+        raise HTTPException(400, "New passphrase must be at least 8 characters.")
+    new_salt = _os.urandom(16).hex()
+    new_key = _derive_key(body.new_passphrase, new_salt)
+    new_verifier = hashlib.sha256(new_key).hexdigest()
+    new_wrapped = _master_fernet().encrypt(new_key).decode("utf-8")
+    reencrypted = 0
+    for info in _list_backup_files(user["org_id"]):
+        if not info.get("encrypted"):
+            continue
+        fname = info["file"]
+        mp = _meta_path(fname)
+        try:
+            with open(mp, encoding="utf-8") as f:
+                meta = json.load(f)
+            old_key = _master_fernet().decrypt(meta["wrapped_key"].encode("utf-8"))
+            fp = _safe_backup_path(fname)
+            with open(fp, "rb") as f:
+                gz = Fernet(old_key).decrypt(f.read())
+            with open(fp, "wb") as f:
+                f.write(Fernet(new_key).encrypt(gz))
+            meta["salt"] = new_salt
+            meta["wrapped_key"] = new_wrapped
+            meta["size"] = os.path.getsize(fp)
+            with open(mp, "w", encoding="utf-8") as f:
+                json.dump(meta, f)
+            reencrypted += 1
+        except Exception:
+            continue
+    await db.organizations.update_one(
+        {"_id": ObjectId(user["org_id"])},
+        {"$set": {"system_health.backup.encryption":
+                  {"enabled": True, "salt": new_salt, "verifier": new_verifier, "wrapped_key": new_wrapped}}})
+    return {"enabled": True, "reencrypted": reencrypted}
+
+
 @deploy_router.get("/backups")
 async def list_backups(user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
@@ -661,6 +719,26 @@ async def restore_backup(body: dict, user: dict = Depends(get_current_user)):
         raise HTTPException(400, "Type RESTORE to confirm — restoring replaces the current data "
                                  "(a pre-restore backup is taken automatically first).")
     return await restore_org(user["org_id"], body.get("file", ""), passphrase=body.get("passphrase"))
+
+
+@deploy_router.post("/restore-preview")
+async def restore_preview(body: dict, user: dict = Depends(get_current_user)):
+    """Non-destructive diff: per-collection current-vs-backup record counts so admins can see the
+    impact before restoring. Reads (and decrypts if needed) the snapshot but writes nothing."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    payload = _read_backup(user["org_id"], body.get("file", ""), passphrase=body.get("passphrase"))
+    cols = payload.get("collections", {})
+    rows, total_backup, total_current = [], 0, 0
+    for name, docs in cols.items():
+        bcount = len(docs or [])
+        ccount = await db[name].count_documents({"org_id": user["org_id"]})
+        rows.append({"collection": name, "current": ccount, "backup": bcount, "delta": bcount - ccount})
+        total_backup += bcount
+        total_current += ccount
+    rows.sort(key=lambda r: (abs(r["delta"]), r["backup"]), reverse=True)
+    return {"rows": rows, "collections": len(cols),
+            "total_backup": total_backup, "total_current": total_current}
 
 
 @deploy_router.get("/backup/download")
@@ -891,6 +969,138 @@ async def health_alert_test(user: dict = Depends(get_current_user)):
                        "✅ Obserra SAP UAC — test alert",
                        "This is a test of your System Health alert routing. If you received this, the channel is working correctly.")
     return {"slack_configured": slack_cfg, "teams_configured": teams_cfg, "email_attempted": True}
+
+
+def _build_compliance_pdf(org_name, generated_by, version, health, enc, bcfg, backup_count, latest_backup, stats):
+    """Render a signed, auditor-ready compliance evidence PDF from the live control-plane state."""
+    import hashlib
+    from datetime import datetime, timezone
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table,
+                                    TableStyle, HRFlowable)
+
+    NAVY = colors.HexColor("#0f1e3d")
+    ACCENT = colors.HexColor("#2f6df6")
+    MUTED = colors.HexColor("#6b7280")
+    GRID = colors.HexColor("#e5e7eb")
+    generated_at = datetime.now(timezone.utc)
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=20 * mm, bottomMargin=18 * mm,
+                            leftMargin=18 * mm, rightMargin=18 * mm,
+                            title="Obserra SAP UAC — Compliance Evidence")
+    styles = getSampleStyleSheet()
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"], textColor=NAVY, fontSize=20, spaceAfter=2, leading=24)
+    subs = ParagraphStyle("subs", parent=styles["Normal"], textColor=MUTED, fontSize=9)
+    h2 = ParagraphStyle("h2", parent=styles["Heading2"], textColor=NAVY, fontSize=12, spaceBefore=12, spaceAfter=4)
+    body = ParagraphStyle("body", parent=styles["Normal"], fontSize=9.5, leading=14)
+    small = ParagraphStyle("small", parent=styles["Normal"], fontSize=8, textColor=MUTED, leading=11)
+
+    status = "HEALTHY" if health.get("healthy") else "DEGRADED"
+    status_color = colors.HexColor("#12805c") if health.get("healthy") else colors.HexColor("#c2410c")
+
+    el = [Paragraph("Obserra SAP UAC", h1),
+          Paragraph("Compliance Evidence Report — SAP User Access Control &amp; Access Intelligence", subs),
+          Spacer(1, 6),
+          HRFlowable(width="100%", thickness=1.2, color=ACCENT, spaceAfter=8)]
+
+    meta_tbl = Table([["Organization", org_name],
+                      ["Generated by", generated_by],
+                      ["Generated at (UTC)", generated_at.strftime("%Y-%m-%d %H:%M:%S")],
+                      ["Platform version", f"v{version}"]], colWidths=[45 * mm, None])
+    meta_tbl.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 9.5),
+                                  ("TEXTCOLOR", (0, 0), (0, -1), MUTED),
+                                  ("TEXTCOLOR", (1, 0), (1, -1), NAVY),
+                                  ("TOPPADDING", (0, 0), (-1, -1), 4),
+                                  ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+    el.append(meta_tbl)
+
+    el.append(Paragraph("1 &middot; System Health &amp; Controls", h2))
+    health_tbl = Table([["Overall status", status],
+                        ["Database", "Responsive" if health.get("db") else "Not responding"],
+                        ["Scheduler", "Armed" if health.get("scheduler_armed") else "Not armed"],
+                        ["Degraded connectors", str(len(health.get("degraded_connectors") or []))],
+                        ["Backups on file", str(backup_count)],
+                        ["Latest backup (UTC)", latest_backup or "None"],
+                        ["Backup policy", f"{bcfg.get('frequency', 'daily').title()} · keep {bcfg.get('keep')}"],
+                        ["At-rest encryption", "Enabled (AES / Fernet)" if enc.get("enabled") else "Disabled"]],
+                       colWidths=[55 * mm, None])
+    health_tbl.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 9.5),
+                                    ("TEXTCOLOR", (0, 0), (0, -1), MUTED),
+                                    ("GRID", (0, 0), (-1, -1), 0.4, GRID),
+                                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f4f6fb")),
+                                    ("TEXTCOLOR", (1, 0), (1, 0), status_color),
+                                    ("FONTNAME", (1, 0), (1, 0), "Helvetica-Bold"),
+                                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
+    el.append(health_tbl)
+
+    el.append(Paragraph("2 &middot; Access Governance Coverage", h2))
+    gov_rows = [["Metric", "Count"]] + [[k, str(v)] for k, v in stats.items()]
+    gov_tbl = Table(gov_rows, colWidths=[None, 30 * mm])
+    gov_tbl.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 9.5),
+                                 ("BACKGROUND", (0, 0), (-1, 0), NAVY),
+                                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                                 ("GRID", (0, 0), (-1, -1), 0.4, GRID),
+                                 ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f9fafb")]),
+                                 ("TOPPADDING", (0, 0), (-1, -1), 5),
+                                 ("BOTTOMPADDING", (0, 0), (-1, -1), 5)]))
+    el.append(gov_tbl)
+
+    el.append(Paragraph("3 &middot; Attestation", h2))
+    el.append(Paragraph(
+        "This report is generated directly from the live Obserra SAP UAC control plane at the timestamp above. "
+        "It reflects the operational state of segregation-of-duties, access certification, backup and "
+        "at-rest encryption controls for the named organization. All figures are computed from the current "
+        "data snapshot and are not editable after generation.", body))
+    el.append(Spacer(1, 8))
+
+    fingerprint = hashlib.sha256(
+        f"{org_name}|{generated_by}|{generated_at.isoformat()}|{version}|{status}|{backup_count}|{stats}"
+        .encode("utf-8")).hexdigest()
+    el.append(HRFlowable(width="100%", thickness=0.8, color=GRID, spaceAfter=6))
+    el.append(Paragraph(f"Document integrity signature (SHA-256): {fingerprint}", small))
+    el.append(Paragraph("Obserra SAP UAC &middot; Enterprise SAP Access Governance &middot; Confidential", small))
+
+    doc.build(el)
+    return buf.getvalue()
+
+
+@deploy_router.get("/compliance-evidence")
+async def compliance_evidence(user: dict = Depends(get_current_user)):
+    """Downloadable, signed compliance-evidence PDF for auditors (admins only)."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can export compliance evidence")
+    from datetime import datetime, timezone
+    from bson import ObjectId
+    from starlette.concurrency import run_in_threadpool
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    org_name = org.get("name") or "Organization"
+    health = await evaluate_org_health(user["org_id"])
+    enc = _enc_cfg(org)
+    bcfg = _backup_cfg(org)
+    backups = _list_backup_files(user["org_id"])
+    latest_backup = backups[0]["created_at"] if backups else None
+    stats = {}
+    for label, coll in [("Identities (HR persons)", "sap_persons"),
+                        ("SAP accounts", "sap_accounts"),
+                        ("SoD mitigations", "sap_mitigations"),
+                        ("Access certifications", "sap_certifications"),
+                        ("ServiceNow tickets", "sap_snow_tickets"),
+                        ("Watchlist items", "sap_watchlist"),
+                        ("Auto-remediation actions", "sap_autoremediation_log")]:
+        stats[label] = await db[coll].count_documents({"org_id": user["org_id"]})
+    pdf = await run_in_threadpool(_build_compliance_pdf, org_name, user["email"],
+                                  onprem_pack.read_version(), health, enc, bcfg,
+                                  len(backups), latest_backup, stats)
+    fname = f"Obserra-Compliance-Evidence-{datetime.now(timezone.utc).date().isoformat()}.pdf"
+    return StreamingResponse(io.BytesIO(pdf), media_type=_PDF_MT,
+                             headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 _TOUR_DIR = os.path.join(_ROOT, "frontend", "public", "tour")
