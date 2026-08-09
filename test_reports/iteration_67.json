@@ -1,0 +1,39 @@
+{
+  "summary": "Frontend-only e2e verification of 5 new SoD Command Center add-ons on /app/sod (Recap Preview, Voice Intro, AI Thread Titles, Open Map sparkline, Digest Branding + public share page). All wired, integrated with backend, and persisting. No uncaught runtime errors; only pre-existing Radix DialogContent aria-describedby cosmetic warnings (ignorable per request).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "verified_flows": [
+    "Login admin + /app/sod loads with no pageerror / no 'X is not defined'",
+    "Recap Preview: recap-preview-btn opens recap-preview-dialog with recap-preview-item-0 populated (e.g. 'What are the top risks in this digest right now? 2×'). Backend GET /api/sap/digest/recap/preview implicitly OK (dialog non-empty).",
+    "Voice Intro: voice-intro input filled with 'Good morning team, here is your governance briefing.' → digest-save → PUT /api/sap/digest/config 200 → after page reload GET /api/sap/digest/config returns and voice-intro value MATCHES exactly (persisted).",
+    "Digest Branding: brand-accent='#7c3aed' updates brand-swatch inline style to rgb(124,58,237); brand-logo URL accepted; digest-save PUT config 200. Invalid accent 'notahex' saved then reloaded → server rejected to empty string ('') as expected (validation working).",
+    "Public share page: newly created share (POST /api/sap/digest/share 200) opened at /share/digest/<token> without auth → share-content renders, share-accent-bar has inline style 'height:4px; background: rgb(124,58,237)' matching admin's accent, share-score renders.",
+    "AI Thread Titles: New question 'What is the current segregation of duties risk for the Procurement team this week?' → POST /api/sap/digest/ask 200 → History (digest-ask-history-toggle) shows digest-ask-history-0 = 'Procurement SoD Risk Status' — short Title-Case AI-generated title (not the raw long question). Prior manually-renamed threads preserved (e.g. 'Board review 174130').",
+    "Open Map: digest-shares list rendered with 2× digest-share-spark-* SVG sparklines and 8× digest-share-opens-* counts (some links have opens, some don't — expected)."
+  ],
+  "network_evidence": {
+    "recap_preview": "dialog populated (endpoint confirmed reachable via UI)",
+    "config_get_put": "GET/PUT /api/sap/digest/config -> 200 (repeated, voice_intro + brand_accent + brand_logo_url persist)",
+    "share_create": "POST /api/sap/digest/share -> 200",
+    "shares_list": "GET /api/sap/digest/shares -> 200 (each row now includes series: [14 ints])",
+    "ask_new": "POST /api/sap/digest/ask -> 200 (first message auto-titled)",
+    "ask_history": "GET /api/sap/digest/ask/history -> 200"
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "SodCommandCenter.jsx still >1000 lines — consider splitting Voice/Recap/Brand/Ask/Shares blocks into subcomponents for maintainability (non-blocking, previously flagged).",
+    "Ask AI DialogContent still lacks aria-describedby (cosmetic Radix a11y warning, previously flagged)."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a (skipped per request)", "frontend": "100%" },
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "voice_intro='Good morning team, here is your governance briefing.', brand_accent='#7c3aed', brand_logo_url='https://picsum.photos/80' saved to demo org digest config. One new share link created via digest-share (token: LWlIpZxG9zZbOpIkn9piYw). One new Ask-AI thread auto-titled 'Procurement SoD Risk Status'.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 5 add-ons live: Recap Preview dialog, Voice Intro persistence, AI Thread Titles on first question, Open Map sparklines (only shows for shares with dated opens), Digest Branding (accent + logo) applied to public /share/digest/<token> page (share-accent-bar colour = admin's saved accent). Server-side hex validation confirmed working (invalid accent rejected to empty). No blockers."
+}

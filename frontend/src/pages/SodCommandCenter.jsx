@@ -88,6 +88,9 @@ export default function SodCommandCenter() {
   const [askHistory, setAskHistory] = useState([]);
   const [shares, setShares] = useState(null);
   const [briefingBusy, setBriefingBusy] = useState(false);
+  const [recapOpen, setRecapOpen] = useState(false);
+  const [recapData, setRecapData] = useState(null);
+  const [recapBusy, setRecapBusy] = useState(false);
   const previewAudioRef = useRef(null);
 
   const loadConflicts = useCallback(async () => {
@@ -292,6 +295,12 @@ export default function SodCommandCenter() {
       toast.success("Thread renamed");
       loadAskHistory();
     } catch { toast.error("Rename failed"); }
+  };
+  const previewRecap = async () => {
+    setRecapBusy(true); setRecapOpen(true); setRecapData(null);
+    try { const { data } = await api.get("/sap/digest/recap/preview"); setRecapData(data); }
+    catch { setRecapData({ total: 0, unique: 0, top: [] }); }
+    setRecapBusy(false);
   };
   const exportScorecard = async (fmt = "csv") => {
     try {
@@ -751,6 +760,10 @@ export default function SodCommandCenter() {
                   <SelectContent>{[["1", "1× (normal)"], ["1.25", "1.25× (brisk)"], ["1.5", "1.5× (fast)"]].map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent></Select>
               </div>
             </div>
+            <div className="mt-2">
+              <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Spoken intro (optional, ~140 chars — plays first)</div>
+              <Input data-testid="voice-intro" maxLength={140} value={dcfgLocal.voice_intro || ""} onChange={(e) => setDcfgLocal({ ...dcfgLocal, voice_intro: e.target.value })} placeholder="e.g. Good morning team, here's this week's access posture." />
+            </div>
             <p className="text-[10px] text-muted-foreground mt-1.5">Save the schedule to apply this to the emailed briefing. "Listen to digest" below previews your current selection.</p>
             <div className="mt-3 pt-3 border-t border-border/60 flex flex-wrap items-center gap-2" data-testid="recap-config">
               <History className="w-4 h-4 text-primary" />
@@ -761,7 +774,24 @@ export default function SodCommandCenter() {
                 <Select value={dcfgLocal.recap_day || "mon"} onValueChange={(v) => setDcfgLocal({ ...dcfgLocal, recap_day: v })}><SelectTrigger data-testid="recap-day" className="h-8 w-[150px]"><SelectValue /></SelectTrigger>
                   <SelectContent>{[["mon", "Mondays"], ["tue", "Tuesdays"], ["wed", "Wednesdays"], ["thu", "Thursdays"], ["fri", "Fridays"], ["sat", "Saturdays"], ["sun", "Sundays"]].map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}</SelectContent></Select>
               )}
+              <Button size="sm" variant="ghost" className="h-8 text-[11px] gap-1" data-testid="recap-preview-btn" onClick={previewRecap}><Eye className="w-3.5 h-3.5" /> Preview</Button>
               <Switch data-testid="recap-toggle" checked={!!dcfgLocal.recap_enabled} onCheckedChange={(v) => setDcfgLocal({ ...dcfgLocal, recap_enabled: v })} />
+            </div>
+            <div className="mt-3 pt-3 border-t border-border/60" data-testid="brand-config">
+              <div className="flex items-center gap-2 mb-2"><Sparkles className="w-4 h-4 text-primary" /><span className="text-sm font-medium">Branding</span><span className="text-[11px] text-muted-foreground">Applied to the digest email &amp; read-only share page</span></div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Logo image URL</div>
+                  <Input data-testid="brand-logo" value={dcfgLocal.brand_logo_url || ""} onChange={(e) => setDcfgLocal({ ...dcfgLocal, brand_logo_url: e.target.value })} placeholder="https://…/logo.png" />
+                </div>
+                <div>
+                  <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Accent colour (hex)</div>
+                  <div className="flex items-center gap-2">
+                    <span className="w-9 h-9 rounded-md border border-border shrink-0" data-testid="brand-swatch" style={{ background: (/^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(dcfgLocal.brand_accent || "") ? dcfgLocal.brand_accent : "#0f1e3d") }} />
+                    <Input data-testid="brand-accent" value={dcfgLocal.brand_accent || ""} onChange={(e) => setDcfgLocal({ ...dcfgLocal, brand_accent: e.target.value })} placeholder="#0f1e3d" />
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 mt-4">
@@ -796,6 +826,13 @@ export default function SodCommandCenter() {
                     <span className="font-bold" data-testid={`digest-share-opens-${i}`}>{s.opens} open{s.opens === 1 ? "" : "s"}</span>
                     <span className="text-muted-foreground">{s.last_opened_at ? `· last ${new Date(s.last_opened_at).toLocaleString()}` : "· not opened yet"}</span>
                     <div className="flex-1" />
+                    {Array.isArray(s.series) && s.series.some((n) => n > 0) && (
+                      <svg width="70" height="18" viewBox="0 0 70 18" data-testid={`digest-share-spark-${i}`} className="opacity-80">
+                        {(() => { const mx = Math.max(...s.series, 1); const w = 70 / s.series.length; return s.series.map((n, j) => (
+                          <rect key={j} x={j * w + 0.5} y={18 - Math.max(2, (n / mx) * 16)} width={Math.max(1, w - 1)} height={Math.max(2, (n / mx) * 16)} rx="0.5" fill="hsl(199 89% 48%)" />
+                        )); })()}
+                      </svg>
+                    )}
                     <button data-testid={`digest-share-copy-${i}`} onClick={() => { navigator.clipboard?.writeText(s.url); toast.success("Link copied"); }} className="text-primary hover:underline">Copy</button>
                   </div>
                 ))}
@@ -1012,6 +1049,28 @@ export default function SodCommandCenter() {
               </div>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={recapOpen} onOpenChange={setRecapOpen}>
+        <DialogContent className="max-w-md" data-testid="recap-preview-dialog">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><History className="w-4 h-4 text-primary" /> Weekly AI Q&amp;A recap — preview</DialogTitle></DialogHeader>
+          {recapBusy ? (
+            <div className="text-sm text-muted-foreground py-6 text-center" data-testid="recap-preview-loading">Gathering this week's questions…</div>
+          ) : !recapData || recapData.total === 0 ? (
+            <div className="text-sm text-muted-foreground py-6 text-center" data-testid="recap-preview-empty">No AI questions asked in the last 7 days yet.</div>
+          ) : (
+            <div className="space-y-1" data-testid="recap-preview-list">
+              <div className="text-[11px] text-muted-foreground mb-1">{recapData.total} question(s) · {recapData.unique} distinct — top asked:</div>
+              {recapData.top.map((it, i) => (
+                <div key={i} data-testid={`recap-preview-item-${i}`} className="flex items-center gap-2 text-sm py-1 border-b border-border/50">
+                  <span className="font-bold text-primary w-5">{i + 1}</span>
+                  <span className="flex-1">{it.q}</span>
+                  <span className="font-mono text-xs text-muted-foreground">{it.count}×</span>
+                </div>
+              ))}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

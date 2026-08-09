@@ -43,7 +43,10 @@ async def _governance_digest_data(org_id):
     }
 
 
-def _governance_digest_html(d, share_url=""):
+def _governance_digest_html(d, share_url="", logo="", accent=""):
+    acc = accent or "#0f1e3d"
+    logo_html = (f'<img src="{logo}" alt="logo" style="height:26px;margin-bottom:6px;display:block" />' if logo else '')
+
     def row(label, value, color="#0f1e3d"):
         return (f'<tr><td style="padding:6px 10px;color:#64748b;font-size:13px">{label}</td>'
                 f'<td style="padding:6px 10px;text-align:right;font-weight:700;font-size:15px;color:{color}">{value}</td></tr>')
@@ -52,7 +55,8 @@ def _governance_digest_html(d, share_url=""):
     ar = ("enabled" if d["autorem_enabled"] else "disabled")
     return (
         '<div style="font:400 14px Arial,Helvetica,sans-serif;color:#1f2937;max-width:640px;margin:auto">'
-        '<div style="background:#0f1e3d;color:#fff;padding:18px 22px;border-radius:12px 12px 0 0">'
+        f'<div style="background:{acc};color:#fff;padding:18px 22px;border-radius:12px 12px 0 0">'
+        + logo_html +
         '<div style="font-size:11px;letter-spacing:2px;opacity:.7">OBSERRA SAP UAC</div>'
         '<h2 style="margin:4px 0 0;font-size:20px">SAP Access Governance Digest</h2>'
         f'<div style="font-size:12px;opacity:.75;margin-top:2px">Daily posture · {_now().strftime("%B %d, %Y")}</div></div>'
@@ -71,7 +75,7 @@ def _governance_digest_html(d, share_url=""):
         f'<h3 style="font-size:14px;color:#0f1e3d;margin:14px 0 4px">Top access-risk identities</h3>'
         f'<ul style="margin:0;padding-left:18px;font-size:13px;color:#334155">{top}</ul>'
         + (f'<div style="margin-top:16px;text-align:center"><a href="{share_url}" '
-           'style="display:inline-block;background:#0f1e3d;color:#fff;text-decoration:none;padding:10px 18px;'
+           f'style="display:inline-block;background:{acc};color:#fff;text-decoration:none;padding:10px 18px;'
            'border-radius:8px;font-size:13px;font-weight:700">View the live governance snapshot &rarr;</a>'
            '<div style="font-size:11px;color:#9ca3af;margin-top:6px">Read-only · no login required</div></div>'
            if share_url else '')
@@ -88,9 +92,16 @@ _DIGEST_DEFAULT = {"enabled": True, "recipients": [], "days": "everyday", "chat_
                    "evidence_prepared_by": "", "evidence_approved_by": "", "evidence_approved_at": "",
                    "auditor_scopes": [],
                    "voice_name": "onyx", "voice_speed": 1.0, "voice_attach": False,
-                   "recap_enabled": False, "recap_day": "mon"}
+                   "recap_enabled": False, "recap_day": "mon",
+                   "voice_intro": "", "brand_logo_url": "", "brand_accent": ""}
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 _TTS_VOICES = {"onyx", "alloy", "nova", "shimmer", "echo", "ash", "coral", "fable", "sage"}
+
+
+def _valid_hex(v):
+    import re
+    v = (v or "").strip()
+    return v if re.fullmatch(r"#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})", v) else ""
 
 
 async def _get_digest_config(org_id):
@@ -154,6 +165,9 @@ class DigestConfigBody(BaseModel):
     voice_attach: bool = False
     recap_enabled: bool = False
     recap_day: str = "mon"
+    voice_intro: str = ""
+    brand_logo_url: str = ""
+    brand_accent: str = ""
 
 
 @sap_router.get("/digest/config")
@@ -214,7 +228,10 @@ async def put_digest_config(body: DigestConfigBody, user: dict = Depends(require
            "evidence_prepared_by": prepared, "auditor_scopes": scopes,
            "voice_name": vname, "voice_speed": vspeed, "voice_attach": bool(body.voice_attach),
            "recap_enabled": bool(body.recap_enabled),
-           "recap_day": body.recap_day if body.recap_day in _WEEKDAYS else "mon"}
+           "recap_day": body.recap_day if body.recap_day in _WEEKDAYS else "mon",
+           "voice_intro": (body.voice_intro or "").strip()[:140],
+           "brand_logo_url": (body.brand_logo_url or "").strip()[:500],
+           "brand_accent": _valid_hex(body.brand_accent)}
     if existing.get("evidence_prepared_by", "") != prepared:
         doc["evidence_approved_by"] = ""
         doc["evidence_approved_at"] = ""
@@ -306,7 +323,7 @@ async def governance_digest_send(user: dict = Depends(get_current_user)):
     if cfg.get("voice_attach"):
         try:
             import base64 as _b64
-            audio, _sc = await _generate_voice_audio(org_id, cfg.get("voice_name", "onyx"), cfg.get("voice_speed", 1.0))
+            audio, _sc = await _generate_voice_audio(org_id, cfg.get("voice_name", "onyx"), cfg.get("voice_speed", 1.0), cfg.get("voice_intro", ""))
             att = list(att) + [{"filename": "sap-governance-briefing.mp3", "content": _b64.b64encode(audio).decode()}]
         except Exception:
             pass
@@ -335,8 +352,9 @@ async def digest_preview(user: dict = Depends(get_current_user)):
     """Rendered governance-digest email (HTML + data) for a live in-app preview — does not send."""
     org_id = user["org_id"]
     await _ensure(org_id)
+    cfg = await _get_digest_config(org_id)
     data = await _governance_digest_data(org_id)
-    return {"html": _governance_digest_html(data), "data": data}
+    return {"html": _governance_digest_html(data, "", cfg.get("brand_logo_url", ""), cfg.get("brand_accent", "")), "data": data}
 
 
 # ── Access Governance Scorecard (weekly trend + export) ───────────────────────
@@ -1243,6 +1261,7 @@ async def digest_ask(body: DigestAskBody, user: dict = Depends(get_current_user)
     ctx = await _digest_ai_context(org_id)
     convo = await db.sap_digest_chat.find_one({"org_id": org_id, "session_id": session_id},
                                               {"_id": 0, "messages": 1}) or {}
+    is_first = len(convo.get("messages") or []) == 0
     history = (convo.get("messages") or [])[-6:]
     answer, model = None, "deterministic-fallback"
     try:
@@ -1284,6 +1303,13 @@ async def digest_ask(body: DigestAskBody, user: dict = Depends(get_current_user)
          "$set": {"org_id": org_id, "session_id": session_id, "updated_at": now}},
         upsert=True)
     await _audit(org_id, user["email"], "sap.digest.ask", q[:120])
+    if is_first:
+        title = await _suggest_thread_title(q)
+        if title:
+            await db.sap_digest_chat.update_one(
+                {"org_id": org_id, "session_id": session_id,
+                 "$or": [{"title": {"$exists": False}}, {"title": ""}]},
+                {"$set": {"title": title}})
     return {"session_id": session_id, "answer": answer[:1200], "model": model,
             "suggestions": _digest_ask_suggestions(ctx)}
 
@@ -1403,11 +1429,13 @@ async def digest_ask_email(body: DigestAskEmailBody, user: dict = Depends(get_cu
 # ── Shareable read-only digest snapshot (tokenised, no login) ─────────────────
 async def _build_digest_snapshot(org_id):
     ctx = await _digest_ai_context(org_id)
+    cfg = await _get_digest_config(org_id)
     why = _score_why_fallback({"trend": ctx["scorecard"].get("trend") or []})
     return {"digest": ctx["digest"], "scorecard": ctx["scorecard"],
             "open_conflicts_by_area": ctx["open_conflicts_by_area"],
             "open_conflicts_by_system": ctx["open_conflicts_by_system"],
-            "top_open_rules": ctx["top_open_rules"], "why": why, "generated_at": _now().isoformat()}
+            "top_open_rules": ctx["top_open_rules"], "why": why, "generated_at": _now().isoformat(),
+            "brand": {"logo": cfg.get("brand_logo_url", ""), "accent": cfg.get("brand_accent", "")}}
 
 
 async def _create_digest_share(org_id):
@@ -1460,12 +1488,13 @@ async def digest_shares(user: dict = Depends(get_current_user)):
     await _ensure(org_id)
     frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
     docs = await db.sap_digest_shares.find({"org_id": org_id},
-        {"_id": 0, "token": 1, "created_at": 1, "expires_at": 1, "opens": 1, "last_opened_at": 1}
+        {"_id": 0, "token": 1, "created_at": 1, "expires_at": 1, "opens": 1, "last_opened_at": 1, "opened_events": 1}
         ).sort("created_at", -1).to_list(50)
     now_iso = _now().isoformat()
     out = [{"token": d["token"], "url": f"{frontend}/share/digest/{d['token']}",
             "created_at": d.get("created_at"), "expires_at": d.get("expires_at"),
             "opens": d.get("opens", 0), "last_opened_at": d.get("last_opened_at"),
+            "series": _open_series(d.get("opened_events") or [], 14),
             "expired": bool(d.get("expires_at") and now_iso > d["expires_at"])} for d in docs]
     return {"shares": out, "total": len(out), "total_opens": sum(x["opens"] for x in out)}
 
@@ -1530,12 +1559,13 @@ async def digest_voice_script(user: dict = Depends(get_current_user)):
     return {"script": _digest_voice_script(ctx)}
 
 
-async def _generate_voice_audio(org_id, voice="onyx", speed=1.0):
-    """Return (mp3 bytes, script) for the current governance briefing, cached per (script, voice, speed)."""
+async def _generate_voice_audio(org_id, voice="onyx", speed=1.0, intro=""):
+    """Return (mp3 bytes, script) for the current governance briefing, cached per (script, voice, speed, intro)."""
     import hashlib
     import base64
     ctx = await _digest_ai_context(org_id)
-    script = _digest_voice_script(ctx)
+    intro = (intro or "").strip()
+    script = (intro + " " if intro else "") + _digest_voice_script(ctx)
     voice = (voice or "onyx").lower()
     if voice not in _TTS_VOICES:
         voice = "onyx"
@@ -1565,7 +1595,7 @@ async def digest_voice(voice: str = "", speed: float = 0, user: dict = Depends(g
     v = voice or cfg.get("voice_name") or "onyx"
     sp = speed or cfg.get("voice_speed") or 1.0
     try:
-        audio, _script = await _generate_voice_audio(org_id, v, sp)
+        audio, _script = await _generate_voice_audio(org_id, v, sp, cfg.get("voice_intro", ""))
     except Exception:
         raise HTTPException(status_code=503, detail="Voice generation is unavailable right now — please try again shortly.")
     await _audit(org_id, user["email"], "sap.digest.voice", f"voice briefing generated ({v} @ {sp}x)")
@@ -1621,7 +1651,7 @@ async def share_briefing(body: ShareBriefingBody, user: dict = Depends(get_curre
     emails = [e.strip() for e in body.recipients if e.strip()] or [user["email"]]
     att = []
     try:
-        audio, _s = await _generate_voice_audio(org_id, cfg.get("voice_name", "onyx"), cfg.get("voice_speed", 1.0))
+        audio, _s = await _generate_voice_audio(org_id, cfg.get("voice_name", "onyx"), cfg.get("voice_speed", 1.0), cfg.get("voice_intro", ""))
         att = [{"filename": "sap-governance-briefing.mp3", "content": base64.b64encode(audio).decode()}]
     except Exception:
         pass
@@ -1722,4 +1752,46 @@ async def run_sap_weekly_recap():
                 ref="sap-ai-recap", dedupe_key=f"sap-recap:{today}")
         except Exception:
             pass
+
+
+def _open_series(events, days=14):
+    today = _now().date()
+    buckets = {}
+    for e in events:
+        try:
+            dd = datetime.fromisoformat(e.get("at") or "").date().isoformat()
+        except Exception:
+            continue
+        buckets[dd] = buckets.get(dd, 0) + 1
+    return [buckets.get((today - timedelta(days=i)).isoformat(), 0) for i in range(days - 1, -1, -1)]
+
+
+async def _suggest_thread_title(question):
+    """Best-effort 3-6 word AI title for a new Q&A thread (falls back to empty on failure)."""
+    try:
+        import asyncio
+        from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
+        chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"sap-title-{int(_now().timestamp())}",
+                       system_message="You write a 3-6 word title in Title Case (no quotes, no trailing punctuation) that "
+                                       "summarizes the TOPIC of a leadership question about SAP access governance.").with_model("openai", "gpt-5.4")
+        parts = []
+
+        async def _run():
+            async for ev in chat.stream_message(UserMessage(text=f"Question: {question}\nTitle:")):
+                if isinstance(ev, TextDelta):
+                    parts.append(ev.content)
+                elif isinstance(ev, StreamDone):
+                    break
+        await asyncio.wait_for(_run(), timeout=12)
+        return "".join(parts).strip().strip('"').strip()[:60]
+    except Exception:
+        return ""
+
+
+@sap_router.get("/digest/recap/preview")
+async def digest_recap_preview(user: dict = Depends(get_current_user)):
+    """Preview this week's most-asked AI questions before the weekly recap emails."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    return await _weekly_recap_data(org_id)
 

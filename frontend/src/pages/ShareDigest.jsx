@@ -5,9 +5,9 @@ import { ShieldAlert, TrendingUp, Sparkles, Loader2, Lock, Clock } from "lucide-
 
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
 
-const Tile = ({ label, v, suffix = "", accent = "199 89% 60%", testid }) => (
+const Tile = ({ label, v, suffix = "", accent = "199 89% 60%", raw, testid }) => (
   <div className="rounded-xl bg-white/[0.04] border border-white/10 p-4" data-testid={testid}>
-    <div className="font-black text-3xl leading-none" style={{ color: `hsl(${accent})` }}>
+    <div className="font-black text-3xl leading-none" style={{ color: raw || `hsl(${accent})` }}>
       {v}<span className="text-sm font-normal text-white/50">{suffix}</span>
     </div>
     <div className="text-xs text-white/60 mt-1.5 leading-tight">{label}</div>
@@ -28,11 +28,16 @@ export default function ShareDigest() {
       .finally(() => setLoading(false));
   }, [token]);
 
+  const brand = snap?.brand || {};
+  const accent = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(brand.accent || "") ? brand.accent : "";
+  const logo = brand.logo || `${BACKEND}/brand-lockup.png`;
+
   return (
     <div className="min-h-screen bg-[#0a1226] text-white px-4 py-10 sm:py-16" data-testid="share-digest-page">
+      {accent && <div style={{ height: 4, background: accent }} data-testid="share-accent-bar" />}
       <div className="max-w-3xl mx-auto">
         <div className="flex items-center gap-3 mb-8">
-          <img src={`${BACKEND}/brand-lockup.png`} alt="Obserra" className="h-9 w-auto"
+          <img src={logo} alt="brand" className="h-9 w-auto max-w-[180px] object-contain"
                onError={(e) => { e.currentTarget.style.display = "none"; }} data-testid="share-brand" />
           <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-white/40">SAP UAC</span>
         </div>
@@ -62,7 +67,7 @@ export default function ShareDigest() {
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              <Tile testid="share-score" label="Governance score" v={snap.scorecard?.current?.governance_score} suffix="/100" accent="142 70% 55%" />
+              <Tile testid="share-score" label="Governance score" v={snap.scorecard?.current?.governance_score} suffix="/100" raw={accent || undefined} accent="142 70% 55%" />
               <Tile testid="share-open-sod" label="Open SoD conflicts" v={snap.digest?.open_sod} accent="0 84% 65%" />
               <Tile testid="share-sev" label="Critical / High / Medium"
                     v={`${snap.digest?.sev?.Critical ?? 0}/${snap.digest?.sev?.High ?? 0}/${snap.digest?.sev?.Medium ?? 0}`} accent="35 90% 60%" />
