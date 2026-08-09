@@ -22,8 +22,8 @@ services:
 
   backend:
     build:
-      context: ../backend
-      dockerfile: ../deploy/backend.Dockerfile
+      context: ..
+      dockerfile: deploy/backend.Dockerfile
     restart: unless-stopped
     env_file: ./.env
     environment:

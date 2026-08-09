@@ -3,7 +3,7 @@ import os
 import sys
 import zipfile
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 
@@ -24,29 +24,10 @@ _PDF_MT = "application/pdf"
 _DOCX_MT = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 _PKG = "obserra-sap-uac"
-_ONPREM_ZIP_NAME = "Obserra-SAP-UAC-OnPrem.zip"
-_ZIP_SKIP_DIRS = {"node_modules", "__pycache__", ".git", "build", ".venv", "venv",
-                  ".emergent", ".ruff_cache", ".pytest_cache", "dist", ".yarn", ".idea", ".vscode"}
-_ZIP_SKIP_EXT = {".pyc", ".pyo", ".log"}
-_DOCKERIGNORE = (
-    "**/node_modules\n**/__pycache__\n**/*.pyc\n**/*.pyo\n**/.git\n**/.venv\n**/venv\n"
-    "frontend/build\nbackend/assets/docs\n**/.env\n**/.emergent\n**/.ruff_cache\n**/.pytest_cache\n"
-)
-
-
-def _add_tree(z, src_root, arc_prefix, skip_rel_prefixes=()):
-    if not os.path.isdir(src_root):
-        return
-    for root, dirs, files in os.walk(src_root):
-        dirs[:] = [d for d in dirs if d not in _ZIP_SKIP_DIRS]
-        for fn in files:
-            if fn == ".env" or os.path.splitext(fn)[1] in _ZIP_SKIP_EXT:
-                continue
-            fp = os.path.join(root, fn)
-            rel = os.path.relpath(fp, src_root)
-            if any(rel == p or rel.startswith(p + os.sep) for p in skip_rel_prefixes):
-                continue
-            z.write(fp, os.path.join(arc_prefix, rel))
+import importlib.util as _ilu
+_pack_spec = _ilu.spec_from_file_location("onprem_pack", os.path.join(_ROOT, "scripts", "onprem_pack.py"))
+onprem_pack = _ilu.module_from_spec(_pack_spec)
+_pack_spec.loader.exec_module(onprem_pack)
 
 
 def _serve_guide(path, media, fname):
@@ -65,7 +46,7 @@ async def onprem_package(user: dict = Depends(get_current_user)):
     return StreamingResponse(
         io.BytesIO(_build_onprem_zip()),
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{_ONPREM_ZIP_NAME}"'},
+        headers={"Content-Disposition": f'attachment; filename="{onprem_pack.zip_name()}"'},
     )
 
 
@@ -122,15 +103,11 @@ async def guide_admin_docx(user: dict = Depends(get_current_user)):
 def _build_onprem_zip() -> bytes:
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        _add_tree(z, os.path.join(_ROOT, "backend"), f"{_PKG}/backend", skip_rel_prefixes=("assets/docs",))
-        _add_tree(z, os.path.join(_ROOT, "frontend"), f"{_PKG}/frontend")
-        for root, _dirs, files in os.walk(_ONPREM):
-            for fn in files:
-                fp = os.path.join(root, fn)
-                rel = os.path.relpath(fp, _ONPREM)
-                arc = f"{_PKG}/install.sh" if rel == "install.sh" else f"{_PKG}/deploy/{rel}"
-                z.write(fp, arc)
-        z.writestr(f"{_PKG}/.dockerignore", _DOCKERIGNORE)
+        for src, arc in onprem_pack.iter_files():
+            z.write(src, f"{onprem_pack.PKG}/{arc}")
+        z.writestr(f"{onprem_pack.PKG}/.dockerignore", onprem_pack.DOCKERIGNORE)
+        z.writestr(f"{onprem_pack.PKG}/VERSION", onprem_pack.read_version() + "\n")
+        z.writestr(f"{onprem_pack.PKG}/BUILD_INFO", onprem_pack.build_info())
     return buf.getvalue()
 
 
@@ -164,6 +141,31 @@ async def regenerate(capture: bool = False, user: dict = Depends(get_current_use
         return {"ok": True, "captured": capture, "pdf_size": res["pdf_size"], "docx_size": res["docx_size"]}
     except Exception as e:
         raise HTTPException(500, f"Could not regenerate guides: {e}")
+
+
+async def _refresh_visuals_job(org_id: str):
+    """Background: recapture every dashboard, rebuild tour previews + guides, then notify."""
+    from starlette.concurrency import run_in_threadpool
+    from kernel import notifications
+    try:
+        res = await run_in_threadpool(regenerate_guides, True)
+        await notifications.create(
+            org_id, "system", "Visuals updated",
+            "Tour previews and the PDF/Word guides were refreshed from the latest dashboards "
+            f"(guide {round(res.get('pdf_size', 0) / 1e6, 1)} MB).")
+    except Exception as e:
+        await notifications.create(org_id, "system", "Visual refresh failed",
+                                   f"Could not refresh visuals: {e}")
+
+
+@deploy_router.post("/refresh-visuals")
+async def refresh_visuals(background_tasks: BackgroundTasks, user: dict = Depends(get_current_user)):
+    """Kick off a full recapture + guide rebuild in the background; the admin gets an
+    in-app 'Visuals updated' notification when it finishes (no blocking request)."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Only admins can refresh visuals")
+    background_tasks.add_task(_refresh_visuals_job, user["org_id"])
+    return {"ok": True, "status": "started"}
 
 
 _TOUR_DIR = os.path.join(_ROOT, "frontend", "public", "tour")
@@ -238,7 +240,7 @@ def _doc_attachments():
             attachments.append({"filename": "Obserra-SAP-UAC-Install-and-User-Guide.pdf",
                                 "content": base64.b64encode(f.read()).decode()})
     if os.path.isdir(_ONPREM):
-        attachments.append({"filename": _ONPREM_ZIP_NAME,
+        attachments.append({"filename": onprem_pack.zip_name(),
                             "content": base64.b64encode(_build_onprem_zip()).decode()})
     return attachments
 

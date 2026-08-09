@@ -9,7 +9,9 @@ cd "$here"
 say(){ printf "\033[36m==>\033[0m %s\n" "$1"; }
 err(){ printf "\033[31m!!\033[0m %s\n" "$1" >&2; }
 
-say "Obserra SAP UAC — one-click on-premise installer"
+VER="$([ -f VERSION ] && cat VERSION || echo '?')"
+BUILT="$([ -f BUILD_INFO ] && (grep '^built=' BUILD_INFO | cut -d= -f2) || echo '')"
+say "Obserra SAP UAC — one-click on-premise installer (v${VER}${BUILT:+, built ${BUILT}})"
 
 command -v docker >/dev/null 2>&1 || { err "Docker is required — see https://docs.docker.com/get-docker/"; exit 1; }
 docker compose version >/dev/null 2>&1 || { err "Docker Compose v2 is required (the 'docker compose' command)."; exit 1; }
@@ -33,6 +35,7 @@ fi
 
 PUBLIC_URL="$(grep -E '^PUBLIC_URL=' "$ENV_FILE" | cut -d= -f2- || true)"
 PUBLIC_URL="${PUBLIC_URL:-http://localhost:8080}"
+PUBLIC_URL="${PUBLIC_URL%/}"
 
 say "Building and starting containers — first run downloads images and builds the app (a few minutes)…"
 docker compose -f "$COMPOSE" --env-file "$ENV_FILE" up -d --build
@@ -40,18 +43,41 @@ docker compose -f "$COMPOSE" --env-file "$ENV_FILE" up -d --build
 say "Waiting for the app to become healthy…"
 ok=0
 for _ in $(seq 1 90); do
-  if curl -fsS "${PUBLIC_URL%/}/" >/dev/null 2>&1; then ok=1; break; fi
+  if curl -fsS "${PUBLIC_URL}/" >/dev/null 2>&1; then ok=1; break; fi
   sleep 3
 done
 
-echo
-if [ "$ok" = "1" ]; then
-  say "Obserra SAP UAC is up and running."
-  echo "   Open:          ${PUBLIC_URL}"
-  echo "   First run:      click 'Create Account' to register your organization."
-  echo "   Make an admin:  docker compose -f ${COMPOSE} exec mongodb mongosh obserra_sap_uac --eval 'db.users.updateOne({email:\"you@company.com\"},{\$set:{role:\"admin\"}})'"
-else
+if [ "$ok" != "1" ]; then
   err "Containers started but the health check timed out."
-  echo "   Check logs with: docker compose -f ${COMPOSE} logs -f backend"
+  echo "   Check logs:  docker compose -f ${COMPOSE} logs -f backend"
   echo "   (If PUBLIC_URL is a non-local domain, open it in a browser to confirm.)"
+  exit 0
+fi
+
+say "Obserra SAP UAC is up at ${PUBLIC_URL}"
+
+# --- First-run administrator (only while the instance has no users yet) ---
+STATUS="$(curl -fsS "${PUBLIC_URL}/api/auth/bootstrap-status" 2>/dev/null || echo '')"
+if printf '%s' "$STATUS" | grep -q '"initialized":false'; then
+  echo
+  say "Create the first administrator account:"
+  read -r -p "   Admin email [jblan2026@gmail.com]: " ADMIN_EMAIL
+  ADMIN_EMAIL="${ADMIN_EMAIL:-jblan2026@gmail.com}"
+  ADMIN_PW=""; ADMIN_PW2="x"
+  while [ -z "$ADMIN_PW" ] || [ "$ADMIN_PW" != "$ADMIN_PW2" ]; do
+    read -r -s -p "   Admin password (min 15 chars, upper/lower/number/symbol): " ADMIN_PW; echo
+    read -r -s -p "   Confirm password: " ADMIN_PW2; echo
+    [ "$ADMIN_PW" != "$ADMIN_PW2" ] && err "Passwords did not match — try again."
+  done
+  RESP="$(curl -sS -X POST "${PUBLIC_URL}/api/auth/bootstrap-admin" \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"${ADMIN_EMAIL}\",\"password\":\"${ADMIN_PW}\",\"name\":\"Administrator\"}" || true)"
+  if printf '%s' "$RESP" | grep -q '"email"'; then
+    say "Administrator ${ADMIN_EMAIL} created. Sign in at ${PUBLIC_URL}"
+  else
+    err "Could not create the admin automatically: ${RESP}"
+    echo "   Create it from the app's Create Account screen instead."
+  fi
+else
+  echo "   Sign in at ${PUBLIC_URL} (an account already exists on this instance)."
 fi

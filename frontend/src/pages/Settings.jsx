@@ -104,9 +104,9 @@ export default function Settings() {
   const refreshAllVisuals = async () => {
     setAllVisualsBusy(true);
     try {
-      await api.post("/deploy/regenerate-guides?capture=true", {}, { timeout: 300000 });
-      toast.success("All visuals refreshed — recaptured every dashboard, then rebuilt the tour previews and PDF/Word guides");
-    } catch (e) { toast.error(e.response?.data?.detail || "Could not refresh visuals"); }
+      await api.post("/deploy/refresh-visuals");
+      toast.success("Refreshing all visuals in the background — you'll get a notification when it's done (~1 min).");
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not start refresh"); }
     setAllVisualsBusy(false);
   };
 

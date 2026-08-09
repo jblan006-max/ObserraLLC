@@ -6,11 +6,16 @@ web app) on your own infrastructure with **one command**. This package is
 bundled alongside the Docker deployment files, so there is nothing else to
 download.
 
+The exact version and build date you downloaded are recorded in `VERSION` and
+`BUILD_INFO`, and `install.sh` prints them at the top of every run.
+
 ```
 obserra-sap-uac/
+├── VERSION             # e.g. 1.0.0
+├── BUILD_INFO          # version + build date
+├── install.sh          # ← one-click installer (run this)
 ├── backend/            # FastAPI source (bundled)
 ├── frontend/           # React source (bundled)
-├── install.sh          # ← one-click installer (run this)
 └── deploy/
     ├── docker-compose.yml
     ├── docker-compose.https.yml     # optional HTTPS via Caddy
@@ -19,6 +24,8 @@ obserra-sap-uac/
     ├── frontend.Dockerfile
     ├── nginx.conf
     ├── Caddyfile
+    ├── build-wheelhouse.sh          # optional — for fully air-gapped installs
+    ├── wheels/                      # bundled emergentintegrations wheel (+ your offline wheelhouse)
     ├── .env.example
     └── INSTALL.md      # this file
 ```
@@ -53,10 +60,11 @@ From the extracted `obserra-sap-uac/` folder:
 That's it. The installer will:
 
 1. Check Docker & Compose are present.
-2. Create `deploy/.env` from the template and **auto‑generate a strong
-   `JWT_SECRET`** (no manual editing required).
+2. Create `deploy/.env` from the template and **auto‑generate a strong `JWT_SECRET`**.
 3. Build and start MongoDB, the FastAPI backend and the React web app.
-4. Wait until the app is healthy and print the URL to open.
+4. Wait until the app is healthy, then **prompt you to create the first
+   administrator** (email + password) — no database commands required.
+5. Print the URL to open.
 
 When it finishes, open:
 
@@ -66,53 +74,48 @@ http://<this-machine-ip>:8080
 
 > Prefer to do it by hand? See **Manual launch** below.
 
-## 3. First login
-
-On first launch, open the app and click **Create Account** to register your
-organization and its first user.
-
-To grant that user the **Admin** role (Settings, Team, Deployment &
-Documentation), promote it once in the database:
-
-```bash
-docker compose -f deploy/docker-compose.yml exec mongodb \
-  mongosh obserra_sap_uac --eval 'db.users.updateOne({email:"you@company.com"},{$set:{role:"admin"}})'
-```
-
-You'll be asked to set a NIST‑compliant password (≥12 chars, with
-upper/lower/number/symbol).
-
-## 4. AI features (optional)
+## 3. AI features (optional)
 
 The AI Advisor, SoD narratives and board summaries use an LLM. Paste your key
 into `deploy/.env` and restart:
 
 ```bash
 EMERGENT_LLM_KEY=your-key-here
-```
-```bash
 docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d
 ```
+
 Leaving it blank keeps every non‑AI feature fully functional.
+
+## 4. Fully offline / air‑gapped installs
+
+The bundled `deploy/wheels/` already contains the `emergentintegrations` wheel, so
+the build never needs the private package index — only public PyPI for the rest.
+
+For a host with **no internet at all**, pre‑build a complete wheelhouse on a
+connected machine of the **same CPU architecture and Python 3.11**, then copy the
+package across:
+
+```bash
+cd obserra-sap-uac
+deploy/build-wheelhouse.sh        # downloads every dependency into deploy/wheels/ and marks it OFFLINE
+# copy the whole obserra-sap-uac/ folder to the air-gapped host, then:
+./install.sh
+```
+
+When `deploy/wheels/OFFLINE` is present the backend image installs **everything**
+from the local wheelhouse with no network access.
 
 ## 5. Managing the deployment
 
 ```bash
-# View logs
-docker compose -f deploy/docker-compose.yml logs -f backend
-
-# Stop
-docker compose -f deploy/docker-compose.yml down
-
-# Update after replacing the source
-docker compose -f deploy/docker-compose.yml up -d --build
+docker compose -f deploy/docker-compose.yml logs -f backend   # logs
+docker compose -f deploy/docker-compose.yml down              # stop
+docker compose -f deploy/docker-compose.yml up -d --build     # update after replacing source
 ```
 
 MongoDB data persists in the `obserra_uac_mongo` Docker volume across restarts.
 
 ## Manual launch
-
-If you'd rather not use `install.sh`:
 
 ```bash
 cd obserra-sap-uac
@@ -122,7 +125,9 @@ docker compose -f deploy/docker-compose.yml --env-file deploy/.env up -d --build
 ```
 
 Set `PUBLIC_URL` (and `FRONTEND_URL`) to the address users will open in their
-browser, e.g. `http://10.0.0.5:8080` or `https://sapuac.corp.internal`.
+browser, e.g. `http://10.0.0.5:8080` or `https://sapuac.corp.internal`. Create the
+first admin from the app's **Create Account** screen, or call
+`POST /api/auth/bootstrap-admin` (works only while no user exists yet).
 
 ## 6. HTTPS (production)
 
@@ -143,21 +148,14 @@ FRONTEND_URL=https://sapuac.yourcompany.com
 docker compose -f deploy/docker-compose.https.yml --env-file deploy/.env up -d --build
 ```
 
-Caddy obtains and renews the certificate automatically and proxies to the app.
-Open `https://<DOMAIN>`. (Uses `deploy/Caddyfile`.)
-
 ### Option B — Traefik
 
 ```bash
 docker compose -f deploy/docker-compose.traefik.yml --env-file deploy/.env up -d --build
 ```
 
-Traefik provisions the cert, redirects HTTP→HTTPS, and routes to the app via
-labels.
-
 > Both HTTPS compose files are **self‑contained** (they include MongoDB, backend
-> and frontend) — use them *instead of* the plain `docker-compose.yml`, not
-> alongside it.
+> and frontend) — use them *instead of* the plain `docker-compose.yml`.
 
 ---
 
@@ -167,9 +165,5 @@ Obserra SAP UAC is an installable Progressive Web App — no app store needed.
 
 - **Desktop (Chrome/Edge):** open the site → click the **Install** icon in the
   address bar, or use the in‑app **Install** banner.
-- **Android (Chrome):** tap the **Install** banner, or menu → *Add to Home
-  screen*.
+- **Android (Chrome):** tap the **Install** banner, or menu → *Add to Home screen*.
 - **iOS/iPadOS (Safari):** Share → **Add to Home Screen**.
-
-Once installed it launches full‑screen like a native app and works across
-desktop, tablet and mobile.

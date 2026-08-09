@@ -211,6 +211,54 @@ async def register(body: RegisterBody, response: Response):
     return _public_user(doc | {"_id": res.inserted_id})
 
 
+class BootstrapBody(BaseModel):
+    email: EmailStr
+    password: str
+    name: str | None = "Administrator"
+    org_name: str | None = None
+
+
+@auth_router.get("/bootstrap-status")
+async def bootstrap_status():
+    """First-run helper: reports whether ANY user exists yet (used by the on-prem installer)."""
+    exists = await db.users.find_one({}, {"_id": 1})
+    return {"initialized": bool(exists)}
+
+
+@auth_router.post("/bootstrap-admin")
+async def bootstrap_admin(body: BootstrapBody, response: Response):
+    """Create the very first administrator + organization. Only works while the instance has
+    NO users (first-run bootstrap for self-hosted installs); returns 409 once any user exists,
+    so it is inert in hosted/multi-tenant deployments."""
+    if await db.users.find_one({}, {"_id": 1}):
+        raise HTTPException(status_code=409, detail="Already initialized — an account already exists")
+    email = body.email.lower()
+    validate_password_policy(body.password)
+    now = datetime.now(timezone.utc).isoformat()
+    org = await db.organizations.insert_one({
+        "name": body.org_name or f"{body.name or 'Administrator'}'s Organization",
+        "plan": "enterprise", "subscription_status": "active",
+        "entitlements": list(ALL_ENTITLEMENTS),
+        "created_at": now,
+    })
+    org_id = str(org.inserted_id)
+    doc = {
+        "email": email, "password_hash": hash_password(body.password),
+        "name": body.name or "Administrator", "role": "admin",
+        "org_id": org_id, "created_at": now,
+    }
+    res = await db.users.insert_one(doc)
+    uid = str(res.inserted_id)
+    try:
+        from seed_data import seed_org
+        await seed_org(org_id)
+    except Exception:
+        pass
+    await _log_audit(org_id, email, "user.bootstrap_admin", "First administrator & organization created")
+    set_auth_cookies(response, create_access_token(uid, email), create_refresh_token(uid))
+    return _public_user(doc | {"_id": res.inserted_id})
+
+
 @auth_router.post("/login")
 async def login(body: LoginBody, request: Request, response: Response):
     email = body.email.lower()

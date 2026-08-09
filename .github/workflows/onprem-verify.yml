@@ -1,0 +1,30 @@
+name: On-Prem Installer Build
+
+# Proves the self-contained one-click installer actually boots by Docker-building it
+# on every push (Docker can't run in the dev environment, so this is the real check).
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build the one-click on-prem package with Docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Assemble on-prem package
+        run: python scripts/assemble_onprem.py dist
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build images (verifies the one-click installer boots)
+        working-directory: dist/obserra-sap-uac
+        run: docker compose -f deploy/docker-compose.yml build
