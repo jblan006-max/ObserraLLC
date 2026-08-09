@@ -1,0 +1,40 @@
+{
+  "summary": "Batch 87 (Heatmap Drilldown, Escalation Digest, Per-Hour Digest, Exec SLA Banner) tested end-to-end. All 16 backend pytest tests pass. All frontend flows verified via Playwright on /app and /app/system-health with admin cookie login.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/app/system-health", "issues": ["Console hydration warning: <span> inside <option> for the sh-sched-hour select. Root cause is the Emergent dev overlay wrapping option text in an x-dynamic span; not a code bug in SystemHealth.jsx (option children are simple strings). No functional impact."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_batch87.py", "/app/test_reports/pytest/batch87.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "deploy_audit.py is ~1300 lines - consider splitting (config endpoints, room endpoints, comments/rollups) into submodules for maintainability. Not blocking."
+  ],
+  "updated_files": ["/app/backend/tests/test_batch87.py"],
+  "success_rate": {"backend": "100% (16/16)", "frontend": "100% (all testids present & flows working)"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026!",
+  "seed_data_creation": "None. Toggled one audit comment to Resolved then back to Open to preserve the 'one open remains' invariant.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend endpoints for audit config are under /api/deploy/{sla-config,escalation-config,reply-templates,digest-schedule} (NOT prefixed with 'audit-'). Status update on comments is POST /api/deploy/audit-room-comments/{id}/status with status values 'Open'|'In Progress'|'Resolved' (title-case). SLA-config PUT body uses {sla_hours: int}. Digest schedule: {enabled, days:[0..6], hour:0..23} — no run_hour_utc. Heatmap rows are BUTTON elements with testids 'sh-heatmap-row-<label>'; clicking Room row sets sh-inbox-room-filter to the room token and sh-inbox-status-filter to 'Open'. SLA banner (sap-sla-banner) currently hidden because open_overdue/breached_7d/escalated_7d are all 0 in demo data — endpoint verified 200 with three int fields; 401 unauth. Hourly cron /api/cron/hourly-overdue-digest returns 401 without auth header (verified). Restored to defaults: digest enabled=true days=[0..6] hour=8; escalation enabled=false contacts=[]; org SLA 72h.",
+  "verified_features": [
+    "GET /api/deploy/digest-schedule returns {enabled,days,hour} without run_hour_utc",
+    "PUT digest-schedule persists hour and clamps to 0-23 (99 and -5 both clamped)",
+    "GET /api/deploy/audit-request-analytics returns rooms with 'token' field on each",
+    "GET /api/deploy/audit-sla-banner returns 200 with three integer fields; 401 unauth",
+    "POST /api/deploy/audit-room-comments/{id}/status (Resolved) returns 200 and stamps resolved_at",
+    "POST /api/cron/hourly-overdue-digest returns 401 without cron header",
+    "POST /api/cron/monthly-board-report returns 401 without cron header",
+    "Regressions: sla-config, escalation-config, reply-templates, export.csv all 200",
+    "UI: sh-digest-schedule panel with sh-sched-hour <select> (24 options), sh-sched-enabled checkbox, sh-sched-day-0..6 chips",
+    "UI: disabling sh-sched-enabled disables sh-sched-hour and day chips",
+    "UI: sh-sla-heatmap rows are clickable BUTTON elements",
+    "UI: clicking sh-heatmap-row-Room 1 sets sh-inbox-room-filter to that room's token and sh-inbox-status-filter to 'Open'",
+    "UI: clicking sh-heatmap-row-All rooms resets sh-inbox-room-filter to 'all'",
+    "UI: sap-sla-banner correctly hidden on /app when all counts are 0 (no error)",
+    "UI: sh-comments-panel, sh-uptime-panel, sh-sla-panel, sh-escalation, sh-service all present"
+  ]
+}

@@ -98,18 +98,23 @@ export function Sparkline({ points, testid }) {
   );
 }
 
-// Per-room on-time vs breached SLA response heatmap.
-export function SlaHeatmap({ rooms, org, testid }) {
+// Per-room on-time vs breached SLA response heatmap. When onSelectRoom is given, rows are clickable.
+export function SlaHeatmap({ rooms, org, testid, onSelectRoom }) {
   const items = (rooms || []).filter((r) => (r.on_time + r.breached + r.pending) > 0);
   const orgHas = org && (org.on_time + org.breached + org.pending) > 0;
   if (!items.length && !orgHas) return null;
-  const Row = ({ r, label }) => {
+  const clickable = typeof onSelectRoom === "function";
+  const Row = ({ r, label, token }) => {
     const total = (r.on_time || 0) + (r.breached || 0) + (r.pending || 0);
     const pct = (v) => (total ? `${(v / total) * 100}%` : "0%");
     const tone = r.on_time_pct == null ? "text-muted-foreground" : r.on_time_pct >= 80 ? "text-low" : r.on_time_pct >= 50 ? "text-high" : "text-crit";
+    const Tag = clickable ? "button" : "div";
     return (
-      <div className="flex items-center gap-2" data-testid={`sh-heatmap-row-${label}`}>
-        <span className="text-[11px] w-24 truncate shrink-0" title={label}>{label}</span>
+      <Tag type={clickable ? "button" : undefined} onClick={clickable ? () => onSelectRoom(token ?? "all") : undefined}
+        className={`flex items-center gap-2 w-full text-left ${clickable ? "hover:opacity-80 cursor-pointer" : ""}`}
+        title={clickable ? "Jump to this room's overdue requests" : undefined}
+        data-testid={`sh-heatmap-row-${label}`}>
+        <span className="text-[11px] w-24 truncate shrink-0">{label}</span>
         <div className="flex-1 min-w-[120px] h-3 rounded-full overflow-hidden flex bg-secondary/60"
           title={`On-time ${r.on_time} · Breached ${r.breached} · Pending ${r.pending} (SLA ${r.sla_hours}h)`}>
           <div className="h-full bg-low" style={{ width: pct(r.on_time) }} />
@@ -117,19 +122,19 @@ export function SlaHeatmap({ rooms, org, testid }) {
           <div className="h-full bg-high/60" style={{ width: pct(r.pending) }} />
         </div>
         <span className={`text-[11px] font-mono w-12 text-right shrink-0 ${tone}`}>{r.on_time_pct == null ? "—" : `${r.on_time_pct}%`}</span>
-      </div>
+      </Tag>
     );
   };
   return (
     <div className="mt-3 space-y-1.5" data-testid={testid || "sh-sla-heatmap"}>
       <div className="flex flex-wrap items-center gap-3 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-        <span>SLA response heatmap</span>
+        <span>SLA response heatmap{clickable ? " · click a room" : ""}</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-low inline-block" /> on-time</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-crit inline-block" /> breached</span>
         <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-high/60 inline-block" /> pending</span>
       </div>
-      {orgHas && <Row r={org} label="All rooms" />}
-      {items.map((r) => <Row key={r.label} r={r} label={r.label} />)}
+      {orgHas && <Row r={org} label="All rooms" token="all" />}
+      {items.map((r) => <Row key={r.label} r={r} label={r.label} token={r.token} />)}
     </div>
   );
 }

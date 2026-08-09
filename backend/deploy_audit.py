@@ -488,7 +488,7 @@ async def reply_audit_room_comment(comment_id: str, body: CommentReplyBody, user
         raise HTTPException(400, "A reply is required.")
     res = await db.audit_room_comments.update_one(
         {"id": comment_id, "org_id": user["org_id"]},
-        {"$set": {"reply": reply[:2000], "reply_by": user["email"], "reply_at": _now_iso(), "status": "Resolved"}})
+        {"$set": {"reply": reply[:2000], "reply_by": user["email"], "reply_at": _now_iso(), "resolved_at": _now_iso(), "status": "Resolved"}})
     if res.matched_count == 0:
         raise HTTPException(404, "Comment not found.")
     # Notify the auditor by email (if they left one) so they don't have to keep re-checking the portal.
@@ -523,8 +523,11 @@ async def set_audit_room_comment_status(comment_id: str, body: CommentStatusBody
         raise HTTPException(403, "Admins only")
     if body.status not in ("Open", "In Progress", "Resolved"):
         raise HTTPException(400, "Invalid status")
+    upd = {"status": body.status}
+    if body.status == "Resolved":
+        upd["resolved_at"] = _now_iso()
     res = await db.audit_room_comments.update_one(
-        {"id": comment_id, "org_id": user["org_id"]}, {"$set": {"status": body.status}})
+        {"id": comment_id, "org_id": user["org_id"]}, {"$set": upd})
     if res.matched_count == 0:
         raise HTTPException(404, "Comment not found.")
     return {"ok": True}
@@ -601,13 +604,17 @@ def _escalation_cfg(org):
 
 
 def _digest_schedule_cfg(org):
-    """Days use Python weekday convention (Mon=0 … Sun=6). Send hour is fixed by the platform daily cron (08:00 UTC)."""
+    """Days use Python weekday convention (Mon=0 … Sun=6). Hour is UTC (0-23)."""
     c = ((org or {}).get("system_health") or {}).get("digest_schedule") or {}
     days = c.get("days")
     if not isinstance(days, list) or not days:
         days = list(range(7))
     days = sorted({int(d) for d in days if 0 <= int(d) <= 6})
-    return {"enabled": bool(c.get("enabled", True)), "days": days or list(range(7))}
+    try:
+        hour = int(c.get("hour", 8))
+    except Exception:
+        hour = 8
+    return {"enabled": bool(c.get("enabled", True)), "days": days or list(range(7)), "hour": max(0, min(23, hour))}
 
 
 class EscalationBody(BaseModel):
@@ -646,6 +653,7 @@ async def set_escalation_config(body: EscalationBody, user: dict = Depends(get_c
 class DigestScheduleBody(BaseModel):
     enabled: bool = True
     days: list[int] = [0, 1, 2, 3, 4, 5, 6]
+    hour: int = 8
 
 
 @deploy_router.get("/digest-schedule")
@@ -654,7 +662,7 @@ async def get_digest_schedule(user: dict = Depends(get_current_user)):
         raise HTTPException(403, "Admins only")
     from bson import ObjectId
     org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
-    return {**_digest_schedule_cfg(org), "run_hour_utc": 8}
+    return _digest_schedule_cfg(org)
 
 
 @deploy_router.put("/digest-schedule")
@@ -663,10 +671,10 @@ async def set_digest_schedule(body: DigestScheduleBody, user: dict = Depends(get
         raise HTTPException(403, "Admins only")
     from bson import ObjectId
     days = sorted({int(d) for d in (body.days or []) if 0 <= int(d) <= 6}) or list(range(7))
-    cfg = {"enabled": bool(body.enabled), "days": days}
+    cfg = {"enabled": bool(body.enabled), "days": days, "hour": max(0, min(23, int(body.hour)))}
     await db.organizations.update_one({"_id": ObjectId(user["org_id"])},
                                       {"$set": {"system_health.digest_schedule": cfg}})
-    return {**cfg, "run_hour_utc": 8}
+    return cfg
 
 
 class SlaConfigBody(BaseModel):
@@ -733,7 +741,10 @@ async def bulk_status_filter(body: BulkFilterBody, user: dict = Depends(get_curr
         q["status"] = body.filter_status
     if body.room_token:
         q["token"] = body.room_token
-    res = await db.audit_room_comments.update_many(q, {"$set": {"status": body.status}})
+    upd = {"status": body.status}
+    if body.status == "Resolved":
+        upd["resolved_at"] = _now_iso()
+    res = await db.audit_room_comments.update_many(q, {"$set": upd})
     return {"ok": True, "updated": res.modified_count}
 
 
@@ -760,8 +771,11 @@ async def bulk_set_comment_status(body: BulkStatusBody, user: dict = Depends(get
     ids = [i for i in (body.ids or []) if i][:500]
     if not ids:
         raise HTTPException(400, "No requests selected.")
+    upd = {"status": body.status}
+    if body.status == "Resolved":
+        upd["resolved_at"] = _now_iso()
     res = await db.audit_room_comments.update_many(
-        {"id": {"$in": ids}, "org_id": user["org_id"]}, {"$set": {"status": body.status}})
+        {"id": {"$in": ids}, "org_id": user["org_id"]}, {"$set": upd})
     return {"ok": True, "updated": res.modified_count}
 
 
@@ -900,10 +914,52 @@ async def audit_request_analytics(user: dict = Depends(get_current_user)):
     per_room = {}
     for c in rows:
         per_room.setdefault(c.get("token"), []).append(c)
-    rooms_out = [{"label": label.get(tok, "Archived room"), **_bucket(items), **_sla_class(items, smap.get(tok, base))}
+    rooms_out = [{"token": tok, "label": label.get(tok, "Archived room"), **_bucket(items), **_sla_class(items, smap.get(tok, base))}
                  for tok, items in per_room.items()]
     rooms_out.sort(key=lambda r: (r["open"] == 0, r["label"]))
     return {"org": {**_bucket(rows), **_sla_class(rows, base)}, "rooms": rooms_out, "trend": trend, "sla_default": base}
+
+
+@deploy_router.get("/audit-sla-banner")
+async def audit_sla_banner(user: dict = Depends(get_current_user)):
+    """Lightweight governance-responsiveness summary for the Executive Overview banner."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from datetime import datetime, timezone, timedelta
+    org_id = user["org_id"]
+    now = datetime.now(timezone.utc)
+    wk = (now - timedelta(days=7)).isoformat()
+    base, smap = await _sla_map(org_id)
+    rows = await db.audit_room_comments.find({"org_id": org_id}, {"_id": 0}).to_list(5000)
+
+    def _age(iso):
+        try:
+            return (now - datetime.fromisoformat(iso)).total_seconds() / 3600 if iso else None
+        except Exception:
+            return None
+
+    def _resp(c):
+        if c.get("reply_at") and c.get("at"):
+            try:
+                return (datetime.fromisoformat(c["reply_at"]) - datetime.fromisoformat(c["at"])).total_seconds() / 3600
+            except Exception:
+                return None
+        return None
+
+    open_overdue = breached_7d = 0
+    for c in rows:
+        sla = smap.get(c.get("token"), base)
+        st = c.get("status") or "Open"
+        if st != "Resolved":
+            ah = _age(c.get("at"))
+            if ah is not None and ah > sla:
+                open_overdue += 1
+        rat = c.get("reply_at") or c.get("resolved_at")
+        rh = _resp(c)
+        if rat and rat >= wk and rh is not None and rh > sla:
+            breached_7d += 1
+    escalated_7d = sum(1 for c in rows if (c.get("escalated_at") or "") >= wk)
+    return {"open_overdue": open_overdue, "breached_7d": breached_7d, "escalated_7d": escalated_7d}
 
 
 def _req_action_html(comment, org_name, done=None):
@@ -961,7 +1017,7 @@ async def req_action_resolve(token: str):
         raise HTTPException(404, "Invalid action link.")
     if _action_expired(c):
         raise HTTPException(410, "This action link has expired.")
-    await db.audit_room_comments.update_one({"action_token": token}, {"$set": {"status": "Resolved"}})
+    await db.audit_room_comments.update_one({"action_token": token}, {"$set": {"status": "Resolved", "resolved_at": _now_iso()}})
     return {"ok": True}
 
 
@@ -982,7 +1038,7 @@ async def req_action_reply(token: str, body: ActionReplyBody):
         raise HTTPException(410, "This action link has expired.")
     await db.audit_room_comments.update_one(
         {"action_token": token},
-        {"$set": {"reply": reply[:2000], "reply_by": "Slack/Teams action", "reply_at": _now_iso(), "status": "Resolved"}})
+        {"$set": {"reply": reply[:2000], "reply_by": "Slack/Teams action", "reply_at": _now_iso(), "resolved_at": _now_iso(), "status": "Resolved"}})
     try:
         em = c.get("author_email") or ""
         if em and "@" in em:
@@ -1069,7 +1125,7 @@ async def _run_overdue_request_digest(sla_hours: int | None = None):
         try:
             org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
             sched = _digest_schedule_cfg(org)
-            if not sched["enabled"] or now.weekday() not in sched["days"]:
+            if not sched["enabled"] or now.weekday() not in sched["days"] or now.hour != sched["hour"]:
                 continue
             base, smap = await _sla_map(org_id, org)
             items = []
@@ -1167,5 +1223,81 @@ async def _run_overdue_request_digest(sla_hours: int | None = None):
                                        ref="system-health", dedupe_key=f"overdue-req:{today}")
             await db.organizations.update_one({"_id": ObjectId(org_id)},
                                               {"$set": {"system_health.overdue_digest_date": today}})
+        except Exception:
+            pass
+
+
+async def _run_weekly_escalation_rollup():
+    """Weekly rollup to escalation owners: what escalated in the last 7 days and how fast each resolved. Folded into the weekly cron."""
+    from datetime import datetime, timezone, timedelta
+    from bson import ObjectId
+    from kernel import notifications
+    now = datetime.now(timezone.utc)
+    window = (now - timedelta(days=7)).isoformat()
+    wkkey = f"{now.isocalendar()[0]}-W{now.isocalendar()[1]:02d}"
+    orgs = await db.organizations.find({"system_health.escalation.enabled": True}).to_list(1000)
+    for org in orgs:
+        try:
+            esc = _escalation_cfg(org)
+            if not esc["enabled"] or not esc["contacts"]:
+                continue
+            org_id = str(org["_id"])
+            if ((org.get("system_health") or {}).get("escalation_rollup_week")) == wkkey:
+                continue
+            rows = await db.audit_room_comments.find(
+                {"org_id": org_id, "escalated_at": {"$gte": window}}, {"_id": 0}).to_list(2000)
+            if not rows:
+                continue
+            oname = org.get("name") or "your organization"
+
+            def _hrs(a, b):
+                try:
+                    return (datetime.fromisoformat(b) - datetime.fromisoformat(a)).total_seconds() / 3600
+                except Exception:
+                    return None
+
+            def _fmt(h):
+                return "—" if h is None else (f"{int(h // 24)}d {int(h % 24)}h" if h >= 24 else f"{int(h)}h")
+
+            resolved, res_times = [], []
+            for r in rows:
+                rat = r.get("resolved_at") or (r.get("reply_at") if r.get("status") == "Resolved" else None)
+                if r.get("status") == "Resolved" and rat:
+                    resolved.append(r)
+                    t = _hrs(r["escalated_at"], rat)
+                    if t is not None:
+                        res_times.append(max(0.0, t))
+            med = None
+            if res_times:
+                s = sorted(res_times)
+                n = len(s)
+                med = round(s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2, 1)
+            li = "".join(
+                f"<li><strong>{_esc_html(r.get('author', 'Auditor'))}</strong> — "
+                + (f"resolved in {_fmt(_hrs(r['escalated_at'], r.get('resolved_at') or r.get('reply_at')))} after escalation"
+                   if r.get("status") == "Resolved" else "<span style='color:#b91c1c'>still open</span>")
+                + f" · <span style='color:#6b7280'>{_esc_html((r.get('comment') or '')[:100])}</span></li>"
+                for r in sorted(rows, key=lambda x: x.get("status") == "Resolved"))
+            link = (os.environ.get("FRONTEND_URL", "").rstrip("/")) + "/app/system-health"
+            html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
+                    f"<h2 style='color:#0f1e3d'>Weekly SLA escalation rollup — {_esc_html(oname)}</h2>"
+                    f"<p>{len(rows)} auditor request(s) escalated in the last 7 days · {len(resolved)} resolved"
+                    + (f" · median {med}h from escalation to resolution" if med is not None else "") + ".</p>"
+                    f"<ul>{li}</ul>"
+                    f"<p style='margin:16px 0'><a href='{link}' style='background:#2f6df6;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600' target='_blank'>Open the Audit Requests inbox</a></p>"
+                    f"<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — SLA escalation rollup</p></div>")
+            for to in esc["contacts"]:
+                try:
+                    await notifications.send_email(to, f"Weekly SLA escalation rollup ({len(rows)}) — {oname}", html)
+                except Exception:
+                    pass
+            try:
+                await _route_alert(org, {"slack": True, "teams": True}, f"Weekly SLA escalation rollup — {len(rows)} escalated",
+                                   f"{len(rows)} escalated in the last 7 days · {len(resolved)} resolved"
+                                   + (f" · median {med}h to resolve" if med is not None else "") + ". Open System Health → Audit Requests.")
+            except Exception:
+                pass
+            await db.organizations.update_one({"_id": ObjectId(org_id)},
+                                              {"$set": {"system_health.escalation_rollup_week": wkkey}})
         except Exception:
             pass

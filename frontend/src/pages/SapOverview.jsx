@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import { useAuth } from "@/context/AuthContext";
 import { useDeepDive } from "@/context/DeepDiveContext";
 import { api } from "@/lib/api";
+import { Link } from "react-router-dom";
 import { StatCard, Spinner } from "@/components/dash";
 import { SapInsight } from "@/components/SapInsight";
 import { ChartBox } from "@/components/ChartBox";
@@ -29,10 +30,12 @@ export default function SapOverview() {
   const { mode } = useAuth();
   const { openDeepDive } = useDeepDive();
   const [d, setD] = useState(null);
+  const [slaBanner, setSlaBanner] = useState(null);
 
   const load = useCallback(async () => {
     const { data } = await api.get("/sap/overview");
     setD(data);
+    try { const b = await api.get("/deploy/audit-sla-banner"); setSlaBanner(b.data); } catch { /* non-admin: no banner */ }
   }, []);
   useEffect(() => { load(); const t = setInterval(load, 30000); return () => clearInterval(t); }, [load]);
 
@@ -83,6 +86,18 @@ export default function SapOverview() {
             : "Operational access posture across identities, roles, privileged accounts, dormant/orphan access and the joiner/mover/leaver pipeline."}
         </p>
       </div>
+
+      {slaBanner && (slaBanner.open_overdue > 0 || slaBanner.breached_7d > 0 || slaBanner.escalated_7d > 0) && (
+        <Link to="/app/system-health" data-testid="sap-sla-banner"
+          className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-xl border border-crit/40 bg-crit/10 px-4 py-3 hover:bg-crit/15 transition-colors">
+          <ShieldAlert className="w-4 h-4 text-crit shrink-0" />
+          <span className="text-sm font-semibold text-crit">Audit SLA attention</span>
+          <span className="text-xs text-muted-foreground">
+            {slaBanner.open_overdue} open request{slaBanner.open_overdue === 1 ? "" : "s"} past SLA · {slaBanner.breached_7d} breached this week · {slaBanner.escalated_7d} escalated
+          </span>
+          <span className="ml-auto text-[11px] font-mono text-crit">Open System Health →</span>
+        </Link>
+      )}
 
       <SapInsight dashboard="SAP Access Overview" accent="190 90% 50%" auto slug="sap-overview" />
 

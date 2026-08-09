@@ -492,7 +492,7 @@ export default function SystemHealth() {
   const toggleDigestDay = (d) => {
     if (!digestSched) return;
     const days = digestSched.days.includes(d) ? digestSched.days.filter((x) => x !== d) : [...digestSched.days, d].sort((a, b) => a - b);
-    saveDigestSched({ enabled: digestSched.enabled, days });
+    saveDigestSched({ enabled: digestSched.enabled, days, hour: digestSched.hour });
   };
   const exportComments = async () => {
     setExporting(true);
@@ -1063,11 +1063,19 @@ export default function SystemHealth() {
                 <Clock className="w-4 h-4 text-primary" />
                 <h2 className="font-head font-bold text-lg">Overdue Digest Schedule</h2>
                 <label className="flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer ml-auto select-none">
-                  <input type="checkbox" data-testid="sh-sched-enabled" checked={!!digestSched.enabled} onChange={(e) => saveDigestSched({ enabled: e.target.checked, days: digestSched.days })} className="w-3.5 h-3.5 accent-primary" />
+                  <input type="checkbox" data-testid="sh-sched-enabled" checked={!!digestSched.enabled} onChange={(e) => saveDigestSched({ enabled: e.target.checked, days: digestSched.days, hour: digestSched.hour })} className="w-3.5 h-3.5 accent-primary" />
                   Enabled
                 </label>
               </div>
-              <p className="text-[11px] text-muted-foreground mb-2">Choose which days the overdue-request digest sends. It runs during the platform's daily {digestSched.run_hour_utc ?? 8}:00 UTC job.</p>
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <p className="text-[11px] text-muted-foreground">Send the overdue-request digest at</p>
+                <select data-testid="sh-sched-hour" value={digestSched.hour ?? 8} disabled={savingSched || !digestSched.enabled}
+                  onChange={(e) => saveDigestSched({ enabled: digestSched.enabled, days: digestSched.days, hour: parseInt(e.target.value, 10) })}
+                  className="h-7 rounded-md border border-border bg-secondary/40 px-2 text-[11px]">
+                  {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00 UTC</option>)}
+                </select>
+                <span className="text-[11px] text-muted-foreground">on these days:</span>
+              </div>
               <div className="flex flex-wrap gap-1.5" data-testid="sh-sched-days">
                 {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((d, i) => {
                   const on = digestSched.days?.includes(i);
@@ -1145,7 +1153,8 @@ export default function SystemHealth() {
                   ))}
                 </div>
               )}
-              <SlaHeatmap rooms={reqStats.rooms} org={reqStats.org} testid="sh-sla-heatmap" />
+              <SlaHeatmap rooms={reqStats.rooms} org={reqStats.org} testid="sh-sla-heatmap"
+                onSelectRoom={(tok) => { setInboxRoom(tok || "all"); setInboxStatus("Open"); setSelectedIds(new Set()); setSelectAcross(false); document.querySelector('[data-testid="sh-comments-panel"]')?.scrollIntoView({ behavior: "smooth" }); }} />
             </div>
           )}
           {selectedIds.size > 0 && (

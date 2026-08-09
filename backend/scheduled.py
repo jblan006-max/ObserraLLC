@@ -119,6 +119,11 @@ async def monthly_board_report(request: Request, background_tasks: BackgroundTas
     background_tasks.add_task(_run_quarterly_evidence_pack)
     from sap_uac import run_sap_board_pack
     background_tasks.add_task(run_sap_board_pack)
+    from datetime import datetime, timezone
+    _cad = {"monthly"}
+    if datetime.now(timezone.utc).month in (1, 4, 7, 10):
+        _cad.add("quarterly")
+    background_tasks.add_task(_run_studio_reports, _cad)
     return {"status": "accepted"}
 
 
@@ -312,6 +317,8 @@ async def weekly_drift_digest(request: Request, background_tasks: BackgroundTask
     background_tasks.add_task(run_sap_owner_digest)
     from ai_advisor import _run_weekly_fair_air_refresh
     background_tasks.add_task(_run_weekly_fair_air_refresh)
+    from deploy import _run_weekly_escalation_rollup
+    background_tasks.add_task(_run_weekly_escalation_rollup)
     return {"status": "accepted"}
 
 
@@ -393,8 +400,17 @@ async def daily_drift_digest(request: Request, background_tasks: BackgroundTasks
     from deploy import backup_all_orgs, run_health_alerts
     background_tasks.add_task(backup_all_orgs)
     background_tasks.add_task(run_health_alerts)
-    from deploy import _run_audit_room_expiry_reminders, _run_overdue_request_digest
+    from deploy import _run_audit_room_expiry_reminders
     background_tasks.add_task(_run_audit_room_expiry_reminders)
+    return {"status": "accepted"}
+
+
+@scheduled_router.post("/cron/hourly-overdue-digest")
+async def hourly_overdue_digest(request: Request, background_tasks: BackgroundTasks):
+    # Runs hourly; the overdue-request digest + SLA escalation self-gate per org to the configured UTC hour + days.
+    if not _authorized(request):
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    from deploy import _run_overdue_request_digest
     background_tasks.add_task(_run_overdue_request_digest)
     return {"status": "accepted"}
 

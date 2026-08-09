@@ -1811,4 +1811,5 @@ async def email_docs_all(user: dict = Depends(get_current_user)):
 from deploy_audit import (  # noqa: E402,F401
     _run_audit_room_expiry_reminders,
     _run_overdue_request_digest,
+    _run_weekly_escalation_rollup,
 )
