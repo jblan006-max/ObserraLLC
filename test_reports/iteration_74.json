@@ -1,0 +1,35 @@
+{
+  "summary": "Frontend-only verification of 4 new SoD Command Center features on /app/sod (Leaderboard Nudge, Assign From Leaderboard, Board Pack Scheduling, Timeline Toast/live-refresh stability) plus a full SoD regression pass. All 7 scenarios PASSED. Login (jblan2026@gmail.com) worked, all target data-testid nodes rendered, all API round-trips returned 200 with expected toasts and UI updates.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "SoD Command Center — SoD Risk Watchlist native <select data-testid='watchlist-add'>", "issues": ["Pre-existing/known cosmetic hydration warning: <span> inside <option> in SodWatchlist.jsx (line 186). Non-blocking; called out by main agent as known. Consider rendering option children as plain string to silence React hydration warning."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "SodOwnerLeaderboard.jsx: email validation is minimal (owner.includes('@')). Consider stricter regex to reject malformed emails before firing /remediate.",
+    "SodBoardPackCard.jsx: day input caps at max=28 in UI but backend accepts Number(cfg.day)||1 — no client-side clamp for 29-31 typed values before PUT; backend likely clamps but worth confirming.",
+    "SodWatchlist.jsx (line 186) still renders a <span> inside <option>, causing a repeated hydration warning in console. Trivial fix: render {a.area} directly.",
+    "Nudge/Send/Remediate perform real side-effects (real emails, real ticket numbers). Consider a confirm() gate on 'Nudge all owners' similar to Board Pack send-now to prevent accidental mass emails."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "skipped", "frontend": "100%"},
+  "seed_data_creation": "None. Test created ticket CHG100578 by assigning Basis / Security to ops-owner@acme.com from the leaderboard (expected side-effect). Board Pack config was updated to enabled=true, day=7, recipients=[board@acme.com, exec@acme.com] and persisted across reload.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin, cookie-based login via data-testid=auth-submit)",
+  "context_for_next_testing_agent": "All 4 new SoD features are working end-to-end. Note that running the leaderboard-assign test bumps Owners accountable from 1→2 (adds ops-owner@acme.com owning Basis / Security via ticket CHG100578) — the Finance pin stayed intact. Board Pack config now persists as enabled=true, day=7, recipients=[board@acme.com, exec@acme.com]. If a fresh baseline is needed, main agent should reseed. Timeline modal for CHG100577 (Closed) stays stable across a 6s live-refresh window with no toast (as expected).",
+  "detailed_results": {
+    "test_1_leaderboard_nudge": "PASS — POST /api/sap/watchlist/leaderboard/nudge → 200 {nudged:1, owners:[jblan2026@gmail.com]}. Toast: 'Nudged 1 owner(s) — Each owner was emailed their assigned Critical hot spots.'",
+    "test_2_assign_from_leaderboard": "PASS — POST /api/sap/watchlist/remediate → 200. Toast: 'Basis / Security assigned to ops-owner@acme.com — Ticket CHG100578 opened'. Leaderboard live-refreshed via sap-watchlist-changed event: Owners accountable 1→2, unowned rows 5→4 (Basis / Security moved out of unowned list, new owner row 2 rendered).",
+    "test_3_board_pack_scheduling": "PASS — PUT /api/sap/board-pack/config → 200 {enabled:true, day:7, recipients:[board@acme.com, exec@acme.com]}. Toast: 'Board pack schedule saved — Auto-sends on day 7 each month'. Chip updated from 'Auto-send off' to 'Auto-send · day 7'.",
+    "test_4_persistence_after_reload": "PASS — after reload: chip='Auto-send · day 7', switch data-state=checked, day input='7', recipients='board@acme.com, exec@acme.com'.",
+    "test_5_boardpack_preview_reflects_settings": "PASS — modal opened, boardpack-status='Not yet sent this month', boardpack-recipients chips include board@acme.com and exec@acme.com.",
+    "test_6_timeline_modal_stability": "PASS — watchlist-ticket-0 opened watchlist-ticket-dialog with watchlist-ticket-live chip. Modal stayed present and stable across 6.5s of live refresh polling, no crash/flicker, no advance toast (expected for a Closed ticket), closed cleanly on Escape.",
+    "test_7_regression": "PASS — sod-scorecard, sod-autorem, sod-digest-schedule, sod-simulator, sod-rules, sod-table, sod-leaderboard, sod-boardpack all rendered. watchlist-mine-toggle shows 'Assigned to me (1)'. 4 KPI StatCards visible (Critical 28, High 40, Medium 3, Total Rules 72). No 'undefined' or crash observed."
+  }
+}

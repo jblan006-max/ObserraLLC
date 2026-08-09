@@ -446,7 +446,43 @@ async def watchlist_leaderboard(user: dict = Depends(get_current_user)):
               "total_open": sum(s["open"] for s in stats.values()),
               "total_critical": sum(s["Critical"] for s in stats.values()),
               "unassigned_critical": sum(s["Critical"] for a, s in stats.items() if a not in assigned)}
-    return {"owners": owners, "totals": totals}
+    unassigned = sorted(
+        [{"area": a, "open": s["open"], "Critical": s["Critical"], "High": s.get("High", 0)}
+         for a, s in stats.items() if a not in assigned and s["open"] > 0],
+        key=lambda a: (-a["Critical"], -a["open"], a["area"]))
+    return {"owners": owners, "totals": totals, "unassigned": unassigned}
+
+
+@sap_router.post("/watchlist/leaderboard/nudge")
+async def watchlist_leaderboard_nudge(user: dict = Depends(require_roles("admin"))):
+    """One-tap: email every SoD-area owner in this org their assigned hot spots right now (same content
+    as the weekly Owner Digest, but on demand)."""
+    from kernel import notifications
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    docs = await db.sap_watchlist.find({"org_id": org_id, "owner": {"$nin": [None, ""]}}).to_list(5000)
+    stats = await _area_stats(org_id)
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    by_owner = {}
+    for d in docs:
+        owner = (d.get("owner") or "").strip()
+        if "@" not in owner:
+            continue
+        s = stats.get(d["area"], {"area": d["area"], "open": 0, "Critical": 0})
+        by_owner.setdefault(owner, {}).setdefault(d["area"], {**s, "ticket": d.get("ticket")})
+    sent = []
+    for owner, amap in by_owner.items():
+        rows = sorted(amap.values(), key=lambda r: (-r.get("Critical", 0), -r.get("open", 0), r["area"]))
+        to = sum(r["open"] for r in rows)
+        tc = sum(r["Critical"] for r in rows)
+        await notifications.send_email(owner, f"Your SAP SoD areas — {tc} Critical, {to} open",
+                                       _owner_digest_html(owner, rows, to, tc, frontend))
+        sent.append({"owner": owner, "areas": len(rows), "Critical": tc, "open": to})
+    if sent:
+        await notifications.create(org_id, "sap", "Owners nudged",
+                                   f"On-demand SoD owner nudge emailed to {len(sent)} owner(s).", ref="sap-owner-nudge")
+    await _audit(org_id, user["email"], "sap.watchlist.nudge", f"{len(sent)} owner(s)")
+    return {"nudged": len(sent), "owners": sent}
 
 
 # ── Owner Digest (weekly: each owner gets just the SoD areas assigned to them) ─
@@ -532,18 +568,29 @@ def _board_pack_html(d, wins, month):
         '</td></tr></table>')
 
 
-async def _board_pack_recipients(org_id, cfg=None, override=None):
-    """Resolve board-pack recipients: explicit override → digest recipients → org admins/execs."""
+async def _board_pack_settings(org_id):
+    """Board-pack scheduling settings (isolated from digest config so neither writer clobbers the other)."""
+    doc = await db.sap_board_pack_config.find_one({"org_id": org_id}, {"_id": 0}) or {}
+    return {"enabled": bool(doc.get("enabled")),
+            "day": min(28, max(1, int(doc.get("day", 1) or 1))),
+            "recipients": [e for e in (doc.get("recipients") or []) if e]}
+
+
+async def _board_pack_recipients(org_id, override=None):
+    """Resolve recipients: explicit override → board-pack settings → digest recipients → org admins/execs."""
     if override:
-        recips = [e.strip() for e in override if e and "@" in e]
-        if recips:
-            return recips
-    if cfg is None:
-        from sap_digest import _get_digest_config
-        cfg = await _get_digest_config(org_id)
-    recips = [e.strip() for e in (cfg.get("recipients") or []) if e and "@" in e]
-    if recips:
-        return recips
+        r = [e.strip() for e in override if e and "@" in e]
+        if r:
+            return r
+    st = await _board_pack_settings(org_id)
+    r = [e.strip() for e in st["recipients"] if e and "@" in e]
+    if r:
+        return r
+    from sap_digest import _get_digest_config
+    cfg = await _get_digest_config(org_id)
+    r = [e.strip() for e in (cfg.get("recipients") or []) if e and "@" in e]
+    if r:
+        return r
     users = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
                                 {"_id": 0, "email": 1}).to_list(200)
     return [u["email"] for u in users if u.get("email")]
@@ -566,19 +613,21 @@ async def _board_pack_build(org_id):
 
 
 async def run_sap_board_pack():
-    """Monthly (1st): email the SAP access-governance board pack to the digest recipients (opt-in via
-    digest config `board_pack`), with the analytics PDF attached. Sent once per calendar month."""
+    """Scheduled: on the configured day-of-month, email the SAP board pack to the resolved recipients
+    (opt-in via board-pack settings), with the analytics PDF attached. Once per calendar month."""
     import base64
     from kernel import notifications
-    from sap_digest import _get_digest_config
     month = _now().strftime("%Y-%m")
+    today = _now().day
     orgs = await db.organizations.find({}).to_list(1000)
     for org in orgs:
         org_id = str(org["_id"])
         try:
-            cfg = await _get_digest_config(org_id)
-            recips = [e.strip() for e in (cfg.get("recipients") or []) if e and "@" in e]
-            if not cfg.get("board_pack") or not recips:
+            st = await _board_pack_settings(org_id)
+            if not st["enabled"] or today != st["day"]:
+                continue
+            recips = await _board_pack_recipients(org_id)
+            if not recips:
                 continue
             if await db.sap_board_pack_log.find_one({"org_id": org_id, "month": month}):
                 continue
@@ -597,16 +646,15 @@ async def run_sap_board_pack():
 @sap_router.get("/board-pack/preview")
 async def board_pack_preview(user: dict = Depends(get_current_user)):
     """On-demand preview of THIS month's SAP board pack — branded HTML + resolved recipients + whether
-    it has already been sent this calendar month."""
-    from sap_digest import _get_digest_config
+    it has already been sent this calendar month + the scheduling settings."""
     org_id = user["org_id"]
-    cfg = await _get_digest_config(org_id)
-    recips = await _board_pack_recipients(org_id, cfg)
+    st = await _board_pack_settings(org_id)
+    recips = await _board_pack_recipients(org_id)
     html, _, month = await _board_pack_build(org_id)
     sent = await db.sap_board_pack_log.find_one({"org_id": org_id, "month": month}, {"_id": 0})
     return {"html": html, "month": month, "recipients": recips,
             "already_sent": bool(sent), "sent_at": (sent or {}).get("at"),
-            "board_pack_enabled": bool(cfg.get("board_pack"))}
+            "board_pack_enabled": st["enabled"], "board_pack_day": st["day"]}
 
 
 class BoardPackSendBody(BaseModel):
@@ -619,12 +667,10 @@ async def board_pack_send(body: BoardPackSendBody, user: dict = Depends(require_
     1st-of-month cron. Records the monthly log so the scheduled run won't double-send."""
     import base64
     from kernel import notifications
-    from sap_digest import _get_digest_config
     org_id = user["org_id"]
-    cfg = await _get_digest_config(org_id)
-    recips = await _board_pack_recipients(org_id, cfg, override=body.recipients)
+    recips = await _board_pack_recipients(org_id, override=body.recipients)
     if not recips:
-        raise HTTPException(status_code=400, detail="No recipients — add board-pack recipients in the digest schedule first.")
+        raise HTTPException(status_code=400, detail="No recipients — set board-pack recipients first.")
     html, pdf, month = await _board_pack_build(org_id)
     att = [{"filename": f"sap-board-pack-{month}.pdf", "content": base64.b64encode(pdf).decode()}]
     for to in recips:
@@ -637,3 +683,33 @@ async def board_pack_send(body: BoardPackSendBody, user: dict = Depends(require_
                                f"SAP board pack emailed on demand to {len(recips)} recipient(s).", ref="sap-board-pack")
     await _audit(org_id, user["email"], "sap.board-pack.send", f"{month} · {len(recips)} recipient(s)")
     return {"sent": len(recips), "recipients": recips, "month": month}
+
+
+class BoardPackConfigBody(BaseModel):
+    enabled: bool = False
+    day: int = 1
+    recipients: list[str] = []
+
+
+@sap_router.get("/board-pack/config")
+async def get_board_pack_config(user: dict = Depends(get_current_user)):
+    """Board-pack scheduling: enabled, day-of-month, recipient override (blank = digest recipients)."""
+    org_id = user["org_id"]
+    st = await _board_pack_settings(org_id)
+    resolved = await _board_pack_recipients(org_id)
+    return {**st, "resolved_recipients": resolved}
+
+
+@sap_router.put("/board-pack/config")
+async def put_board_pack_config(body: BoardPackConfigBody, user: dict = Depends(require_roles("admin"))):
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    recips = [e.strip() for e in body.recipients if "@" in e.strip()]
+    day = min(28, max(1, int(body.day or 1)))
+    await db.sap_board_pack_config.update_one(
+        {"org_id": org_id},
+        {"$set": {"org_id": org_id, "enabled": bool(body.enabled), "day": day, "recipients": recips}}, upsert=True)
+    await _audit(org_id, user["email"], "sap.board-pack.config", f"enabled={body.enabled} day={day} recips={len(recips)}")
+    st = await _board_pack_settings(org_id)
+    resolved = await _board_pack_recipients(org_id)
+    return {**st, "resolved_recipients": resolved}

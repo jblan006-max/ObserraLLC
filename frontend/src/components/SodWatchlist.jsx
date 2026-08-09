@@ -135,8 +135,18 @@ export function SodWatchlist() {
     if (!ticket?.number) return;
     const num = ticket.number;
     const id = setInterval(async () => {
-      try { const { data } = await api.get(`/sap/ticket/${encodeURIComponent(num)}`); setTicket((cur) => (cur && cur.number === num ? data : cur)); }
-      catch { /* keep last snapshot */ }
+      try {
+        const { data } = await api.get(`/sap/ticket/${encodeURIComponent(num)}`);
+        setTicket((cur) => {
+          if (!cur || cur.number !== num) return cur;
+          const grew = (data.stages || []).length > (cur.stages || []).length;
+          if (grew) {
+            const last = (data.stages || []).slice(-1)[0];
+            toast.info(`${num} advanced → ${last?.state || "updated"}`, { description: last?.note || "ServiceNow change progressed" });
+          }
+          return data;
+        });
+      } catch { /* keep last snapshot */ }
     }, 4000);
     return () => clearInterval(id);
   }, [ticket?.number]);
