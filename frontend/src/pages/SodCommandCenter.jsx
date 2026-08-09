@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send, Eye, Download, TrendingUp, FileText, BellRing, FileWarning } from "lucide-react";
+import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send, Eye, Download, TrendingUp, FileText, BellRing, FileWarning, Sparkles } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 
 const SEV = { Critical: "0 84% 60%", High: "35 90% 55%", Medium: "190 90% 50%", Low: "142 70% 45%" };
@@ -64,6 +64,11 @@ export default function SodCommandCenter() {
   const [previewBusy, setPreviewBusy] = useState(false);
   const [scoreBusy, setScoreBusy] = useState(false);
   const [evidBusy, setEvidBusy] = useState(false);
+  const [scoreAlerts, setScoreAlerts] = useState([]);
+  const [why, setWhy] = useState(null);
+  const [whyBusy, setWhyBusy] = useState(false);
+  const [evidPreview, setEvidPreview] = useState(null);
+  const [evidPreviewBusy, setEvidPreviewBusy] = useState(false);
   const [nowTs, setNowTs] = useState(Date.now());
 
   const loadConflicts = useCallback(async () => {
@@ -77,10 +82,14 @@ export default function SodCommandCenter() {
   const loadArem = useCallback(async () => { const { data } = await api.get("/sap/autoremediation"); setArem(data); }, []);
   const loadDcfg = useCallback(async () => { const { data } = await api.get("/sap/digest/config"); setDcfg(data); setDcfgLocal({ ...data.config, recipients: (data.config.recipients || []).join(", "), evidence_recipients: (data.config.evidence_recipients || []).join(", ") }); }, []);
   const loadScorecard = useCallback(async () => { const { data } = await api.get("/sap/scorecard"); setScorecard(data); }, []);
+  const loadAlerts = useCallback(async () => { try { const { data } = await api.get("/sap/scorecard/alerts"); setScoreAlerts(data.log || []); } catch { /* noop */ } }, []);
+  const loadWhy = useCallback(async () => { setWhyBusy(true); try { const { data } = await api.get("/sap/scorecard/why"); setWhy(data); } catch { /* noop */ } setWhyBusy(false); }, []);
   useEffect(() => { loadConflicts(); }, [loadConflicts]);
   useEffect(() => { loadArem(); }, [loadArem]);
   useEffect(() => { loadDcfg(); }, [loadDcfg]);
   useEffect(() => { loadScorecard(); }, [loadScorecard]);
+  useEffect(() => { loadAlerts(); }, [loadAlerts]);
+  useEffect(() => { loadWhy(); }, [loadWhy]);
   useEffect(() => { const id = setInterval(() => setNowTs(Date.now()), 1000); return () => clearInterval(id); }, []);
   useEffect(() => {
     api.get("/sap/sod/rules").then((r) => setRules(r.data.rules));
@@ -143,6 +152,12 @@ export default function SodCommandCenter() {
     catch { toast.error("Could not load preview"); }
     setPreviewBusy(false);
   };
+  const openEvidPreview = async () => {
+    setEvidPreviewBusy(true);
+    try { const { data } = await api.get("/sap/sod-evidence/preview"); setEvidPreview(data); }
+    catch { toast.error("Could not load preview"); }
+    setEvidPreviewBusy(false);
+  };
   const exportScorecard = async (fmt = "csv") => {
     try {
       const res = await api.get(`/sap/scorecard/export?format=${fmt}`, { responseType: "blob" });
@@ -156,22 +171,25 @@ export default function SodCommandCenter() {
     setScoreBusy(true);
     try {
       const { data } = await api.post("/sap/scorecard/alert-check");
-      if (data.below) toast[data.posted ? "success" : "info"](`Score ${data.score}/100 is below the ${data.threshold} target`, { description: data.posted ? "Alert posted to Slack / Teams" : "No chat webhook configured — add one above" });
-      else toast.success(`Score ${data.score}/100 is at/above the ${data.threshold} target — no alert needed`);
+      const rs = (data.reasons || []).join(" · ");
+      if (data.below) toast[data.posted ? "success" : "info"](`Threshold breached — score ${data.score}/100`, { description: (data.posted ? "Alert posted to Slack / Teams. " : "No chat webhook configured. ") + rs });
+      else toast.success(`All thresholds healthy — score ${data.score}/100`, { description: "No alert needed" });
+      await loadAlerts();
     } catch (e) { toast.error(e?.response?.data?.detail || "Check failed (admin only)"); }
     setScoreBusy(false);
   };
   const sendEvidence = async () => {
     setEvidBusy(true);
     try {
-      const { data } = await api.post("/sap/sod-evidence/send");
-      toast.success(`SoD evidence pack emailed to ${data.sent} recipient(s)`, { description: `${data.conflicts} conflict(s) documented` });
+      const { data } = await api.post("/sap/sod-evidence/send", { signed_by: dcfgLocal?.evidence_signed_by || "" });
+      toast.success(`SoD evidence pack emailed to ${data.sent} recipient(s)`, { description: `${data.conflicts} conflict(s) · signed by ${data.signed_by}` });
     } catch (e) { toast.error(e?.response?.data?.detail || "Send failed (admin only)"); }
     setEvidBusy(false);
   };
   const exportEvidence = async (fmt) => {
     try {
-      const res = await api.get(`/sap/sod-evidence/export?format=${fmt}`, { responseType: "blob" });
+      const sb = fmt === "pdf" && dcfgLocal?.evidence_signed_by ? `&signed_by=${encodeURIComponent(dcfgLocal.evidence_signed_by)}` : "";
+      const res = await api.get(`/sap/sod-evidence/export?format=${fmt}${sb}`, { responseType: "blob" });
       const url = URL.createObjectURL(res.data);
       const a = document.createElement("a"); a.href = url; a.download = `sap-sod-evidence.${fmt}`; a.click();
       URL.revokeObjectURL(url);
@@ -273,6 +291,17 @@ export default function SodCommandCenter() {
             <ScoreTile testid="score-movers" label="Movers cleaned" v={scorecard.current.movers_stripped} accent="260 85% 66%" />
             <ScoreTile testid="score-residual" label="Residual leavers" v={scorecard.current.residual} accent="35 90% 55%" />
             <ScoreTile testid="score-risk" label="Avg SAP risk" v={scorecard.current.avg_risk} suffix="/100" accent="199 89% 48%" />
+          </div>
+          <div className="mb-3 rounded-lg border border-primary/25 bg-primary/[0.04] px-3 py-2.5 flex items-start gap-2.5" data-testid="scorecard-why">
+            <Sparkles className="w-4 h-4 text-primary mt-0.5 shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Why did the score move?</span>
+                <button data-testid="scorecard-why-refresh" onClick={loadWhy} disabled={whyBusy} className="text-[10px] text-primary hover:underline disabled:opacity-50">{whyBusy ? "…" : "refresh"}</button>
+                {why?.model && <span className="text-[9px] font-mono text-muted-foreground">· {why.model}</span>}
+              </div>
+              <div className="text-sm text-foreground/90 mt-0.5" data-testid="scorecard-why-text">{whyBusy && !why ? "Analyzing the 8-week trend…" : (why?.summary || "—")}</div>
+            </div>
           </div>
           <div className="h-[200px]" data-testid="scorecard-trend">
             <ResponsiveContainer width="100%" height="100%">
@@ -412,11 +441,30 @@ export default function SodCommandCenter() {
               <Input type="number" min={0} max={100} data-testid="score-threshold" value={dcfgLocal.score_threshold ?? 60} onChange={(e) => setDcfgLocal({ ...dcfgLocal, score_threshold: e.target.value })} className="w-20 h-8" />
               <Switch data-testid="score-alert-toggle" checked={!!dcfgLocal.score_alert} onCheckedChange={(v) => setDcfgLocal({ ...dcfgLocal, score_alert: v })} />
             </div>
+            <div className="flex flex-wrap items-center gap-3 mt-2" data-testid="sev-thresholds">
+              <span className="text-xs text-muted-foreground">Also alert when open conflicts exceed —</span>
+              <div className="flex items-center gap-1.5"><span className="text-[11px] font-mono text-crit">Critical</span><Input type="number" min={0} data-testid="sev-threshold-Critical" value={dcfgLocal.sev_thresholds?.Critical ?? ""} onChange={(e) => setDcfgLocal({ ...dcfgLocal, sev_thresholds: { ...(dcfgLocal.sev_thresholds || {}), Critical: e.target.value } })} className="w-16 h-8" /></div>
+              <div className="flex items-center gap-1.5"><span className="text-[11px] font-mono text-amber">High</span><Input type="number" min={0} data-testid="sev-threshold-High" value={dcfgLocal.sev_thresholds?.High ?? ""} onChange={(e) => setDcfgLocal({ ...dcfgLocal, sev_thresholds: { ...(dcfgLocal.sev_thresholds || {}), High: e.target.value } })} className="w-16 h-8" /></div>
+            </div>
             <div className="flex flex-wrap items-center gap-2 mt-2">
-              <span className="text-[11px] text-muted-foreground">Current governance score <b>{scorecard?.current?.governance_score ?? "—"}/100</b>. The daily sweep posts a one-time alert per week while the score stays below target.</span>
+              <span className="text-[11px] text-muted-foreground">Current governance score <b>{scorecard?.current?.governance_score ?? "—"}/100</b>. The daily sweep posts a one-time alert per week while any threshold stays breached.</span>
               <div className="flex-1" />
               <Button size="sm" variant="outline" className="h-8 gap-1.5" data-testid="score-alert-check" onClick={checkScoreAlert} disabled={scoreBusy}><BellRing className="w-3.5 h-3.5" />{scoreBusy ? "Checking…" : "Check & alert now"}</Button>
             </div>
+            {scoreAlerts.length > 0 && (
+              <div className="mt-3 border-t border-border pt-3" data-testid="score-alert-history">
+                <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2">Recent alerts · {scoreAlerts.length}</div>
+                <div className="space-y-1.5 max-h-[150px] overflow-y-auto pr-1">
+                  {scoreAlerts.slice(0, 12).map((a, i) => (
+                    <div key={i} data-testid={`score-alert-${i}`} className="flex items-start gap-2 text-[11px]">
+                      <span className="font-mono text-muted-foreground w-32 shrink-0">{new Date(a.at).toLocaleString()}</span>
+                      <span className="font-head font-bold shrink-0" style={{ color: "hsl(0 84% 60%)" }}>{a.score}/100</span>
+                      <span className="text-muted-foreground">{(a.reasons || []).join(" · ")}{a.posted ? "" : " (not posted)"}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Weekly SoD evidence pack */}
@@ -439,8 +487,13 @@ export default function SodCommandCenter() {
                 <Input data-testid="evidence-recipients" value={dcfgLocal.evidence_recipients || ""} onChange={(e) => setDcfgLocal({ ...dcfgLocal, evidence_recipients: e.target.value })} placeholder="auditor@company.com, soc@company.com" />
               </div>
             </div>
+            <div className="mt-2">
+              <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Reviewed &amp; signed by (auditor/reviewer — stamped on the PDF)</div>
+              <Input data-testid="evidence-signed-by" value={dcfgLocal.evidence_signed_by || ""} onChange={(e) => setDcfgLocal({ ...dcfgLocal, evidence_signed_by: e.target.value })} placeholder="e.g. Jane Auditor, Internal Audit" />
+            </div>
             <div className="flex flex-wrap items-center gap-2 mt-3">
               <Button size="sm" variant="outline" className="h-8 gap-1.5" data-testid="evidence-send-now" onClick={sendEvidence} disabled={evidBusy}><Mail className="w-3.5 h-3.5" />{evidBusy ? "Sending…" : "Send evidence pack now"}</Button>
+              <Button size="sm" variant="outline" className="h-8 gap-1.5" data-testid="evidence-preview" onClick={openEvidPreview} disabled={evidPreviewBusy}><Eye className="w-3.5 h-3.5" />{evidPreviewBusy ? "Loading…" : "Preview pack"}</Button>
               <Button size="sm" variant="outline" className="h-8 gap-1.5" data-testid="evidence-export-pdf" onClick={() => exportEvidence("pdf")}><FileText className="w-3.5 h-3.5" /> Download PDF</Button>
               <Button size="sm" variant="outline" className="h-8 gap-1.5" data-testid="evidence-export-csv" onClick={() => exportEvidence("csv")}><Download className="w-3.5 h-3.5" /> Download CSV</Button>
             </div>
@@ -553,6 +606,41 @@ export default function SodCommandCenter() {
         <DialogContent className="max-w-2xl" data-testid="digest-preview-dialog">
           <DialogHeader><DialogTitle>Governance digest — email preview</DialogTitle></DialogHeader>
           <div className="max-h-[70vh] overflow-y-auto rounded-lg border border-border bg-white" data-testid="digest-preview-body" dangerouslySetInnerHTML={{ __html: preview || "" }} />
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!evidPreview} onOpenChange={(o) => !o && setEvidPreview(null)}>
+        <DialogContent className="max-w-3xl" data-testid="evidence-preview-dialog">
+          <DialogHeader><DialogTitle>Weekly SoD evidence pack — preview</DialogTitle></DialogHeader>
+          {evidPreview && (
+            <div className="max-h-[72vh] overflow-y-auto space-y-4">
+              <div className="text-[11px] font-mono text-muted-foreground" data-testid="evidence-preview-meta">
+                {evidPreview.enabled ? "Scheduled" : "Not scheduled"} · sends every <b className="text-foreground">{({ mon: "Monday", tue: "Tuesday", wed: "Wednesday", thu: "Thursday", fri: "Friday", sat: "Saturday", sun: "Sunday" })[evidPreview.evidence_day] || evidPreview.evidence_day}</b> to {evidPreview.recipients?.length || 0} recipient(s){evidPreview.recipients?.length ? `: ${evidPreview.recipients.join(", ")}` : " (admins/execs)"}{evidPreview.signed_by ? ` · signed by ${evidPreview.signed_by}` : ""}
+              </div>
+              <div className="rounded-lg border border-border bg-white" dangerouslySetInnerHTML={{ __html: evidPreview.html || "" }} />
+              <div>
+                <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2">Attached PDF preview — first {evidPreview.rows?.length || 0} of {evidPreview.summary?.total || 0} conflict(s)</div>
+                <div className="overflow-x-auto rounded-lg border border-border">
+                  <table className="w-full text-xs" data-testid="evidence-preview-table">
+                    <thead className="bg-secondary/60 text-left text-[10px] font-mono uppercase text-muted-foreground"><tr>
+                      <th className="p-2">Ref</th><th className="p-2">Sev</th><th className="p-2">Status</th><th className="p-2">Rule</th><th className="p-2">User (Dept)</th>
+                    </tr></thead>
+                    <tbody>
+                      {(evidPreview.rows || []).map((r, i) => (
+                        <tr key={i} className="border-t border-border/50">
+                          <td className="p-2 font-mono">{r.rule_ref}</td>
+                          <td className="p-2"><Chip v={r.severity} /></td>
+                          <td className="p-2">{r.status}</td>
+                          <td className="p-2">{r.rule_name}</td>
+                          <td className="p-2 whitespace-nowrap">{r.person_name} <span className="text-muted-foreground">({r.department})</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

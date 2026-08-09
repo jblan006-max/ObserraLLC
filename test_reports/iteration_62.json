@@ -1,0 +1,33 @@
+{
+  "summary": "Frontend-only verification of 5 new governance features on /app/sod and the SapInsight box on /app/audit. All target testids present and wired. Auth via cookie login (submitted via Enter key on password field since data-testid=auth-submit click was previously not triggering — Enter works reliably).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "features_verified": {
+    "scorecard_why": "PASS — data-testid=scorecard-why renders above the trend chart. scorecard-why-text populated with real sentence: 'Governance score rose 21 points (32→53) as open SoD fell 14 (85→71) and auto-remediations increased 7 (9→16), helped by 1 residual leaver cleared; movers stayed at 0, with 2 residual leavers remaining.' scorecard-why-refresh triggers GET /api/sap/scorecard/why (200).",
+    "sev_thresholds": "PASS — sev-thresholds visible with sev-threshold-Critical=25 and sev-threshold-High=50 defaults. Editing to 30/55 and clicking digest-save persisted (PUT /api/sap/digest/config 200); values retained after full page reload.",
+    "score_alert_check": "PASS — POST /api/sap/scorecard/alert-check 200 followed by GET /api/sap/scorecard/alerts 200. Toast shows both reasons: 'Governance score 53/100 below target 60/100 · Open Critical SoD 28 over limit 25'. score-alert-0 entry updated with new timestamp, 53/100 score, and both reasons.",
+    "alert_history": "PASS — score-alert-history renders with score-alert-0 showing date (8/9/2026, 1:46:04 AM), score (53/100), and reason text.",
+    "evidence_signoff_and_send": "PASS — evidence-signed-by input present and prefilled from config ('Jane Auditor, Internal Audit'). evidence-send-now → POST /api/sap/sod-evidence/send 200; toast reads 'SoD evidence pack emailed to 1 recipient(s) · 72 conflict(s) · signed by Jane Auditor'.",
+    "evidence_preview": "PASS — evidence-preview → GET /api/sap/sod-evidence/preview 200. evidence-preview-dialog opens with email body, meta line 'Not scheduled · sends every Monday to 1 recipient(s): jblan2026@gmail.com · signed by Jane Auditor, Internal Audit', and evidence-preview-table with 25 tbody rows.",
+    "regression": "PASS — digest-save, digest-chat-toggle, digest-teams-url, digest-slack-url, scorecard-annotations (W32..W26 rendered), scorecard-export (CSV), scorecard-export-pdf, evidence-export-csv, evidence-export-pdf all present. digest-save persists full config.",
+    "audit_log_sapinsight": "PASS — /app/audit renders data-testid=sap-insight-audit-log with header 'AI Analyst — Audit Log' and sap-insight-run-audit-log button. Immutable audit log entries below render as list rows (sap.digest.config, sap.sod.evidence.send, user.login, sap.mover.strip.carried_over, etc.). Note: entries render as div rows, not as an HTML <table> element — visually correct but no <table> DOM node."
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Login submit via clicking data-testid=auth-submit did not trigger a POST /api/auth/login in Playwright; pressing Enter on the password input worked. May be a form onSubmit vs onClick handler ambiguity — worth verifying handleSubmit is on the <form> element and the submit button is type='submit'.",
+    "Immutable Audit Log renders as a list of divs rather than an actual <table>. Fine visually but semantically inaccurate given the label 'audit log table' — consider using <table> for a11y."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped)", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md) — works.",
+  "seed_data_creation": "Recorded one new alert history entry via score-alert-check (demo state restored by main agent per note). Sev thresholds temporarily changed to 30/55 during persistence test and restored to defaults 25/50.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 5 new governance features on SoD Command Center + SapInsight on Audit Log verified end-to-end in UI. Use Enter-key on password field for reliable login; clicking auth-submit did not fire the submit in this environment.",
+  "rca of the issue": "No issues to root cause."
+}

@@ -78,8 +78,8 @@ def _governance_digest_html(d):
 # ── Governance Digest scheduling config + Slack/Teams alert ───────────────────
 _DIGEST_DEFAULT = {"enabled": True, "recipients": [], "days": "everyday", "chat_alert": True,
                    "teams_url": "", "slack_url": "",
-                   "score_alert": True, "score_threshold": 60,
-                   "evidence_export": False, "evidence_recipients": [], "evidence_day": "mon"}
+                   "score_alert": True, "score_threshold": 60, "sev_thresholds": {"Critical": 25, "High": 50},
+                   "evidence_export": False, "evidence_recipients": [], "evidence_day": "mon", "evidence_signed_by": ""}
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 
 
@@ -133,9 +133,11 @@ class DigestConfigBody(BaseModel):
     slack_url: str = ""
     score_alert: bool = True
     score_threshold: int = 60
+    sev_thresholds: dict = {}
     evidence_export: bool = False
     evidence_recipients: list[str] = []
     evidence_day: str = "mon"
+    evidence_signed_by: str = ""
 
 
 @sap_router.get("/digest/config")
@@ -163,11 +165,20 @@ async def put_digest_config(body: DigestConfigBody, user: dict = Depends(require
     days = body.days if body.days in ("everyday", "weekdays") else "everyday"
     recips = [e.strip() for e in body.recipients if e.strip()]
     evid_recips = [e.strip() for e in body.evidence_recipients if e.strip()]
+    sevt = {}
+    for k, v in (body.sev_thresholds or {}).items():
+        if k in ("Critical", "High", "Medium"):
+            try:
+                sevt[k] = max(0, int(v))
+            except Exception:
+                pass
     doc = {"org_id": org_id, "enabled": body.enabled, "recipients": recips, "days": days,
            "chat_alert": body.chat_alert, "teams_url": body.teams_url.strip(), "slack_url": body.slack_url.strip(),
            "score_alert": body.score_alert, "score_threshold": max(0, min(100, int(body.score_threshold or 60))),
+           "sev_thresholds": sevt or _DIGEST_DEFAULT["sev_thresholds"],
            "evidence_export": body.evidence_export, "evidence_recipients": evid_recips,
-           "evidence_day": body.evidence_day if body.evidence_day in _WEEKDAYS else "mon"}
+           "evidence_day": body.evidence_day if body.evidence_day in _WEEKDAYS else "mon",
+           "evidence_signed_by": (body.evidence_signed_by or "").strip()[:120]}
     await db.sap_digest_config.update_one({"org_id": org_id}, {"$set": doc}, upsert=True)
     await _audit(org_id, user["email"], "sap.digest.config",
                  f"enabled={body.enabled} days={days} chat={body.chat_alert} recipients={len(recips)} "
@@ -612,33 +623,47 @@ async def run_sap_weekly_scorecard():
 
 # ── Scorecard threshold alert (Slack / Teams the moment the score drops below target) ─────────
 async def _check_score_alert(org_id, force=False):
-    """Post a Slack/Teams alert when the governance score falls below the org's target threshold.
-    De-duped per ISO week so a sustained dip alerts once; recovery clears the flag so the next drop re-alerts."""
+    """Post a Slack/Teams alert when the governance score falls below target OR open Critical/High SoD
+    conflicts exceed their per-severity thresholds. De-duped per ISO week (recovery clears the flag);
+    every alert is recorded to sap_score_alert_log for the Alert History."""
     from kernel import notifications
     cfg = await _get_digest_config(org_id)
     m = await _scorecard_metrics(org_id)
     score = m["governance_score"]
     thr = int(cfg.get("score_threshold") or 60)
-    below = score < thr
+    sevt = cfg.get("sev_thresholds") or {}
+    reasons = []
+    if score < thr:
+        reasons.append(f"Governance score {score}/100 below target {thr}/100")
+    for sev in ("Critical", "High", "Medium"):
+        lim = sevt.get(sev)
+        if lim is not None and m["sev"].get(sev, 0) > int(lim):
+            reasons.append(f"Open {sev} SoD {m['sev'][sev]} over limit {lim}")
+    below = bool(reasons)
     wk = _now().strftime("%G-W%V")
     state = await db.sap_digest_state.find_one({"org_id": org_id}, {"_id": 0}) or {}
     already = state.get("score_alert_week") == wk
     posted = False
     if cfg.get("score_alert") and below and (force or not already):
-        title = "🔴 SAP Access Governance score below target"
-        text = (f"Governance score {score}/100 dropped below the {thr}/100 target. "
-                f"Open SoD {m['open_sod']} (Critical {m['sev']['Critical']} · High {m['sev']['High']}) · "
+        title = "🔴 SAP Access Governance alert — threshold breached"
+        text = (f"Governance score {score}/100 · Open SoD {m['open_sod']} "
+                f"(Critical {m['sev']['Critical']} · High {m['sev']['High']}) · "
                 f"Residual-access leavers {m['residual']} · Avg SAP risk {m['avg_risk']}/100. "
-                f"Sign in to the SoD Command Center to remediate.")
+                f"Breached: {'; '.join(reasons)}. Sign in to the SoD Command Center to remediate.")
         posted = await _sap_post_chat(org_id, cfg, title, text)
-        await notifications.create(org_id, "report", "SAP governance score below target", text,
+        await notifications.create(org_id, "report", "SAP governance threshold breached", text,
                                    ref="sap-score-alert", dedupe_key=f"sap-score:{wk}")
+        await db.sap_score_alert_log.insert_one({
+            "org_id": org_id, "at": _now().isoformat(), "score": score, "threshold": thr,
+            "critical": m["sev"]["Critical"], "high": m["sev"]["High"], "medium": m["sev"]["Medium"],
+            "open_sod": m["open_sod"], "reasons": reasons, "posted": posted, "week": wk})
         await db.sap_digest_state.update_one({"org_id": org_id},
                                              {"$set": {"org_id": org_id, "score_alert_week": wk}}, upsert=True)
     if not below and state.get("score_alert_week"):
         await db.sap_digest_state.update_one({"org_id": org_id}, {"$unset": {"score_alert_week": ""}})
-    return {"score": score, "threshold": thr, "below": below, "posted": posted,
-            "enabled": bool(cfg.get("score_alert")), "alerted_this_week": already and not force}
+    return {"score": score, "threshold": thr, "below": below, "reasons": reasons, "posted": posted,
+            "enabled": bool(cfg.get("score_alert")), "alerted_this_week": already and not force,
+            "sev": m["sev"], "sev_thresholds": sevt}
 
 
 async def run_sap_scorecard_alerts():
@@ -660,6 +685,15 @@ async def scorecard_alert_check(user: dict = Depends(require_roles("admin"))):
     org_id = user["org_id"]
     await _ensure(org_id)
     return await _check_score_alert(org_id, force=True)
+
+
+@sap_router.get("/scorecard/alerts")
+async def scorecard_alerts(user: dict = Depends(get_current_user)):
+    """Alert History — every recorded governance score-drop / threshold-breach alert."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    log = await db.sap_score_alert_log.find({"org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(100)
+    return {"log": log, "total": await db.sap_score_alert_log.count_documents({"org_id": org_id})}
 
 
 # ── SoD Evidence Pack (auditor CSV/PDF + scheduled weekly auto-email) ─────────────────────────
@@ -709,7 +743,7 @@ def _sod_evidence_csv(rows, summary):
     return sio.getvalue()
 
 
-def _sod_evidence_pdf(rows, summary):
+def _sod_evidence_pdf(rows, summary, signed_by=""):
     """Branded SOX-grade PDF evidence pack of every SoD conflict and its remediation state."""
     from reportlab.lib.pagesizes import LETTER, landscape
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -755,6 +789,20 @@ def _sod_evidence_pdf(rows, summary):
         ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
     ]))
     flow.append(tbl)
+    flow.append(Spacer(1, 10))
+    stamp_txt = (f"REVIEWED &amp; SIGNED — {signed_by} · {_now().strftime('%B %d, %Y')}"
+                 if signed_by else
+                 "REVIEWED &amp; SIGNED — Auditor: ____________________     Signature: ____________________     Date: ____________")
+    sign_st = ParagraphStyle("sg", parent=ss["Normal"], fontSize=10, leading=14, fontName="Helvetica-Bold",
+                             textColor=(colors.HexColor("#166534") if signed_by else navy))
+    sign_tbl = Table([[Paragraph(stamp_txt, sign_st)]], colWidths=[9.0 * inch])
+    sign_tbl.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 1.2, colors.HexColor("#16a34a") if signed_by else colors.HexColor("#94a3b8")),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#dcfce7") if signed_by else colors.white),
+        ("TOPPADDING", (0, 0), (-1, -1), 9), ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+        ("LEFTPADDING", (0, 0), (-1, -1), 12), ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+    ]))
+    flow.append(sign_tbl)
     flow.append(Spacer(1, 8))
     flow.append(Paragraph("Obserra — Executive Protection &amp; Intelligence LLC · Confidential · "
                           "Live SoD detection across the SAP access model. Each conflict lists the toxic function "
@@ -788,17 +836,21 @@ def _sod_evidence_html(summary):
         'Obserra — Executive Protection &amp; Intelligence LLC · Confidential.</p></div></div>')
 
 
-def _sod_evidence_attachment(rows, summary):
+def _sod_evidence_attachment(rows, summary, signed_by=""):
     import base64
-    pdf = _sod_evidence_pdf(rows, summary)
+    pdf = _sod_evidence_pdf(rows, summary, signed_by)
     return [{"filename": f"sap-sod-evidence-{_now().strftime('%Y%m%d')}.pdf",
              "content": base64.b64encode(pdf.getvalue()).decode()}]
 
 
+class SodEvidenceBody(BaseModel):
+    signed_by: str = ""
+
+
 @sap_router.get("/sod-evidence/export")
-async def sod_evidence_export(format: str = "pdf", status: str = "", severity: str = "",
+async def sod_evidence_export(format: str = "pdf", status: str = "", severity: str = "", signed_by: str = "",
                               user: dict = Depends(get_current_user)):
-    """Download the SoD evidence pack (branded PDF or auditor CSV), optionally filtered by status/severity."""
+    """Download the SoD evidence pack (branded PDF or auditor CSV), optionally filtered + signed off."""
     org_id = user["org_id"]
     await _ensure(org_id)
     if format not in ("csv", "pdf"):
@@ -808,20 +860,39 @@ async def sod_evidence_export(format: str = "pdf", status: str = "", severity: s
     if format == "csv":
         return Response(content=_sod_evidence_csv(rows, summary), media_type="text/csv",
                         headers={"Content-Disposition": f'attachment; filename="{fname}.csv"'})
-    pdf = _sod_evidence_pdf(rows, summary)
+    pdf = _sod_evidence_pdf(rows, summary, signed_by.strip()[:120])
     return Response(content=pdf.getvalue(), media_type="application/pdf",
                     headers={"Content-Disposition": f'attachment; filename="{fname}.pdf"'})
 
 
+@sap_router.get("/sod-evidence/preview")
+async def sod_evidence_preview(user: dict = Depends(get_current_user)):
+    """Live preview of exactly what the weekly auto-emailed SoD evidence pack will contain."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    cfg = await _get_digest_config(org_id)
+    rows, summary = await _sod_evidence_rows(org_id)
+    if cfg.get("evidence_recipients"):
+        emails = cfg["evidence_recipients"]
+    else:
+        recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
+                                     {"_id": 0, "email": 1}).to_list(200)
+        emails = [r["email"] for r in recips]
+    return {"html": _sod_evidence_html(summary), "summary": summary, "rows": rows[:25],
+            "recipients": emails, "evidence_day": cfg.get("evidence_day", "mon"),
+            "signed_by": cfg.get("evidence_signed_by", ""), "enabled": bool(cfg.get("evidence_export"))}
+
+
 @sap_router.post("/sod-evidence/send")
-async def sod_evidence_send(user: dict = Depends(require_roles("admin"))):
-    """Email the SoD evidence pack PDF now to the configured auditors (or admins/execs)."""
+async def sod_evidence_send(body: SodEvidenceBody, user: dict = Depends(require_roles("admin"))):
+    """Email the SoD evidence pack PDF now to the configured auditors (or admins/execs), signed off."""
     org_id = user["org_id"]
     await _ensure(org_id)
     from kernel import notifications
     cfg = await _get_digest_config(org_id)
     rows, summary = await _sod_evidence_rows(org_id)
-    att = _sod_evidence_attachment(rows, summary)
+    signed_by = (body.signed_by or cfg.get("evidence_signed_by") or user.get("name") or user["email"]).strip()[:120]
+    att = _sod_evidence_attachment(rows, summary, signed_by)
     html = _sod_evidence_html(summary)
     if cfg.get("evidence_recipients"):
         emails = cfg["evidence_recipients"]
@@ -833,8 +904,10 @@ async def sod_evidence_send(user: dict = Depends(require_roles("admin"))):
     for e in emails:
         if await notifications.send_email(e, "SAP SoD Evidence Pack — Obserra UAC", html, attachments=att):
             sent += 1
-    await _audit(org_id, user["email"], "sap.sod.evidence.send", f"evidence pack emailed to {len(emails)}, {sent} sent")
-    return {"ok": True, "sent": sent, "recipients": emails, "conflicts": summary["total"], "summary": summary}
+    await _audit(org_id, user["email"], "sap.sod.evidence.send",
+                 f"evidence pack emailed to {len(emails)}, {sent} sent, signed_by={signed_by}")
+    return {"ok": True, "sent": sent, "recipients": emails, "conflicts": summary["total"],
+            "signed_by": signed_by, "summary": summary}
 
 
 async def run_sap_sod_evidence_export():
@@ -854,7 +927,7 @@ async def run_sap_sod_evidence_export():
             continue
         try:
             rows, summary = await _sod_evidence_rows(org_id)
-            att = _sod_evidence_attachment(rows, summary)
+            att = _sod_evidence_attachment(rows, summary, cfg.get("evidence_signed_by", ""))
             html = _sod_evidence_html(summary)
             if cfg.get("evidence_recipients"):
                 emails = cfg["evidence_recipients"]
@@ -870,3 +943,67 @@ async def run_sap_sod_evidence_export():
                 ref="sap-sod-evidence", dedupe_key=f"sap-sod-evidence:{now.date().isoformat()}")
         except Exception:
             pass
+
+
+# ── "Why did the score move?" — one-line AI explanation of the 8-week trend ──────────────────
+def _score_why_fallback(sc):
+    trend = sc.get("trend") or []
+    if len(trend) < 2:
+        return "Not enough weekly history yet to explain the score movement."
+    first, last = trend[0], trend[-1]
+    dg = last["governance_score"] - first["governance_score"]
+    parts = []
+    dsod = last["open_sod"] - first["open_sod"]
+    if dsod < 0:
+        parts.append(f"{abs(dsod)} fewer open SoD conflicts")
+    elif dsod > 0:
+        parts.append(f"{dsod} more open SoD conflicts")
+    dauto = last.get("autoremediated", 0) - first.get("autoremediated", 0)
+    if dauto > 0:
+        parts.append(f"{dauto} auto-remediations")
+    dmov = last.get("movers", 0) - first.get("movers", 0)
+    if dmov > 0:
+        parts.append(f"{dmov} mover(s) cleaned")
+    dres = last["residual"] - first["residual"]
+    if dres < 0:
+        parts.append(f"{abs(dres)} residual-access leaver(s) cleared")
+    elif dres > 0:
+        parts.append(f"{dres} new residual-access leaver(s)")
+    direction = "rose" if dg > 0 else "fell" if dg < 0 else "held flat"
+    drivers = ", ".join(parts) or "steady posture across the period"
+    return f"Governance score {direction} {abs(dg)} pts over 8 weeks, driven by {drivers}."
+
+
+@sap_router.get("/scorecard/why")
+async def scorecard_why(user: dict = Depends(get_current_user)):
+    """One-line AI explanation of the 8-week governance score movement (LLM, deterministic fallback)."""
+    org_id = user["org_id"]
+    await _ensure(org_id)
+    sc = await _scorecard_payload(org_id, record=False)
+    ctx = {"trend": sc.get("trend"), "current": sc.get("current")}
+    try:
+        import asyncio
+        import json as _json
+        from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
+        system = ("You are the Obserra SAP UAC AI Analyst. Given an 8-week SAP Access Governance scorecard trend, "
+                  "explain in ONE concise sentence (max 30 words) WHY the governance score moved — cite the biggest "
+                  "drivers (open SoD change, auto-remediations, movers cleaned, residual leavers). Ground it in the "
+                  "numbers. Return ONLY the sentence, no preamble.")
+        chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"sap-why-{org_id}",
+                       system_message=system).with_model("openai", "gpt-5.4")
+        prompt = f"SCORECARD TREND (JSON):\n{_json.dumps(ctx, default=str)[:6000]}"
+        collected = []
+
+        async def _run():
+            async for ev in chat.stream_message(UserMessage(text=prompt)):
+                if isinstance(ev, TextDelta):
+                    collected.append(ev.content)
+                elif isinstance(ev, StreamDone):
+                    break
+        await asyncio.wait_for(_run(), timeout=14)
+        text = "".join(collected).strip().strip('"').strip()
+        if not text:
+            return {"summary": _score_why_fallback(sc), "model": "deterministic-fallback", "generated_at": _now().isoformat()}
+        return {"summary": text[:400], "model": "openai/gpt-5.4", "generated_at": _now().isoformat()}
+    except Exception:
+        return {"summary": _score_why_fallback(sc), "model": "deterministic-fallback", "generated_at": _now().isoformat()}
