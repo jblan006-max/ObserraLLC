@@ -12,6 +12,13 @@ import {
 } from "lucide-react";
 
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
+const slaAge = (s) => {
+  if (!s) return null;
+  const h = Math.max(0, (Date.now() - new Date(s).getTime()) / 3.6e6);
+  const label = h < 24 ? `${Math.max(1, Math.round(h))}h` : `${Math.round(h / 24)}d`;
+  const color = h >= 72 ? "bg-crit/15 text-crit" : h >= 24 ? "bg-high/15 text-high" : "bg-low/15 text-low";
+  return { label, color };
+};
 const fmtBytes = (b) => (b == null ? "—" : b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`);
 const DOT_COLOR = { ok: "142 70% 45%", degraded: "35 90% 55%", down: "0 84% 60%" };
 const RANGES = [{ label: "24h", h: 24 }, { label: "7d", h: 168 }, { label: "30d", h: 720 }];
@@ -363,6 +370,13 @@ export default function SystemHealth() {
   const revokeRoom = async (token) => {
     try { await api.post("/deploy/audit-room/revoke", { token }); toast.success("Audit room revoked"); await loadRooms(); }
     catch (e) { toast.error(e.response?.data?.detail || "Couldn't revoke"); }
+  };
+  const renewRoom = async (token) => {
+    try {
+      const { data } = await api.post("/deploy/audit-room/renew", { token, ttl_days: 14 });
+      toast.success("Audit Room renewed", { description: `Now expires ${fmtDT(data.expires_at)}.` });
+      await loadRooms();
+    } catch (e) { toast.error(e.response?.data?.detail || "Couldn't renew"); }
   };
   const revokeAllShares = async () => {
     if (!window.confirm("Revoke ALL auditor share links and audit rooms? External auditors will immediately lose access.")) return;
@@ -818,6 +832,7 @@ export default function SystemHealth() {
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
+                  <button data-testid={`sh-room-renew-${r.token}`} onClick={() => renewRoom(r.token)} className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-secondary/60" title="Renew (extend 14 days)"><RefreshCw className="w-4 h-4" /></button>
                   <a href={r.url} target="_blank" rel="noreferrer" className="p-1.5 rounded-md text-muted-foreground hover:text-primary hover:bg-secondary/60" title="Open portal"><DoorOpen className="w-4 h-4" /></a>
                   <button data-testid={`sh-room-revoke-${r.token}`} onClick={() => revokeRoom(r.token)} className="p-1.5 rounded-md text-muted-foreground hover:text-crit hover:bg-secondary/60" title="Revoke room"><Trash2 className="w-4 h-4" /></button>
                 </div>
@@ -855,7 +870,12 @@ export default function SystemHealth() {
                 <div key={c.id || i} className="bg-secondary/25 rounded-lg px-3 py-2.5" data-testid={`sh-comment-${i}`}>
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-xs font-semibold">{c.author}</span>
-                    <span className="text-[11px] text-muted-foreground">{fmtDT(c.at)}</span>
+                    <div className="flex items-center gap-2">
+                      {st !== "Resolved" && slaAge(c.at) && (
+                        <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded ${slaAge(c.at).color}`} data-testid={`sh-comment-sla-${i}`}>waiting {slaAge(c.at).label}</span>
+                      )}
+                      <span className="text-[11px] text-muted-foreground">{fmtDT(c.at)}</span>
+                    </div>
                   </div>
                   <p className="text-sm text-foreground/90 mt-1 whitespace-pre-wrap break-words">{c.comment}</p>
                   {c.reply && (

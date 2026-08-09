@@ -1839,6 +1839,7 @@ def _audit_room_html(org_name, room, findings, latest, branding=None, comments=N
         '<p class="hint">Auditors can leave notes or questions for the SAP access governance team.</p>'
         '<div id="cbox">'
         '<input id="cauth" placeholder="Your name (optional)" />'
+        '<input id="cmail" type="email" placeholder="Your email (optional — we will notify you of replies)" />'
         '<textarea id="ctext" placeholder="Your comment or question…" rows="3"></textarea>'
         '<button class="btn" id="csend" onclick="sendComment()">Submit comment</button>'
         '<div id="cmsg" class="hint" style="margin-top:6px"></div></div>'
@@ -1846,10 +1847,11 @@ def _audit_room_html(org_name, room, findings, latest, branding=None, comments=N
         'async function sendComment(){'
         'var t=document.getElementById("ctext").value.trim();'
         'var a=document.getElementById("cauth").value.trim();'
+        'var e2=document.getElementById("cmail").value.trim();'
         'var m=document.getElementById("cmsg");'
         'if(!t){m.textContent="Please enter a comment.";return;}'
         'document.getElementById("csend").disabled=true;'
-        f'try{{var r=await fetch("/api/deploy/audit-room/{room["token"]}/comment",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{author:a,comment:t}})}});'
+        f'try{{var r=await fetch("/api/deploy/audit-room/{room["token"]}/comment",{{method:"POST",headers:{{"Content-Type":"application/json"}},body:JSON.stringify({{author:a,email:e2,comment:t}})}});'
         'if(r.ok){document.getElementById("cbox").innerHTML="<p style=\\"color:#12805c;font-weight:600\\">Thank you — your comment was sent to the governance team.</p>";}'
         'else{m.textContent="Could not submit — the link may have expired.";document.getElementById("csend").disabled=false;}'
         '}catch(e){m.textContent="Network error, please try again.";document.getElementById("csend").disabled=false;}'
@@ -2013,6 +2015,7 @@ async def revoke_all_shares(user: dict = Depends(get_current_user)):
 
 class RoomCommentBody(BaseModel):
     author: str = ""
+    email: str = ""
     comment: str
 
 
@@ -2029,11 +2032,12 @@ async def audit_room_comment(token: str, body: RoomCommentBody):
     if not text:
         raise HTTPException(400, "A comment is required.")
     author = (body.author or "").strip()[:120] or "Anonymous auditor"
+    author_email = (body.email or "").strip()[:200]
     org_id = room["org_id"]
     import secrets
     cid = secrets.token_urlsafe(9)
     await db.audit_room_comments.insert_one({
-        "id": cid, "token": token, "org_id": org_id, "author": author,
+        "id": cid, "token": token, "org_id": org_id, "author": author, "author_email": author_email,
         "comment": text[:2000], "at": _now_iso(),
         "status": "Open", "reply": None, "reply_by": None, "reply_at": None})
     await db.audit_rooms.update_one({"token": token}, {"$inc": {"comments": 1}})
@@ -2062,7 +2066,13 @@ async def audit_room_comment(token: str, body: RoomCommentBody):
 async def list_audit_room_comments(user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(403, "Admins only")
-    rows = await db.audit_room_comments.find({"org_id": user["org_id"]}, {"_id": 0}).sort("at", -1).to_list(200)
+    import secrets
+    org_id = user["org_id"]
+    # Backfill legacy comments so every one has an id + status and is replyable from the inbox.
+    async for c in db.audit_room_comments.find({"org_id": org_id, "id": {"$exists": False}}, {"_id": 1}):
+        await db.audit_room_comments.update_one(
+            {"_id": c["_id"]}, {"$set": {"id": secrets.token_urlsafe(9), "status": "Open"}})
+    rows = await db.audit_room_comments.find({"org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(200)
     return {"comments": rows}
 
 
@@ -2083,6 +2093,24 @@ async def reply_audit_room_comment(comment_id: str, body: CommentReplyBody, user
         {"$set": {"reply": reply[:2000], "reply_by": user["email"], "reply_at": _now_iso(), "status": "Resolved"}})
     if res.matched_count == 0:
         raise HTTPException(404, "Comment not found.")
+    # Notify the auditor by email (if they left one) so they don't have to keep re-checking the portal.
+    try:
+        doc = await db.audit_room_comments.find_one({"id": comment_id, "org_id": user["org_id"]}, {"_id": 0})
+        em = (doc or {}).get("author_email") or ""
+        if em and "@" in em:
+            from kernel import notifications
+            from bson import ObjectId
+            org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+            oname = org.get("name") or "the organization"
+            html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
+                    f"<h2 style='color:#0f1e3d'>Reply to your audit comment</h2>"
+                    f"<p>The SAP access governance team at <strong>{_esc_html(oname)}</strong> replied to your comment:</p>"
+                    f"<blockquote style='border-left:3px solid #2f6df6;margin:0;padding:6px 14px;color:#374151'>{_esc_html(reply[:1000])}</blockquote>"
+                    f"<p style='font-size:12px;color:#6b7280'>Your original note: {_esc_html((doc.get('comment') or '')[:300])}</p>"
+                    f"<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — Audit Room</p></div>")
+            await notifications.send_email(em, f"Reply to your audit comment — {oname}", html)
+    except Exception:
+        pass
     return {"ok": True}
 
 
@@ -2102,6 +2130,27 @@ async def set_audit_room_comment_status(comment_id: str, body: CommentStatusBody
     if res.matched_count == 0:
         raise HTTPException(404, "Comment not found.")
     return {"ok": True}
+
+
+class RenewRoomBody(BaseModel):
+    token: str
+    ttl_days: int = 14
+
+
+@deploy_router.post("/audit-room/renew")
+async def renew_audit_room(body: RenewRoomBody, user: dict = Depends(get_current_user)):
+    """Extend an expiring Audit Room in one click and re-arm its expiry reminder."""
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from datetime import datetime, timezone, timedelta
+    ttl = max(1, min(90, int(body.ttl_days or 14)))
+    expires = (datetime.now(timezone.utc) + timedelta(days=ttl)).isoformat()
+    res = await db.audit_rooms.update_one(
+        {"token": body.token, "org_id": user["org_id"]},
+        {"$set": {"expires_at": expires}, "$unset": {"expiry_reminder_sent": ""}})
+    if res.matched_count == 0:
+        raise HTTPException(404, "Audit room not found.")
+    return {"ok": True, "expires_at": expires, "ttl_days": ttl}
 
 
 async def _run_audit_room_expiry_reminders(within_days: int = 3):
@@ -2128,11 +2177,13 @@ async def _run_audit_room_expiry_reminders(within_days: int = 3):
                                        ref="system-health", dedupe_key=f"room-expiry:{token}")
             recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
                                          {"_id": 0, "email": 1}).to_list(200)
+            link = (os.environ.get("FRONTEND_URL", "").rstrip("/")) + "/app/system-health"
             html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
                     f"<h2 style='color:#b45309'>Audit Room link expiring soon</h2>"
                     f"<p>An external auditor Audit Room for <strong>{_esc_html(oname)}</strong> expires on "
                     f"<strong>{exp[:10]}</strong> — about {days_left} day(s) away.</p>"
-                    f"<p>Open <strong>System Health → Shared Access Links</strong> to renew it so your audit doesn't stall on a dead link.</p>"
+                    f"<p style='margin:18px 0'><a href='{link}' style='background:#2f6df6;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600' target='_blank'>Open System Health to renew</a></p>"
+                    f"<p class='hint' style='font-size:12px;color:#6b7280'>In the <strong>Shared Access Links</strong> panel, click <strong>Renew</strong> on the room to extend it in one click — so your audit doesn't stall on a dead link.</p>"
                     f"<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — System Health · Audit Room</p></div>")
             for rr in recips:
                 try:
