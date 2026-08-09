@@ -330,6 +330,30 @@ async def upgrade(background_tasks: BackgroundTasks, user: dict = Depends(get_cu
 # --- Backups (org-scoped Mongo export/restore; runs nightly from the daily cron) ---
 _BACKUP_DIR = os.environ.get("BACKUP_DIR", os.path.join(_ROOT, "backups"))
 
+_DEFAULT_BACKUP_CFG = {"enabled": True, "frequency": "daily", "keep": 14}
+_DEFAULT_ALERT_CFG = {
+    "db": {"slack": True, "teams": True, "email": True},
+    "connector": {"slack": True, "teams": True, "email": False},
+    "scheduler": {"slack": True, "teams": True, "email": True},
+}
+
+
+def _backup_cfg(org):
+    c = ((org or {}).get("system_health") or {}).get("backup") or {}
+    freq = c.get("frequency", "daily")
+    return {"enabled": bool(c.get("enabled", True)),
+            "frequency": freq if freq in ("daily", "weekly") else "daily",
+            "keep": max(1, min(90, int(c.get("keep") or 14)))}
+
+
+def _alert_cfg(org):
+    saved = ((org or {}).get("system_health") or {}).get("alerts") or {}
+    out = {}
+    for k, d in _DEFAULT_ALERT_CFG.items():
+        s = saved.get(k) or {}
+        out[k] = {ch: bool(s.get(ch, d[ch])) for ch in ("slack", "teams", "email")}
+    return out
+
 
 def _safe_backup_path(filename: str) -> str:
     name = os.path.basename(filename or "")
@@ -437,15 +461,28 @@ def _prune_backups(org_id: str, keep: int = 14):
 
 
 async def backup_all_orgs():
-    """Nightly backup of every org (invoked from the daily cron); best-effort, keeps last 14."""
+    """Nightly backup of every org (invoked from the daily cron); honours each org's schedule
+    config (enabled, daily/weekly frequency, snapshots to keep). Best-effort."""
     import logging
+    from datetime import datetime, timezone, timedelta
     from db import db
-    orgs = await db.organizations.find({}, {"_id": 1}).to_list(1000)
+    orgs = await db.organizations.find({}).to_list(1000)
     for o in orgs:
         oid = str(o["_id"])
+        cfg = _backup_cfg(o)
+        if not cfg["enabled"]:
+            continue
         try:
-            await backup_org(oid)
-            _prune_backups(oid)
+            if cfg["frequency"] == "weekly":
+                existing = _list_backup_files(oid)
+                if existing:
+                    la = datetime.fromisoformat(existing[0]["created_at"])
+                    if la.tzinfo is None:
+                        la = la.replace(tzinfo=timezone.utc)
+                    if datetime.now(timezone.utc) - la < timedelta(days=6, hours=12):
+                        continue
+            await backup_org(oid, tag="nightly")
+            _prune_backups(oid, keep=cfg["keep"])
         except Exception as e:
             logging.getLogger("deploy").warning(f"nightly backup failed for org {oid}: {e}")
 
@@ -454,9 +491,38 @@ async def backup_all_orgs():
 async def backup_now(user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(403, "Only admins can create backups")
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
     res = await backup_org(user["org_id"])
-    _prune_backups(user["org_id"])
+    _prune_backups(user["org_id"], keep=_backup_cfg(org)["keep"])
     return res
+
+
+class BackupConfig(BaseModel):
+    enabled: bool = True
+    frequency: str = "daily"
+    keep: int = 14
+
+
+@deploy_router.get("/backup-config")
+async def get_backup_config(user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    return _backup_cfg(org)
+
+
+@deploy_router.put("/backup-config")
+async def put_backup_config(body: BackupConfig, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from bson import ObjectId
+    if body.frequency not in ("daily", "weekly"):
+        raise HTTPException(400, "frequency must be 'daily' or 'weekly'")
+    cfg = {"enabled": bool(body.enabled), "frequency": body.frequency,
+           "keep": max(1, min(90, int(body.keep)))}
+    await db.organizations.update_one({"_id": ObjectId(user["org_id"])},
+                                      {"$set": {"system_health.backup": cfg}})
+    return cfg
 
 
 @deploy_router.get("/backups")
@@ -494,7 +560,7 @@ async def evaluate_org_health(org_id: str) -> dict:
     """Per-org system-health snapshot (DB, scheduler, connectors) for the header pill + alerts."""
     import time
     from db import db
-    issues = []
+    issue_types = []
     t0 = time.perf_counter()
     db_ok = True
     try:
@@ -503,73 +569,179 @@ async def evaluate_org_health(org_id: str) -> dict:
         db_ok = False
     latency = round((time.perf_counter() - t0) * 1000, 1)
     if not db_ok:
-        issues.append("Database is not responding")
+        issue_types.append(("db", "Database is not responding"))
     cron_ok = bool(os.environ.get("WEBHOOK_CRON_SECRET"))
     if not cron_ok:
-        issues.append("Scheduler is not armed")
-    degraded = []
+        issue_types.append(("scheduler", "Scheduler is not armed"))
+    degraded, degraded_detail = [], []
     try:
+        from connectors_catalog import CATALOG
+        names = {e["id"]: e["name"] for e in CATALOG}
         states = await db.connector_state.find({"org_id": org_id}).to_list(500)
         for st in states:
             if st.get("state") in ("degraded", "unreachable", "error", "auth_failed"):
-                degraded.append(st.get("cid") or "connector")
+                cid = st.get("cid") or "connector"
+                degraded.append(cid)
+                degraded_detail.append({"cid": cid, "name": names.get(cid, cid), "state": st.get("state"),
+                                        "detail": st.get("detail") or "", "checked_at": st.get("checked_at")})
     except Exception:
         pass
     if degraded:
-        issues.append(f"{len(degraded)} connector(s) degraded: {', '.join(degraded[:5])}")
-    status = "down" if not db_ok else ("degraded" if issues else "ok")
+        issue_types.append(("connector", f"{len(degraded)} connector(s) degraded: {', '.join(degraded[:5])}"))
+    issues = [m for _, m in issue_types]
+    status = "down" if not db_ok else ("degraded" if issue_types else "ok")
     return {"status": status, "db": db_ok, "db_latency_ms": latency, "scheduler_armed": cron_ok,
-            "degraded_connectors": degraded, "issues": issues, "healthy": not issues}
+            "degraded_connectors": degraded, "degraded_detail": degraded_detail,
+            "issues": issues, "issue_types": issue_types, "healthy": not issue_types}
+
+
+async def _route_alert(org, channels, title, body):
+    """Post a health alert to only the channels enabled for this event type."""
+    import httpx
+    from kernel import notifications
+    org_id = str(org["_id"])
+    alerts = org.get("scan_alerts") or {}
+    teams_url = alerts.get("teams_url") or (org.get("live_teams") or {}).get("webhook_url")
+    slack_url = alerts.get("slack_url")
+    async with httpx.AsyncClient(timeout=15) as c:
+        if channels.get("teams") and teams_url:
+            try:
+                await c.post(teams_url, json={"@type": "MessageCard", "@context": "https://schema.org/extensions",
+                                              "summary": title, "themeColor": "b45309", "title": title, "text": body})
+            except Exception:
+                pass
+        if channels.get("slack") and slack_url:
+            try:
+                await c.post(slack_url, json={"text": f"*{title}*\n{body}"})
+            except Exception:
+                pass
+    if channels.get("email"):
+        recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
+                                     {"_id": 0, "email": 1}).to_list(200)
+        html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
+                f"<h2 style='color:#b45309'>{title}</h2><p>{body}</p>"
+                f"<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — System Health</p></div>")
+        for r in recips:
+            try:
+                await notifications.send_email(r["email"], title, html)
+            except Exception:
+                pass
+
+
+async def _record_health(org_id, h, min_gap_min=12):
+    """Append a throttled health sample to db.health_history for the 24h uptime strip."""
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    last = await db.health_history.find_one({"org_id": org_id}, sort=[("at", -1)])
+    if last:
+        try:
+            la = datetime.fromisoformat(last["at"])
+            if la.tzinfo is None:
+                la = la.replace(tzinfo=timezone.utc)
+            if now - la < timedelta(minutes=min_gap_min):
+                return
+        except Exception:
+            pass
+    await db.health_history.insert_one({
+        "org_id": org_id, "at": now.isoformat(), "status": h.get("status"),
+        "healthy": h.get("healthy"), "db_ok": h.get("db"),
+        "scheduler_armed": h.get("scheduler_armed"),
+        "degraded_count": len(h.get("degraded_connectors") or [])})
+    cutoff = (now - timedelta(days=7)).isoformat()
+    await db.health_history.delete_many({"org_id": org_id, "at": {"$lt": cutoff}})
 
 
 async def run_health_alerts():
-    """Folded into the daily cron: alert Slack/Teams + in-app when an org's DB, a connector,
-    or the scheduler is degraded (deduped once per day)."""
+    """Folded into the daily cron: route Slack/Teams/email + in-app alerts per event type
+    (DB / connector / scheduler) when degraded, deduped once per day; records a health sample."""
     import logging
     from datetime import datetime, timezone
-    from db import db
-    from self_scan import _post_chat_alert
     from kernel import notifications
     today = datetime.now(timezone.utc).date().isoformat()
-    orgs = await db.organizations.find({}, {"_id": 1}).to_list(1000)
-    for o in orgs:
-        oid = str(o["_id"])
+    orgs = await db.organizations.find({}).to_list(1000)
+    for org in orgs:
+        oid = str(org["_id"])
         try:
             h = await evaluate_org_health(oid)
+            await _record_health(oid, h)
             if h["healthy"]:
                 continue
-            body = " · ".join(h["issues"])
-            await notifications.create(oid, "system", "System health degraded", body,
+            routing = _alert_cfg(org)
+            for etype, msg in h.get("issue_types", []):
+                await _route_alert(org, routing.get(etype, {"slack": True, "teams": True, "email": False}),
+                                   f"⚠ System health — {etype}", msg + "\n\nOpen System Health to review.")
+            await notifications.create(oid, "system", "System health degraded", " · ".join(h["issues"]),
                                        ref="system-health", dedupe_key=f"health-degraded:{today}")
-            await _post_chat_alert(oid, "⚠ System health degraded",
-                                   body + "\n\nOpen System Health in Obserra SAP UAC to review and remediate.")
         except Exception as e:
             logging.getLogger("deploy").warning(f"health alert failed for org {oid}: {e}")
 
 
+class HealthAlertConfig(BaseModel):
+    db: dict | None = None
+    connector: dict | None = None
+    scheduler: dict | None = None
+
+
+@deploy_router.get("/health-config")
+async def get_health_config(user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
+    return {"alerts": _alert_cfg(org)}
+
+
+@deploy_router.put("/health-config")
+async def put_health_config(body: HealthAlertConfig, user: dict = Depends(get_current_user)):
+    if user.get("role") != "admin":
+        raise HTTPException(403, "Admins only")
+    from bson import ObjectId
+    routing = {}
+    for k in ("db", "connector", "scheduler"):
+        s = getattr(body, k) or {}
+        routing[k] = {ch: bool(s.get(ch, _DEFAULT_ALERT_CFG[k][ch])) for ch in ("slack", "teams", "email")}
+    await db.organizations.update_one({"_id": ObjectId(user["org_id"])},
+                                      {"$set": {"system_health.alerts": routing}})
+    return {"alerts": routing}
+
+
+@deploy_router.get("/health-history")
+async def get_health_history(hours: int = 24, user: dict = Depends(get_current_user)):
+    from datetime import datetime, timezone, timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(hours=max(1, min(168, hours)))).isoformat()
+    pts = await db.health_history.find({"org_id": user["org_id"], "at": {"$gte": cutoff}},
+                                       {"_id": 0}).sort("at", 1).to_list(2000)
+    return {"points": pts, "hours": hours}
+
+
 @deploy_router.get("/health-detail")
 async def health_detail(user: dict = Depends(get_current_user)):
-    """Per-org deep health snapshot for the header status pill."""
-    return await evaluate_org_health(user["org_id"])
+    """Per-org deep health snapshot for the header status pill (also records a throttled sample)."""
+    h = await evaluate_org_health(user["org_id"])
+    try:
+        await _record_health(user["org_id"], h)
+    except Exception:
+        pass
+    return h
 
 
 @deploy_router.post("/health-alert-run")
 async def health_alert_run(user: dict = Depends(get_current_user)):
-    """Admin: evaluate this org's health now and push a Slack/Teams alert if degraded."""
+    """Admin: evaluate this org's health now and route alerts (per config) if degraded."""
     if user.get("role") != "admin":
         raise HTTPException(403, "Admins only")
     from bson import ObjectId
-    from self_scan import _post_chat_alert
     h = await evaluate_org_health(user["org_id"])
     org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}) or {}
     alerts = org.get("scan_alerts") or {}
     has_webhook = bool(alerts.get("teams_url") or alerts.get("slack_url")
                        or (org.get("live_teams") or {}).get("webhook_url"))
+    routing = _alert_cfg(org)
     alerted = False
-    if not h["healthy"] and has_webhook:
-        await _post_chat_alert(user["org_id"], "⚠ System health degraded", " · ".join(h["issues"]))
+    if not h["healthy"]:
+        for etype, msg in h.get("issue_types", []):
+            await _route_alert(org, routing.get(etype, {"slack": True, "teams": True, "email": False}),
+                               f"⚠ System health — {etype}", msg)
         alerted = True
-    return {**h, "webhook_configured": has_webhook, "alerted": alerted}
+    return {**h, "webhook_configured": has_webhook, "alerted": alerted, "routing": routing}
 
 
 _TOUR_DIR = os.path.join(_ROOT, "frontend", "public", "tour")
