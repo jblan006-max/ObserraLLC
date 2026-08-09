@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 import httpx
 from bson import ObjectId
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, HTTPException, Request, BackgroundTasks
 from fastapi.responses import Response
 from pydantic import BaseModel
 
@@ -93,7 +93,8 @@ _DIGEST_DEFAULT = {"enabled": True, "recipients": [], "days": "everyday", "chat_
                    "auditor_scopes": [],
                    "voice_name": "onyx", "voice_speed": 1.0, "voice_attach": False,
                    "recap_enabled": False, "recap_day": "mon",
-                   "voice_intro": "", "brand_logo_url": "", "brand_accent": ""}
+                   "voice_intro": "", "brand_logo_url": "", "brand_accent": "",
+                   "slack_ask": False, "slack_signing_secret": "", "slack_team_id": ""}
 _WEEKDAYS = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 _TTS_VOICES = {"onyx", "alloy", "nova", "shimmer", "echo", "ash", "coral", "fable", "sage"}
 
@@ -168,6 +169,8 @@ class DigestConfigBody(BaseModel):
     voice_intro: str = ""
     brand_logo_url: str = ""
     brand_accent: str = ""
+    slack_ask: bool = False
+    slack_signing_secret: str = ""
 
 
 @sap_router.get("/digest/config")
@@ -181,10 +184,13 @@ async def get_digest_config(user: dict = Depends(get_current_user)):
     fallback_chat = bool(alerts.get("teams_url") or (org.get("live_teams") or {}).get("webhook_url") or alerts.get("slack_url"))
     default_recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
                                          {"_id": 0, "email": 1}).to_list(200)
-    return {"config": {k: cfg[k] for k in _DIGEST_DEFAULT},
+    pub = {k: cfg[k] for k in _DIGEST_DEFAULT}
+    pub["slack_signing_secret"] = ""  # never expose the raw secret to the client
+    return {"config": pub,
             "last_at": (state or {}).get("last_at"),
             "default_recipients": [r["email"] for r in default_recips],
             "fallback_chat_configured": fallback_chat,
+            "slack_signing_secret_set": bool((cfg.get("slack_signing_secret") or "").strip()),
             "next_window": "Daily 08:00 UTC · platform scheduler"}
 
 
@@ -218,7 +224,11 @@ async def put_digest_config(body: DigestConfigBody, user: dict = Depends(require
         vspeed = max(0.5, min(2.0, round(float(body.voice_speed or 1.0), 2)))
     except Exception:
         vspeed = 1.0
-    existing = await db.sap_digest_config.find_one({"org_id": org_id}, {"_id": 0, "evidence_prepared_by": 1}) or {}
+    existing = await db.sap_digest_config.find_one(
+        {"org_id": org_id},
+        {"_id": 0, "evidence_prepared_by": 1, "slack_signing_secret": 1, "slack_team_id": 1}) or {}
+    incoming_secret = (body.slack_signing_secret or "").strip()
+    new_secret = incoming_secret if incoming_secret else (existing.get("slack_signing_secret", "") or "")
     doc = {"org_id": org_id, "enabled": body.enabled, "recipients": recips, "days": days,
            "chat_alert": body.chat_alert, "teams_url": body.teams_url.strip(), "slack_url": body.slack_url.strip(),
            "score_alert": body.score_alert, "score_threshold": max(0, min(100, int(body.score_threshold or 60))),
@@ -231,7 +241,9 @@ async def put_digest_config(body: DigestConfigBody, user: dict = Depends(require
            "recap_day": body.recap_day if body.recap_day in _WEEKDAYS else "mon",
            "voice_intro": (body.voice_intro or "").strip()[:140],
            "brand_logo_url": (body.brand_logo_url or "").strip()[:500],
-           "brand_accent": _valid_hex(body.brand_accent)}
+           "brand_accent": _valid_hex(body.brand_accent),
+           "slack_ask": bool(body.slack_ask), "slack_signing_secret": new_secret,
+           "slack_team_id": existing.get("slack_team_id", "")}
     if existing.get("evidence_prepared_by", "") != prepared:
         doc["evidence_approved_by"] = ""
         doc["evidence_approved_at"] = ""
@@ -1249,15 +1261,13 @@ async def digest_ask_intro(user: dict = Depends(get_current_user)):
     return {"greeting": greeting, "suggestions": _digest_ask_suggestions(ctx)}
 
 
-@sap_router.post("/digest/ask")
-async def digest_ask(body: DigestAskBody, user: dict = Depends(get_current_user)):
-    """Answer a leader's follow-up question about the governance digest, grounded in the live snapshot (multi-turn)."""
-    org_id = user["org_id"]
+async def _run_digest_ask(org_id, question, session_id=None, actor="", channel="app"):
+    """Core grounded Q&A used by the in-app endpoint AND the Slack slash command (multi-turn)."""
     await _ensure(org_id)
-    q = (body.question or "").strip()[:500]
+    q = (question or "").strip()[:500]
     if not q:
         raise HTTPException(400, "Ask a question about the digest")
-    session_id = (body.session_id or "").strip() or f"{org_id}-{int(_now().timestamp())}"
+    session_id = (session_id or "").strip() or f"{org_id}-{int(_now().timestamp())}"
     ctx = await _digest_ai_context(org_id)
     convo = await db.sap_digest_chat.find_one({"org_id": org_id, "session_id": session_id},
                                               {"_id": 0, "messages": 1}) or {}
@@ -1302,7 +1312,7 @@ async def digest_ask(body: DigestAskBody, user: dict = Depends(get_current_user)
                                           {"role": "assistant", "text": answer, "at": now}]}},
          "$set": {"org_id": org_id, "session_id": session_id, "updated_at": now}},
         upsert=True)
-    await _audit(org_id, user["email"], "sap.digest.ask", q[:120])
+    await _audit(org_id, actor or f"slack:{channel}", "sap.digest.ask", q[:120])
     if is_first:
         title = await _suggest_thread_title(q)
         if title:
@@ -1312,6 +1322,99 @@ async def digest_ask(body: DigestAskBody, user: dict = Depends(get_current_user)
                 {"$set": {"title": title}})
     return {"session_id": session_id, "answer": answer[:1200], "model": model,
             "suggestions": _digest_ask_suggestions(ctx)}
+
+
+@sap_router.post("/digest/ask")
+async def digest_ask(body: DigestAskBody, user: dict = Depends(get_current_user)):
+    """Answer a leader's follow-up question about the governance digest, grounded in the live snapshot (multi-turn)."""
+    return await _run_digest_ask(user["org_id"], body.question, body.session_id, actor=user["email"])
+
+
+# ── Slack Ask — inbound slash command (e.g. /askdigest) grounded in the live digest ──
+def _verify_slack_sig(secret, ts, body_bytes, signature):
+    """Real Slack HMAC-SHA256 request verification (No-Mock)."""
+    import hmac
+    import hashlib
+    if not (secret and ts and signature):
+        return False
+    base = b"v0:" + ts.encode() + b":" + body_bytes
+    digest = "v0=" + hmac.new(secret.encode(), base, hashlib.sha256).hexdigest()
+    try:
+        return hmac.compare_digest(digest, signature)
+    except Exception:
+        return False
+
+
+async def _resolve_slack_org(ts, body_bytes, signature):
+    """Find the org whose configured Slack signing secret validates this request — the shared
+    secret both authenticates the call and identifies the workspace (No-Mock HMAC)."""
+    cursor = db.sap_digest_config.find(
+        {"slack_ask": True, "slack_signing_secret": {"$nin": ["", None]}},
+        {"_id": 0, "org_id": 1, "slack_signing_secret": 1})
+    async for c in cursor:
+        if _verify_slack_sig(c.get("slack_signing_secret", ""), ts, body_bytes, signature):
+            return c["org_id"]
+    return None
+
+
+async def _slack_answer_and_respond(org_id, question, response_url, user_name):
+    """Compute the grounded answer and POST it back to Slack's response_url (delayed response)."""
+    try:
+        res = await _run_digest_ask(org_id, question, actor=f"slack:{user_name}", channel="slack")
+        payload = {"response_type": "in_channel",
+                   "blocks": [
+                       {"type": "section", "text": {"type": "mrkdwn",
+                        "text": f":lock: *SAP Access Governance* — asked by @{user_name}\n>{question}"}},
+                       {"type": "section", "text": {"type": "mrkdwn", "text": res["answer"]}},
+                       {"type": "context", "elements": [{"type": "mrkdwn",
+                        "text": "Grounded in the live SAP access snapshot · Obserra SAP UAC"}]},
+                   ]}
+    except Exception as e:
+        payload = {"response_type": "ephemeral", "text": f"Sorry — I couldn't answer that right now ({str(e)[:120]})."}
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            await c.post(response_url, json=payload)
+    except Exception:
+        pass
+
+
+@sap_router.post("/slack/ask")
+async def slack_ask(request: Request, background: BackgroundTasks):
+    """Slack slash-command endpoint. Authenticity is verified via the org's Slack signing secret;
+    answers the governance digest question grounded in the live snapshot and posts to response_url."""
+    import time
+    raw = await request.body()
+    ts = request.headers.get("X-Slack-Request-Timestamp", "")
+    sig = request.headers.get("X-Slack-Signature", "")
+    try:
+        if abs(time.time() - int(ts)) > 300:
+            raise HTTPException(401, "stale request")
+    except (ValueError, TypeError):
+        raise HTTPException(401, "invalid request")
+    org_id = await _resolve_slack_org(ts, raw, sig)
+    if not org_id:
+        return {"response_type": "ephemeral",
+                "text": "This Slack app isn't linked to a SAP UAC workspace yet, or the signing secret doesn't match. "
+                        "Ask an admin to enable Slack Ask on the SoD Command Center and paste the app's signing secret."}
+    from urllib.parse import parse_qs
+    form = {k: v[0] for k, v in parse_qs(raw.decode()).items()}
+    question = (form.get("text") or "").strip()
+    response_url = form.get("response_url", "")
+    user_name = form.get("user_name", "leader")
+    team_id = form.get("team_id", "")
+    if team_id:
+        await db.sap_digest_config.update_one({"org_id": org_id}, {"$set": {"slack_team_id": team_id}})
+    if not question:
+        ctx = await _digest_ai_context(org_id)
+        sugg = "\n".join(f"• {s}" for s in _digest_ask_suggestions(ctx))
+        return {"response_type": "ephemeral",
+                "text": f"Ask me about the SAP Access Governance digest. For example:\n{sugg}"}
+    if response_url:
+        background.add_task(_slack_answer_and_respond, org_id, question, response_url, user_name)
+        return {"response_type": "ephemeral",
+                "text": ":hourglass_flowing_sand: Analyzing the live SAP access governance digest…"}
+    res = await _run_digest_ask(org_id, question, actor=f"slack:{user_name}", channel="slack")
+    return {"response_type": "in_channel", "text": res["answer"]}
 
 
 # ── Chat Export (PDF + email the AI Q&A thread, stamped to the audit trail) ────

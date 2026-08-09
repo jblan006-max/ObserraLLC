@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
-import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send, Eye, Download, TrendingUp, FileText, BellRing, FileWarning, Sparkles, MessagesSquare, Share2, Volume2, History } from "lucide-react";
+import { GitCompare, ShieldAlert, ShieldCheck, FlaskConical, ScrollText, Wrench, Bot, Mail, CalendarClock, Send, Eye, Download, TrendingUp, FileText, BellRing, FileWarning, Sparkles, MessagesSquare, Share2, Volume2, History, Slack, Copy } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid } from "recharts";
 
 const SEV = { Critical: "0 84% 60%", High: "35 90% 55%", Medium: "190 90% 50%", Low: "142 70% 45%" };
@@ -103,6 +103,7 @@ export default function SodCommandCenter() {
   }, [sev, area, status]);
   const loadArem = useCallback(async () => { const { data } = await api.get("/sap/autoremediation"); setArem(data); }, []);
   const loadDcfg = useCallback(async () => { const { data } = await api.get("/sap/digest/config"); setDcfg(data); setDcfgLocal({ ...data.config, recipients: (data.config.recipients || []).join(", "), evidence_recipients: (data.config.evidence_recipients || []).join(", "), auditor_scopes: (data.config.auditor_scopes || []).map((s) => ({ email: s.email, areas: (s.areas || []).join(", "), systems: (s.systems || []).join(", ") })) }); }, []);
+  const slackAskUrl = `${process.env.REACT_APP_BACKEND_URL || ""}/api/sap/slack/ask`;
   const loadScorecard = useCallback(async () => { const { data } = await api.get("/sap/scorecard"); setScorecard(data); }, []);
   const loadAlerts = useCallback(async () => { try { const { data } = await api.get("/sap/scorecard/alerts"); setScoreAlerts(data.log || []); setScoreMute({ muted: data.muted, mute_until: data.mute_until, mute_reason: data.mute_reason }); } catch { /* noop */ } }, []);
   const loadWhy = useCallback(async () => { setWhyBusy(true); try { const { data } = await api.get("/sap/scorecard/why"); setWhy(data); } catch { /* noop */ } setWhyBusy(false); }, []);
@@ -792,6 +793,33 @@ export default function SodCommandCenter() {
                   </div>
                 </div>
               </div>
+            </div>
+            <div className="mt-3 pt-3 border-t border-border/60" data-testid="slack-ask-config">
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <Slack className="w-4 h-4 text-primary" />
+                <span className="text-sm font-medium">Slack Ask</span>
+                <span className="text-[11px] text-muted-foreground">Let leadership ask digest questions from a Slack slash-command</span>
+                <div className="flex-1" />
+                <Switch data-testid="slack-ask-toggle" checked={!!dcfgLocal.slack_ask} onCheckedChange={(v) => setDcfgLocal({ ...dcfgLocal, slack_ask: v })} />
+              </div>
+              {dcfgLocal.slack_ask && (
+                <div className="space-y-3" data-testid="slack-ask-setup">
+                  <div>
+                    <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Slash-command Request URL (paste into your Slack app)</div>
+                    <div className="flex items-center gap-2">
+                      <Input data-testid="slack-ask-url" readOnly value={slackAskUrl} className="font-mono text-xs" onFocus={(e) => e.target.select()} />
+                      <Button type="button" size="sm" variant="outline" className="gap-1.5 shrink-0" data-testid="slack-ask-copy" onClick={() => { navigator.clipboard?.writeText(slackAskUrl); toast.success("Request URL copied"); }}><Copy className="w-3.5 h-3.5" /> Copy</Button>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Slack app Signing Secret {dcfg?.slack_signing_secret_set && <span className="text-emerald-500 normal-case">· configured</span>}</div>
+                    <Input data-testid="slack-ask-secret" type="password" autoComplete="off" value={dcfgLocal.slack_signing_secret || ""} onChange={(e) => setDcfgLocal({ ...dcfgLocal, slack_signing_secret: e.target.value })} placeholder={dcfg?.slack_signing_secret_set ? "•••••••• (leave blank to keep current)" : "Basic Information → App Credentials → Signing Secret"} />
+                  </div>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    In your Slack app, create a Slash Command (e.g. <span className="font-mono">/askdigest</span>) pointing at the Request URL above, paste the app's Signing Secret here, then Save. Ask e.g. <span className="font-mono">/askdigest what are the top risks right now?</span> — the AI answers in-channel, grounded in the live SAP access snapshot.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 mt-4">
