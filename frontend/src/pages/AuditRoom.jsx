@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "@/lib/api";
-import { ShieldCheck, Bot, Ban, PauseCircle, PlayCircle, FileText, AlertTriangle, Loader2 } from "lucide-react";
+import { ShieldCheck, Bot, Ban, PauseCircle, PlayCircle, FileText, AlertTriangle, Loader2, MessageSquare, Send, CheckCircle2 } from "lucide-react";
 
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—");
 const STATUS_TONE = { killed: "0 84% 60%", restricted: "35 90% 55%", sanctioned: "142 70% 45%", shadow: "0 84% 60%" };
@@ -12,15 +12,39 @@ export default function AuditRoom() {
   const [meta, setMeta] = useState(null);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [dlName, setDlName] = useState("");
+  const [comments, setComments] = useState([]);
+  const [cName, setCName] = useState("");
+  const [cEmail, setCEmail] = useState("");
+  const [cText, setCText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [sent, setSent] = useState(false);
 
   useEffect(() => {
     api.get(`/agents/public/evidence-room/${token}`)
       .then(({ data }) => { setSnap(data.snapshot); setMeta({ created_at: data.created_at, expires_at: data.expires_at }); })
       .catch((e) => setError(e?.response?.data?.detail || "This auditor room link is invalid or has expired."))
       .finally(() => setLoading(false));
+    api.get(`/agents/public/evidence-room/${token}/comments`)
+      .then(({ data }) => setComments(data.comments || [])).catch(() => {});
   }, [token]);
 
-  const pdfUrl = `${process.env.REACT_APP_BACKEND_URL}/api/agents/public/evidence-room/${token}/pack.pdf`;
+  const pdfUrl = `${process.env.REACT_APP_BACKEND_URL}/api/agents/public/evidence-room/${token}/pack.pdf${dlName ? `?who=${encodeURIComponent(dlName)}` : ""}`;
+
+  const submitQuestion = async () => {
+    if (!cText.trim()) return;
+    setSubmitting(true);
+    try {
+      const { data } = await api.post(`/agents/public/evidence-room/${token}/comment`, { author: cName, email: cEmail, text: cText });
+      setComments((cs) => [...cs, { id: data.id, author: cName || "External auditor", text: cText, at: new Date().toISOString(), status: "Open", reply: null }]);
+      setCText("");
+      setSent(true);
+    } catch {
+      /* swallow — form shows nothing beyond the toast-less inline state */
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   if (loading) {
     return (
@@ -55,13 +79,23 @@ export default function AuditRoom() {
           <p className="text-sm text-white/60">
             {snap.org_name || "Organization"} · generated {fmtDT(snap.generated_at)} · link expires {fmtDT(meta?.expires_at)}
           </p>
-          <a
-            href={pdfUrl}
-            data-testid="audit-room-download"
-            className="inline-flex items-center gap-2 mt-2 px-4 py-2.5 rounded-lg bg-ai text-[#050810] font-head font-bold text-sm hover:opacity-90 transition-opacity"
-          >
-            <FileText className="w-4 h-4" /> Download signed PDF
-          </a>
+          <div className="flex flex-wrap items-center gap-2 mt-2">
+            <input
+              data-testid="audit-room-dl-name"
+              value={dlName}
+              onChange={(e) => setDlName(e.target.value)}
+              placeholder="Your name (stamped on the PDF)"
+              className="bg-white/[0.06] border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-ai/60 w-56"
+            />
+            <a
+              href={pdfUrl}
+              data-testid="audit-room-download"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-ai text-[#050810] font-head font-bold text-sm hover:opacity-90 transition-opacity"
+            >
+              <FileText className="w-4 h-4" /> Download signed PDF
+            </a>
+          </div>
+          <p className="text-[11px] text-white/30">Each download is watermarked with your name + timestamp for a tamper-evident trail.</p>
         </header>
 
         <section className="rounded-xl border border-white/10 bg-white/[0.03] p-4" data-testid="audit-room-attestation">
@@ -138,6 +172,55 @@ export default function AuditRoom() {
                   </div>
                 );
               })}
+            </div>
+          )}
+        </section>
+
+        <section className="space-y-3" data-testid="audit-room-questions">
+          <h2 className="font-head font-bold text-lg flex items-center gap-2"><MessageSquare className="w-4 h-4 text-ai" /> Auditor questions</h2>
+          <p className="text-[12px] text-white/50">Leave a read-only question for the governance team — it lands in their inbox and any reply appears here.</p>
+
+          {comments.length > 0 && (
+            <div className="space-y-2" data-testid="audit-room-thread">
+              {comments.map((q, i) => (
+                <div key={q.id || i} data-testid={`audit-room-question-${i}`} className="rounded-lg border border-white/10 bg-white/[0.03] p-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <span className="font-head font-bold text-sm">{q.author || "External auditor"}</span>
+                    <span className="text-[10px] font-mono text-white/40">{fmtDT(q.at)}</span>
+                    <span className="ml-auto text-[10px] font-mono px-2 py-0.5 rounded-full" style={{ background: q.status === "Resolved" ? "hsl(142 70% 45% / 0.15)" : "hsl(35 90% 55% / 0.15)", color: q.status === "Resolved" ? "hsl(142 70% 45%)" : "hsl(35 90% 55%)" }}>{q.status || "Open"}</span>
+                  </div>
+                  <p className="text-sm text-white/80 mt-1.5">{q.text}</p>
+                  {q.reply && (
+                    <div className="mt-2 pl-3 border-l-2 border-ai/40">
+                      <div className="text-[10px] font-mono uppercase tracking-wider text-ai/70 flex items-center gap-1"><ShieldCheck className="w-3 h-3" /> Governance reply</div>
+                      <p className="text-sm text-white/70 mt-1">{q.reply}</p>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {sent ? (
+            <div data-testid="audit-room-question-sent" className="rounded-lg border border-low/30 bg-low/5 p-3 flex items-center gap-2 text-sm text-white/80">
+              <CheckCircle2 className="w-4 h-4 text-low" /> Thanks — your question was sent to the governance team.
+              <button className="ml-auto text-[11px] font-mono text-ai underline" onClick={() => setSent(false)}>Ask another</button>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 space-y-2">
+              <div className="flex flex-wrap gap-2">
+                <input data-testid="audit-room-q-name" value={cName} onChange={(e) => setCName(e.target.value)} placeholder="Your name" className="flex-1 min-w-[160px] bg-white/[0.06] border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-ai/60" />
+                <input data-testid="audit-room-q-email" value={cEmail} onChange={(e) => setCEmail(e.target.value)} placeholder="Email (optional — for the reply)" className="flex-1 min-w-[160px] bg-white/[0.06] border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-ai/60" />
+              </div>
+              <textarea data-testid="audit-room-q-text" value={cText} onChange={(e) => setCText(e.target.value)} placeholder="Your question about this evidence…" rows={3} className="w-full bg-white/[0.06] border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-ai/60 resize-none" />
+              <button
+                data-testid="audit-room-q-submit"
+                onClick={submitQuestion}
+                disabled={submitting || !cText.trim()}
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-ai text-[#050810] font-head font-bold text-sm hover:opacity-90 transition-opacity disabled:opacity-40"
+              >
+                {submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send question
+              </button>
             </div>
           )}
         </section>

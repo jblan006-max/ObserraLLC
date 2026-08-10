@@ -87,7 +87,11 @@ function StandardActions({ actions, accent }) {
     setBusy(a.id); setRes(null);
     try {
       const { data } = await api.post("/actions/run", { action_id: a.action_id });
-      setRes({ ok: true, message: data.message });
+      const enf = data.agent?.enforcement;
+      const runtime = enf && enf.runtime === "external-webhook"
+        ? (enf.external_ok ? " · dispatched to the agent runtime ✓" : " · ⚠ never reached the agent runtime")
+        : "";
+      setRes({ ok: true, message: data.message + runtime });
       toast.success(data.message);
       a.onDone && a.onDone(data);
     } catch (e) {

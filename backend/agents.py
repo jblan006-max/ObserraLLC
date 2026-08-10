@@ -550,10 +550,11 @@ async def public_evidence_room(token: str):
 
 
 @agents_router.get("/public/evidence-room/{token}/pack.pdf")
-async def public_evidence_room_pdf(token: str):
+async def public_evidence_room_pdf(token: str, who: str = ""):
     from datetime import datetime, timezone
     from fastapi.responses import StreamingResponse
     from reports import _build_pdf
+    import io
     doc = await db.evidence_rooms.find_one({"token": token}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "This auditor room link is invalid.")
@@ -565,8 +566,270 @@ async def public_evidence_room_pdf(token: str):
                      org_name=snap.get("org_name"),
                      exec_summary=f"{c.get('agents', 0)} governed agents, {c.get('toxic', 0)} toxic; "
                                   f"{c.get('events', 0)} runtime enforcement actions with verifiable receipts.")
-    return StreamingResponse(buf, media_type="application/pdf",
+    raw = buf.getvalue()
+    # Tamper-evident provenance watermark — who downloaded it, when, and the link expiry.
+    try:
+        from deploy import _watermark_pdf
+        auditor = (who or "").strip()[:120] or "External auditor"
+        access = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        raw = _watermark_pdf(raw, "AUDITOR ROOM COPY",
+                             f"Downloaded by {auditor} · {access} · link expires {(doc.get('expires_at') or '')[:10]}")
+        await db.evidence_rooms.update_one(
+            {"token": token},
+            {"$inc": {"downloads": 1},
+             "$set": {"last_downloaded_at": datetime.now(timezone.utc).isoformat(), "last_downloaded_by": auditor}})
+    except Exception:
+        pass
+    return StreamingResponse(io.BytesIO(raw), media_type="application/pdf",
         headers={"Content-Disposition": 'attachment; filename="obserra-evidence-pack.pdf"'})
+
+
+# ── Auditor notes — external auditors leave read-only questions on the public room ──
+class RoomCommentBody(BaseModel):
+    author: str = ""
+    email: str | None = ""
+    text: str = ""
+
+
+async def _notify_org_staff(org_id, subject, html, kind_title, kind_body, dedupe_key=None):
+    """In-app + email admins/execs of an org (best-effort)."""
+    try:
+        await notifications.create(org_id, "system", kind_title, kind_body,
+                                   ref="agentic-ai-security", dedupe_key=dedupe_key)
+    except Exception:
+        pass
+    try:
+        recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
+                                     {"_id": 0, "email": 1}).to_list(200)
+        for rr in recips:
+            try:
+                await notifications.send_email(rr["email"], subject, html)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+@agents_router.post("/public/evidence-room/{token}/comment")
+async def evidence_room_comment(token: str, body: RoomCommentBody):
+    """Public — an external auditor asks a read-only question on the portal; lands in the admin inbox."""
+    from datetime import datetime, timezone
+    import secrets, html as _html
+    doc = await db.evidence_rooms.find_one({"token": token})
+    if not doc:
+        raise HTTPException(404, "This auditor room link is invalid.")
+    if doc.get("expires_at") and datetime.now(timezone.utc).isoformat() > doc["expires_at"]:
+        raise HTTPException(410, "This auditor room link has expired.")
+    text = (body.text or "").strip()
+    if not text:
+        raise HTTPException(400, "A question is required.")
+    author = (body.author or "").strip()[:120] or "External auditor"
+    author_email = (body.email or "").strip()[:200]
+    org_id = doc["org_id"]
+    cid = secrets.token_urlsafe(9)
+    await db.evidence_room_comments.insert_one({
+        "id": cid, "token": token, "org_id": org_id, "author": author, "author_email": author_email,
+        "text": text[:2000], "at": _now(), "status": "Open", "reply": None, "reply_by": None, "reply_at": None})
+    await db.evidence_rooms.update_one({"token": token}, {"$inc": {"comments": 1}})
+    html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
+            f"<h2 style='color:#0f1e3d'>New auditor question</h2>"
+            f"<p><strong>{_html.escape(author)}</strong> asked a question in your AI Enforcement Evidence auditor room:</p>"
+            f"<blockquote style='border-left:3px solid #12b4d6;margin:0;padding:6px 14px;color:#374151'>{_html.escape(text[:1000])}</blockquote>"
+            f"<p style='font-size:11px;color:#9ca3af'>Obserra — Agentic AI Security Control Plane · Defensibility · Auditor questions</p></div>")
+    await _notify_org_staff(org_id, "New auditor question — Obserra", html,
+                            "New auditor question", f"{author}: {text[:200]}", dedupe_key=f"auditor-q:{cid}")
+    return {"ok": True, "id": cid}
+
+
+@agents_router.get("/public/evidence-room/{token}/comments")
+async def public_evidence_room_comments(token: str):
+    """Public — the thread of questions + governance replies shown on the portal (no PII beyond author name)."""
+    doc = await db.evidence_rooms.find_one({"token": token}, {"_id": 1})
+    if not doc:
+        raise HTTPException(404, "This auditor room link is invalid.")
+    rows = await db.evidence_room_comments.find(
+        {"token": token}, {"_id": 0, "org_id": 0, "author_email": 0, "reply_by": 0}).sort("at", 1).to_list(200)
+    return {"comments": rows}
+
+
+@agents_router.get("/runtime/evidence-room-comments")
+async def list_evidence_room_comments(admin: dict = Depends(require_roles("admin"))):
+    rows = await db.evidence_room_comments.find({"org_id": admin["org_id"]}, {"_id": 0}).sort("at", -1).to_list(200)
+    return {"comments": rows}
+
+
+class RoomReplyBody(BaseModel):
+    id: str
+    reply: str
+
+
+@agents_router.post("/runtime/evidence-room-comments/reply")
+async def reply_evidence_room_comment(body: RoomReplyBody, admin: dict = Depends(require_roles("admin"))):
+    import html as _html
+    reply = (body.reply or "").strip()
+    if not reply:
+        raise HTTPException(400, "A reply is required.")
+    res = await db.evidence_room_comments.update_one(
+        {"id": body.id, "org_id": admin["org_id"]},
+        {"$set": {"reply": reply[:2000], "reply_by": admin["email"], "reply_at": _now(), "status": "Resolved"}})
+    if not res.matched_count:
+        raise HTTPException(404, "Question not found.")
+    try:
+        doc = await db.evidence_room_comments.find_one({"id": body.id, "org_id": admin["org_id"]}, {"_id": 0})
+        em = (doc or {}).get("author_email") or ""
+        if em and "@" in em:
+            html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
+                    f"<h2 style='color:#0f1e3d'>Reply to your audit question</h2>"
+                    f"<p>The AI governance team replied to your question:</p>"
+                    f"<blockquote style='border-left:3px solid #12b4d6;margin:0;padding:6px 14px;color:#374151'>{_html.escape(reply[:1000])}</blockquote>"
+                    f"<p style='font-size:12px;color:#6b7280'>Your question: {_html.escape((doc.get('text') or '')[:300])}</p>"
+                    f"<p style='font-size:11px;color:#9ca3af'>Obserra — Agentic AI Security Control Plane</p></div>")
+            await notifications.send_email(em, "Reply to your audit question — Obserra", html)
+    except Exception:
+        pass
+    return {"ok": True}
+
+
+# ── Room renewal + expiry reminders (folded into the daily cron) ──────────────
+class RoomRenewBody(BaseModel):
+    token: str
+    days: int = 14
+
+
+@agents_router.post("/runtime/evidence-room/renew")
+async def renew_evidence_room(body: RoomRenewBody, admin: dict = Depends(require_roles("admin"))):
+    import os
+    from datetime import datetime, timezone, timedelta
+    days = max(1, min(90, int(body.days or 14)))
+    expires = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    res = await db.evidence_rooms.update_one(
+        {"token": body.token, "org_id": admin["org_id"]},
+        {"$set": {"expires_at": expires}, "$unset": {"expiry_reminder_sent": ""}})
+    if not res.matched_count:
+        raise HTTPException(404, "Auditor room not found.")
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    await _log_audit(admin["org_id"], admin["email"], "agent.evidence_room_renew",
+                     f"Auditor room renewed ({body.token[:8]}… → {expires[:10]})")
+    return {"ok": True, "token": body.token, "url": f"{frontend}/audit-room/{body.token}",
+            "expires_at": expires, "days": days}
+
+
+async def _run_agent_room_expiry_reminders(within_days: int = 3):
+    """Folded into the daily cron: email admins/execs a few days before each Auditor Room link expires."""
+    import os
+    from datetime import datetime, timezone, timedelta
+    from bson import ObjectId
+    now = datetime.now(timezone.utc)
+    nowiso = now.isoformat()
+    horizon = (now + timedelta(days=within_days)).isoformat()
+    rooms = await db.evidence_rooms.find({"expires_at": {"$gt": nowiso, "$lte": horizon}}).to_list(1000)
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    for room in rooms:
+        try:
+            if room.get("expiry_reminder_sent"):
+                continue
+            token = room["token"]; org_id = room["org_id"]; exp = room.get("expires_at", "")
+            days_left = max(0, (datetime.fromisoformat(exp) - now).days) if exp else 0
+            org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+            oname = org.get("name") or "your organization"
+            link = f"{frontend}/app/agentic-ai-security"
+            html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
+                    f"<h2 style='color:#b45309'>Auditor Room link expiring soon</h2>"
+                    f"<p>A read-only AI Enforcement auditor room for <strong>{oname}</strong> expires on "
+                    f"<strong>{exp[:10]}</strong> — about {days_left} day(s) away.</p>"
+                    f"<p style='margin:18px 0'><a href='{link}' style='background:#12b4d6;color:#04121a;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:700' target='_blank'>Open the Defensibility tab to renew</a></p>"
+                    f"<p style='font-size:12px;color:#6b7280'>In the <strong>Read-only Auditor Room</strong> card, click <strong>Renew</strong> to extend it in one click — so your audit doesn't stall on a dead link.</p>"
+                    f"<p style='font-size:11px;color:#9ca3af'>Obserra — Agentic AI Security Control Plane</p></div>")
+            await _notify_org_staff(org_id, "Auditor Room link expiring soon — Obserra", html,
+                                    "Auditor Room link expiring soon",
+                                    f"An Auditor Room for {oname} expires on {exp[:10]} ({days_left}d). Renew it to keep auditor access live.",
+                                    dedupe_key=f"agent-room-expiry:{token}")
+            await db.evidence_rooms.update_one({"token": token}, {"$set": {"expiry_reminder_sent": nowiso}})
+        except Exception:
+            pass
+
+
+# ── Board Evidence Digest — one-tap / monthly rollup of kills & sanctions + signed PDF ──
+async def _run_board_evidence_digest(org_id=None, on_demand=False):
+    """Email admins/execs a rollup of the last 30 days of AI enforcement (kills/suspends) + current toxic
+    estate + sanctioned/shadow AI systems, with the signed Evidence Pack PDF attached. Monthly via cron
+    (auto-skips orgs with nothing to report) or on-demand from the Defensibility tab."""
+    import base64
+    from datetime import datetime, timezone, timedelta
+    from bson import ObjectId
+    from reports import _build_pdf
+    if org_id:
+        org = await db.organizations.find_one({"_id": ObjectId(org_id)})
+        orgs = [org] if org else []
+    else:
+        orgs = await db.organizations.find({}).to_list(1000)
+    since = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    total_sent = 0
+    for org in orgs:
+        if not org:
+            continue
+        oid = str(org["_id"])
+        try:
+            events = await db.agent_enforcements.find(
+                {"org_id": oid, "at": {"$gte": since}}, {"_id": 0}).to_list(2000)
+            kills = sum(1 for e in events if e.get("action") == "kill")
+            suspends = sum(1 for e in events if e.get("action") == "suspend")
+            resumes = sum(1 for e in events if e.get("action") == "resume")
+            snap = await _evidence_snapshot(oid)
+            c = snap.get("counts", {})
+            systems = await db.ai_systems.find({"org_id": oid}, {"_id": 0}).to_list(500)
+            sanctioned_sys = sum(1 for s in systems if s.get("status") == "sanctioned")
+            shadow_sys = sum(1 for s in systems if s.get("status") == "shadow")
+            if not on_demand and (kills + suspends + resumes) == 0 and c.get("toxic", 0) == 0:
+                continue
+            buf = _build_pdf(_evidence_markdown(snap), "AI Enforcement Evidence Pack", cover=True,
+                             org_name=snap.get("org_name"),
+                             exec_summary=f"{c.get('agents', 0)} governed agents, {c.get('toxic', 0)} toxic; "
+                                          f"{c.get('events', 0)} runtime enforcement actions with verifiable receipts.")
+            att = [{"filename": "obserra-ai-enforcement-evidence.pdf",
+                    "content": base64.b64encode(buf.getvalue()).decode()}]
+            oname = org.get("name") or "your organization"
+            row = lambda k, v, col: (f"<tr><td style='padding:8px 12px;border-bottom:1px solid #eef2f7;font:600 13px Arial;color:#374151'>{k}</td>"
+                                     f"<td style='padding:8px 12px;border-bottom:1px solid #eef2f7;font:800 15px Arial;color:{col};text-align:right'>{v}</td></tr>")
+            html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:600px;margin:auto'>"
+                    f"<h2 style='color:#0f1e3d;margin-bottom:2px'>AI Security — Board Evidence Digest</h2>"
+                    f"<div style='font:400 12px Arial;color:#6b7280;margin-bottom:14px'>{oname} · last 30 days · {datetime.now(timezone.utc).strftime('%B %Y')}</div>"
+                    f"<table width='100%' cellspacing='0' cellpadding='0' style='border:1px solid #eef2f7;border-radius:10px;overflow:hidden'>"
+                    f"{row('Agents killed', kills, '#dc2626')}"
+                    f"{row('Agents suspended', suspends, '#d97706')}"
+                    f"{row('Agents resumed', resumes, '#16a34a')}"
+                    f"{row('Toxic agents (current)', c.get('toxic', 0), '#dc2626')}"
+                    f"{row('Governed agents', c.get('agents', 0), '#0f1e3d')}"
+                    f"{row('Sanctioned AI systems', sanctioned_sys, '#16a34a')}"
+                    f"{row('Shadow AI systems', shadow_sys, '#dc2626')}"
+                    f"</table>"
+                    f"<p style='font:400 13px Arial;color:#374151;margin-top:14px'>The full, signed AI Enforcement Evidence Pack — with every runtime enforcement receipt and the live toxicity snapshot — is attached as a PDF for the board / audit committee.</p>"
+                    f"<p style='font-size:11px;color:#9ca3af'>Obserra — Agentic AI Security Control Plane · Defensibility Ledger</p></div>")
+            recips = await db.users.find({"org_id": oid, "role": {"$in": ["admin", "executive"]}},
+                                         {"_id": 0, "email": 1}).to_list(200)
+            for rr in recips:
+                try:
+                    await notifications.send_email(rr["email"], f"AI Security — Board Evidence Digest ({datetime.now(timezone.utc).strftime('%b %Y')})", html, attachments=att)
+                    total_sent += 1
+                except Exception:
+                    pass
+            try:
+                await notifications.create(oid, "system", "Board Evidence Digest sent",
+                                           f"{kills} kills · {suspends} suspends · {c.get('toxic', 0)} toxic agents (30d) — emailed to admins/execs with the signed PDF.",
+                                           ref="agentic-ai-security")
+            except Exception:
+                pass
+        except Exception:
+            pass
+    return {"sent": total_sent}
+
+
+@agents_router.post("/runtime/board-evidence-digest/send")
+async def send_board_evidence_digest(admin: dict = Depends(require_roles("admin"))):
+    result = await _run_board_evidence_digest(org_id=admin["org_id"], on_demand=True)
+    await _log_audit(admin["org_id"], admin["email"], "agent.board_evidence_digest",
+                     f"Board evidence digest emailed ({result.get('sent', 0)} recipient(s))")
+    return result
 
 
 # ---- One-tap bulk 'Neutralise' from the Toxicity Map ----
