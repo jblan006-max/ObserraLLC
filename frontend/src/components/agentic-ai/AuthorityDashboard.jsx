@@ -1,5 +1,6 @@
 import { KeyRound, ShieldAlert, UserCheck, Wrench, Zap } from "lucide-react";
 import { EmptyState, Panel, StatusPill } from "@/components/agentic-ai/shared";
+import ToxicityMap from "@/components/agentic-ai/ToxicityMap";
 
 export default function AuthorityDashboard({ agents, onSelectAgent }) {
   const actionAgents = (agents || []).filter((agent) => (agent.actionTools || []).length > 0);
@@ -8,6 +9,7 @@ export default function AuthorityDashboard({ agents, onSelectAgent }) {
 
   return (
     <div className="space-y-5">
+      <ToxicityMap agents={agents} />
       <div className="grid xl:grid-cols-3 gap-4">
         <div className="bg-card fact-border rounded-xl p-4">
           <Zap className="w-4 h-4 text-crit" />

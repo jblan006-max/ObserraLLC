@@ -20,33 +20,35 @@ os.makedirs(OUT, exist_ok=True)
 
 NAVY = "#0f1e3d"
 AI = "#12b4d6"
-BRAND = "Obserra SAP UAC"
-TAGLINE = "Enterprise SAP User Access Control & Access Intelligence"
+BRAND = "Obserra Agentic AI Security"
+TAGLINE = "Agentic AI Security Control Plane — machine authority, guardrails & runtime enforcement"
 
 E, A = "exec", "admin"      # audience tags
 ALL = (E, A)
 
 # (heading, [paragraphs], screenshot_or_None, audiences)
 SECTIONS = [
-    ("About Obserra SAP UAC", [
-        "Obserra SAP UAC gives access, audit and GRC teams a single live view of who can do "
-        "what across the SAP landscape — and the tooling to fix it. It reconciles HR against "
-        "SAP accounts, detects Segregation-of-Duties (SoD) conflicts and privileged exposure in "
-        "real time, and turns every finding into an actionable, auditable ServiceNow change.",
-        "Every number is computed LIVE from the underlying records on each request (No-Mock): "
-        "the shipped dataset is a realistic, fully sourced snapshot, and real SAP / ServiceNow "
-        "connectors slot in later without changing the API contract. Every metric carries its "
-        "source and freshness so findings are audit-defensible.",
+    ("About Obserra Agentic AI Security", [
+        "Obserra Agentic AI Security is the control plane for the AI agents and models operating "
+        "across your enterprise. It gives security, GRC and executive teams a single live view of "
+        "which agents exist, what tools and permissions they hold, how much autonomy they have, "
+        "and where their capabilities combine into dangerous — 'toxic' — patterns.",
+        "Every number is computed LIVE from the underlying agent records on each request (No-Mock): "
+        "delegated authority tiers, modelled agent risk scores, guardrail coverage and the heuristic "
+        "red-team baseline are all derived from real telemetry. Governance actions (sanction, "
+        "restrict, suspend, kill) are written to the Defensibility Ledger so every decision is "
+        "audit-defensible, and the runtime enforcement connector can push those decisions to an "
+        "external agent runtime.",
     ], None, ALL),
 
     ("Installing the App (One-Click PWA)", [
-        "Obserra SAP UAC installs like a native app straight from the browser — no app store "
-        "required — and works across desktop, tablet and mobile.",
+        "Obserra installs like a native app straight from the browser — no app store required — "
+        "and works across desktop, tablet and mobile.",
         "Desktop (Chrome / Edge): click the Install icon in the address bar, or use the in-app "
         "'Install' banner. Android (Chrome): tap the 'Install' banner or menu -> Add to Home "
         "screen. iPhone / iPad (Safari): tap Share -> Add to Home Screen.",
-        "Once installed, the app launches full-screen and can receive push notifications for "
-        "access alerts and SoD threshold breaches.",
+        "Once installed, the app launches full-screen and can receive push notifications for AI "
+        "security alerts, shadow-AI discoveries and guardrail breaches.",
     ], None, ALL),
 
     ("On-Premise Installation (Docker)", [
@@ -62,101 +64,90 @@ SECTIONS = [
     ("Signing In", [
         "Open the app and sign in with your work email and password. Passwords follow "
         "NIST 800-63B (>=12 chars with upper/lower/number/symbol). Roles determine what you see: "
-        "admins get full governance controls, executives get the board view.",
+        "admins get full enforcement controls, executives get the board view.",
     ], "01_login.jpg", ALL),
 
     ("Executive Overview", [
-        "The landing dashboard opens on board-ready SAP access posture: the auto-running AI "
-        "Analyst headline, key KPIs (identities, accounts, open SoD, average risk, license "
-        "usage), top exposures and the decisions that need attention. Switch altitude between "
-        "Executive and Operational from the toggle in the top bar.",
+        "The landing dashboard is the complete rollup of the AI security estate: modelled agent "
+        "risk, autonomous agents, toxic capability combinations, shadow-AI exposure, guardrail "
+        "gaps and open AI incidents — all as one board-ready view. Every KPI and card opens a "
+        "standardized deep-dive with an AI strategic brief and recommended actions, and admins can "
+        "email the executive brief on demand or on a cadence from here.",
     ], "02_exec_overview.jpg", ALL),
 
-    ("SAP Analytics", [
-        "A deep analytics workspace over the whole SAP estate: identities, accounts, SoD by "
-        "business area, license utilisation and risk distribution, with drill-downs on every "
-        "chart. Export any view as a branded PDF or CSV for auditors and steering committees.",
-    ], "03_sap_analytics.jpg", ALL),
+    ("Agentic AI Security Control Plane", [
+        "The dedicated seven-tab workspace: Mission Control, Agent Inventory, Authority & Tools "
+        "(with the Tool Toxicity Map), Guardrails & Red Team, Shadow AI, Incidents and "
+        "Defensibility. Mission Control summarises the estate; every tile is clickable and drills "
+        "into the relevant tab or agent.",
+    ], None, ALL),
 
-    ("SoD Command Center", [
-        "The heart of the platform. An AI insight card summarises the live SoD picture, followed "
-        "by severity KPIs, the Access Governance Scorecard (with an 8-week trend and 'why the "
-        "score moved'), the SoD -> ServiceNow Auto-Remediation rule engine, the Governance Digest "
-        "schedule (email + Slack/Teams + voice briefing + evidence pack), a pre-assignment risk "
-        "simulator, the SoD rule library and the full detected-conflicts table with severity, "
-        "area and status filters. Every row opens a detail view with an AI risk rating and "
-        "concrete 'how to fix' steps.",
-    ], "04_sod_command_center.jpg", ALL),
+    ("Agent Inventory", [
+        "Every registered AI agent with its owner, model, delegated tools and permissions, "
+        "modelled risk score, authority tier, guardrail coverage and governance status. Search and "
+        "filter by status or risk class; open any agent for full evidence and AI analysis.",
+    ], None, (A,)),
 
-    ("Risk Watchlist, Owner Leaderboard & Board Pack", [
-        "Pin the SoD business areas you own to the Risk Watchlist so their hot spots surface "
-        "every login; flip the 'Assigned to me' lens, set a bell alert threshold, and open a "
-        "one-tap ServiceNow remediation ticket. Click any ticket badge to view its full "
-        "ServiceNow change timeline, which auto-refreshes while open.",
-        "The Owner Accountability Leaderboard ranks who carries the most open Critical SoD across "
-        "regions, flags unowned hot spots, lets admins assign an owner in place, and can 'nudge "
-        "all owners' — emailing each owner their assigned hot spots on demand.",
-        "The Board Pack card previews this month's executive access-governance pack with the "
-        "analytics PDF attached; admins can send it immediately or schedule the monthly auto-send "
-        "day and recipients inline.",
-    ], "05_sod_watchlist_leaderboard.jpg", ALL),
+    ("Tool Toxicity Map", [
+        "A visual Agent -> Tool -> Permission -> Resource graph that flags toxic capability "
+        "combinations — for example an action-capable tool such as shell.exec paired with write "
+        "permissions and no human-in-the-loop guardrail, or a data-exfiltration-capable tool with "
+        "access to sensitive resources. The heatmap makes the most dangerous agents glanceable so "
+        "reviewers can neutralise them first.",
+    ], None, ALL),
 
-    ("Privileged Access (PAM)", [
-        "Track SAP privileged and emergency (firefighter) access: who holds elevated roles, how "
-        "long, and whether usage is justified. Revoke privileged access, lock accounts or trigger "
-        "recertification in one click, each stamped to the audit trail and a ServiceNow change.",
-    ], "06_privileged_access.jpg", (A,)),
+    ("Guardrails & Red Team", [
+        "Enterprise guardrail coverage (input/output filtering, tool allowlist, human approval) "
+        "across every agent, plus the heuristic red-team baseline. Admins can toggle a guardrail "
+        "on an agent's governance record and run the deterministic red-team probes; results are "
+        "explicitly labelled as a heuristic baseline, not live adversarial runtime testing.",
+    ], None, (A,)),
 
-    ("Access Monitoring", [
-        "Continuous monitoring of access signals — anomalous logons, dormant-but-entitled "
-        "accounts, terminated identities with residual access and connector health — so drift is "
-        "caught the moment it appears.",
-    ], "07_access_monitoring.jpg", (A,)),
+    ("Shadow AI Discovery", [
+        "A discovery feed that auto-populates the review queue with unsanctioned AI systems "
+        "detected across the estate — common public GenAI SaaS as well as agents flagged shadow. "
+        "Admins run discovery in one click and sanction each system to bring it under governance.",
+    ], None, (A,)),
 
-    ("Identities", [
-        "The canonical identity register reconciled from HR: each person with their SAP accounts, "
-        "roles, risk score and lifecycle state. Open any identity for the full access footprint, "
-        "an AI risk rating and lifecycle actions (activate, suspend, resume, deactivate).",
-    ], "08_identities.jpg", (A,)),
+    ("Kill Switch & Runtime Enforcement", [
+        "From any agent's detail view, admins can Suspend (restrict), Kill (block) or Resume an "
+        "agent. The runtime enforcement connector flips the agent's governance status, records the "
+        "action to the Defensibility Ledger, posts a Slack/Teams alert, and — when an agent-runtime "
+        "webhook is configured — dispatches the enforcement command to the external execution "
+        "environment. The UI honestly reflects whether enforcement was applied in the control plane "
+        "only or pushed to an external runtime.",
+    ], None, (A,)),
 
-    ("Joiner / Mover / Leaver", [
-        "Automate the identity lifecycle. Joiners are provisioned to role templates, movers are "
-        "re-evaluated for SoD as they change departments, and leavers are deprovisioned with "
-        "residual-access checks — every step orchestrated through ServiceNow.",
-    ], "09_lifecycle.jpg", (A,)),
+    ("AI Incidents & Workflows", [
+        "AI security incident records (severity, mode, status) from the governance backend, "
+        "alongside the related governance workflows. Each incident opens a deep-dive with an AI "
+        "brief and recommended actions.",
+    ], None, (A,)),
 
-    ("HR Reconciliation", [
-        "Reconcile SAP accounts against the HR source of truth to surface orphaned accounts, "
-        "missing owners and identity mismatches, with one-tap remediation for each exception.",
-    ], "10_hr_reconciliation.jpg", (A,)),
+    ("Defensibility & Evidence", [
+        "The evidence layer: live data-source status, an explicit separation of FACT vs MODELLED "
+        "vs HEURISTIC BASELINE vs AI RECOMMENDATION, the runtime-enforcement boundary statement and "
+        "connector health. This is what makes the whole plane audit-defensible.",
+    ], None, ALL),
 
-    ("Role Intelligence", [
-        "Analyse the role model: composite vs single roles, over-provisioning, redundant "
-        "assignments and role-level SoD risk — with recommendations to right-size access before "
-        "it becomes an audit finding.",
-    ], "11_role_intelligence.jpg", (A,)),
-
-    ("Access Requests", [
-        "A self-service access request and approval workflow with automatic pre-assignment SoD "
-        "simulation, so risky combinations are flagged before they are ever granted.",
-    ], "12_access_requests.jpg", (A,)),
-
-    ("Certifications", [
-        "Run periodic access certification (attestation) campaigns: reviewers confirm or revoke "
-        "entitlements, with progress tracking and an auditable record of every decision.",
-    ], "13_certifications.jpg", (A,)),
+    ("Board Brief Scheduler", [
+        "A one-click control (admin) that emails the AI Security Executive Brief — modelled agent "
+        "risk, autonomous agents, toxic combinations, shadow AI and open incidents — via the "
+        "managed email pipeline. Choose a weekly or monthly cadence, or send it immediately.",
+    ], None, (A,)),
 
     ("Settings, Branding & Deployment", [
         "Personal preferences (digest cadence, replay the guided tour) plus admin controls: "
-        "governance-digest and board-pack recipients, custom branding (company name, logo, accent "
-        "colour), a 'send me a test now' button, and the Deployment & Documentation downloads "
-        "(on-premise package and these guides in PDF and Word).",
+        "alert recipients, custom branding (company name, logo, accent colour), a 'send me a test "
+        "now' button, and the Deployment & Documentation downloads (on-premise package and these "
+        "guides in PDF and Word).",
     ], "14_settings.jpg", (A,)),
 
-    ("Obserra Advisor", [
-        "The floating Advisor (top bar) answers access-governance questions grounded on your live "
-        "SAP posture — open SoD, privileged exposure and the remediations that need sign-off. It "
-        "can execute recommended actions and, for admins, reports its own usage and spend.",
+    ("Obserrian Advisor", [
+        "The floating Obserrian Advisor (bottom-right, and via the top-bar ask box) answers AI "
+        "security questions grounded on your LIVE agent telemetry — delegated tools, permissions, "
+        "guardrail coverage, tool-governance violations and the red-team baseline. It can execute "
+        "recommended actions and, for admins, reports its own usage and spend.",
     ], None, ALL),
 
     ("Support", [

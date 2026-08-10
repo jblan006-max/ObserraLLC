@@ -119,6 +119,8 @@ async def monthly_board_report(request: Request, background_tasks: BackgroundTas
     background_tasks.add_task(_run_quarterly_evidence_pack)
     from sap_uac import run_sap_board_pack
     background_tasks.add_task(run_sap_board_pack)
+    from agents import _run_ai_board_brief
+    background_tasks.add_task(_run_ai_board_brief, "monthly")
     from datetime import datetime, timezone
     _cad = {"monthly"}
     if datetime.now(timezone.utc).month in (1, 4, 7, 10):
@@ -319,6 +321,8 @@ async def weekly_drift_digest(request: Request, background_tasks: BackgroundTask
     background_tasks.add_task(_run_weekly_fair_air_refresh)
     from deploy import _run_weekly_escalation_rollup
     background_tasks.add_task(_run_weekly_escalation_rollup)
+    from agents import _run_ai_board_brief
+    background_tasks.add_task(_run_ai_board_brief, "weekly")
     return {"status": "accepted"}
 
 

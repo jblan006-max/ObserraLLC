@@ -3,25 +3,25 @@ import { useAuth } from "@/context/AuthContext";
 import { ArrowRight, ArrowLeft } from "lucide-react";
 
 const EXEC_STEPS = [
-  { title: "Welcome to Obserra SAP UAC", img: "/tour/overview.jpg",
-    body: "Your live SAP access-control plane. Every number — open SoD, privileged exposure, risk scores — recomputes from the underlying records on every request, and each metric carries its source and freshness. Switch altitude anytime from the toggle in the top bar." },
-  { title: "Executive Mode", spotlight: true, img: "/tour/overview.jpg",
-    body: "The boardroom view — highlighted above. SAP access risk framed as posture and business impact: identities, open Segregation-of-Duties conflicts, privileged exposure and average risk, so leadership sees what matters without the noise." },
-  { title: "Operational Mode", spotlight: true, img: "/tour/sod.jpg",
-    body: "Flip the same toggle to Operational for the working view — live SoD counts, privileged access, HR reconciliation and connector health — so your team can act on specifics in real time." },
-  { title: "Start at the SoD Command Center", spotlight: true, target: "nav-sod-command-center", img: "/tour/watchlist.jpg",
-    body: "Highlighted in the sidebar — the SoD Command Center is where you pin risk areas to the watchlist, see the owner leaderboard, and open one-tap ServiceNow remediation. Come back here anytime." },
+  { title: "Welcome to Agentic AI Security",
+    body: "Obserra's control plane for the AI agents and models operating across your enterprise. Every number — modelled agent risk, autonomous agents, toxic capability combinations, shadow AI — recomputes live from your agent records. Switch altitude anytime from the toggle in the top bar." },
+  { title: "Executive Mode", spotlight: true,
+    body: "The boardroom view — highlighted above. AI risk framed as posture: which agents exist, how much authority they hold, where guardrails are weak and what needs executive action, without the noise." },
+  { title: "Operational Mode", spotlight: true,
+    body: "Flip the same toggle to Operational for the working view — agent tools and permissions, guardrail coverage, the heuristic red-team baseline, shadow AI and incidents — so your team can act on specifics." },
+  { title: "Start at the Control Plane", spotlight: true, target: "nav-agentic-ai-security",
+    body: "Highlighted in the sidebar — Agentic AI Security is where you explore the Tool Toxicity Map, run red-team baselines, discover shadow AI and apply one-click runtime enforcement (Suspend / Kill). Come back here anytime." },
 ];
 
 const OPS_STEPS = [
-  { title: "Welcome to Obserra SAP UAC", img: "/tour/overview.jpg",
-    body: "This is your operational cockpit for SAP access. Every metric is evidence-grounded and carries its source and freshness, so you always know exactly what you're acting on." },
-  { title: "Operational Mode", spotlight: true, img: "/tour/monitoring.jpg",
-    body: "The toggle above keeps you in Operational view — live SoD counts, privileged access, HR reconciliation and connector health. This is your day-to-day working surface." },
-  { title: "Where you'll work", img: "/tour/sod.jpg",
-    body: "Jump into the SoD Command Center, Privileged Access and Access Monitoring from the sidebar to triage, investigate and remediate. The Advisor can execute remediations for you too." },
-  { title: "Start at the SoD Command Center", spotlight: true, target: "nav-sod-command-center", img: "/tour/watchlist.jpg",
-    body: "Highlighted in the sidebar — the SoD Command Center is your triage home base: risk watchlist, owner leaderboard and one-tap ServiceNow remediation, with the Advisor one click away." },
+  { title: "Welcome to Agentic AI Security",
+    body: "This is your operational cockpit for enterprise AI. Every metric is grounded in your live agent telemetry and carries its data class, so you always know exactly what you're acting on." },
+  { title: "Operational Mode", spotlight: true,
+    body: "The toggle above keeps you in Operational view — agent inventory, authority & tools, guardrails & red team, shadow AI and incidents. This is your day-to-day working surface." },
+  { title: "Where you'll work",
+    body: "Jump into the Agentic AI Security Control Plane from the sidebar to inspect the Tool Toxicity Map, sanction shadow AI and enforce Suspend/Kill on risky agents. The Obserrian Advisor can help you triage too." },
+  { title: "Start at the Control Plane", spotlight: true, target: "nav-agentic-ai-security",
+    body: "Highlighted in the sidebar — Agentic AI Security is your triage home base: toxicity map, guardrail evidence and one-click runtime enforcement, with the Obserrian Advisor one click away." },
 ];
 
 export const OnboardingTour = () => {

@@ -2,7 +2,7 @@ import { Suspense, useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate, useLocation, Navigate } from "react-router-dom";
 import { prefetchRoute } from "@/lib/routePrefetch";
 import { useAuth } from "@/context/AuthContext";
-import { SapAdvisor } from "@/components/SapAdvisor";
+import { AIAdvisor } from "@/components/AIAdvisor";
 import { OnboardingTour } from "@/components/OnboardingTour";
 import { UpdateBanner } from "@/components/UpdateBanner";
 import { LockedGate } from "@/components/LockedGate";
@@ -64,24 +64,6 @@ function DualModeToggle() {
 const NAV_SECTIONS = [
   { section: null, items: [
     { to: "/app", label: "Executive Overview", icon: LayoutDashboard, end: true },
-    { to: "/app/analytics", label: "SAP Analytics", icon: BarChart3 },
-  ]},
-  { section: "Access Risk", cat: true, color: "crit", items: [
-    { to: "/app/sod", label: "SoD Command Center", icon: ShieldAlert },
-    { to: "/app/privileged", label: "Privileged Access", icon: Lock },
-    { to: "/app/monitoring", label: "Access Monitoring", icon: Radar },
-  ]},
-  { section: "Identity & Workforce", cat: true, color: "ai", items: [
-    { to: "/app/identities", label: "Identities", icon: Users },
-    { to: "/app/activation", label: "User Activation", icon: ToggleRight },
-    { to: "/app/lifecycle", label: "Joiner / Mover / Leaver", icon: GitBranch },
-    { to: "/app/hr-reconciliation", label: "HR Reconciliation", icon: Building },
-  ]},
-  { section: "Governance", cat: true, color: "low", items: [
-    { to: "/app/access-requests", label: "Access Requests", icon: ListChecks },
-    { to: "/app/certifications", label: "Certifications", icon: ShieldCheck },
-    { to: "/app/roles", label: "Role Intelligence", icon: Layers },
-    { to: "/app/workflow", label: "Workflow Activity", icon: Network },
   ]},
   { section: "AI Security", cat: true, color: "ai", items: [
     { to: "/app/agentic-ai-security", label: "Agentic AI Security", icon: Bot },
@@ -322,6 +304,7 @@ export default function AppShell() {
             <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest truncate hidden lg:block">
               {sub?.org_name || "Obserra — Agentic AI Security Control Plane"}
             </div>
+            <span data-testid="app-version-badge" className="hidden lg:inline-flex items-center px-1.5 py-0.5 rounded-full border border-ai/30 bg-ai/10 text-ai text-[9px] font-mono font-bold tracking-wider shrink-0">v1</span>
           </div>
           <div className="flex-1 max-w-md hidden sm:block">
             <div className="flex items-center gap-2 rounded-full border border-ai/30 bg-ai/5 px-3 py-1.5 focus-within:ring-1 focus-within:ring-ai transition-shadow">
@@ -353,7 +336,7 @@ export default function AppShell() {
         <Footer />
       </div>
 
-      <SapAdvisor />
+      <AIAdvisor />
       <OnboardingTour />
       <UpdateBanner />
     </div>

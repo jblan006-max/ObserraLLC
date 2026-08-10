@@ -248,16 +248,44 @@ async def _build_context(org_id: str) -> str:
     health = await db.health_index.find_one({"org_id": org_id}, {"_id": 0})
     ai_systems = await db.ai_systems.find({"org_id": org_id}, {"_id": 0}).to_list(50)
     incidents = await db.ai_incidents.find({"org_id": org_id}, {"_id": 0}).to_list(50)
+    # Ground the advisor in LIVE agent telemetry (the agentic-AI-security `agents` collection):
+    # real tools, delegated permissions, guardrail coverage, tool-governance violations and the
+    # heuristic red-team baseline, so insights reflect actual runtime agent risk.
+    agents = await db.ai_agents.find({"org_id": org_id}, {"_id": 0}).to_list(100)
+
+    def _danger(a):
+        DANGER = {"shell.exec", "cloud.admin", "iam.write"}
+        return [t for t in (a.get("tools") or []) if t in DANGER and not (a.get("guardrails") or {}).get("tool_allowlist")]
+
+    def _gpct(a):
+        g = a.get("guardrails") or {}
+        keys = ["input_filtering", "output_filtering", "tool_allowlist", "human_in_loop"]
+        return round(sum(1 for k in keys if g.get(k)) / len(keys) * 100)
+
     ctx = {
         "enterprise_health": health,
         "risks": [{"ref": r["ref"], "title": r["title"], "residual": r["residual"],
                    "inherent": r["inherent"], "status": r["status"], "owner": r["owner"],
                    "source": r["source"], "confidence": r["confidence"], "data_type": r["data_type"],
                    "business_impact": r.get("business_impact")} for r in risks],
-        "ai_systems": [{"ref": a["ref"], "name": a["name"], "status": a["status"],
-                        "risk_class": a["risk_class"], "drift": a["drift"]} for a in ai_systems],
+        "ai_systems": [{"ref": a.get("ref"), "name": a.get("name"), "status": a.get("status"),
+                        "risk_class": a.get("risk_class"), "drift": a.get("drift", 0)} for a in ai_systems],
         "ai_incidents": [{"ref": i["ref"], "title": i["title"], "severity": i["severity"],
                           "status": i["status"]} for i in incidents],
+        "ai_agents": {
+            "total": len(agents),
+            "shadow": sum(1 for a in agents if a.get("status") == "shadow"),
+            "killed": sum(1 for a in agents if a.get("status") == "killed"),
+            "toxic_capability_combos": sum(1 for a in agents if _danger(a) and not (a.get("guardrails") or {}).get("human_in_loop")),
+            "no_human_approval": sum(1 for a in agents if not (a.get("guardrails") or {}).get("human_in_loop")),
+            "agents": [{"ref": a.get("ref"), "name": a.get("name"), "owner": a.get("owner"),
+                        "model": a.get("model"), "risk_class": a.get("risk_class"),
+                        "status": a.get("status"), "enforced": a.get("enforced", False),
+                        "tools": a.get("tools"), "permissions": a.get("permissions"),
+                        "dangerous_tools": _danger(a), "guardrail_pct": _gpct(a),
+                        "guardrails": a.get("guardrails"),
+                        "redteam_score": (a.get("last_redteam") or {}).get("score")} for a in agents],
+        },
     }
     ctx["unified_risk_correlation"] = await _engine_summary_safe(org_id)
     return json.dumps(ctx, default=str)

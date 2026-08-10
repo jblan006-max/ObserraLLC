@@ -153,6 +153,58 @@ async def govern_ai_system(ref: str, body: GovernBody, user: dict = Depends(get_
     return {"message": m["msg"], "system": updated}
 
 
+_SHADOW_AI_CATALOG = [
+    ("ChatGPT (consumer)", "OpenAI", "GPT-4o", "High", "Staff pasting internal docs into the public web app"),
+    ("Claude.ai (consumer)", "Anthropic", "Claude", "High", "Unmanaged document summarisation"),
+    ("Google Gemini (consumer)", "Google", "Gemini", "Medium", "Ad-hoc drafting on personal accounts"),
+    ("Perplexity AI", "Perplexity", "Sonar", "Medium", "Unsanctioned research assistant"),
+    ("DeepSeek", "DeepSeek", "DeepSeek-V3", "Critical", "Data residency and provenance unknown"),
+    ("Midjourney", "Midjourney", "v6", "Low", "Marketing image generation"),
+    ("Character.AI", "Character.AI", "proprietary", "Medium", "Personal chatbots on the corporate network"),
+    ("Notion AI", "Notion", "multi", "Medium", "AI writing over synced workspace data"),
+    ("GitHub Copilot (personal)", "GitHub", "Codex", "High", "Personal-token code assistant on org repos"),
+    ("Grammarly AI", "Grammarly", "proprietary", "Medium", "Generative rewriting over pasted content"),
+]
+
+
+@api.post("/ai-systems/discover")
+async def discover_shadow_ai(admin: dict = Depends(require_roles("admin"))):
+    """Shadow AI discovery feed — auto-populates the AI system inventory with unsanctioned AI
+    detected across the estate (common public GenAI SaaS) plus any agents flagged shadow. Idempotent
+    upsert by ref; never overwrites a system an admin has already sanctioned."""
+    org_id = admin["org_id"]
+    now = datetime.now(timezone.utc).isoformat()
+    existing_names = {s.get("name") for s in await db.ai_systems.find({"org_id": org_id}, {"_id": 0, "name": 1}).to_list(500)}
+    added = 0
+    for i, (name, provider, model, risk, use_case) in enumerate(_SHADOW_AI_CATALOG, 1):
+        ref = f"SHAI-{i:03d}"
+        if name in existing_names or await db.ai_systems.find_one({"org_id": org_id, "ref": ref}):
+            continue
+        await db.ai_systems.insert_one({
+            "org_id": org_id, "ref": ref, "name": name, "provider": provider, "model": model,
+            "type": "Shadow AI", "status": "shadow", "risk_class": risk, "use_case": use_case,
+            "owner": "Unassigned", "nist_profile": "Unmapped", "discovered": True,
+            "source": "Shadow AI Discovery Feed", "detected_at": now, "data_type": "estimate",
+            "confidence": 0.5, "freshness": "live"})
+        added += 1
+    shadow_agents = await db.ai_agents.find({"org_id": org_id, "status": "shadow"}, {"_id": 0}).to_list(200)
+    for a in shadow_agents:
+        ref = f"SHAI-AGT-{a['ref']}"
+        if await db.ai_systems.find_one({"org_id": org_id, "ref": ref}):
+            continue
+        await db.ai_systems.insert_one({
+            "org_id": org_id, "ref": ref, "name": a.get("name"), "provider": a.get("model"),
+            "model": a.get("model"), "type": "Shadow Agent", "status": "shadow",
+            "risk_class": a.get("risk_class", "High"), "use_case": "Unsanctioned autonomous agent",
+            "owner": a.get("owner", "Unassigned"), "nist_profile": "Unmapped", "discovered": True,
+            "source": "Agent inventory", "detected_at": now, "data_type": "estimate",
+            "confidence": 0.6, "freshness": "live"})
+        added += 1
+    await _audit(org_id, admin["email"], "ai_system.discover", f"Shadow AI discovery added {added} system(s)")
+    total_shadow = await db.ai_systems.count_documents({"org_id": org_id, "status": "shadow"})
+    return {"ok": True, "added": added, "shadow_total": total_shadow}
+
+
 @api.get("/ai-incidents")
 async def list_incidents(user: dict = Depends(get_current_user)):
     return await db.ai_incidents.find({"org_id": user["org_id"]}, {"_id": 0}).sort("opened", -1).to_list(500)

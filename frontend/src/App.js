@@ -43,6 +43,7 @@ const SapAnalytics = lazyWithRetry(() => import("@/pages/SapAnalytics"));
 const WorkflowActivity = lazyWithRetry(() => import("@/pages/WorkflowActivity"));
 const SystemHealth = lazyWithRetry(() => import("@/pages/SystemHealth"));
 const AgenticAISecurity = lazyWithRetry(() => import("@/pages/AgenticAISecurity"));
+const AIExecutiveOverview = lazyWithRetry(() => import("@/pages/AIExecutiveOverview"));
 // Reused platform pages (identical to Obserra).
 const AuditLog = lazyWithRetry(() => import("@/pages/AuditLog"));
 const Team = lazyWithRetry(() => import("@/pages/Team"));
@@ -86,7 +87,7 @@ function AppRoutes() {
         <Route path="/share/digest/:token" element={<ShareDigest />} />
         <Route path="/payment/success" element={<Gate><PaymentSuccess /></Gate>} />
         <Route path="/app" element={<Gate><AppShell /></Gate>}>
-          <Route index element={<SapOverview />} />
+          <Route index element={<AIExecutiveOverview />} />
           <Route path="sod" element={<SodCommandCenter />} />
           <Route path="identities" element={<Identities />} />
           <Route path="privileged" element={<PrivilegedAccess />} />

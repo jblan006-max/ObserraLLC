@@ -1,7 +1,10 @@
 import { AlertOctagon, ShieldAlert } from "lucide-react";
 import { EmptyState, Panel, StatusPill } from "@/components/agentic-ai/shared";
+import { useDeepDive } from "@/context/DeepDiveContext";
+import { incidentDeepDive } from "@/lib/agenticDeepDive";
 
 export default function IncidentsDashboard({ incidents, workflows }) {
+  const { openDeepDive, warm } = useDeepDive();
   return (
     <div className="space-y-5">
       <Panel
@@ -19,7 +22,10 @@ export default function IncidentsDashboard({ incidents, workflows }) {
             {(incidents || []).map((incident, index) => (
               <div
                 key={incident.ref || incident.id || index}
-                className="rounded-xl border border-border bg-secondary/20 p-4"
+                onMouseEnter={() => warm(incidentDeepDive(incident))}
+                onClick={() => openDeepDive(incidentDeepDive(incident))}
+                data-testid={`incident-${incident.ref || incident.id || index}`}
+                className="rounded-xl border border-border bg-secondary/20 p-4 cursor-pointer hover:bg-secondary/40 transition-colors"
               >
                 <div className="grid xl:grid-cols-[1.4fr_.8fr_.8fr_.8fr] gap-4">
                   <div>

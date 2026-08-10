@@ -160,3 +160,237 @@ async def redteam(ref: str, admin: dict = Depends(require_roles("admin"))):
             f"{a['name']} failed {len(crit_fails)} critical probe(s): {', '.join(f['id'] for f in crit_fails)}. Score {score}%.",
             ref=ref, dedupe_key=f"redteam:{ref}:{score}")
     return result
+
+
+# ---- Runtime enforcement (Kill Switch connector) ----
+ENFORCE_MAP = {
+    "suspend": {"status": "restricted", "mode": "restrict", "verb": "suspended"},
+    "kill": {"status": "killed", "mode": "block", "verb": "killed"},
+    "resume": {"status": "sanctioned", "mode": "observe", "verb": "resumed"},
+}
+
+
+class EnforceBody(BaseModel):
+    action: str  # suspend | kill | resume
+
+
+@agents_router.post("/{ref}/enforce")
+async def enforce_agent(ref: str, body: EnforceBody, admin: dict = Depends(require_roles("admin"))):
+    """Runtime enforcement connector — actually flips the agent runtime status (suspend/kill/resume),
+    records the action to the Defensibility Ledger and alerts Slack/Teams. If an external agent-runtime
+    webhook is configured on the org it also dispatches the enforcement command there (best-effort)."""
+    from bson import ObjectId
+    import httpx
+    m = ENFORCE_MAP.get((body.action or "").lower())
+    if not m:
+        raise HTTPException(400, "Unknown enforcement action")
+    a = await db.ai_agents.find_one({"org_id": admin["org_id"], "ref": ref})
+    if not a:
+        raise HTTPException(404, "Agent not found")
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}) or {}
+    webhook = org.get("agent_runtime_webhook")
+    enforced = body.action != "resume"
+    external_ok, runtime = None, "obserra-control-plane"
+    if webhook:
+        runtime = "external-webhook"
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.post(webhook, json={"agent_ref": ref, "action": body.action,
+                                                "mode": m["mode"], "org_id": admin["org_id"]})
+            external_ok = 200 <= r.status_code < 300
+        except Exception:
+            external_ok = False
+    note = ("Enforcement dispatched to the connected agent-runtime webhook." if webhook
+            else "Enforced in the Obserra control plane — the agent governance status changed and every "
+                 "downstream policy check now honours it. Wire an agent-runtime webhook to push this to an "
+                 "external execution environment.")
+    enforcement = {"enforced": enforced, "mode": m["mode"], "action": body.action,
+                   "runtime": runtime, "external_ok": external_ok, "note": note,
+                   "at": _now(), "by": admin.get("email")}
+    await db.ai_agents.update_one({"_id": a["_id"]},
+        {"$set": {"status": m["status"], "enforced": enforced, "enforcement": enforcement}})
+    await _log_audit(admin["org_id"], admin["email"], "agent.enforce",
+                     f"{ref} {m['verb']} (mode {m['mode']})")
+    try:
+        from risk_engine import _ledger
+        await _ledger(admin["org_id"], {
+            "action": "agent-enforce", "task_id": ref, "by": admin.get("email"),
+            "provider": runtime, "verified": bool(external_ok) if webhook else True,
+            "status": m["status"], "message": f"{a['name']} ({ref}) {m['verb']} — {note}",
+            "external": {"webhook": bool(webhook), "external_ok": external_ok, "mode": m["mode"]},
+            "started_at": _now(), "finished_at": _now()})
+    except Exception:
+        pass
+    try:
+        from self_scan import _post_chat_alert
+        emoji = "🛑" if body.action == "kill" else "⏸" if body.action == "suspend" else "▶"
+        await _post_chat_alert(admin["org_id"], f"{emoji} AI agent {m['verb']}: {a['name']} ({ref})",
+                               f"Runtime enforcement '{body.action}' applied (mode {m['mode']}). {note}")
+    except Exception:
+        pass
+    updated = await db.ai_agents.find_one({"org_id": admin["org_id"], "ref": ref}, {"_id": 0})
+    updated["tool_violations"] = _tool_violations(updated)
+    return {"ok": True, "agent": updated, "enforcement": enforcement}
+
+
+# ---- AI Security Executive Board Brief (Resend email + cron cadence) ----
+_DANGER_TOOLS = {"shell.exec", "cloud.admin", "iam.write"}
+_ACTION_TOKENS = (".write", ".send", ".exec", ".admin", ".delete", ".create", ".update",
+                  "shell", "deploy", "publish", "approve", "payment")
+
+
+def _is_action_tool(t):
+    t = str(t).lower()
+    return any(tok in t for tok in _ACTION_TOKENS)
+
+
+def _guard_pct(a):
+    g = a.get("guardrails") or {}
+    keys = ["input_filtering", "output_filtering", "tool_allowlist", "human_in_loop"]
+    return round(sum(1 for k in keys if g.get(k)) / len(keys) * 100)
+
+
+def _agent_authority(a):
+    if a.get("status") == "killed":
+        return "Disabled"
+    action = [t for t in (a.get("tools") or []) if _is_action_tool(t)]
+    human = bool((a.get("guardrails") or {}).get("human_in_loop"))
+    if action and not human:
+        return "Autonomous"
+    if action and human:
+        return "Approval Required"
+    if a.get("tools"):
+        return "Tool Assisted"
+    return "Observe"
+
+
+def _is_toxic(a):
+    g = a.get("guardrails") or {}
+    tools = a.get("tools") or []
+    if a.get("status") == "killed":
+        return False
+    dangerous = [t for t in tools if t in _DANGER_TOOLS]
+    action = [t for t in tools if _is_action_tool(t)]
+    if dangerous and not g.get("tool_allowlist"):
+        return True
+    if action and not g.get("human_in_loop") and not g.get("tool_allowlist"):
+        return True
+    return False
+
+
+def _agent_risk(a):
+    if a.get("status") == "killed":
+        return 0
+    base = {"Critical": 90, "High": 74, "Medium": 52, "Low": 28}.get(a.get("risk_class"), 50)
+    g = a.get("guardrails") or {}
+    gaps = sum(1 for k in ["input_filtering", "output_filtering", "tool_allowlist", "human_in_loop"] if not g.get(k))
+    base += gaps * 4 + min(12, len(_tool_violations(a)) * 8)
+    if _agent_authority(a) == "Autonomous":
+        base += 10
+    if a.get("status") == "shadow":
+        base += 8
+    return max(0, min(100, round(base)))
+
+
+async def _brief_rollup(org_id):
+    agents = await db.ai_agents.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    systems = await db.ai_systems.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    incidents = await db.ai_incidents.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+    total = len(agents)
+    top = sorted(agents, key=_agent_risk, reverse=True)[:5]
+    return {"total": total,
+            "avg_risk": round(sum(_agent_risk(a) for a in agents) / total) if total else 0,
+            "autonomous": sum(1 for a in agents if _agent_authority(a) == "Autonomous"),
+            "toxic": sum(1 for a in agents if _is_toxic(a)),
+            "weak_guardrails": sum(1 for a in agents if _guard_pct(a) < 75),
+            "tool_violations": sum(1 for a in agents if _tool_violations(a)),
+            "shadow_ai": sum(1 for s in systems if s.get("status") == "shadow"),
+            "open_incidents": sum(1 for i in incidents if str(i.get("status", "")).lower() not in ("resolved", "closed", "remediated")),
+            "top": [{"ref": a["ref"], "name": a["name"], "risk": _agent_risk(a),
+                     "authority": _agent_authority(a), "risk_class": a.get("risk_class")} for a in top]}
+
+
+def _brief_html(org_name, r):
+    rows = "".join(
+        f'<tr><td style="padding:6px 8px;border-bottom:1px solid #eee;font:400 13px Arial">{t["name"]} '
+        f'<span style="color:#6b7280;font-size:11px">{t["ref"]}</span></td>'
+        f'<td style="padding:6px 8px;border-bottom:1px solid #eee;font:700 13px Arial;color:#0f1e3d;text-align:right">{t["risk"]}/100</td>'
+        f'<td style="padding:6px 8px;border-bottom:1px solid #eee;font:400 12px Arial;color:#6b7280;text-align:right">{t["authority"]}</td></tr>'
+        for t in r["top"]) or '<tr><td style="padding:8px;font:400 13px Arial;color:#6b7280">No agents registered</td></tr>'
+
+    def kpi(label, val, color="#0f1e3d"):
+        return (f'<td style="padding:10px;text-align:center;border:1px solid #eef">'
+                f'<div style="font:800 24px Arial;color:{color}">{val}</div>'
+                f'<div style="font:400 10px Arial;color:#6b7280;text-transform:uppercase;letter-spacing:.06em">{label}</div></td>')
+    return (
+        '<div style="font:400 14px Arial;color:#1f2937;max-width:640px;margin:auto">'
+        '<h2 style="color:#0f1e3d;margin:0">Agentic AI Security — Executive Brief</h2>'
+        f'<div style="font:400 12px Arial;color:#6b7280;margin:4px 0 16px">{org_name} · machine authority intelligence</div>'
+        '<table style="width:100%;border-collapse:collapse;margin-bottom:6px"><tr>'
+        + kpi("Agents", r["total"]) + kpi("Avg risk", f'{r["avg_risk"]}/100', "#b45309")
+        + kpi("Autonomous", r["autonomous"], "#dc2626") + kpi("Toxic combos", r["toxic"], "#dc2626")
+        + '</tr><tr>' + kpi("Shadow AI", r["shadow_ai"], "#dc2626")
+        + kpi("Guardrail gaps", r["weak_guardrails"], "#b45309")
+        + kpi("Tool violations", r["tool_violations"], "#dc2626")
+        + kpi("Open incidents", r["open_incidents"], "#b45309") + '</tr></table>'
+        '<h3 style="color:#0f1e3d;margin:18px 0 4px;font-size:15px">Highest-risk AI agents</h3>'
+        f'<table style="width:100%;border-collapse:collapse">{rows}</table>'
+        '<p style="font:400 11px Arial;color:#9ca3af;margin-top:16px">Agent risk scores and delegated authority tiers '
+        'are modelled from live Obserra agent records. Sign in to the Agentic AI Security Control Plane for the full '
+        'toxicity map, guardrail red-team evidence and one-click runtime enforcement.</p>'
+        '<p style="font-size:11px;color:#9ca3af">Obserra — Executive Protection &amp; Intelligence LLC</p></div>')
+
+
+async def _send_ai_brief(org_id):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    r = await _brief_rollup(org_id)
+    html = _brief_html(org.get("name") or "Obserra", r)
+    recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
+                                 {"_id": 0, "email": 1}).to_list(200)
+    for u in recips:
+        await notifications.send_email(u["email"], "Agentic AI Security — Executive Brief", html)
+    await notifications.create(org_id, "report", "AI security brief delivered",
+                               f"Agentic AI Security executive brief emailed to {len(recips)} recipient(s).",
+                               ref="agentic-ai-security")
+    return len(recips)
+
+
+class BriefSchedule(BaseModel):
+    enabled: bool | None = None
+    cadence: str | None = None
+
+
+@agents_router.get("/board-brief/schedule")
+async def get_brief_schedule(user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}, {"ai_brief_schedule": 1}) or {}
+    sch = org.get("ai_brief_schedule") or {}
+    return {"enabled": bool(sch.get("enabled")), "cadence": sch.get("cadence") or "monthly"}
+
+
+@agents_router.put("/board-brief/schedule")
+async def set_brief_schedule(body: BriefSchedule, admin: dict = Depends(require_roles("admin"))):
+    from bson import ObjectId
+    sch = {"enabled": bool(body.enabled),
+           "cadence": body.cadence if body.cadence in ("weekly", "monthly") else "monthly"}
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"ai_brief_schedule": sch}})
+    return sch
+
+
+@agents_router.post("/board-brief/send")
+async def send_brief_now(admin: dict = Depends(require_roles("admin"))):
+    sent = await _send_ai_brief(admin["org_id"])
+    return {"ok": True, "sent": sent}
+
+
+async def _run_ai_board_brief(cadence):
+    orgs = await db.organizations.find({"ai_brief_schedule.enabled": True}).to_list(1000)
+    for org in orgs:
+        sch = org.get("ai_brief_schedule") or {}
+        if (sch.get("cadence") or "monthly") != cadence:
+            continue
+        try:
+            await _send_ai_brief(str(org["_id"]))
+        except Exception:
+            pass

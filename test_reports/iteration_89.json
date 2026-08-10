@@ -1,0 +1,51 @@
+{
+  "summary": "Full e2e verification of Obserra Agentic AI Security Control Plane v1 (iter 89). Backend 10/10 pytests green after a small defensive fix in ai_advisor._build_context (KeyError 'drift' when the newly discovered shadow ai_systems records were missing the 'drift' field — advisor/chat was returning 500 whenever the Shadow AI Discovery had run first). Frontend: login (jblan2026@gmail.com) → Executive Overview lands, tour copy reads 'Welcome to Agentic AI Security' (no SAP wording), sidebar contains ONLY Executive Overview, AI Security→Agentic AI Security, Sources→Connector Health and Admin (no SoD/Identities/PrivilegedAccess/SAP Analytics/HR Reconciliation). Both v1 badges (app-version-badge, overview-version-badge) render. 8 overview-kpi-* cards, 3 overview-agent-* top-agent cards; clicking overview-agent-AGT-002 opens the universal deep-dive modal with runtime enforcement controls + AI Insight. Agentic AI Security page: agentic-toxicity-map renders with 3 toxicity-agent-* rows and clicking a row opens the deep-dive. Shadow tab: shadow-discover-btn present, invocation populates 10 shadow-system-* cards, card click opens deep-dive, Sanction button coexists. Kill Switch: from Agent Inventory clicking 'IT Support Copilot' opens AgentDetailModal exposing agent-enforce-suspend/kill/resume; clicking Suspend flips the inventory row to 'Restricted' (verified visually + via backend pytest suspend→restricted / resume→sanctioned round-trip). Corner Obserrian Advisor eye-launcher visible on all app pages. Board-brief control (toggle+cadence+Email now) all present on the Executive Overview and PUT/GET/send endpoints all pass server-side.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/advisor/chat", "issue": "Was returning 500 due to KeyError 'drift' whenever ai_systems collection contained shadow-discovered rows without a 'drift' key. Fixed defensively via a.get('drift', 0) in ai_advisor._build_context. Verified fixed."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AIExecutiveOverview KPI cards", "issue": "KPI card click does NOT navigate to /app/agentic-ai-security (Control Plane). Test spec: 'KPI cards navigate to the Control Plane'. Click on overview-kpi-* stayed on /app.", "selector": "[data-testid^=overview-kpi-]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "Kill Switch — agent-enforcement-status refresh", "issue": "After clicking agent-enforce-suspend inside AgentDetailModal, the agent-enforcement-status pill was not queryable (modal likely re-rendered or closed before the state update). Backend flip works (row shows Restricted in inventory, backend pytest confirms suspend→restricted / resume→sanctioned round-trip).", "affected_selectors": ["[data-testid=agent-enforcement-status]"]}
+    ],
+    "design_issues": [
+      {"screen": "Executive Overview", "issues": [
+        "Missing data-testids on rendered panels that the review contract asks for: overview-authority-chart, overview-guardrail-coverage, overview-toxic-combos, overview-shadow-queue. The panels ARE rendered (Delegated Machine Authority chart, Guardrail Coverage bars, Toxic Capability Combinations, Shadow AI Queue) but the section root elements lack the promised testids.",
+        "Corner Obserrian Advisor launcher renders with data-testid='advisor-toggle' rather than the spec-requested 'ai-advisor-launcher'/'obserrian-advisor-launcher'. Functional element is present."
+      ]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter89_agentic_v1.py",
+    "/app/test_reports/pytest/iter89.xml"
+  ],
+  "action_items": [
+    "Wire overview-kpi-* cards to navigate() to /app/agentic-ai-security (per spec 'KPI cards navigate to the Control Plane').",
+    "Add data-testid attributes on Executive Overview panels: overview-authority-chart, overview-guardrail-coverage, overview-toxic-combos, overview-shadow-queue (panels exist, only testid contract missing).",
+    "Add data-testid='ai-advisor-launcher' (alias/duplicate) to the corner AIAdvisor launcher button; currently only 'advisor-toggle'.",
+    "Verify AgentDetailModal keeps the modal open (and re-reads updated agent) after enforce so that agent-enforcement-status is exposed to consumers after suspend/kill/resume.",
+    "Optional: defensive ai_systems .get() everywhere in _build_context (only 'drift' hit us; audit other required keys)."
+  ],
+  "critical_code_review_comments": [
+    "ai_advisor._build_context previously did a[\"drift\"] on ai_systems — brittle contract with Shadow AI Discovery (which seeds records without a drift field). Fixed to a.get('drift', 0). Recommend auditing 'ref/name/status/risk_class' with the same defensive pattern to prevent similar 500s.",
+    "AIExecutiveOverview does not honor the spec's 'KPI card click → Control Plane' navigation. Deep-dive/modal opens for overview-agent-* but not KPI cards.",
+    "Testid contract drift: multiple review-request testids do not exist in code (overview-authority-chart, overview-guardrail-coverage, overview-toxic-combos, overview-shadow-queue, ai-advisor-launcher). Adding them is cheap and makes the contract with automation reliable.",
+    "iter88 already flagged missing per-item testids (agentic-agent-row-*, agentic-top-agent-*, register modal fields). Still not addressed."
+  ],
+  "updated_files": [
+    "/app/backend/ai_advisor.py (defensive .get('drift', 0) — fixed advisor/chat 500 after Shadow AI discovery)",
+    "/app/backend/tests/test_iter89_agentic_v1.py (new pytest suite for iter89)"
+  ],
+  "success_rate": {"backend": "100% (10/10 pytest incl. enforce suspend/kill/resume, idempotent shadow discovery, board-brief GET/PUT/send, advisor chat)", "frontend": "~90% — core flows all pass; missing testids + KPI-click-navigate + modal status refresh are the outstanding gaps"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin, cookie-based) — worked",
+  "seed_data_creation": "Shadow AI Discovery ran twice (idempotent) — 10 shadow systems (SHAI-001..010) now populate the ai_systems collection. Board-brief 'Email now' invoked once (real Resend email sent to owner). No new agents registered.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Backend pytest suite lives at /app/backend/tests/test_iter89_agentic_v1.py — run with REACT_APP_BACKEND_URL env var (pytest doesn't load frontend/.env). Login submit does NOT work with plain button.click() — the form only submits on Enter (or explicit form.submit()); use await page.press('input[type=password]', 'Enter'). Onboarding tour appears on first login (dismiss with the 'Skip' link) — copy verified as 'Welcome to Agentic AI Security'. Shadow discovery is idempotent so re-running it in tests is safe. Board-brief send hits Resend — call it at most once per run.",
+  "rca of the issue": "advisor/chat 500 RCA: _build_context loads ai_systems from Mongo and unconditionally accesses a['drift']. The new /api/ai-systems/discover route inserts records ({ref,name,status,risk_class,provider,owner,nist_profile,discovered,confidence,exposure,models,sources,created_at}) with NO 'drift' key. Once the review request's shadow-discovery step ran, the very next advisor/chat call raised KeyError 'drift' → FastAPI 500. Fix: replace a['drift'] with a.get('drift', 0) (also switched other lookups to .get in the same list-comp for symmetry). Reproduces reliably: POST /api/ai-systems/discover then POST /api/advisor/chat before the fix → 500; after the fix → 200 SSE stream."
+}

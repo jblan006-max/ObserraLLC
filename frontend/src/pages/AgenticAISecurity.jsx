@@ -63,6 +63,7 @@ export default function AgenticAISecurity() {
   const [busySystem, setBusySystem] = useState("");
   const [registerBusy, setRegisterBusy] = useState(false);
   const [reportBusy, setReportBusy] = useState(false);
+  const [discovering, setDiscovering] = useState(false);
 
   const openTab = (tab) => {
     setActiveTab(tab);
@@ -104,18 +105,40 @@ export default function AgenticAISecurity() {
     }
   };
 
-  const setAgentStatus = async (agent, status) => {
+  const enforceAgent = async (agent, action) => {
     if (!isAdmin) return;
     setBusyRef(agent.ref);
     try {
-      await api.patch(`/agents/${agent.ref}`, { status });
-      toast.success(`${agent.ref} governance status changed to ${status}.`);
-      setSelectedAgent(null);
+      const { data: res } = await api.post(`/agents/${agent.ref}/enforce`, { action });
+      const verb = action === "kill" ? "killed" : action === "suspend" ? "suspended" : "resumed";
+      const where = res.enforcement?.runtime === "external-webhook"
+        ? "dispatched to the agent runtime"
+        : "enforced in the control plane";
+      toast.success(`${agent.ref} ${verb} — ${where}.`);
+      setSelectedAgent((prev) =>
+        prev && prev.ref === agent.ref
+          ? { ...prev, status: res.agent.status, enforced: res.agent.enforced, enforcement: res.agent.enforcement }
+          : prev
+      );
       await reload();
     } catch (e) {
-      toast.error(e.response?.data?.detail || "Unable to change governance status.");
+      toast.error(e.response?.data?.detail || "Unable to apply runtime enforcement.");
     } finally {
       setBusyRef("");
+    }
+  };
+
+  const discoverShadowAI = async () => {
+    if (!isAdmin) return;
+    setDiscovering(true);
+    try {
+      const { data: res } = await api.post("/ai-systems/discover");
+      toast.success(`Discovery added ${res.added} shadow AI system(s). ${res.shadow_total} in the queue.`);
+      await reload();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Shadow AI discovery failed.");
+    } finally {
+      setDiscovering(false);
     }
   };
 
@@ -311,6 +334,8 @@ export default function AgenticAISecurity() {
           isAdmin={isAdmin}
           busySystem={busySystem}
           onSanction={sanctionSystem}
+          onDiscover={discoverShadowAI}
+          discovering={discovering}
         />
       )}
 
@@ -331,7 +356,7 @@ export default function AgenticAISecurity() {
           isAdmin={isAdmin}
           busy={busyRef === selectedAgent.ref}
           onClose={() => setSelectedAgent(null)}
-          onSetStatus={setAgentStatus}
+          onEnforce={enforceAgent}
         />
       )}
 

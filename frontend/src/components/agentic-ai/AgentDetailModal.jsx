@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Loader2, ShieldAlert, X } from "lucide-react";
+import { Ban, Loader2, PauseCircle, PlayCircle, ShieldAlert, X } from "lucide-react";
 import { AIExplain } from "@/components/AIExplain";
 import { DataClassBadge, StatusPill } from "@/components/agentic-ai/shared";
 
@@ -8,7 +8,7 @@ export default function AgentDetailModal({
   isAdmin,
   busy,
   onClose,
-  onSetStatus,
+  onEnforce,
 }) {
   const [tab, setTab] = useState("evidence");
   if (!agent) return null;
@@ -177,23 +177,55 @@ export default function AgentDetailModal({
           {isAdmin && (
             <div className="border-t border-border pt-4">
               <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2">
-                Governance status control
+                Runtime enforcement — Kill Switch
               </div>
+              {agent.enforcement && (
+                <div className="mb-3 rounded-lg border border-ai/25 bg-ai/5 p-3 text-xs" data-testid="agent-enforcement-status">
+                  <div className="flex items-center gap-2 font-head font-bold">
+                    <ShieldAlert className="w-3.5 h-3.5 text-ai" />
+                    {agent.enforcement.enforced ? "Enforcement active" : "Enforcement lifted"} · mode {agent.enforcement.mode}
+                    <span className="ml-auto font-mono text-[10px] text-muted-foreground">
+                      {agent.enforcement.runtime === "external-webhook"
+                        ? (agent.enforcement.external_ok ? "dispatched to runtime" : "runtime dispatch failed")
+                        : "control-plane"}
+                    </span>
+                  </div>
+                  <p className="text-muted-foreground mt-1">{agent.enforcement.note}</p>
+                </div>
+              )}
               <p className="text-xs text-muted-foreground mb-3">
-                These buttons update the Obserra governance status only. They do not claim to terminate or restrict the external runtime.
+                Suspend restricts the agent, Kill blocks it, Resume returns it to sanctioned. Each action flips the agent
+                runtime status, is written to the Defensibility Ledger and alerts Slack/Teams. When an agent-runtime
+                webhook is connected, the command is also dispatched to the external execution environment.
               </p>
               <div className="flex flex-wrap gap-2">
-                {["sanctioned", "restricted", "killed"].map((status) => (
-                  <button
-                    key={status}
-                    onClick={() => onSetStatus(agent, status)}
-                    disabled={busy || agent.status === status}
-                    className="px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold capitalize disabled:opacity-50 inline-flex items-center gap-1.5"
-                  >
-                    {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-                    {status}
-                  </button>
-                ))}
+                <button
+                  data-testid="agent-enforce-suspend"
+                  onClick={() => onEnforce(agent, "suspend")}
+                  disabled={busy || agent.status === "restricted"}
+                  className="px-3 py-2 rounded-md border border-high/40 bg-high/10 text-high text-xs font-head font-bold disabled:opacity-50 inline-flex items-center gap-1.5"
+                >
+                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PauseCircle className="w-3.5 h-3.5" />}
+                  Suspend
+                </button>
+                <button
+                  data-testid="agent-enforce-kill"
+                  onClick={() => onEnforce(agent, "kill")}
+                  disabled={busy || agent.status === "killed"}
+                  className="px-3 py-2 rounded-md border border-crit/40 bg-crit/10 text-crit text-xs font-head font-bold disabled:opacity-50 inline-flex items-center gap-1.5"
+                >
+                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
+                  Kill
+                </button>
+                <button
+                  data-testid="agent-enforce-resume"
+                  onClick={() => onEnforce(agent, "resume")}
+                  disabled={busy || agent.status === "sanctioned"}
+                  className="px-3 py-2 rounded-md border border-low/40 bg-low/10 text-low text-xs font-head font-bold disabled:opacity-50 inline-flex items-center gap-1.5"
+                >
+                  {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />}
+                  Resume
+                </button>
               </div>
             </div>
           )}
