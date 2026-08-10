@@ -31,6 +31,7 @@ function AccessGlobe() {
   const [busy, setBusy] = useState(true);
   const [sel, setSel] = useState(null);
   const [expBusy, setExpBusy] = useState(false);
+  const [filter, setFilter] = useState("all");
   const loadG = () => {
     setBusy(true);
     api.get("/agents/runtime/access-globe").then(({ data }) => setG(data)).catch(() => {}).finally(() => setBusy(false));
@@ -47,6 +48,9 @@ function AccessGlobe() {
     setExpBusy(false);
   };
   const points = g?.points || [];
+  const shown = points
+    .filter((p) => (filter === "downloads" ? p.kind === "download" : filter === "suspicious" ? p.suspicious : true))
+    .map((p) => ({ ...p, anomaly: p.anomaly || p.suspicious }));
   return (
     <Panel title="Evidence access globe" subtitle="Every place your shared detail-cards and auditor rooms have been opened or downloaded — geo-located live from the chain-of-custody ledger. Click any pin to see who, on what device, and which card or room."
       testid="ca-access-globe"
@@ -75,13 +79,22 @@ function AccessGlobe() {
             <Tile label="Countries" value={(g.countries || []).length} sub={(g.countries || []).slice(0, 3).join(", ") || "—"} Icon={Gauge} iconClass="text-high" />
             <Tile label="Sources" value={`${g.cards + g.rooms}`} sub={`${g.cards} card · ${g.rooms} room`} Icon={Flame} iconClass="text-crit" />
           </div>
-          <div className="flex justify-center rounded-xl border border-border bg-[#0a1120] p-3">
-            <WorldMapThumb points={points} width={720} height={360} onClusterClick={(c) => setSel(c)} />
+          <div className="flex flex-wrap items-center gap-2" data-testid="ca-globe-filters">
+            {[["all", "All", points.length], ["downloads", "Downloads", g.downloads || 0], ["suspicious", "Suspicious", g.suspicious || 0]].map(([k, lbl, n]) => (
+              <button key={k} data-testid={`ca-globe-filter-${k}`} onClick={() => setFilter(k)} className={`px-3 py-1.5 rounded-full text-xs font-head font-bold border transition-colors ${filter === k ? "bg-ai/15 border-ai/50 text-ai" : "border-border text-muted-foreground hover:bg-secondary"}`}>{lbl} <span className="opacity-60">({n})</span></button>
+            ))}
+          </div>
+          <div className="flex justify-center items-center rounded-xl border border-border bg-[#0a1120] p-3 min-h-[200px]">
+            {shown.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-10" data-testid="ca-globe-filter-empty">No {filter} accesses to plot.</p>
+            ) : (
+              <WorldMapThumb points={shown} width={720} height={360} onClusterClick={(c) => setSel(c)} />
+            )}
           </div>
           <div className="flex flex-wrap items-center gap-4 text-[11px] text-muted-foreground">
             <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: "hsl(142 70% 50%)" }} /> open</span>
             <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: "hsl(190 90% 55%)" }} /> download</span>
-            <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: "hsl(0 84% 62%)" }} /> anomaly</span>
+            <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: "hsl(0 84% 62%)" }} /> anomaly / outside trusted zones</span>
             <span className="ml-auto">Click any pin to inspect its access events.</span>
           </div>
         </div>

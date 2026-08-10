@@ -1,6 +1,15 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Suspicious Globe Filter + Watchlist + Scheduled Board Map + Gated Snapshot Retire (iteration_113, backend 10/10 + frontend 100%)
+User-approved 4-feature batch (all live/no-mock):
+- **Anomaly-Only / Suspicious Globe filter**: `_gather_access_globe` now fetches the org's trusted countries+networks and tags each point `suspicious` (outside all trusted zones) plus returns `suspicious` count + `has_trust`. Control Assurance globe gained filter chips (`ca-globe-filter-all|downloads|suspicious`) — suspicious/anomaly pins render red; empty-state `ca-globe-filter-empty` when a filter has no pins.
+- **Suspicious Access Watchlist (weekly board note)**: new `_run_unusual_access_watchlist()` (wired into the `weekly-drift-digest` cron in `scheduled.py`) emails admins/execs a per-org summary of located accesses from OUTSIDE trusted countries/networks in the last 7 days (deduped per ISO week; only fires for orgs with trusted lists configured; blank/private-geo skipped).
+- **Scheduled Board Map**: `access_globe_pdf` refactored into a shared `_build_board_access_map_pdf(org_id, org)` helper; `_run_board_evidence_digest` now auto-attaches `obserra-board-access-map.pdf` to the monthly board evidence digest email when there are located accesses.
+- **Retire Snapshots (GATED)**: `GET /api/agents/runtime/snapshot-status` (SNAPSHOT record count + live-source-connected flag) and `POST /api/agents/runtime/retire-snapshots` (purges `ai_incidents` with `demo_label:"SNAPSHOT"` — but returns **HTTP 409** and deletes nothing until a connector with `sync_mode ∉ {SNAPSHOT,null,''}` + status connected exists). UI: `gov-snapshot-retire` footer in the Governance card with a `gov-retire-snapshots` button disabled until a live source is connected. NOTE: the hardcoded SNAPSHOT connector labels in `routes.py` (Entra/etc.) are code, not DB seed, so they remain until Entra is code-wired — only DB-backed demo incidents are purged by this endpoint.
+- Regression pytest: `/app/backend/tests/test_iter113_suspicious_snapshot.py` (10/10; run with `pytest -n 0` — access-globe.pdf can take ~30s). Cron endpoints need `Bearer WEBHOOK_CRON_SECRET`, not the admin cookie.
+
+
 ## Status (Jun 2026) — Globe Drilldown + Trusted Networks + Board Access Map PDF (iteration_112, backend 14/14 + frontend 100%)
 User-approved 3-feature enhancement batch (all live/no-mock):
 - **Globe Drilldown**: `GET /api/agents/runtime/access-globe` now returns per-point drilldown fields (kind, source card|room, title, who, device, ip, at, label, token, lat, lon, anomaly) via new `_gather_access_globe(org_id)` helper. `WorldMapThumb` gained an optional `onClusterClick` prop → clickable pins (`globe-pin-<i>`); Control Assurance `AccessGlobe` opens a dialog (`ca-globe-drilldown`) listing each access event at a location (`globe-access-<i>`: kind badge, source, title, auditor, device, IP, timestamp).

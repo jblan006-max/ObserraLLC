@@ -373,7 +373,45 @@ function GovernanceSettingsCard() {
         <label className="block md:col-span-2"><span className={lbl}>Trusted access countries (comma-separated — opens from these won't raise a "new country" anomaly)</span><input data-testid="gov-trusted-countries" value={trusted} onChange={(e) => setTrusted(e.target.value)} placeholder="United States, United Kingdom, Canada" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Match the country names shown in your access logs. New-device alerts still fire from any location.</span></label>
         <label className="block md:col-span-2"><span className={lbl}>Trusted networks — IP ranges (comma-separated IPs or CIDRs — accesses from these never raise an anomaly)</span><input data-testid="gov-trusted-networks" value={trustedIps} onChange={(e) => setTrustedIps(e.target.value)} placeholder="203.0.113.0/24, 198.51.100.7" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Add your office egress IPs / VPN ranges so trusted-network access is never flagged.</span></label>
       </div>
+      <SnapshotRetire />
     </Panel>
+  );
+}
+
+function SnapshotRetire() {
+  const [st, setSt] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => { api.get("/agents/runtime/snapshot-status").then(({ data }) => setSt(data)).catch(() => {}); };
+  useEffect(() => { load(); }, []);
+  const retire = async () => {
+    if (!window.confirm("Permanently remove the demo SNAPSHOT seed data? This only runs once a live source is connected.")) return;
+    setBusy(true);
+    try {
+      const { data } = await api.post("/agents/runtime/retire-snapshots");
+      toast.success(`Retired ${data.retired} demo snapshot record(s).`);
+      load();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not retire snapshot data.");
+    }
+    setBusy(false);
+  };
+  if (!st) return null;
+  const live = st.live_source_connected;
+  return (
+    <div data-testid="gov-snapshot-retire" className="mt-5 pt-4 border-t border-border flex flex-wrap items-center gap-3">
+      <div className="flex items-center gap-2">
+        <Database className="w-4 h-4 text-muted-foreground" />
+        <div>
+          <div className="text-sm font-head font-bold">Demo snapshot data</div>
+          <div className="text-[11px] text-muted-foreground">{st.snapshot_incidents} SNAPSHOT record(s) present · live source {live ? `connected (${st.live_source || "source"})` : "not connected"}</div>
+        </div>
+      </div>
+      <button data-testid="gov-retire-snapshots" onClick={retire} disabled={busy || !live}
+        title={live ? "Purge demo snapshot seed data" : "Connect a live enterprise source first"}
+        className={`ml-auto inline-flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-head font-bold transition-colors disabled:opacity-50 ${live ? "border-crit/50 text-crit hover:bg-crit/10" : "border-border text-muted-foreground"}`}>
+        {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Retire demo snapshots
+      </button>
+    </div>
   );
 }
 

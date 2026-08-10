@@ -1,0 +1,29 @@
+{
+  "summary": "Iter113 verified: (1) access-globe suspicious/has_trust — baseline no-trust returns has_trust=false, suspicious=0, all points suspicious=false; after PUT trusted_countries=['United States'], has_trust=true and >0 pins flagged suspicious (AU accesses). (2) access-globe.pdf still returns valid 3+ page PDF (~%PDF header). (3) snapshot-status returns {snapshot_incidents:2, live_source_connected:false, live_source:''}; retire-snapshots returns HTTP 409 with 'live'/'connect'/'source' message; snapshot count unchanged after gated call (nothing deleted). (4) Regression: governance PUT dedupe/validate for trusted_countries + trusted_ip_ranges (invalid dropped, dupes collapsed, empties trimmed); shared-cards, access-log.csv, board-evidence-digest all respond <500; cron/weekly-drift-digest returns 202 with Bearer WEBHOOK_CRON_SECRET. Baseline restored (trusted_countries=[], trusted_ip_ranges=[]). Frontend: Control Assurance globe now shows ca-globe-filters with All(116) / Downloads(34) / Suspicious(0) chips; clicking Suspicious renders ca-globe-filter-empty with text 'No suspicious accesses to plot.'; Downloads/All chips clickable; ca-globe-export + ca-globe-refresh present. Defensibility tab -> Governance card footer gov-snapshot-retire shows '2 SNAPSHOT record(s) present · live source not connected' and gov-retire-snapshots button is DISABLED as required.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter113_suspicious_snapshot.py",
+    "/app/test_reports/pytest/iter113.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "_gather_access_globe cleanly exposes has_trust + suspicious count and per-point suspicious flag; trust list PUT flips flags immediately (no cache staleness).",
+    "retire-snapshots gate is enforced server-side (HTTP 409) and confirmed non-destructive: snapshot_incidents count preserved after gated POST — matches design intent.",
+    "_build_board_access_map_pdf helper refactor holds: access-globe.pdf continues to be a valid multi-page branded PDF, exercising the same code path used by the board-evidence-digest attachment.",
+    "weekly-drift-digest cron enqueues _run_unusual_access_watchlist alongside existing tasks and still returns 202 quickly (background_tasks pattern preserved)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter113_suspicious_snapshot.py"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin/owner)",
+  "seed_data_creation": "None. trusted_countries=['United States'] was set transiently for the suspicious-flag test and reset to [] within the same test. Final GET confirmed trusted_countries=[] and trusted_ip_ranges=[] baseline restored. 2 SNAPSHOT ai_incidents intentionally preserved (gate refused deletion).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter113 (Suspicious globe filter + Board Access Map PDF + Snapshot retire gate + unusual-access weekly cron wiring) fully verified end-to-end. Regression pytest at /app/backend/tests/test_iter113_suspicious_snapshot.py — run with `pytest -n 0` because access-globe.pdf can take ~30s. Note: cron endpoint /api/cron/weekly-drift-digest requires Bearer token from backend/.env WEBHOOK_CRON_SECRET (not admin cookie). Globe pins do NOT expose per-pin data-testid selectors (drilldown click validated in iter112 by DOM/svg click). Onboarding tour 'Skip' still appears on fresh sessions."
+}

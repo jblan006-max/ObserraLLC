@@ -1821,6 +1821,59 @@ async def _run_card_engagement_weekly_digest():
             pass
 
 
+async def _run_unusual_access_watchlist():
+    """Weekly: for orgs with trusted countries/networks configured, summarise evidence accesses from
+    OUTSIDE those trusted zones (last 7 days) as an 'unusual access' board note. Located accesses only
+    (private/blank-geo opens are skipped to avoid noise). Hooked into the weekly-drift-digest cron."""
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=7)).isoformat()
+    orgs = await db.organizations.find(
+        {"$or": [{"trusted_countries": {"$exists": True, "$ne": []}},
+                 {"trusted_ip_ranges": {"$exists": True, "$ne": []}}]},
+        {"_id": 1, "trusted_countries": 1, "trusted_ip_ranges": 1}).to_list(1000)
+    for org in orgs:
+        try:
+            oid = str(org["_id"])
+            trusted = {(c or "").strip().lower() for c in (org.get("trusted_countries") or [])}
+            tips = org.get("trusted_ip_ranges") or []
+            rows = (await db.card_share_access.find({"org_id": oid, "at": {"$gte": since}}, {"_id": 0}).to_list(5000)) \
+                + (await db.evidence_room_access.find({"org_id": oid, "at": {"$gte": since}}, {"_id": 0}).to_list(5000))
+            sus = []
+            for r in rows:
+                if _ip_in_ranges(r.get("ip"), tips):
+                    continue
+                geo = r.get("geo") or ""
+                country = geo.split(",")[-1].strip() if geo else ""
+                if not country or country.lower() in trusted:
+                    continue
+                sus.append(r)
+            if not sus:
+                continue
+            by_loc = {}
+            for r in sus:
+                loc = r.get("geo") or (r.get("ip") or "unknown")
+                by_loc[loc] = by_loc.get(loc, 0) + 1
+            top = sorted(by_loc.items(), key=lambda kv: kv[1], reverse=True)[:8]
+            rows_html = "".join(
+                f"<li style='margin-bottom:4px'><strong>{l}</strong> "
+                f"<span style='color:#dc2626'>{n} access(es)</span></li>" for l, n in top)
+            html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:600px;margin:auto'>"
+                    f"<h2 style='color:#0f1e3d'>\u26a0 Unusual access watchlist</h2>"
+                    f"<p>In the last 7 days, <strong style='color:#dc2626'>{len(sus)}</strong> evidence access(es) "
+                    f"came from <strong>outside your trusted countries / networks</strong>, across {len(by_loc)} location(s):</p>"
+                    f"<ul style='padding-left:18px'>{rows_html}</ul>"
+                    f"<p style='font-size:12px;color:#6b7280'>Review these on the Control Assurance access globe "
+                    f"(filter \u2192 Suspicious). Add legitimate locations to your Trusted access rules to silence future alerts.</p>"
+                    f"<p style='font-size:11px;color:#9ca3af'>Obserra — Agentic AI Security Control & Governance · Chain-of-custody watchlist</p></div>")
+            await _notify_org_staff(oid, "\u26a0 Unusual access watchlist — Obserra", html,
+                "Unusual access watchlist",
+                f"{len(sus)} access(es) from outside your trusted zones last week, across {len(by_loc)} location(s).",
+                dedupe_key=f"unusual-access:{oid}:{now.strftime('%Y-%W')}")
+        except Exception:
+            pass
+
+
 @agents_router.post("/public/evidence-room/{token}/comment")
 async def evidence_room_comment(token: str, body: RoomCommentBody):
     """Public — an external auditor asks a read-only question on the portal; lands in the admin inbox."""
@@ -2040,6 +2093,14 @@ async def _run_board_evidence_digest(org_id=None, on_demand=False, scheduled=Fal
             d = await _build_board_digest(org)
             if not on_demand and d["nothing"]:
                 continue
+            try:
+                import base64 as _b64
+                map_raw, map_sum = await _build_board_access_map_pdf(oid, org)
+                if map_sum.get("located"):
+                    d["att"] = (d.get("att") or []) + [{"filename": "obserra-board-access-map.pdf",
+                                                        "content": _b64.b64encode(map_raw).decode()}]
+            except Exception:
+                pass
             for rr in d["recips"]:
                 try:
                     await notifications.send_email(rr["email"], d["subject"], d["html"], attachments=d["att"])
@@ -2063,6 +2124,33 @@ async def send_board_evidence_digest(admin: dict = Depends(require_roles("admin"
     await _log_audit(admin["org_id"], admin["email"], "agent.board_evidence_digest",
                      f"Board evidence digest emailed ({result.get('sent', 0)} recipient(s))")
     return result
+
+
+@agents_router.get("/runtime/snapshot-status")
+async def snapshot_status(admin: dict = Depends(require_roles("admin"))):
+    """How much SNAPSHOT demo data remains + whether a genuinely live enterprise source is connected (gate)."""
+    oid = admin["org_id"]
+    incidents = await db.ai_incidents.count_documents({"org_id": oid, "demo_label": "SNAPSHOT"})
+    live = await db.connectors.find_one({"org_id": oid, "status": "connected",
+                                         "sync_mode": {"$nin": ["SNAPSHOT", None, ""]}})
+    return {"snapshot_incidents": incidents, "live_source_connected": bool(live),
+            "live_source": (live or {}).get("name") or (live or {}).get("provider") or ""}
+
+
+@agents_router.post("/runtime/retire-snapshots")
+async def retire_snapshots(admin: dict = Depends(require_roles("admin"))):
+    """Purge SNAPSHOT-tagged demo seed data — GATED: refuses until a genuinely live enterprise source is
+    connected, so dashboards are never emptied before real data flows in (the 'all live' directive)."""
+    oid = admin["org_id"]
+    live = await db.connectors.find_one({"org_id": oid, "status": "connected",
+                                         "sync_mode": {"$nin": ["SNAPSHOT", None, ""]}})
+    if not live:
+        raise HTTPException(409, "Connect and verify a live enterprise source (e.g. Microsoft Entra) before retiring the demo snapshot data.")
+    res = await db.ai_incidents.delete_many({"org_id": oid, "demo_label": "SNAPSHOT"})
+    src = (live or {}).get("name") or (live or {}).get("provider") or "source"
+    await _log_audit(oid, admin["email"], "agent.retire_snapshots",
+                     f"Retired {res.deleted_count} SNAPSHOT demo record(s) after live source '{src}' confirmed")
+    return {"retired": res.deleted_count, "live_source": src}
 
 
 # ── Auditor question SLA (org setting + overdue nudge, folded into the daily cron) ──
@@ -2429,6 +2517,11 @@ async def _gather_access_globe(org_id):
     for r in room_rows:
         r["source"] = "room"
     all_rows = card_rows + room_rows
+    from bson import ObjectId as _OID2
+    _org = await db.organizations.find_one({"_id": _OID2(org_id)}, {"trusted_countries": 1, "trusted_ip_ranges": 1}) if org_id else None
+    _tc = {(c or "").strip().lower() for c in ((_org or {}).get("trusted_countries") or [])}
+    _tips = (_org or {}).get("trusted_ip_ranges") or []
+    _has_trust = bool(_tc or _tips)
     tokens = list({r.get("token") for r in all_rows if r.get("token")})
     label_map = {}
     if tokens:
@@ -2442,17 +2535,21 @@ async def _gather_access_globe(org_id):
         lat, lon = r.get("geo_lat"), r.get("geo_lon")
         if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
             title = label_map.get(r.get("token")) or ("Detail card" if r.get("source") == "card" else "Auditor room")
+            _ctry = r["geo"].split(",")[-1].strip() if r.get("geo") else ""
+            _susp = bool(_has_trust and not _ip_in_ranges(r.get("ip"), _tips)
+                         and not (_ctry and _ctry.lower() in _tc))
             points.append({"lat": lat, "lon": lon, "kind": r.get("kind") or "open",
-                           "anomaly": bool(r.get("anomaly")), "label": r.get("geo") or "",
+                           "anomaly": bool(r.get("anomaly")), "suspicious": _susp, "label": r.get("geo") or "",
                            "who": r.get("who") or "", "device": _parse_ua(r.get("ua") or "") or "",
                            "ip": r.get("ip") or "", "at": r.get("at") or "",
                            "source": r.get("source"), "title": title, "token": r.get("token") or ""})
-            if r.get("geo"):
-                countries.add(r["geo"].split(",")[-1].strip())
+            if _ctry:
+                countries.add(_ctry)
     summary = {"total": len(all_rows),
                "opens": sum(1 for r in all_rows if r.get("kind") == "open"),
                "downloads": sum(1 for r in all_rows if r.get("kind") == "download"),
                "located": len(points), "countries": sorted(c for c in countries if c),
+               "suspicious": sum(1 for p in points if p.get("suspicious")), "has_trust": _has_trust,
                "cards": len(card_rows), "rooms": len(room_rows)}
     return points, summary, all_rows
 
@@ -2464,17 +2561,17 @@ async def access_globe(admin: dict = Depends(require_roles("admin"))):
     return {"points": points, **summary}
 
 
-@agents_router.get("/runtime/access-globe.pdf")
-async def access_globe_pdf(admin: dict = Depends(require_roles("admin"))):
-    """Board Access Map — a branded, sealed PDF of everywhere this org's evidence has been opened worldwide."""
-    import io, json as _json, hashlib as _hl
+async def _build_board_access_map_pdf(org_id, org=None):
+    """Board Access Map PDF bytes — worldwide evidence-access map + locations list, branded + sealed.
+    Returns (raw_bytes, summary)."""
+    import json as _json, hashlib as _hl
     from datetime import datetime, timezone
-    from fastapi.responses import StreamingResponse
     from reports import _build_pdf, _resolve_brand
     from agent_reports import _stamp_verified_seal
     from bson import ObjectId
-    points, summary, all_rows = await _gather_access_globe(admin["org_id"])
-    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}) or {}
+    _points, summary, all_rows = await _gather_access_globe(org_id)
+    if org is None:
+        org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
     try:
         brand = _resolve_brand(org)
     except Exception:
@@ -2486,6 +2583,8 @@ async def access_globe_pdf(admin: dict = Depends(require_roles("admin"))):
              f"**Total accesses:** {summary['total']} ({summary['opens']} opens \u00b7 {summary['downloads']} downloads) "
              f"\u00b7 **located:** {summary['located']} \u00b7 **countries:** {len(summary['countries'])} "
              f"\u00b7 **sources:** {summary['cards']} card / {summary['rooms']} room.", ""]
+    if summary.get("has_trust"):
+        lines += [f"**Unusual (outside trusted zones):** {summary.get('suspicious', 0)} access(es).", ""]
     if summary["countries"]:
         lines += ["**Countries:** " + ", ".join(summary["countries"]), ""]
     lines.append("## Access locations")
@@ -2502,12 +2601,22 @@ async def access_globe_pdf(admin: dict = Depends(require_roles("admin"))):
     raw = _append_custody_map_page(raw, geo_rows, title="Evidence access map \u2014 worldwide")
     seal = _hl.sha256(_json.dumps(summary, sort_keys=True, default=str).encode()).hexdigest()
     try:
-        raw = await _brand_watermark_pdf(raw, org_id=admin["org_id"], room_url="",
+        raw = await _brand_watermark_pdf(raw, org_id=org_id, room_url="",
             subtext=f"Board Access Map \u00b7 {summary['total']} accesses \u00b7 {len(summary['countries'])} countries")
         raw = _stamp_verified_seal(raw, seal)
     except Exception:
         pass
-    stamp = now.strftime("%Y%m%d-%H%M")
+    return raw, summary
+
+
+@agents_router.get("/runtime/access-globe.pdf")
+async def access_globe_pdf(admin: dict = Depends(require_roles("admin"))):
+    """Board Access Map — a branded, sealed PDF of everywhere this org's evidence has been opened worldwide."""
+    import io
+    from datetime import datetime, timezone
+    from fastapi.responses import StreamingResponse
+    raw, _summary = await _build_board_access_map_pdf(admin["org_id"])
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
     return StreamingResponse(io.BytesIO(raw), media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="obserra-board-access-map-{stamp}.pdf"'})
 
