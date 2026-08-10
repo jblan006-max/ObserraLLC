@@ -1,5 +1,8 @@
 # Obserra EIOS — PRD
 
+## Status (Jun 2026) — Agentic AI Security Control Plane v1: DEFENSIBILITY COMPLETE + reporting layer refactored (iteration_96)
+Latest (fork continuation): the final 4-feature Defensibility batch is validated — Board **Digest Preview** (`/board-evidence-digest/preview` + `.pdf`), **Auditor Room Access Log** (`/evidence-room/{token}/access-log`, chain of custody), **Auditor-question SLA + second-approver escalation** (governance settings + daily `_run_auditor_question_escalation` cron), and **Runtime Playbook Test Ping** (`POST /runtime/webhook/test`, signed+retried, no-mock). Backend curl-verified + testing_agent frontend 100% (5/5, `iteration_96.json`). Also refactored: `agents.py` 1493→1277 lines, reporting/PDF builders extracted into `backend/agent_reports.py` (236 lines, one-way dep, backend boots clean, all report endpoints re-verified 200 + valid PDF).
+
 ## Status (Jun 2026) — Agentic AI Security Control Plane v1: UNIFICATION COMPLETE
 The v1 pivot + all Enforcement Observability features + the final unification phase are done and E2E-verified (iteration_93). Standard universal deep-dive cards (agent Suspend/Kill/Resume, AI-system Sanction/Block via `/api/actions/run`) run across Executive Overview, Agent Inventory, Mission Control, Shadow AI and the Toxicity Map; the bespoke `AgentDetailModal` is kept on Authority & Guardrails for extra detail. The read-only, expiring **Auditor Room** (create/list/copy/revoke UI in the Defensibility tab → public `/audit-room/:token` portal + signed PDF) is live. Connectors are unified (SAP Landscape merged into `connectors_catalog.py`). All live — no placeholders/mocks. Owner/admin test account: `jblan2026@gmail.com` / `Obserra2026!`.
 
