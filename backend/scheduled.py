@@ -373,6 +373,24 @@ async def weekly_teams_digest(request: Request, background_tasks: BackgroundTask
     return {"status": "accepted"}
 
 
+async def _run_daily_readiness_snapshot():
+    """Zero-touch: record each org's Go-Live readiness score daily so the trend fills in without logins."""
+    try:
+        from sap_uac import compute_go_live
+    except Exception as e:
+        logger.warning(f"readiness snapshot import failed: {e}")
+        return
+    orgs = await db.organizations.find({}, {"_id": 1}).to_list(1000)
+    n = 0
+    for org in orgs:
+        try:
+            await compute_go_live(str(org["_id"]))
+            n += 1
+        except Exception as e:
+            logger.warning(f"readiness snapshot failed for org {org['_id']}: {e}")
+    logger.info(f"readiness snapshot recorded for {n} org(s)")
+
+
 @scheduled_router.post("/cron/daily-drift-digest")
 async def daily_drift_digest(request: Request, background_tasks: BackgroundTasks):
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
@@ -381,6 +399,7 @@ async def daily_drift_digest(request: Request, background_tasks: BackgroundTasks
     background_tasks.add_task(_run_drift_digest, {"daily"}, "Daily")
     background_tasks.add_task(_run_access_expiry)
     background_tasks.add_task(_run_connector_health)
+    background_tasks.add_task(_run_daily_readiness_snapshot)
     from sap_uac import (run_sap_autoremediation_all, run_sap_governance_digest,
                          run_sap_mover_autostrip_all, record_sap_scorecard_all, run_sap_weekly_scorecard,
                          run_sap_scorecard_alerts, run_sap_sod_evidence_export, run_sap_weekly_recap,

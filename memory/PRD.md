@@ -1,6 +1,10 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Daily readiness cron + board-digest readiness + rebrand "Control & Governance"
+Shipped: **Daily Readiness Snapshot** (`compute_go_live(org_id)` refactor + `_run_daily_readiness_snapshot` folded into the daily-drift-digest cron — records a readiness point per org daily; verified writing all 18 orgs); **Board digest readiness line** (`_build_board_digest` adds a Go-Live readiness row + 7-day unicode sparkline + `counts.go_live_score`; preview-verified); **Product rebrand** to **"Agentic AI Security Control & Governance"** across all frontend titles + backend PDF/email footers (correct `&amp;`/`&` escaping; 0 leftovers; compiles) with new positioning on the Auth hero + meta: "Discover, understand, govern, constrain, and respond to enterprise AI agents before delegated machine authority becomes enterprise risk." Generic lowercase "control plane" enforcement phrasing left intact.
+
+
 ## Status (Jun 2026) — Readiness history + trend sparkline + one-click Auto-Wire webhook
 Shipped 3 follow-ups: **Readiness history** (`go_live_checklist` upserts a daily snapshot to `db.go_live_history` and returns `trend[]`; new recharts area chart `go-live-history` on the Go-Live card with a 100% target line + "builds daily" empty state); **Board readiness sparkline** (`AIExecutiveOverview` `MiniSparkline` under the `exec-golive-badge`, `exec-golive-sparkline`); **Auto-Wire webhook** (runtime-item Fix opens `webhook-dialog` → `PUT /api/agents/runtime/webhook` → auto re-check to 100%). Honest note: readiness trend is real daily history (no fabrication) — shows "builds daily" until ≥2 days accrue. Backend `trend` curl-verified; both visuals + dialog verified; services compile clean.
 

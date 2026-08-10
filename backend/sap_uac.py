@@ -211,10 +211,9 @@ async def systems_reprobe(user: dict = Depends(get_current_user)):
     return {"ok": True, **payload}
 
 
-@sap_router.get("/go-live-checklist")
-async def go_live_checklist(user: dict = Depends(get_current_user)):
-    """Live production-readiness checklist. Every item is evaluated against REAL state (No-Mock)."""
-    org_id = user["org_id"]
+async def compute_go_live(org_id: str):
+    """Live production-readiness checklist for an org — evaluated against REAL state (No-Mock).
+    Persists today's snapshot into go_live_history and returns items + score + daily trend."""
     await _ensure(org_id)
     items = []
 
@@ -326,6 +325,11 @@ async def go_live_checklist(user: dict = Depends(get_current_user)):
     return {"items": items, "passed": passed, "warned": warned, "failed": failed,
             "total": len(items), "score": score, "ready": failed == 0,
             "last_probe_at": last_probe, "checked_at": now.isoformat(), "trend": hist}
+
+
+@sap_router.get("/go-live-checklist")
+async def go_live_checklist(user: dict = Depends(get_current_user)):
+    return await compute_go_live(user["org_id"])
 
 
 

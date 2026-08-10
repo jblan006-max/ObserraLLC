@@ -58,10 +58,10 @@ export default function Auth() {
         </div>
         <div className="relative space-y-6">
           <h1 className="font-head font-black text-5xl leading-[1.05] tracking-tight">
-            Agentic AI Security<br /><span className="text-ai">Control Plane.</span>
+            Agentic AI Security<br /><span className="text-ai">Control &amp; Governance.</span>
           </h1>
           <p className="text-muted-foreground max-w-md text-base leading-relaxed">
-            Discover, understand, govern, constrain and respond to every enterprise AI agent — with modelled risk, heuristic red-team baselines and a defensibility ledger. Every metric carries its source, freshness and confidence.
+            Discover, understand, govern, constrain, and respond to enterprise AI agents before delegated machine authority becomes enterprise risk. Every metric carries its source, freshness and confidence.
           </p>
           <div className="flex gap-3 text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
             <span className="px-2 py-1 rounded-sm border border-border">Machine Authority</span>

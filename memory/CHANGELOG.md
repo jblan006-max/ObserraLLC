@@ -1,5 +1,12 @@
 # Obserra EIOS — CHANGELOG
 
+## 2026-06 — Daily readiness cron + board-digest readiness line + rebrand to "Control & Governance"
+- **Daily Readiness Snapshot (scheduled)**: refactored the checklist into org-callable `sap_uac.compute_go_live(org_id)` (endpoint is now a thin wrapper). New `scheduled._run_daily_readiness_snapshot()` folded into the existing **daily-drift-digest** cron (08:00 UTC, after the connector re-probe — crons stay at 5, none added) records a readiness point for every org daily, so the trend fills in with no logins. Verified in isolation: wrote today's real score for all 18 orgs.
+- **Board Digest readiness line**: `agent_reports._build_board_digest` now calls `compute_go_live`, adds a "Go-Live readiness" table row (score + · ready), a 7-day unicode block sparkline (▁▂▃▅▇, shown once ≥2 days) with "(first% → last%)", and `counts.go_live_score`. Verified via the preview endpoint (row present, go_live_score=94).
+- **Rebrand → "Agentic AI Security Control & Governance"**: replaced the branded product title everywhere (index.html title+meta, AppShell header, AgenticAISecurity H1 + AIInsight dashboard label, Auth hero, Settings, AuditRoom footer, OnboardingTour, manifest.json, and all backend PDF/email footers in agents.py + agent_reports.py). Correct entity escaping per context (`&amp;` in JSX/HTML text, plain `&` in JS strings/JSON). New market positioning on the Auth hero + meta description: "Discover, understand, govern, constrain, and respond to enterprise AI agents before delegated machine authority becomes enterprise risk." Verified: 0 leftover old-title strings, no `&amp;` leak into JS/JSON, frontend compiles, digest carries the new brand.
+- Left generic lowercase "control plane" enforcement-architecture phrasing intact (e.g., "enforced in the control plane only") — those describe the mechanism, not the product title.
+
+
 ## 2026-06 — Readiness history + trend sparkline + one-click Auto-Wire webhook
 Shipped the three follow-ups (user: both items + "y"):
 - **Readiness history** (`sap_uac.go_live_checklist`): each check now upserts a daily snapshot into `db.go_live_history` (keyed by org+date) and returns a `trend[]` (last 60 days). New **Readiness history** area chart on the Go-Live card (`go-live-history`, recharts, 100% target ReferenceLine) with a graceful "builds daily" empty state (`go-live-history-empty`) until ≥2 days exist. Verified rendering with 5 climbing points (70→94) via temporary test data, then cleaned up (only today's real point remains).

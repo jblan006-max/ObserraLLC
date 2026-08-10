@@ -19,7 +19,7 @@ const OPS_STEPS = [
   { title: "Operational Mode", spotlight: true,
     body: "The toggle above keeps you in Operational view — agent inventory, authority & tools, guardrails & red team, shadow AI and incidents. This is your day-to-day working surface." },
   { title: "Where you'll work",
-    body: "Jump into the Agentic AI Security Control Plane from the sidebar to inspect the Tool Toxicity Map, sanction shadow AI and enforce Suspend/Kill on risky agents. The Obserrian Advisor can help you triage too." },
+    body: "Jump into the Agentic AI Security Control & Governance from the sidebar to inspect the Tool Toxicity Map, sanction shadow AI and enforce Suspend/Kill on risky agents. The Obserrian Advisor can help you triage too." },
   { title: "Start at the Control Plane", spotlight: true, target: "nav-agentic-ai-security",
     body: "Highlighted in the sidebar — Agentic AI Security is your triage home base: toxicity map, guardrail evidence and one-click runtime enforcement, with the Obserrian Advisor one click away." },
 ];

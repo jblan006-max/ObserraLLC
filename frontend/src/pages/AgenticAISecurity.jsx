@@ -211,7 +211,7 @@ export default function AgenticAISecurity() {
           <div className="flex items-center gap-2 flex-wrap">
             <Bot className="w-7 h-7 text-ai" />
             <h1 className="font-head font-black text-3xl tracking-tight">
-              Agentic AI Security Control Plane
+              Agentic AI Security Control &amp; Governance
             </h1>
             <span className="px-2 py-1 rounded-full border border-ai/25 bg-ai/10 text-ai text-[10px] font-mono">
               MACHINE AUTHORITY INTELLIGENCE
@@ -262,7 +262,7 @@ export default function AgenticAISecurity() {
       <ErrorBanner message={error} onRetry={reload} refreshing={refreshing} />
 
       <AIInsight
-        dashboard="Agentic AI Security Control Plane"
+        dashboard="Agentic AI Security Control & Governance"
         accent="330 81% 60%"
         auto
         slug="agentic-ai-security"

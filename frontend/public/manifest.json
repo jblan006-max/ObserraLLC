@@ -1,7 +1,7 @@
 {
   "id": "/app",
   "short_name": "Obserra",
-  "name": "Obserra — Agentic AI Security Control Plane",
+  "name": "Obserra — Agentic AI Security Control & Governance",
   "description": "Discover, govern and constrain enterprise AI agents — modelled risk, guardrails, heuristic red-team and defensibility.",
   "start_url": "/app",
   "scope": "/",
