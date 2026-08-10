@@ -1,0 +1,26 @@
+{
+  "summary": "Iter114 verified end-to-end (backend 15/15 pytest + full frontend). (1) Access-globe days: /api/agents/runtime/access-globe?days=7|30|90 echoes days; days=5 falls back to null (all-time); no days -> null; all 4 requests returned 200. (2) Watchtower: baseline (no trust) -> {count:0, has_trust:false}; after PUT trusted_countries=['United States'] -> {count:28, has_trust:true}. Sidebar red badge nav-watchtower-badge appeared immediately with text '28' next to Control Assurance, and did NOT appear at baseline. (3) Governance settings: GET now returns trusted_auditors (list) and unusual_access_threshold (int>=1); PUT trusted_auditors=['Alice@Corp.com',' alice@corp.com ','auditor@bigfour.com'] stored as ['alice@corp.com','auditor@bigfour.com']; unusual_access_threshold=5 stored 5, 0 clamped to 1, 999999 clamped to 1000. (4) Auditor allow-list effect on access-globe: adding a suspicious 'who' email to trusted_auditors (with trusted_countries=['United States']) flipped that pin's suspicious flag to false while other outside-US pins remained suspicious. (5) Regression pass: access-globe drilldown fields intact (who/device/ip/at/source/title/token/suspicious); access-globe.pdf still valid multi-page PDF (previously validated iter113); snapshot-status + retire-snapshots (409 gated) unchanged with no snapshot deletion; trusted_countries/trusted_ip_ranges validate+dedupe; cron/weekly-drift-digest still 2xx. Frontend: ca-globe-range + range-all|7d|30d|90d visible on Control Assurance globe header, each click fires GET access-globe with correct days param and highlights active button (bg-ai/15 text-ai). ca-globe-filter-* chips remain. Defensibility -> Governance card exposes gov-trusted-auditors + gov-unusual-threshold; after gov-save + reload, values persist (auditors lowercased/deduped; threshold=7). Final baseline reset confirmed via GET: trusted_countries=[], trusted_ip_ranges=[], trusted_auditors=[], unusual_access_threshold=1 — watchtower badge hidden by default.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter114_watchtower_range_auditors.py",
+    "/app/test_reports/pytest/iter114.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "access-globe `days` guard (days in (7,30,90) else None) is a clean whitelist — no risk of arbitrary window scans.",
+    "_access_suspicious short-circuits on trusted_auditors before geo/ip checks, matching the design intent of auditor allow-list overriding country/IP mismatch.",
+    "watchtower endpoint returns {count:0, has_trust:false} without querying access rows when no trust configured — good perf shortcut.",
+    "trusted_auditors PUT lower-cases+dedupes+caps at 100 entries; threshold is clamped 1..1000 — both robust against malformed admin input."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter114_watchtower_range_auditors.py",
+    "/app/test_reports/iteration_114.json"
+  ],
+  "success_rate": {"backend": "100% (15/15)", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin/owner)",
+  "seed_data_creation": "None. Transient PUTs: trusted_countries=['United States'] (for watchtower/allow-list tests), trusted_auditors + threshold=7 (for Governance UI persistence). ALL reset in teardown; final GET confirmed baseline: trusted_countries=[], trusted_ip_ranges=[], trusted_auditors=[], unusual_access_threshold=1. Evidence rooms, card shares, and 2 SNAPSHOT ai_incidents untouched.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter114 = Globe time-range selector + Watchtower sidebar badge + Trusted auditors allow-list + Unusual-access threshold — all live, all passing. Regression pytest at /app/backend/tests/test_iter114_watchtower_range_auditors.py (run with `pytest -n 0`). Frontend login note: use page.type (not fill) with a small delay on auth-email/password — SPA state may lose values from a single `fill` if a tab click races; login POST /api/auth/login returned 200 reliably with type+delay. Sidebar poller picks up watchtower changes within ~2s of an api trust change. Baseline is fully reset at end."
+}

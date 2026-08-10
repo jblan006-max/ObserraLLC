@@ -1588,6 +1588,20 @@ def _ip_in_ranges(ip, ranges):
     return False
 
 
+def _access_suspicious(r, trusted_countries, trusted_ips, trusted_auditors):
+    """A located access is 'suspicious' when it's outside every trusted zone AND not from a trusted auditor."""
+    who = (r.get("who") or "").strip().lower()
+    if who and who in trusted_auditors:
+        return False
+    if _ip_in_ranges(r.get("ip"), trusted_ips):
+        return False
+    geo = r.get("geo") or ""
+    country = geo.split(",")[-1].strip() if geo else ""
+    if not country or country.lower() in trusted_countries:
+        return False
+    return True
+
+
 async def _card_anomaly_autocheck(token, org_id, ip, ua, kind, who=None):
     """Immediately alert org staff when THIS access is from a new country/device vs the card's history.
     Fires regardless of engagement cadence (unless cadence == 'off'). Best-effort; dedup per token+ip+kind."""
@@ -1831,24 +1845,19 @@ async def _run_unusual_access_watchlist():
     orgs = await db.organizations.find(
         {"$or": [{"trusted_countries": {"$exists": True, "$ne": []}},
                  {"trusted_ip_ranges": {"$exists": True, "$ne": []}}]},
-        {"_id": 1, "trusted_countries": 1, "trusted_ip_ranges": 1}).to_list(1000)
+        {"_id": 1, "trusted_countries": 1, "trusted_ip_ranges": 1, "trusted_auditors": 1,
+         "unusual_access_threshold": 1}).to_list(1000)
     for org in orgs:
         try:
             oid = str(org["_id"])
             trusted = {(c or "").strip().lower() for c in (org.get("trusted_countries") or [])}
             tips = org.get("trusted_ip_ranges") or []
+            tauds = {(a or "").strip().lower() for a in (org.get("trusted_auditors") or [])}
+            threshold = max(1, int(org.get("unusual_access_threshold") or 1))
             rows = (await db.card_share_access.find({"org_id": oid, "at": {"$gte": since}}, {"_id": 0}).to_list(5000)) \
                 + (await db.evidence_room_access.find({"org_id": oid, "at": {"$gte": since}}, {"_id": 0}).to_list(5000))
-            sus = []
-            for r in rows:
-                if _ip_in_ranges(r.get("ip"), tips):
-                    continue
-                geo = r.get("geo") or ""
-                country = geo.split(",")[-1].strip() if geo else ""
-                if not country or country.lower() in trusted:
-                    continue
-                sus.append(r)
-            if not sus:
+            sus = [r for r in rows if _access_suspicious(r, trusted, tips, tauds)]
+            if len(sus) < threshold:
                 continue
             by_loc = {}
             for r in sus:
@@ -2356,6 +2365,8 @@ class GovSettingsBody(BaseModel):
     card_engagement_cadence: str | None = None
     trusted_countries: list[str] | None = None
     trusted_ip_ranges: list[str] | None = None
+    trusted_auditors: list[str] | None = None
+    unusual_access_threshold: int | None = None
 
 
 @agents_router.get("/runtime/governance-settings")
@@ -2379,7 +2390,9 @@ async def get_governance_settings(admin: dict = Depends(require_roles("admin")))
             "control_assurance_sla_min": int(org.get("control_assurance_sla_min") or 90),
             "card_engagement_cadence": org.get("card_engagement_cadence") or "instant",
             "trusted_countries": org.get("trusted_countries") or [],
-            "trusted_ip_ranges": org.get("trusted_ip_ranges") or []}
+            "trusted_ip_ranges": org.get("trusted_ip_ranges") or [],
+            "trusted_auditors": org.get("trusted_auditors") or [],
+            "unusual_access_threshold": int(org.get("unusual_access_threshold") or 1)}
 
 
 @agents_router.put("/runtime/governance-settings")
@@ -2448,6 +2461,18 @@ async def set_governance_settings(body: GovSettingsBody, admin: dict = Depends(r
             except Exception:
                 continue
         upd["trusted_ip_ranges"] = clean_ip[:60]
+    if body.trusted_auditors is not None:
+        seen_a = []
+        for em in body.trusted_auditors:
+            em = (em or "").strip().lower()
+            if em and em not in seen_a:
+                seen_a.append(em)
+        upd["trusted_auditors"] = seen_a[:100]
+    if body.unusual_access_threshold is not None:
+        try:
+            upd["unusual_access_threshold"] = max(1, min(1000, int(body.unusual_access_threshold)))
+        except Exception:
+            pass
     if upd:
         await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": upd})
     await _log_audit(admin["org_id"], admin["email"], "agent.governance_settings", "Updated AI governance settings")
@@ -2489,10 +2514,15 @@ async def evidence_room_access_log(token: str, admin: dict = Depends(require_rol
             "last_downloaded_by": room.get("last_downloaded_by"), "access": rows}
 
 
-async def _gather_access_globe(org_id):
-    """Aggregate every card-share + evidence-room access (geo-enriched, cached back) into drilldown points."""
-    card_rows = await db.card_share_access.find({"org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(2000)
-    room_rows = await db.evidence_room_access.find({"org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(2000)
+async def _gather_access_globe(org_id, days=None):
+    """Aggregate every card-share + evidence-room access (geo-enriched, cached back) into drilldown points.
+    Optional `days` (7/30/90) scopes to accesses within that recent window."""
+    _match = {"org_id": org_id}
+    if days:
+        from datetime import datetime, timezone, timedelta
+        _match["at"] = {"$gte": (datetime.now(timezone.utc) - timedelta(days=int(days))).isoformat()}
+    card_rows = await db.card_share_access.find(_match, {"_id": 0}).sort("at", -1).to_list(2000)
+    room_rows = await db.evidence_room_access.find(_match, {"_id": 0}).sort("at", -1).to_list(2000)
     need = sorted({r.get("ip") for r in (card_rows + room_rows)
                    if r.get("ip") and r.get("geo_lat") is None})
     geo_map = await _geo_lookup_many(need) if need else {}
@@ -2518,9 +2548,10 @@ async def _gather_access_globe(org_id):
         r["source"] = "room"
     all_rows = card_rows + room_rows
     from bson import ObjectId as _OID2
-    _org = await db.organizations.find_one({"_id": _OID2(org_id)}, {"trusted_countries": 1, "trusted_ip_ranges": 1}) if org_id else None
+    _org = await db.organizations.find_one({"_id": _OID2(org_id)}, {"trusted_countries": 1, "trusted_ip_ranges": 1, "trusted_auditors": 1}) if org_id else None
     _tc = {(c or "").strip().lower() for c in ((_org or {}).get("trusted_countries") or [])}
     _tips = (_org or {}).get("trusted_ip_ranges") or []
+    _tauds = {(a or "").strip().lower() for a in ((_org or {}).get("trusted_auditors") or [])}
     _has_trust = bool(_tc or _tips)
     tokens = list({r.get("token") for r in all_rows if r.get("token")})
     label_map = {}
@@ -2536,8 +2567,7 @@ async def _gather_access_globe(org_id):
         if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
             title = label_map.get(r.get("token")) or ("Detail card" if r.get("source") == "card" else "Auditor room")
             _ctry = r["geo"].split(",")[-1].strip() if r.get("geo") else ""
-            _susp = bool(_has_trust and not _ip_in_ranges(r.get("ip"), _tips)
-                         and not (_ctry and _ctry.lower() in _tc))
+            _susp = bool(_has_trust and _access_suspicious(r, _tc, _tips, _tauds))
             points.append({"lat": lat, "lon": lon, "kind": r.get("kind") or "open",
                            "anomaly": bool(r.get("anomaly")), "suspicious": _susp, "label": r.get("geo") or "",
                            "who": r.get("who") or "", "device": _parse_ua(r.get("ua") or "") or "",
@@ -2555,10 +2585,33 @@ async def _gather_access_globe(org_id):
 
 
 @agents_router.get("/runtime/access-globe")
-async def access_globe(admin: dict = Depends(require_roles("admin"))):
-    """Org-wide evidence-access globe with per-point drilldown (who / device / source / card|room)."""
-    points, summary, _ = await _gather_access_globe(admin["org_id"])
-    return {"points": points, **summary}
+async def access_globe(days: int | None = None, admin: dict = Depends(require_roles("admin"))):
+    """Org-wide evidence-access globe with per-point drilldown (who / device / source / card|room).
+    Optional ?days=7|30|90 scopes the pins to a recent window (default: all-time)."""
+    d = days if days in (7, 30, 90) else None
+    points, summary, _ = await _gather_access_globe(admin["org_id"], days=d)
+    return {"points": points, **summary, "days": d}
+
+
+@agents_router.get("/runtime/watchtower")
+async def watchtower(admin: dict = Depends(require_roles("admin"))):
+    """Live count of suspicious (outside-trusted) evidence accesses in the last 24h — for the sidebar badge."""
+    from datetime import datetime, timezone, timedelta
+    from bson import ObjectId
+    oid = admin["org_id"]
+    org = await db.organizations.find_one(
+        {"_id": ObjectId(oid)},
+        {"trusted_countries": 1, "trusted_ip_ranges": 1, "trusted_auditors": 1}) or {}
+    tc = {(c or "").strip().lower() for c in (org.get("trusted_countries") or [])}
+    tips = org.get("trusted_ip_ranges") or []
+    tauds = {(a or "").strip().lower() for a in (org.get("trusted_auditors") or [])}
+    if not (tc or tips):
+        return {"count": 0, "has_trust": False}
+    since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+    rows = (await db.card_share_access.find({"org_id": oid, "at": {"$gte": since}}, {"_id": 0}).to_list(5000)) \
+        + (await db.evidence_room_access.find({"org_id": oid, "at": {"$gte": since}}, {"_id": 0}).to_list(5000))
+    count = sum(1 for r in rows if _access_suspicious(r, tc, tips, tauds))
+    return {"count": count, "has_trust": True}
 
 
 async def _build_board_access_map_pdf(org_id, org=None):

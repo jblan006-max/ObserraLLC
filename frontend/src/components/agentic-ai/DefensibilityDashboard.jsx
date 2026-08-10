@@ -312,8 +312,9 @@ function GovernanceSettingsCard() {
   const [oncall, setOncall] = useState("");
   const [trusted, setTrusted] = useState("");
   const [trustedIps, setTrustedIps] = useState("");
+  const [tauds, setTauds] = useState("");
   const [saving, setSaving] = useState(false);
-  useEffect(() => { api.get("/agents/runtime/governance-settings").then(({ data }) => { setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); setTrusted((data.trusted_countries || []).join(", ")); setTrustedIps((data.trusted_ip_ranges || []).join(", ")); }).catch(() => {}); }, []);
+  useEffect(() => { api.get("/agents/runtime/governance-settings").then(({ data }) => { setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); setTrusted((data.trusted_countries || []).join(", ")); setTrustedIps((data.trusted_ip_ranges || []).join(", ")); setTauds((data.trusted_auditors || []).join(", ")); }).catch(() => {}); }, []);
   if (!s) return null;
   const sbp = s.auditor_question_sla_by_priority || {};
   const setSbp = (k, v) => setS({ ...s, auditor_question_sla_by_priority: { ...sbp, [k]: v } });
@@ -335,8 +336,10 @@ function GovernanceSettingsCard() {
         card_engagement_cadence: s.card_engagement_cadence || "instant",
         trusted_countries: trusted.split(",").map((x) => x.trim()).filter(Boolean),
         trusted_ip_ranges: trustedIps.split(",").map((x) => x.trim()).filter(Boolean),
+        trusted_auditors: tauds.split(",").map((x) => x.trim()).filter(Boolean),
+        unusual_access_threshold: Number(s.unusual_access_threshold) || 1,
       });
-      setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); setTrusted((data.trusted_countries || []).join(", ")); setTrustedIps((data.trusted_ip_ranges || []).join(", ")); toast.success("Governance settings saved");
+      setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); setTrusted((data.trusted_countries || []).join(", ")); setTrustedIps((data.trusted_ip_ranges || []).join(", ")); setTauds((data.trusted_auditors || []).join(", ")); toast.success("Governance settings saved");
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed."); }
     finally { setSaving(false); }
   };
@@ -372,6 +375,8 @@ function GovernanceSettingsCard() {
         </label>
         <label className="block md:col-span-2"><span className={lbl}>Trusted access countries (comma-separated — opens from these won't raise a "new country" anomaly)</span><input data-testid="gov-trusted-countries" value={trusted} onChange={(e) => setTrusted(e.target.value)} placeholder="United States, United Kingdom, Canada" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Match the country names shown in your access logs. New-device alerts still fire from any location.</span></label>
         <label className="block md:col-span-2"><span className={lbl}>Trusted networks — IP ranges (comma-separated IPs or CIDRs — accesses from these never raise an anomaly)</span><input data-testid="gov-trusted-networks" value={trustedIps} onChange={(e) => setTrustedIps(e.target.value)} placeholder="203.0.113.0/24, 198.51.100.7" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Add your office egress IPs / VPN ranges so trusted-network access is never flagged.</span></label>
+        <label className="block md:col-span-2"><span className={lbl}>Trusted auditors (comma-separated emails — their opens never show as suspicious, even from abroad)</span><input data-testid="gov-trusted-auditors" value={tauds} onChange={(e) => setTauds(e.target.value)} placeholder="auditor@bigfour.com, examiner@regulator.gov" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Use the auditor's login / download email exactly as it appears in the access log.</span></label>
+        <label className="block md:col-span-2"><span className={lbl}>Unusual-access alert threshold (min outside-trusted accesses to trigger the weekly note)</span><input data-testid="gov-unusual-threshold" type="number" min={1} max={1000} value={s.unusual_access_threshold ?? 1} onChange={(e) => setS({ ...s, unusual_access_threshold: e.target.value })} className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Quiet weeks below this count stay silent — no noise for the board.</span></label>
       </div>
       <SnapshotRetire />
     </Panel>

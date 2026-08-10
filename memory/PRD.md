@@ -1,6 +1,15 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Globe Time-Range + Auditor Allow-List + Watchlist Threshold + Watchtower Badge (iteration_114, backend 15/15 + frontend 100%)
+User-approved 4-feature batch (all live/no-mock):
+- **Globe Time Range**: `_gather_access_globe(org_id, days=None)` + `GET /api/agents/runtime/access-globe?days=7|30|90` (whitelisted; invalid→all-time, echoes `days`). UI: `ca-globe-range` segmented control (All/7d/30d/90d) on the Control Assurance globe; re-fetches on change.
+- **Auditor Allow-List**: `trusted_auditors` (emails, lowercased+deduped, cap 100) in Governance Settings. New `_access_suspicious(r, tc, tips, tauds)` helper short-circuits: a trusted-auditor email is never suspicious even from abroad. UI: `gov-trusted-auditors` input.
+- **Watchlist Threshold**: `unusual_access_threshold` (int, clamped 1..1000) in Governance Settings; `_run_unusual_access_watchlist` only emails when `len(suspicious) >= threshold`. UI: `gov-unusual-threshold` number input.
+- **Watchtower Badge**: new `GET /api/agents/runtime/watchtower` → `{count, has_trust}` (live 24h suspicious count; fast no-op when no trust configured). UI: red pulsing `nav-watchtower-badge` next to Control Assurance in the sidebar (`SidebarInner`, admin-only, polls 60s); hidden when count 0.
+- Regression pytest: `/app/backend/tests/test_iter114_watchtower_range_auditors.py` (15/15, run `pytest -n 0`). ⚠️ FORK-HAZARD (recurring): the `_tauds` trusted-fetch edit in `_gather_access_globe` SILENTLY DROPPED mid-batch (its consumer edit landed → would NameError); caught via grep and re-applied. ALWAYS grep-verify each new symbol after a multi-edit agents.py batch. Frontend login note (from tester): use `page.type` with a small delay on auth fields, not a single `fill`.
+
+
 ## Status (Jun 2026) — Suspicious Globe Filter + Watchlist + Scheduled Board Map + Gated Snapshot Retire (iteration_113, backend 10/10 + frontend 100%)
 User-approved 4-feature batch (all live/no-mock):
 - **Anomaly-Only / Suspicious Globe filter**: `_gather_access_globe` now fetches the org's trusted countries+networks and tags each point `suspicious` (outside all trusted zones) plus returns `suspicious` count + `has_trust`. Control Assurance globe gained filter chips (`ca-globe-filter-all|downloads|suspicious`) — suspicious/anomaly pins render red; empty-state `ca-globe-filter-empty` when a filter has no pins.

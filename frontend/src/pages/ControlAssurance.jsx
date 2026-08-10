@@ -32,11 +32,12 @@ function AccessGlobe() {
   const [sel, setSel] = useState(null);
   const [expBusy, setExpBusy] = useState(false);
   const [filter, setFilter] = useState("all");
+  const [days, setDays] = useState(null);
   const loadG = () => {
     setBusy(true);
-    api.get("/agents/runtime/access-globe").then(({ data }) => setG(data)).catch(() => {}).finally(() => setBusy(false));
+    api.get("/agents/runtime/access-globe", { params: days ? { days } : {} }).then(({ data }) => setG(data)).catch(() => {}).finally(() => setBusy(false));
   };
-  useEffect(() => { loadG(); }, []);
+  useEffect(() => { loadG(); }, [days]);
   const exportMap = async () => {
     setExpBusy(true);
     try {
@@ -56,6 +57,11 @@ function AccessGlobe() {
       testid="ca-access-globe"
       actions={
         <div className="flex items-center gap-2">
+          <div className="flex items-center rounded-md border border-border overflow-hidden" data-testid="ca-globe-range">
+            {[[null, "All"], [7, "7d"], [30, "30d"], [90, "90d"]].map(([v, lbl]) => (
+              <button key={lbl} data-testid={`ca-globe-range-${lbl.toLowerCase()}`} onClick={() => setDays(v)} className={`px-2.5 py-2 text-xs font-head font-bold transition-colors ${days === v ? "bg-ai/15 text-ai" : "text-muted-foreground hover:bg-secondary"}`}>{lbl}</button>
+            ))}
+          </div>
           <button data-testid="ca-globe-export" onClick={exportMap} disabled={expBusy || points.length === 0} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-ai/40 text-ai text-xs font-head font-bold hover:bg-ai/10 transition-colors disabled:opacity-50">
             {expBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />} Board Access Map
           </button>

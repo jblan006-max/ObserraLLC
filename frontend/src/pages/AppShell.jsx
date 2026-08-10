@@ -153,6 +153,15 @@ function HealthPill() {
 }
 
 function SidebarInner({ user, sub, owns, doLogout, onNav, onClose }) {
+  const [watchCount, setWatchCount] = useState(0);
+  useEffect(() => {
+    if (user?.role !== "admin") return;
+    let alive = true;
+    const load = () => api.get("/agents/runtime/watchtower").then(({ data }) => { if (alive) setWatchCount(data?.count || 0); }).catch(() => {});
+    load();
+    const id = setInterval(load, 60000);
+    return () => { alive = false; clearInterval(id); };
+  }, [user?.role]);
   const [collapsed, setCollapsed] = useState(() => {
     try { return JSON.parse(localStorage.getItem("obserra-nav-collapsed") || "{}"); } catch { return {}; }
   });
@@ -216,7 +225,11 @@ function SidebarInner({ user, sub, owns, doLogout, onNav, onClose }) {
                         data-testid={`nav-${n.label.toLowerCase().replace(/ &/g, "").replace(/ /g, "-")}`}
                         className={({ isActive }) => `flex items-center justify-between gap-3 px-3 py-2.5 rounded-md text-sm transition-colors duration-200 ${
                           isActive && !locked ? "bg-primary/15 text-foreground border border-primary/30" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}`}>
-                        <span className="flex items-center gap-3"><n.icon className="w-4 h-4" /> {n.label}</span>
+                        <span className="flex items-center gap-3"><n.icon className="w-4 h-4" /> {n.label}
+                          {n.to === "/app/control-assurance" && watchCount > 0 && (
+                            <span data-testid="nav-watchtower-badge" title={`${watchCount} unusual access(es) in the last 24h`} className="ml-0.5 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-crit text-white text-[10px] font-bold animate-pulse">{watchCount > 99 ? "99+" : watchCount}</span>
+                          )}
+                        </span>
                         {locked && <Lock className="w-3 h-3 text-muted-foreground" />}
                       </NavLink>
                     );
