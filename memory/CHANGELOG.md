@@ -1,5 +1,18 @@
 # Obserra EIOS — CHANGELOG
 
+## 2026-06 — Guides updated for go-live + rebrand
+- Rewrote the shared guide content in `scripts/gen_docs.py`: rebranded `TAGLINE` and the "Agentic AI Security Control Plane" section heading to "Control & Governance", refreshed the About section with the new positioning, and added a new **"Going Live — Production Setup Checklist"** walkthrough: (1) connect sources + re-probe, (2) run the Go-Live Readiness checklist (8 live checks), (3) wire the agent-runtime enforcement webhook via the one-click Fix / Settings, (4) confirm 100% + Board Readiness badge + daily trend, (5) export the SHA-256-sealed Evidence Pack.
+- Regenerated all three guides (Install & User, Executive, Admin & Operator) in PDF + DOCX via `gen_docs.generate_all()`. Verified by text extraction: "Going Live" + "Control & Governance" present in all three; old "Control Plane — machine authority" tagline removed. Served unchanged from `/api/deploy/guide*.{pdf,docx}` (admins → Settings → Deployment & Documentation).
+
+
+## 2026-06 — Rebrand sweep audit + positioning on login/covers + v1 label
+- **Positioning on login CTA**: new positioning line woven into the sign-in form (`auth-positioning`, above the tabs) so it lands even for viewers who only look at the login box; hero paragraph carries the full positioning sentence.
+- **Wordmark tagline**: added a verb-chain tagline under the OBSERRA wordmark on the Auth hero (`wordmark-tagline`: "Discover · Understand · Govern · Constrain · Respond") matching the new positioning (LLC legal name untouched).
+- **Positioning on every exported cover**: `reports._paint_cover` now paints a two-line italic positioning subtitle ("Discover · understand · govern · constrain · respond to enterprise AI agents / before delegated machine authority becomes enterprise risk.") — so it appears on all guide covers, board reports and the evidence-pack PDF cover in one place. PDF re-rendered/verified.
+- **v1 label**: added a `brand-version-badge` "v1" pill under the Auth hero title (matches the v1 badges already on the Executive Overview + app header). Screenshot-verified reading "v1".
+- **Rebrand sweep audit** (screenshots): Auth hero, in-app header (shows org name · v1), Executive Overview (94% · Production ready badge) and the exported PDF cover all read cleanly with the new "Agentic AI Security Control & Governance" brand + `&`/`&amp;` escaping correct. Note: the app briefly shows the branded boot splash before the login form paints (expected).
+
+
 ## 2026-06 — Daily readiness cron + board-digest readiness line + rebrand to "Control & Governance"
 - **Daily Readiness Snapshot (scheduled)**: refactored the checklist into org-callable `sap_uac.compute_go_live(org_id)` (endpoint is now a thin wrapper). New `scheduled._run_daily_readiness_snapshot()` folded into the existing **daily-drift-digest** cron (08:00 UTC, after the connector re-probe — crons stay at 5, none added) records a readiness point for every org daily, so the trend fills in with no logins. Verified in isolation: wrote today's real score for all 18 orgs.
 - **Board Digest readiness line**: `agent_reports._build_board_digest` now calls `compute_go_live`, adds a "Go-Live readiness" table row (score + · ready), a 7-day unicode block sparkline (▁▂▃▅▇, shown once ≥2 days) with "(first% → last%)", and `counts.go_live_score`. Verified via the preview endpoint (row present, go_live_score=94).

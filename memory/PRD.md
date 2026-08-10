@@ -1,6 +1,14 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Guides updated for go-live + rebrand
+Updated the shared guide source (`scripts/gen_docs.py`) and regenerated all three guides (Install & User, Executive, Admin & Operator; PDF + DOCX): rebranded tagline/headings to "Agentic AI Security Control & Governance", refreshed the About/positioning copy, and added a new **"Going Live — Production Setup Checklist"** walkthrough (connect sources → Go-Live Readiness checklist → wire runtime webhook → confirm 100% + badge + daily trend → export sealed Evidence Pack). Verified by text extraction across all three PDFs; served from `/api/deploy/guide*.{pdf,docx}`.
+
+
+## Status (Jun 2026) — Rebrand sweep + positioning on login/covers + v1 label
+Login page now carries the new brand end-to-end: OBSERRA wordmark → verb-chain tagline (`wordmark-tagline`) → "Agentic AI Security Control & Governance." → **v1** badge (`brand-version-badge`) → the positioning line, which is also mirrored above the sign-in form (`auth-positioning`). The positioning subtitle is painted on EVERY exported PDF cover via `reports._paint_cover` (guides, board reports, evidence pack). Screenshot-audited: Auth hero, in-app header (org name · v1), Executive Overview (94% Production-ready), and the PDF cover all read cleanly with correct `&`/`&amp;` escaping.
+
+
 ## Status (Jun 2026) — Daily readiness cron + board-digest readiness + rebrand "Control & Governance"
 Shipped: **Daily Readiness Snapshot** (`compute_go_live(org_id)` refactor + `_run_daily_readiness_snapshot` folded into the daily-drift-digest cron — records a readiness point per org daily; verified writing all 18 orgs); **Board digest readiness line** (`_build_board_digest` adds a Go-Live readiness row + 7-day unicode sparkline + `counts.go_live_score`; preview-verified); **Product rebrand** to **"Agentic AI Security Control & Governance"** across all frontend titles + backend PDF/email footers (correct `&amp;`/`&` escaping; 0 leftovers; compiles) with new positioning on the Auth hero + meta: "Discover, understand, govern, constrain, and respond to enterprise AI agents before delegated machine authority becomes enterprise risk." Generic lowercase "control plane" enforcement phrasing left intact.
 

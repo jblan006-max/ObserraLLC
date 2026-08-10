@@ -21,7 +21,7 @@ os.makedirs(OUT, exist_ok=True)
 NAVY = "#0f1e3d"
 AI = "#12b4d6"
 BRAND = "Obserra Agentic AI Security"
-TAGLINE = "Agentic AI Security Control Plane — machine authority, guardrails & runtime enforcement"
+TAGLINE = "Agentic AI Security Control & Governance — discover, understand, govern, constrain & respond to enterprise AI agents"
 
 E, A = "exec", "admin"      # audience tags
 ALL = (E, A)
@@ -29,10 +29,11 @@ ALL = (E, A)
 # (heading, [paragraphs], screenshot_or_None, audiences)
 SECTIONS = [
     ("About Obserra Agentic AI Security", [
-        "Obserra Agentic AI Security is the control plane for the AI agents and models operating "
-        "across your enterprise. It gives security, GRC and executive teams a single live view of "
-        "which agents exist, what tools and permissions they hold, how much autonomy they have, "
-        "and where their capabilities combine into dangerous — 'toxic' — patterns.",
+        "Obserra Agentic AI Security Control & Governance lets you discover, understand, govern, "
+        "constrain and respond to the AI agents and models operating across your enterprise — before "
+        "delegated machine authority becomes enterprise risk. It gives security, GRC and executive "
+        "teams a single live view of which agents exist, what tools and permissions they hold, how "
+        "much autonomy they have, and where their capabilities combine into dangerous — 'toxic' — patterns.",
         "Every number is computed LIVE from the underlying agent records on each request (No-Mock): "
         "delegated authority tiers, modelled agent risk scores, guardrail coverage and the heuristic "
         "red-team baseline are all derived from real telemetry. Governance actions (sanction, "
@@ -67,6 +68,32 @@ SECTIONS = [
         "admins get full enforcement controls, executives get the board view.",
     ], "01_login.jpg", ALL),
 
+    ("Going Live — Production Setup Checklist", [
+        "Follow these steps to take Obserra from first sign-in to a fully live, audit-defensible "
+        "deployment. Progress is tracked automatically by the Go-Live Readiness checklist on the "
+        "Connector Health page — every check runs against real state, so the score reflects your "
+        "actual production readiness (No-Mock).",
+        "1) Connect your sources. Open Connector Health (Sources) and connect your identity, agent "
+        "and security feeds, then use 'Re-probe all connectors' so every source reads healthy and "
+        "fresh. Enterprise connectors that need customer OAuth credentials are shown honestly as "
+        "'credentials required' until you supply them.",
+        "2) Run the Go-Live Readiness checklist. It evaluates eight live checks: database "
+        "connectivity, source-connector ingestion, data freshness, identity inventory, the "
+        "correlation & risk engine, the AI advisor engine, the evidence integrity seal and the "
+        "agent-runtime enforcement webhook. Each item shows Ready / Attention / Blocker with a live "
+        "detail line, and the card auto-refreshes every 30 seconds.",
+        "3) Wire the agent-runtime enforcement webhook. Click 'Fix' on the runtime item (or go to "
+        "Settings -> Agent runtime connector) and register your signed HTTPS endpoint. Once saved, "
+        "Kill / Suspend / Resume actions are dispatched (HMAC-SHA256 signed) to your external agent "
+        "runtime and the checklist reaches 100% — 'Production ready'.",
+        "4) Confirm readiness everywhere. A green 'Production ready' badge with a trend sparkline "
+        "appears on the Executive Overview, and the readiness score is recorded automatically every "
+        "day (no login required) so leadership can watch the trend climb toward 100%.",
+        "5) Export the proof. Download the signed Evidence Pack — every page-one cover carries a "
+        "SHA-256 'Verified by Obserra' integrity seal — and share it with auditors or fold the "
+        "score into the emailed board digest.",
+    ], None, ALL),
+
     ("Executive Overview", [
         "The landing dashboard is the complete rollup of the AI security estate: modelled agent "
         "risk, autonomous agents, toxic capability combinations, shadow-AI exposure, guardrail "
@@ -75,7 +102,7 @@ SECTIONS = [
         "email the executive brief on demand or on a cadence from here.",
     ], "02_exec_overview.jpg", ALL),
 
-    ("Agentic AI Security Control Plane", [
+    ("Agentic AI Security Control & Governance", [
         "The dedicated seven-tab workspace: Mission Control, Agent Inventory, Authority & Tools "
         "(with the Tool Toxicity Map), Guardrails & Red Team, Shadow AI, Incidents and "
         "Defensibility. Mission Control summarises the estate; every tile is clickable and drills "
