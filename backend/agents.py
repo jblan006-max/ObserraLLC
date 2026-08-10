@@ -19,6 +19,8 @@ from kernel import notifications, workflows
 from agent_reports import (
     _evidence_snapshot, _evidence_markdown, _evidence_pdf, _qa_markdown,
     _build_board_digest, _brand_watermark_pdf, _RUNTIME_PLAYBOOKS,
+    _sla_for, _escalation_hours_for, _oncall_recipient, _canonical_snapshot_hash,
+    _stamp_verified_seal, _run_auditor_room_weekly_digest,
 )
 
 agents_router = APIRouter(prefix="/api/agents")
@@ -450,7 +452,9 @@ async def create_evidence_room(body: EvidenceRoomBody, admin: dict = Depends(req
     days = max(1, min(90, int(body.days or 14)))
     now = datetime.now(timezone.utc)
     expires = (now + timedelta(days=days)).isoformat()
+    snap_hash = _canonical_snapshot_hash(snap)
     await db.evidence_rooms.insert_one({"token": token, "org_id": admin["org_id"], "snapshot": snap,
+        "snapshot_sha256": snap_hash,
         "created_at": now.isoformat(), "created_by": admin["email"], "expires_at": expires, "opens": 0})
     await _log_audit(admin["org_id"], admin["email"], "agent.evidence_room",
                      f"Read-only auditor room created (expires {expires[:10]})")
@@ -461,21 +465,59 @@ async def create_evidence_room(body: EvidenceRoomBody, admin: dict = Depends(req
 @agents_router.get("/runtime/evidence-rooms")
 async def list_evidence_rooms(admin: dict = Depends(require_roles("admin"))):
     import os
-    from datetime import datetime, timezone
+    from datetime import datetime, timezone, timedelta
+    from bson import ObjectId
     frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}) or {}
     rooms = []
     async for d in db.evidence_rooms.find({"org_id": admin["org_id"]}).sort("created_at", -1):
+        token = d["token"]
+        snap = d.get("snapshot") or {}
+        sagents = snap.get("agents") or []
+        counts = snap.get("counts") or {}
+        toxic_active = sum(1 for a in sagents if a.get("toxic") and a.get("status") not in ("killed", "restricted"))
+        qs = await db.evidence_room_comments.find(
+            {"token": token}, {"_id": 0, "status": 1, "at": 1, "priority": 1}).to_list(500)
+        open_q = 0
+        overdue_q = 0
+        for q in qs:
+            if q.get("status") == "Resolved":
+                continue
+            open_q += 1
+            try:
+                if q.get("at") and now > datetime.fromisoformat(q["at"]) + timedelta(hours=_sla_for(org, q.get("priority"))):
+                    overdue_q += 1
+            except Exception:
+                pass
+        expired = bool(d.get("expires_at") and now_iso > d["expires_at"])
+        days_left = None
+        try:
+            if d.get("expires_at"):
+                days_left = max(0, (datetime.fromisoformat(d["expires_at"]) - now).days)
+        except Exception:
+            days_left = None
+        risk = min(100, toxic_active * 20 + overdue_q * 12 + max(0, open_q - overdue_q) * 4
+                   + (10 if (days_left is not None and days_left <= 2 and not expired) else 0))
+        rating = "Critical" if risk >= 80 else "High" if risk >= 60 else "Medium" if risk >= 40 else "Low"
         rooms.append({
-            "token": d["token"],
-            "url": f"{frontend}/audit-room/{d['token']}",
+            "token": token,
+            "url": f"{frontend}/audit-room/{token}",
             "created_at": d.get("created_at"),
             "created_by": d.get("created_by"),
             "expires_at": d.get("expires_at"),
             "opens": d.get("opens", 0),
             "downloads": d.get("downloads", 0),
-            "comments": d.get("comments", 0),
-            "expired": bool(d.get("expires_at") and now > d["expires_at"]),
+            "comments": len(qs),
+            "expired": expired,
+            "readiness": {
+                "risk_score": risk, "rating": rating, "toxic_active": toxic_active,
+                "open_questions": open_q, "overdue_questions": overdue_q, "days_left": days_left,
+                "agents": counts.get("agents", len(sagents)), "killed": counts.get("killed", 0),
+                "events": counts.get("events", 0), "org_name": snap.get("org_name"),
+                "subscribers": len([e for e in (d.get("digest_subscribers") or []) if e]),
+            },
         })
     return {"rooms": rooms}
 
@@ -509,11 +551,17 @@ async def public_evidence_room(token: str, request: Request = None):
               or (request.client.host if request and request.client else ""))
     except Exception:
         ip = ""
+    sha = doc.get("snapshot_sha256")
+    if not sha:
+        sha = _canonical_snapshot_hash(doc.get("snapshot") or {})
+        await db.evidence_rooms.update_one({"token": token}, {"$set": {"snapshot_sha256": sha}})
     await db.evidence_rooms.update_one({"token": token},
         {"$inc": {"opens": 1}, "$set": {"last_opened_at": now}})
     await db.evidence_room_access.insert_one({"token": token, "org_id": doc.get("org_id"),
         "kind": "open", "who": None, "ip": ip, "at": now})
-    return {"snapshot": doc["snapshot"], "created_at": doc.get("created_at"), "expires_at": doc.get("expires_at")}
+    return {"snapshot": doc["snapshot"], "created_at": doc.get("created_at"),
+            "expires_at": doc.get("expires_at"), "snapshot_sha256": sha,
+            "digest_subscribed": bool(doc.get("digest_subscribers"))}
 
 
 @agents_router.get("/public/evidence-room/{token}/pack.pdf")
@@ -529,11 +577,20 @@ async def public_evidence_room_pdf(token: str, who: str = "", request: Request =
         raise HTTPException(410, "This auditor room link has expired.")
     snap = doc["snapshot"]
     c = snap.get("counts", {})
+    brand = None
+    try:
+        from bson import ObjectId as _OID
+        from reports import _resolve_brand
+        _org = await db.organizations.find_one({"_id": _OID(doc.get("org_id"))}) if doc.get("org_id") else None
+        brand = _resolve_brand(_org)
+    except Exception:
+        brand = None
     buf = _build_pdf(_evidence_markdown(snap), "AI Enforcement Evidence Pack", cover=True,
-                     org_name=snap.get("org_name"),
+                     org_name=snap.get("org_name"), brand=brand,
                      exec_summary=f"{c.get('agents', 0)} governed agents, {c.get('toxic', 0)} toxic; "
                                   f"{c.get('events', 0)} runtime enforcement actions with verifiable receipts.")
     raw = buf.getvalue()
+    seal = doc.get("snapshot_sha256") or _canonical_snapshot_hash(snap)
     # Tamper-evident provenance watermark — org logo + QR back to the live room + downloader stamp.
     try:
         import os as _os
@@ -543,6 +600,7 @@ async def public_evidence_room_pdf(token: str, who: str = "", request: Request =
         raw = await _brand_watermark_pdf(
             raw, org_id=doc.get("org_id"), room_url=room_url,
             subtext=f"Downloaded by {auditor} · {access} · link expires {(doc.get('expires_at') or '')[:10]}")
+        raw = _stamp_verified_seal(raw, seal)
         ip = ""
         try:
             ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
@@ -566,6 +624,7 @@ class RoomCommentBody(BaseModel):
     author: str = ""
     email: str | None = ""
     text: str = ""
+    priority: str = "normal"
 
 
 async def _notify_org_staff(org_id, subject, html, kind_title, kind_body, dedupe_key=None):
@@ -602,12 +661,16 @@ async def evidence_room_comment(token: str, body: RoomCommentBody):
         raise HTTPException(400, "A question is required.")
     author = (body.author or "").strip()[:120] or "External auditor"
     author_email = (body.email or "").strip()[:200]
+    priority = (body.priority or "normal").strip().lower()
+    if priority not in ("low", "normal", "high", "urgent"):
+        priority = "normal"
     org_id = doc["org_id"]
     cid = secrets.token_urlsafe(9)
     now_iso = _now()
     await db.evidence_room_comments.insert_one({
         "id": cid, "token": token, "org_id": org_id, "author": author, "author_email": author_email,
-        "text": text[:2000], "at": now_iso, "status": "Open", "reply": None, "reply_by": None, "reply_at": None,
+        "text": text[:2000], "priority": priority, "at": now_iso, "status": "Open",
+        "reply": None, "reply_by": None, "reply_at": None,
         "messages": [{"role": "auditor", "by": author, "text": text[:2000], "at": now_iso, "attachment": None}]})
     await db.evidence_rooms.update_one({"token": token}, {"$inc": {"comments": 1}})
     html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
@@ -646,18 +709,24 @@ async def public_evidence_room_comments(token: str):
 @agents_router.get("/runtime/evidence-room-comments")
 async def list_evidence_room_comments(admin: dict = Depends(require_roles("admin"))):
     from datetime import datetime, timezone, timedelta
-    sla = await _question_sla_hours(admin["org_id"])
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}) or {}
     now = datetime.now(timezone.utc)
     rows = await db.evidence_room_comments.find({"org_id": admin["org_id"]}, {"_id": 0}).sort("at", -1).to_list(200)
     for r in rows:
+        pri = (r.get("priority") or "normal").lower()
+        r["priority"] = pri
+        sla_h = _sla_for(org, pri)
+        r["sla_hours"] = sla_h
         overdue = False
         if r.get("status") != "Resolved" and r.get("at"):
             try:
-                overdue = now > (datetime.fromisoformat(r["at"]) + timedelta(hours=sla))
+                overdue = now > (datetime.fromisoformat(r["at"]) + timedelta(hours=sla_h))
             except Exception:
                 overdue = False
         r["overdue"] = overdue
-    return {"comments": rows, "sla_hours": sla}
+    return {"comments": rows, "sla_hours": _sla_for(org, "normal"),
+            "sla_by_priority": {p: _sla_for(org, p) for p in ("urgent", "high", "normal", "low")}}
 
 
 class RoomReplyBody(BaseModel):
@@ -840,14 +909,18 @@ async def _run_auditor_question_sla_nudge():
     pending = await db.evidence_room_comments.find(
         {"status": {"$ne": "Resolved"}, "sla_nudged": {"$exists": False}}, {"_id": 0}).to_list(5000)
     by_org = {}
+    org_cache = {}
     for q in pending:
         try:
             if not q.get("at"):
                 continue
-            sla = await _question_sla_hours(q["org_id"])
+            oid = q["org_id"]
+            if oid not in org_cache:
+                org_cache[oid] = await db.organizations.find_one({"_id": ObjectId(oid)}) or {}
+            sla = _sla_for(org_cache[oid], q.get("priority"))
             if now <= datetime.fromisoformat(q["at"]) + timedelta(hours=sla):
                 continue
-            by_org.setdefault(q["org_id"], []).append(q)
+            by_org.setdefault(oid, []).append(q)
         except Exception:
             pass
     frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
@@ -875,26 +948,30 @@ async def _run_auditor_question_sla_nudge():
 
 
 async def _run_auditor_question_escalation():
-    """Folded into the daily cron: if a question stays open past the escalation threshold (default 2× the
-    SLA), escalate to a second approver (configured email, else executives) — so nothing slips."""
+    """Folded into the daily cron: if a question stays open past its per-priority escalation threshold
+    (per-priority SLA × the org multiplier, default 2×), escalate to the weekly on-call approver
+    (rotation), else the configured second approver, else executives — so nothing slips."""
     import os
     from datetime import datetime, timezone, timedelta
     from bson import ObjectId
     now = datetime.now(timezone.utc)
     pending = await db.evidence_room_comments.find(
         {"status": {"$ne": "Resolved"}, "escalated": {"$exists": False}}, {"_id": 0}).to_list(5000)
+    org_cache = {}
     by_org = {}
     for q in pending:
         try:
             if not q.get("at"):
                 continue
-            org = await db.organizations.find_one(
-                {"_id": ObjectId(q["org_id"])},
-                {"auditor_question_escalation_hours": 1, "auditor_question_sla_hours": 1, "auditor_question_escalation_to": 1}) or {}
-            esc_h = int(org.get("auditor_question_escalation_hours") or (int(org.get("auditor_question_sla_hours") or 48) * 2))
+            oid = q["org_id"]
+            if oid not in org_cache:
+                org_cache[oid] = await db.organizations.find_one({"_id": ObjectId(oid)}) or {}
+            org = org_cache[oid]
+            esc_h = _escalation_hours_for(org, q.get("priority"))
             if now <= datetime.fromisoformat(q["at"]) + timedelta(hours=esc_h):
                 continue
-            bucket = by_org.setdefault(q["org_id"], {"qs": [], "to": (org.get("auditor_question_escalation_to") or "")})
+            to = _oncall_recipient(org) or (org.get("auditor_question_escalation_to") or "")
+            bucket = by_org.setdefault(oid, {"qs": [], "to": to})
             bucket["qs"].append(q)
         except Exception:
             pass
@@ -903,11 +980,11 @@ async def _run_auditor_question_escalation():
         try:
             qs = info["qs"]
             to = (info["to"] or "").strip()
-            org = await db.organizations.find_one({"_id": ObjectId(oid)}) or {}
+            org = org_cache.get(oid) or await db.organizations.find_one({"_id": ObjectId(oid)}) or {}
             oname = org.get("name") or "your organization"
             rows = "".join(
                 f"<tr><td style='padding:6px 0;border-bottom:1px solid #eee;font:400 13px Arial;color:#1f2937'>"
-                f"<b>{(q.get('author') or 'Auditor')}</b>: {(q.get('text') or '')[:160]}</td></tr>" for q in qs[:20])
+                f"<b>{(q.get('author') or 'Auditor')}</b> <span style='color:#b91c1c;font-weight:700'>[{(q.get('priority') or 'normal').upper()}]</span>: {(q.get('text') or '')[:160]}</td></tr>" for q in qs[:20])
             html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
                     f"<h2 style='color:#b91c1c'>Escalation — auditor questions unanswered</h2>"
                     f"<p><strong>{len(qs)}</strong> auditor question(s) for <strong>{oname}</strong> have passed the escalation threshold and need a second approver's attention.</p>"
@@ -976,17 +1053,25 @@ async def evidence_room_followup(token: str, cid: str, body: RoomFollowupBody):
 
 class CommentStatusBody(BaseModel):
     id: str
-    status: str
+    status: str | None = None
+    priority: str | None = None
 
 
 @agents_router.post("/runtime/evidence-room-comments/status")
 async def set_evidence_comment_status(body: CommentStatusBody, admin: dict = Depends(require_roles("admin"))):
-    status = body.status if body.status in ("Open", "Answered", "Resolved") else "Open"
+    upd = {}
+    if body.status is not None:
+        upd["status"] = body.status if body.status in ("Open", "Answered", "Resolved") else "Open"
+    if body.priority is not None:
+        p = (body.priority or "normal").strip().lower()
+        upd["priority"] = p if p in ("low", "normal", "high", "urgent") else "normal"
+    if not upd:
+        raise HTTPException(400, "Nothing to update.")
     res = await db.evidence_room_comments.update_one(
-        {"id": body.id, "org_id": admin["org_id"]}, {"$set": {"status": status}})
+        {"id": body.id, "org_id": admin["org_id"]}, {"$set": upd})
     if not res.matched_count:
         raise HTTPException(404, "Question not found.")
-    return {"ok": True, "status": status}
+    return {"ok": True, **upd}
 
 
 # ── Governance settings — board-digest schedule/recipients + auditor-question SLA ──
@@ -997,6 +1082,9 @@ class GovSettingsBody(BaseModel):
     auditor_question_sla_hours: int | None = None
     auditor_question_escalation_hours: int | None = None
     auditor_question_escalation_to: str | None = None
+    auditor_question_sla_by_priority: dict | None = None
+    auditor_question_escalation_multiplier: float | None = None
+    auditor_oncall_rotation: list[str] | None = None
 
 
 @agents_router.get("/runtime/governance-settings")
@@ -1009,7 +1097,10 @@ async def get_governance_settings(admin: dict = Depends(require_roles("admin")))
             "board_digest_enabled": bool(org.get("board_digest_enabled", True)),
             "auditor_question_sla_hours": sla,
             "auditor_question_escalation_hours": int(org.get("auditor_question_escalation_hours") or sla * 2),
-            "auditor_question_escalation_to": org.get("auditor_question_escalation_to") or ""}
+            "auditor_question_escalation_to": org.get("auditor_question_escalation_to") or "",
+            "auditor_question_sla_by_priority": {p: _sla_for(org, p) for p in ("urgent", "high", "normal", "low")},
+            "auditor_question_escalation_multiplier": float(org.get("auditor_question_escalation_multiplier") or 2),
+            "auditor_oncall_rotation": org.get("auditor_oncall_rotation") or []}
 
 
 @agents_router.put("/runtime/governance-settings")
@@ -1029,6 +1120,20 @@ async def set_governance_settings(body: GovSettingsBody, admin: dict = Depends(r
     if body.auditor_question_escalation_to is not None:
         to = (body.auditor_question_escalation_to or "").strip()
         upd["auditor_question_escalation_to"] = to if "@" in to else ""
+    if body.auditor_question_sla_by_priority is not None:
+        clean = {}
+        for p in ("urgent", "high", "normal", "low"):
+            v = body.auditor_question_sla_by_priority.get(p)
+            if v is not None:
+                try:
+                    clean[p] = max(1, min(4320, int(v)))
+                except Exception:
+                    pass
+        upd["auditor_question_sla_by_priority"] = clean
+    if body.auditor_question_escalation_multiplier is not None:
+        upd["auditor_question_escalation_multiplier"] = max(1.0, min(20.0, float(body.auditor_question_escalation_multiplier)))
+    if body.auditor_oncall_rotation is not None:
+        upd["auditor_oncall_rotation"] = [e.strip() for e in body.auditor_oncall_rotation if e and "@" in e][:50]
     if upd:
         await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": upd})
     await _log_audit(admin["org_id"], admin["email"], "agent.governance_settings", "Updated AI governance settings")
@@ -1274,3 +1379,43 @@ async def _run_ai_board_brief(cadence):
             await _send_ai_brief(str(org["_id"]))
         except Exception:
             pass
+
+
+@agents_router.get("/public/evidence-room/{token}/integrity")
+async def public_evidence_room_integrity(token: str):
+    """Public tamper-evidence check — re-hash the stored evidence snapshot and compare to the hash
+    captured when the room was created. Green when untampered."""
+    from datetime import datetime, timezone
+    doc = await db.evidence_rooms.find_one({"token": token}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "This auditor room link is invalid.")
+    if doc.get("expires_at") and datetime.now(timezone.utc).isoformat() > doc["expires_at"]:
+        raise HTTPException(410, "This auditor room link has expired.")
+    stored = doc.get("snapshot_sha256")
+    live = _canonical_snapshot_hash(doc.get("snapshot") or {})
+    if not stored:
+        stored = live
+        await db.evidence_rooms.update_one({"token": token}, {"$set": {"snapshot_sha256": stored}})
+    return {"verified": (stored == live), "algorithm": "SHA-256", "sha256": live, "short": live[:12],
+            "created_at": doc.get("created_at"), "checked_at": datetime.now(timezone.utc).isoformat()}
+
+
+class RoomSubscribeBody(BaseModel):
+    email: str = ""
+
+
+@agents_router.post("/public/evidence-room/{token}/subscribe")
+async def subscribe_evidence_room_digest(token: str, body: RoomSubscribeBody):
+    """Public opt-in — an auditor subscribes their email to a weekly summary of new evidence and
+    answered questions in this room."""
+    from datetime import datetime, timezone
+    email = (body.email or "").strip().lower()[:200]
+    if "@" not in email:
+        raise HTTPException(400, "A valid email is required.")
+    doc = await db.evidence_rooms.find_one({"token": token}, {"_id": 1, "expires_at": 1})
+    if not doc:
+        raise HTTPException(404, "This auditor room link is invalid.")
+    if doc.get("expires_at") and datetime.now(timezone.utc).isoformat() > doc["expires_at"]:
+        raise HTTPException(410, "This auditor room link has expired.")
+    await db.evidence_rooms.update_one({"token": token}, {"$addToSet": {"digest_subscribers": email}})
+    return {"ok": True, "subscribed": email}

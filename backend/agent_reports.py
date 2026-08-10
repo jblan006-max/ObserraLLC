@@ -233,3 +233,136 @@ async def _brand_watermark_pdf(pdf_bytes: bytes, org_id=None, room_url: str = ""
         return out.getvalue()
     except Exception:
         return pdf_bytes
+
+
+
+# ── Auditor-question per-priority SLA + on-call rotation + integrity + weekly digest ──
+import hashlib as _hashlib
+import json as _json
+
+
+def _canonical_snapshot_hash(snap) -> str:
+    """Stable SHA-256 over the canonical evidence snapshot (order-independent)."""
+    try:
+        blob = _json.dumps(snap or {}, sort_keys=True, default=str, separators=(",", ":"))
+    except Exception:
+        blob = str(snap)
+    return _hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+def _sla_for(org, priority="normal") -> int:
+    """Per-priority auditor-question SLA (hours). 'normal' falls back to the org base SLA."""
+    try:
+        base = int((org or {}).get("auditor_question_sla_hours") or 48)
+    except Exception:
+        base = 48
+    defaults = {"urgent": 4, "high": 12, "normal": base, "low": 96}
+    sbp = (org or {}).get("auditor_question_sla_by_priority") or {}
+    p = (priority or "normal").lower()
+    try:
+        return max(1, min(4320, int(sbp.get(p) or defaults.get(p, base))))
+    except Exception:
+        return defaults.get(p, base)
+
+
+def _escalation_hours_for(org, priority="normal") -> float:
+    """Escalation threshold = per-priority SLA × the org multiplier (default 2×)."""
+    try:
+        mult = float((org or {}).get("auditor_question_escalation_multiplier") or 2)
+    except Exception:
+        mult = 2.0
+    return _sla_for(org, priority) * max(1.0, mult)
+
+
+def _oncall_recipient(org) -> str:
+    """The weekly on-call approver from the rotation (rotates by ISO week). '' when none set."""
+    rot = [e for e in ((org or {}).get("auditor_oncall_rotation") or []) if e and "@" in e]
+    if not rot:
+        return ""
+    from datetime import datetime, timezone
+    wk = datetime.now(timezone.utc).isocalendar()[1]
+    return rot[wk % len(rot)]
+
+
+def _stamp_verified_seal(pdf_bytes: bytes, seal_hash: str = "") -> bytes:
+    """Overlay a 'Verified by Obserra' integrity seal (short SHA-256) on page 1. Fails open."""
+    if not seal_hash:
+        return pdf_bytes
+    try:
+        from io import BytesIO
+        from pypdf import PdfReader, PdfWriter
+        from reportlab.pdfgen import canvas
+        from reportlab.lib import colors
+        reader = PdfReader(BytesIO(pdf_bytes))
+        writer = PdfWriter()
+        for i, page in enumerate(reader.pages):
+            if i == 0:
+                w = float(page.mediabox.width); h = float(page.mediabox.height)
+                buf = BytesIO()
+                c = canvas.Canvas(buf, pagesize=(w, h))
+                sx, sy, sw, sh = w - 224, h - 60, 204, 38
+                c.setFillColor(colors.Color(0.06, 0.5, 0.34, alpha=0.10))
+                c.roundRect(sx, sy, sw, sh, 7, fill=1, stroke=0)
+                c.setStrokeColor(colors.Color(0.06, 0.5, 0.34, alpha=0.6)); c.setLineWidth(0.9)
+                c.roundRect(sx, sy, sw, sh, 7, fill=0, stroke=1)
+                c.setFillColor(colors.Color(0.05, 0.4, 0.28))
+                c.setFont("Helvetica-Bold", 10); c.drawString(sx + 12, sy + 21, "\u2713 VERIFIED BY OBSERRA")
+                c.setFont("Helvetica", 7); c.setFillColor(colors.Color(0.32, 0.42, 0.37))
+                c.drawString(sx + 12, sy + 9, f"integrity SHA-256 \u00b7 {seal_hash[:16]}")
+                c.save(); buf.seek(0)
+                page.merge_page(PdfReader(buf).pages[0])
+            writer.add_page(page)
+        out = BytesIO(); writer.write(out)
+        return out.getvalue()
+    except Exception:
+        return pdf_bytes
+
+
+async def _run_auditor_room_weekly_digest():
+    """Weekly opt-in summary emailed to auditors who subscribed on a room's public portal — new
+    evidence (enforcements) + new/answered questions in the last 7 days. Skips rooms with nothing new."""
+    import os
+    from datetime import datetime, timezone, timedelta
+    from kernel import notifications
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=7)).isoformat()
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    rooms = await db.evidence_rooms.find(
+        {"digest_subscribers": {"$exists": True, "$ne": []}}, {"_id": 0}).to_list(2000)
+    for room in rooms:
+        try:
+            subs = [e for e in (room.get("digest_subscribers") or []) if e and "@" in e]
+            if not subs:
+                continue
+            if room.get("expires_at") and now.isoformat() > room["expires_at"]:
+                continue
+            token = room["token"]; oid = room["org_id"]
+            new_events = await db.agent_enforcements.count_documents({"org_id": oid, "at": {"$gte": since}})
+            new_q = await db.evidence_room_comments.count_documents({"token": token, "at": {"$gte": since}})
+            answered = await db.evidence_room_comments.count_documents({"token": token, "reply_at": {"$gte": since}})
+            if not (new_events or new_q or answered):
+                continue
+            room_url = f"{frontend}/audit-room/{token}"
+            oname = (room.get("snapshot", {}) or {}).get("org_name") or "the organization"
+
+            def _row(k, v):
+                return (f"<tr><td style='padding:7px 12px;border-bottom:1px solid #eef2f7;font:600 13px Arial;color:#374151'>{k}</td>"
+                        f"<td style='padding:7px 12px;border-bottom:1px solid #eef2f7;font:800 15px Arial;color:#0f1e3d;text-align:right'>{v}</td></tr>")
+            html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
+                    f"<h2 style='color:#0f1e3d;margin-bottom:2px'>Your Obserra auditor room — weekly summary</h2>"
+                    f"<div style='font:400 12px Arial;color:#6b7280;margin-bottom:14px'>{oname} · last 7 days · {now.strftime('%B %d, %Y')}</div>"
+                    f"<table width='100%' cellspacing='0' cellpadding='0' style='border:1px solid #eef2f7;border-radius:10px;overflow:hidden'>"
+                    f"{_row('New enforcement actions', new_events)}"
+                    f"{_row('New questions', new_q)}"
+                    f"{_row('Answered questions', answered)}"
+                    f"</table>"
+                    f"<p style='margin:18px 0'><a href='{room_url}' style='background:#12b4d6;color:#04121a;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:700' target='_blank'>Open the auditor room</a></p>"
+                    f"<p style='font-size:11px;color:#9ca3af'>You subscribed to weekly updates for this read-only auditor room. Obserra — Agentic AI Security Control Plane.</p></div>")
+            for em in subs:
+                try:
+                    await notifications.send_email(em, "Your Obserra auditor room — weekly summary", html)
+                except Exception:
+                    pass
+            await db.evidence_rooms.update_one({"token": token}, {"$set": {"digest_last_sent": now.isoformat()}})
+        except Exception:
+            pass

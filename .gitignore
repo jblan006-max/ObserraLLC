@@ -125,9 +125,10 @@ frontend/node_modules/.cache/default-development/2.pack
 !backend/.env.example
 !frontend/.env.example
 
-.env
-.env.*
-*.env
+# Emergent deployment injects backend/.env & frontend/.env, so they must stay tracked (do not ignore).
+# .env
+# .env.*
+# *.env
 credentials.json
 *.key
 .credentials

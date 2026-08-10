@@ -171,6 +171,7 @@ async def discover_shadow_ai(admin: dict = Depends(require_roles("admin"))):
     sanctioned_names = {(s.get("name") or "").lower() for s in
                         await db.ai_systems.find({"org_id": org_id, "status": "sanctioned"}, {"_id": 0, "name": 1}).to_list(500)}
     added, sources = 0, {"connectors": 0, "telemetry": 0, "agents": 0}
+    new_names = []
 
     async def _upsert(ref, doc):
         nonlocal added
@@ -178,6 +179,7 @@ async def discover_shadow_ai(admin: dict = Depends(require_roles("admin"))):
             return False
         await db.ai_systems.insert_one({"org_id": org_id, "ref": ref, **doc})
         added += 1
+        new_names.append(doc.get("name") or ref)
         return True
 
     # (1) Connected AI-provider connectors (live connector_state).
@@ -245,17 +247,17 @@ async def discover_shadow_ai(admin: dict = Depends(require_roles("admin"))):
             from self_scan import _post_chat_alert
             await _post_chat_alert(
                 org_id, f"🕵️ Shadow AI discovered: {added} new unsanctioned system(s)",
-                f"Live discovery flagged {added} new shadow AI system(s) — connectors {sources['connectors']}, "
-                f"telemetry {sources['telemetry']}, agents {sources['agents']}. Shadow queue now {total_shadow}. "
-                "Review and sanction or block in the Agentic AI Security control plane.")
+                f"Live discovery flagged {added} new shadow AI system(s): {', '.join(new_names[:6])}. "
+                f"Sources: connectors {sources['connectors']}, telemetry {sources['telemetry']}, agents {sources['agents']}. "
+                f"Shadow queue now {total_shadow}. Review and sanction or block in the Agentic AI Security control plane.")
         except Exception:
             pass
         try:
             from kernel import notifications
             await notifications.create(
                 org_id, "ai_governance", "New shadow AI discovered",
-                f"{added} new unsanctioned AI system(s) surfaced by live discovery. Review the Shadow AI queue.",
-                ref="agentic-ai-security", dedupe_key=f"shadow-discover:{total_shadow}:{added}")
+                f"{added} new unsanctioned AI system(s) surfaced by live discovery: {', '.join(new_names[:6])}. Review the Shadow AI queue.",
+                ref="agentic-ai-security", dedupe_key=f"shadow-discover:{'|'.join(sorted(new_names))[:120]}")
         except Exception:
             pass
     return {"ok": True, "added": added, "shadow_total": total_shadow, "sources": sources}

@@ -99,7 +99,7 @@ export default function AuthorityDashboard({ agents, onSelectAgent, isAdmin, onR
         >
           <div className="space-y-3">
             {actionAgents.slice(0, 10).map((agent) => (
-              <div key={agent.ref} className="rounded-lg border border-border p-3">
+              <button key={agent.ref} type="button" data-testid={`tool-intel-${agent.ref}`} onClick={() => onSelectAgent(agent)} className="w-full text-left rounded-lg border border-border p-3 hover:bg-secondary/40 transition-colors">
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="font-head font-bold text-sm">{agent.name}</div>
@@ -121,7 +121,7 @@ export default function AuthorityDashboard({ agents, onSelectAgent, isAdmin, onR
                     </span>
                   ))}
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </Panel>
@@ -133,7 +133,7 @@ export default function AuthorityDashboard({ agents, onSelectAgent, isAdmin, onR
         >
           <div className="space-y-3">
             {(agents || []).slice(0, 10).map((agent) => (
-              <div key={agent.ref} className="rounded-lg border border-border p-3">
+              <button key={agent.ref} type="button" data-testid={`perm-intel-${agent.ref}`} onClick={() => onSelectAgent(agent)} className="w-full text-left rounded-lg border border-border p-3 hover:bg-secondary/40 transition-colors">
                 <div className="flex items-center gap-2">
                   <KeyRound className="w-4 h-4 text-ai" />
                   <div className="font-head font-bold text-sm">{agent.name}</div>
@@ -152,7 +152,7 @@ export default function AuthorityDashboard({ agents, onSelectAgent, isAdmin, onR
                     <span className="text-xs text-muted-foreground">No permissions recorded.</span>
                   )}
                 </div>
-              </div>
+              </button>
             ))}
           </div>
         </Panel>

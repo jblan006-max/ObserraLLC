@@ -323,6 +323,8 @@ async def weekly_drift_digest(request: Request, background_tasks: BackgroundTask
     background_tasks.add_task(_run_weekly_escalation_rollup)
     from agents import _run_ai_board_brief
     background_tasks.add_task(_run_ai_board_brief, "weekly")
+    from agents import _run_auditor_room_weekly_digest
+    background_tasks.add_task(_run_auditor_room_weekly_digest)
     return {"status": "accepted"}
 
 

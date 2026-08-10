@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Activity, CheckCircle2, Clock, Copy, Database, DoorOpen, Download, Eye, FileText, Loader2, MessageSquare, Paperclip, Plus, RefreshCw, Send, Settings2, ShieldCheck, Terminal, Trash2, X, XCircle, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { DataClassBadge, Panel } from "@/components/agentic-ai/shared";
+import { useDeepDive } from "@/context/DeepDiveContext";
 import { api } from "@/lib/api";
 
 const SOURCE_LABEL = { agents: "AI Agent Governance", analytics: "AI Analytics", systems: "AI System Inventory", incidents: "AI Incidents", workflows: "Workflow Engine", connectorHealth: "Connector Health" };
@@ -9,6 +10,45 @@ const fmtDT = (s) => (s ? new Date(s).toLocaleDateString(undefined, { dateStyle:
 const fmtDTT = (s) => (s ? new Date(s).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—");
 const copyText = async (t) => { try { await navigator.clipboard.writeText(t); toast.success("Copied"); } catch { toast.error("Copy failed"); } };
 const BACKEND = process.env.REACT_APP_BACKEND_URL;
+const RATING_PILL = { Critical: "bg-crit/15 text-crit", High: "bg-high/15 text-high", Medium: "bg-med/15 text-med", Low: "bg-low/10 text-low" };
+
+// Obserra-standard deep-dive for an external auditor room — sharing-risk rating + score, live
+// readiness facets, and AI recommendations/fixes (grounded in the room's frozen evidence snapshot).
+function roomDeepDive(room) {
+  const r = room.readiness || {};
+  const openOnly = Math.max(0, (r.open_questions || 0) - (r.overdue_questions || 0));
+  const recs = [];
+  if (r.toxic_active > 0) recs.push(`${r.toxic_active} toxic agent(s) are still active in this shared evidence pack — Suspend or Kill them from the Toxicity Map before external auditors review.`);
+  if (r.overdue_questions > 0) recs.push(`${r.overdue_questions} auditor question(s) are past their SLA — reply now to avoid an audit gap.`);
+  if (openOnly > 0) recs.push(`${openOnly} open auditor question(s) awaiting a first reply.`);
+  if (!room.expired && r.days_left != null && r.days_left <= 2) recs.push(`This room expires in ${r.days_left} day(s) — Renew it if the audit is ongoing.`);
+  if (room.expired) recs.push("This room link has expired — Renew to restore auditor access, or Revoke to close it out.");
+  if (!recs.length) recs.push("Evidence pack is clean and signed — ready to share. Keep the room fresh with a periodic Renew and answer any auditor questions within SLA.");
+  return {
+    accent: "190 90% 55%",
+    refLabel: "AUDITOR ROOM",
+    title: `Auditor room readiness${r.org_name ? ` · ${r.org_name}` : ""}`,
+    rating: r.rating,
+    score: r.risk_score,
+    facets: [
+      { label: "Sharing risk", value: `${r.rating || "Low"} · ${r.risk_score ?? 0}/100` },
+      { label: "Toxic agents active", value: r.toxic_active ?? 0 },
+      { label: "Governed agents", value: r.agents ?? 0 },
+      { label: "Agents killed", value: r.killed ?? 0 },
+      { label: "Enforcement events", value: r.events ?? 0 },
+      { label: "Open questions", value: r.open_questions ?? 0 },
+      { label: "Overdue questions", value: r.overdue_questions ?? 0 },
+      { label: "Link expires", value: room.expired ? "expired" : (r.days_left != null ? `${r.days_left} day(s)` : fmtDT(room.expires_at)) },
+      { label: "Opens · downloads", value: `${room.opens || 0} · ${room.downloads || 0}` },
+      { label: "Weekly subscribers", value: r.subscribers ?? 0 },
+    ],
+    complianceRefs: ["NIST AI RMF", "ISO 42001", "SOC 2", "EU AI Act"],
+    recommendedActions: recs,
+    explainTitle: "External auditor room readiness",
+    explainKind: "auditor evidence room readiness ai governance defensibility",
+    explainContext: { url: room.url, expires_at: room.expires_at, expired: room.expired, ...r },
+  };
+}
 
 function DigestPreviewModal({ onClose }) {
   const [data, setData] = useState(null);
@@ -79,6 +119,7 @@ function AuditorRoomCard() {
   const [latest, setLatest] = useState(null);
   const [logOpen, setLogOpen] = useState(null);
   const [showPreview, setShowPreview] = useState(false);
+  const { openDeepDive } = useDeepDive();
   const load = () => api.get("/agents/runtime/evidence-rooms").then(({ data }) => setRooms(data.rooms || [])).catch(() => {});
   useEffect(() => { load(); }, []);
 
@@ -135,9 +176,11 @@ function AuditorRoomCard() {
                   <DoorOpen className={`w-4 h-4 shrink-0 ${room.expired ? "text-muted-foreground" : "text-ai"}`} />
                   <span className="font-mono text-xs truncate max-w-[32%]">{room.url}</span>
                   <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${room.expired ? "bg-crit/10 text-crit" : "bg-low/10 text-low"}`}>{room.expired ? "expired" : `expires ${fmtDT(room.expires_at)}`}</span>
+                  {room.readiness && <span data-testid={`auditor-room-readiness-pill-${room.token}`} className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${RATING_PILL[room.readiness.rating] || "bg-low/10 text-low"}`}>{room.readiness.rating} {room.readiness.risk_score}</span>}
                   <span className="text-[10px] font-mono text-muted-foreground inline-flex items-center gap-1"><Eye className="w-3 h-3" /> {room.opens}</span>
                   <span className="text-[10px] font-mono text-muted-foreground inline-flex items-center gap-1"><Download className="w-3 h-3" /> {room.downloads || 0}</span>
                   <div className="ml-auto flex items-center gap-1.5">
+                    <button data-testid={`auditor-room-readiness-${room.token}`} onClick={() => openDeepDive(roomDeepDive(room))} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-ai/30 text-ai text-xs hover:bg-ai/10 transition-colors"><ShieldCheck className="w-3 h-3" /> Readiness</button>
                     <button data-testid={`auditor-room-log-${room.token}`} onClick={() => setLogOpen(logOpen === room.token ? null : room.token)} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-xs hover:bg-secondary transition-colors"><Activity className="w-3 h-3" /> Log</button>
                     <button data-testid={`auditor-room-renew-${room.token}`} onClick={() => renew(room.token)} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-xs hover:bg-secondary transition-colors"><RefreshCw className="w-3 h-3" /> Renew</button>
                     <button data-testid={`auditor-room-copy-${room.token}`} onClick={() => copyText(room.url)} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-xs hover:bg-secondary transition-colors"><Copy className="w-3 h-3" /> Copy</button>
@@ -154,37 +197,58 @@ function AuditorRoomCard() {
   );
 }
 
+const PRIORITY_TONE = { urgent: "bg-crit/15 text-crit", high: "bg-high/15 text-high", normal: "bg-secondary/60 text-muted-foreground", low: "bg-ai/10 text-ai" };
+
 function GovernanceSettingsCard() {
   const [s, setS] = useState(null);
   const [recips, setRecips] = useState("");
+  const [oncall, setOncall] = useState("");
   const [saving, setSaving] = useState(false);
-  useEffect(() => { api.get("/agents/runtime/governance-settings").then(({ data }) => { setS(data); setRecips((data.board_digest_recipients || []).join(", ")); }).catch(() => {}); }, []);
+  useEffect(() => { api.get("/agents/runtime/governance-settings").then(({ data }) => { setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); }).catch(() => {}); }, []);
   if (!s) return null;
+  const sbp = s.auditor_question_sla_by_priority || {};
+  const setSbp = (k, v) => setS({ ...s, auditor_question_sla_by_priority: { ...sbp, [k]: v } });
   const saveAll = async () => {
     setSaving(true);
     try {
+      const normal = Number(sbp.normal ?? s.auditor_question_sla_hours) || 48;
       const { data } = await api.put("/agents/runtime/governance-settings", {
         board_digest_day: Number(s.board_digest_day) || 1,
         board_digest_recipients: recips.split(",").map((x) => x.trim()).filter(Boolean),
         board_digest_enabled: !!s.board_digest_enabled,
-        auditor_question_sla_hours: Number(s.auditor_question_sla_hours) || 48,
-        auditor_question_escalation_hours: Number(s.auditor_question_escalation_hours) || 96,
+        auditor_question_sla_hours: normal,
         auditor_question_escalation_to: s.auditor_question_escalation_to || "",
+        auditor_question_sla_by_priority: {
+          urgent: Number(sbp.urgent) || 4, high: Number(sbp.high) || 12, normal, low: Number(sbp.low) || 96,
+        },
+        auditor_question_escalation_multiplier: Number(s.auditor_question_escalation_multiplier) || 2,
+        auditor_oncall_rotation: oncall.split(",").map((x) => x.trim()).filter(Boolean),
       });
-      setS(data); setRecips((data.board_digest_recipients || []).join(", ")); toast.success("Governance settings saved");
+      setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); toast.success("Governance settings saved");
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed."); }
     finally { setSaving(false); }
   };
   const fld = "mt-1.5 w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary";
   const lbl = "text-[11px] font-mono uppercase tracking-wider text-muted-foreground";
   return (
-    <Panel title="Governance settings" subtitle="Board-digest schedule + recipients, and the auditor-question response SLA + second-approver escalation." testid="agentic-governance-settings"
+    <Panel title="Governance settings" subtitle="Board-digest schedule + recipients, per-priority auditor-question SLAs, an escalation multiplier, and a weekly on-call rotation for the second approver." testid="agentic-governance-settings"
       actions={<button data-testid="gov-save" onClick={saveAll} disabled={saving} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Settings2 className="w-3.5 h-3.5" />} Save</button>}>
       <div className="grid md:grid-cols-2 gap-4">
         <label className="block"><span className={lbl}>Board digest — day of month</span><input data-testid="gov-digest-day" type="number" min={1} max={28} value={s.board_digest_day} onChange={(e) => setS({ ...s, board_digest_day: e.target.value })} className={fld} /></label>
-        <label className="block"><span className={lbl}>Auditor-question SLA (hours)</span><input data-testid="gov-sla-hours" type="number" min={1} max={720} value={s.auditor_question_sla_hours} onChange={(e) => setS({ ...s, auditor_question_sla_hours: e.target.value })} className={fld} /></label>
-        <label className="block"><span className={lbl}>Escalation after (hours)</span><input data-testid="gov-escalation-hours" type="number" min={1} max={2160} value={s.auditor_question_escalation_hours} onChange={(e) => setS({ ...s, auditor_question_escalation_hours: e.target.value })} className={fld} /></label>
-        <label className="block"><span className={lbl}>Escalate to (second approver email — blank = executives)</span><input data-testid="gov-escalation-to" value={s.auditor_question_escalation_to || ""} onChange={(e) => setS({ ...s, auditor_question_escalation_to: e.target.value })} placeholder="ciso@company.com" className={fld} /></label>
+        <label className="block"><span className={lbl}>Escalation multiplier (× the SLA)</span><input data-testid="gov-escalation-mult" type="number" min={1} max={20} step="0.5" value={s.auditor_question_escalation_multiplier} onChange={(e) => setS({ ...s, auditor_question_escalation_multiplier: e.target.value })} className={fld} /></label>
+      </div>
+      <div className="mt-4">
+        <span className={lbl}>Auditor-question SLA by priority (hours)</span>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-1.5">
+          <label className="block"><span className="text-[10px] font-mono text-crit">URGENT</span><input data-testid="gov-sla-urgent" type="number" min={1} max={4320} value={sbp.urgent ?? 4} onChange={(e) => setSbp("urgent", e.target.value)} className={fld} /></label>
+          <label className="block"><span className="text-[10px] font-mono text-high">HIGH</span><input data-testid="gov-sla-high" type="number" min={1} max={4320} value={sbp.high ?? 12} onChange={(e) => setSbp("high", e.target.value)} className={fld} /></label>
+          <label className="block"><span className="text-[10px] font-mono text-muted-foreground">NORMAL</span><input data-testid="gov-sla-hours" type="number" min={1} max={4320} value={sbp.normal ?? s.auditor_question_sla_hours} onChange={(e) => setSbp("normal", e.target.value)} className={fld} /></label>
+          <label className="block"><span className="text-[10px] font-mono text-ai">LOW</span><input data-testid="gov-sla-low" type="number" min={1} max={4320} value={sbp.low ?? 96} onChange={(e) => setSbp("low", e.target.value)} className={fld} /></label>
+        </div>
+      </div>
+      <div className="grid md:grid-cols-2 gap-4 mt-4">
+        <label className="block"><span className={lbl}>On-call rotation (comma-separated emails — rotates weekly)</span><input data-testid="gov-oncall" value={oncall} onChange={(e) => setOncall(e.target.value)} placeholder="ciso@company.com, deputy@company.com" className={fld} /></label>
+        <label className="block"><span className={lbl}>Fallback second approver (blank = executives)</span><input data-testid="gov-escalation-to" value={s.auditor_question_escalation_to || ""} onChange={(e) => setS({ ...s, auditor_question_escalation_to: e.target.value })} placeholder="ciso@company.com" className={fld} /></label>
         <label className="block md:col-span-2"><span className={lbl}>Board digest recipients (comma-separated emails — blank = all admins &amp; execs)</span><input data-testid="gov-digest-recipients" value={recips} onChange={(e) => setRecips(e.target.value)} placeholder="board@company.com, ciso@company.com" className={fld} /></label>
         <label className="flex items-center gap-2 md:col-span-2 cursor-pointer"><input data-testid="gov-digest-enabled" type="checkbox" checked={!!s.board_digest_enabled} onChange={(e) => setS({ ...s, board_digest_enabled: e.target.checked })} className="w-4 h-4 accent-ai" /><span className="text-sm">Send the monthly board evidence digest automatically</span></label>
       </div>
@@ -219,13 +283,14 @@ function AuditorQuestionsCard() {
     finally { setBusy(false); }
   };
   const setStatus = async (id, status) => { try { await api.post("/agents/runtime/evidence-room-comments/status", { id, status }); load(); } catch (e) { toast.error(e.response?.data?.detail || "Could not update status."); } };
+  const setPriority = async (id, priority) => { try { await api.post("/agents/runtime/evidence-room-comments/status", { id, priority }); load(); } catch (e) { toast.error(e.response?.data?.detail || "Could not update priority."); } };
   const open = comments.filter((c) => c.status !== "Resolved").length;
   const overdue = comments.filter((c) => c.overdue).length;
   const escalated = comments.filter((c) => c.escalated).length;
 
   return (
-    <Panel title="Auditor questions" subtitle="A two-way audit workspace — auditors' questions, your threaded replies (optionally with the signed evidence PDF), SLA + second-approver escalation, and status. The full Q&A trail is exported into the board digest." testid="agentic-auditor-questions"
-      actions={<div className="flex items-center gap-1.5">{sla != null && <span className="text-[10px] font-mono px-2 py-1 rounded-full bg-secondary/60 text-muted-foreground">SLA {sla}h</span>}{escalated > 0 && <span data-testid="auditor-questions-escalated" className="text-[10px] font-mono px-2 py-1 rounded-full bg-crit/15 text-crit">{escalated} escalated</span>}{overdue > 0 && <span data-testid="auditor-questions-overdue" className="text-[10px] font-mono px-2 py-1 rounded-full bg-crit/10 text-crit">{overdue} overdue</span>}<span className="text-[10px] font-mono px-2 py-1 rounded-full bg-secondary/60 text-muted-foreground">{open} open</span></div>}>
+    <Panel title="Auditor questions" subtitle="A two-way audit workspace — auditors' questions, your threaded replies (optionally with the signed evidence PDF), per-priority SLA + on-call escalation, and status. The full Q&A trail is exported into the board digest." testid="agentic-auditor-questions"
+      actions={<div className="flex items-center gap-1.5">{sla != null && <span className="text-[10px] font-mono px-2 py-1 rounded-full bg-secondary/60 text-muted-foreground">Normal SLA {sla}h</span>}{escalated > 0 && <span data-testid="auditor-questions-escalated" className="text-[10px] font-mono px-2 py-1 rounded-full bg-crit/15 text-crit">{escalated} escalated</span>}{overdue > 0 && <span data-testid="auditor-questions-overdue" className="text-[10px] font-mono px-2 py-1 rounded-full bg-crit/10 text-crit">{overdue} overdue</span>}<span className="text-[10px] font-mono px-2 py-1 rounded-full bg-secondary/60 text-muted-foreground">{open} open</span></div>}>
       {comments.length === 0 ? (
         <div className="text-sm text-muted-foreground" data-testid="auditor-questions-empty">No auditor questions yet. They appear here when an auditor asks a question in a room.</div>
       ) : (
@@ -237,6 +302,10 @@ function AuditorQuestionsCard() {
                 <div className="flex items-center gap-2 flex-wrap mb-2">
                   <span className="font-head font-bold text-sm">{q.author}</span>
                   {q.author_email && <span className="text-[10px] font-mono text-muted-foreground">{q.author_email}</span>}
+                  <span data-testid={`auditor-question-priority-${q.id}`} className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${PRIORITY_TONE[q.priority] || PRIORITY_TONE.normal}`}>{(q.priority || "normal").toUpperCase()}{q.sla_hours ? ` · ${q.sla_hours}h` : ""}</span>
+                  <select data-testid={`auditor-question-priority-select-${q.id}`} value={q.priority || "normal"} onChange={(e) => setPriority(q.id, e.target.value)} className="text-[10px] font-mono bg-secondary/60 rounded px-1.5 py-0.5 outline-none cursor-pointer">
+                    <option value="low">low</option><option value="normal">normal</option><option value="high">high</option><option value="urgent">urgent</option>
+                  </select>
                   {q.escalated && <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-crit/15 text-crit">escalated</span>}
                   {q.overdue && !q.escalated && <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-crit/10 text-crit">overdue</span>}
                   <span className={`ml-auto text-[10px] font-mono px-2 py-0.5 rounded-full ${q.status === "Resolved" ? "bg-low/10 text-low" : q.status === "Answered" ? "bg-ai/10 text-ai" : "bg-high/10 text-high"}`}>{q.status || "Open"}</span>

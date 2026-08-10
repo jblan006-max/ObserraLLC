@@ -1,0 +1,33 @@
+{
+  "summary": "Frontend-only validation for 5 new Obserra features on /app/agentic-ai-security Defensibility tab and public /audit-room/{token}. All flows passed end-to-end against live backend.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_results": {
+    "ADMIN_LOGIN_NAV": "PASS - logged in as jblan2026@gmail.com, onboarding Skip clicked, Defensibility tab active.",
+    "GOVERNANCE_SETTINGS_CARD": "PASS - all testids present (gov-digest-day, gov-escalation-mult, gov-sla-urgent/high/hours/low, gov-oncall, gov-escalation-to, gov-digest-recipients, gov-digest-enabled, gov-save). Saved urgent=3, mult=3, oncall='a@obserra.demo, b@obserra.demo' -> toast 'Governance settings saved'. Restored to defaults (urgent=4, mult=2, oncall empty) confirmed via input_value read after reload.",
+    "AUDITOR_QUESTIONS_PRIORITY_OVERRIDE": "PASS - Question row shows priority pill 'URGENT · 4h'. Priority override <select> dropdown changed to 'high' -> pill on reload shows 'HIGH · 12h' (SLA respects governance settings).",
+    "PUBLIC_ROOM_CREATE": "PASS - auditor-room-create-btn produced room token Vl-A0AW_ELxz75xZhU1Ztg, latest URL rendered in auditor-room-latest-url.",
+    "EVIDENCE_INTEGRITY_CHECK": "PASS - audit-room-verify click produced green audit-room-integrity-ok badge 'Untampered · c3048a41a345' on live (untampered) snapshot as expected.",
+    "PRIORITY_QUESTION_PUBLIC": "PASS - audit-room-q-priority is a native <select>; set to 'urgent', filled name/email/text and submitted -> audit-room-question-sent visible. Admin Defensibility Auditor questions card shows new URGENT pill (question id Vw1awS762n3N).",
+    "AUDITOR_DIGEST_SUBSCRIBE": "PASS - audit-room-sub-email filled, audit-room-sub-btn clicked, audit-room-subscribed state rendered. No errors.",
+    "ROOM_BRANDING_PDF": "PASS - audit-room-download href returned HTTP 200, size 693,179 bytes, header '%PDF-'. Non-trivial branded/sealed PDF as expected.",
+    "CLEANUP": "PASS - created auditor room revoked (window.confirm auto-accepted; row for token no longer present after reload). Governance restored to defaults (urgent=4, mult=2, oncall empty)."
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Minor: revoke() uses native window.confirm() which cannot be intercepted by Playwright's page.on('dialog') when clicking via force=True in some cases (had to override window.confirm via evaluate). Consider using an in-app confirm modal with a data-testid for better testability."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (frontend-only run)", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026!",
+  "seed_data_creation": "Created & revoked one auditor room (Vl-A0AW_ELxz75xZhU1Ztg). Created one URGENT auditor question (id Vw1awS762n3N) then admin-overrode to HIGH; left in place (task said leave test question as-is). Subscribed digest@example.com to weekly summary (stored only; no email fired). Governance restored to defaults.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 5 features rendering and wired correctly against live backend. If future test creates an auditor room, override window.confirm via page.evaluate('() => { window.confirm = () => true; }') before clicking auditor-room-revoke-<token> for reliable cleanup, or scroll into view + non-force click.",
+  "rca of the issue": "No functional issues found."
+}

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "@/lib/api";
-import { ShieldCheck, Bot, Ban, PauseCircle, PlayCircle, FileText, AlertTriangle, Loader2, MessageSquare, Send, CheckCircle2, Paperclip } from "lucide-react";
+import { ShieldCheck, Bot, Ban, PauseCircle, PlayCircle, FileText, AlertTriangle, Loader2, MessageSquare, Send, CheckCircle2, Paperclip, BadgeCheck, Bell } from "lucide-react";
 
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—");
 const STATUS_TONE = { killed: "0 84% 60%", restricted: "35 90% 55%", sanctioned: "142 70% 45%", shadow: "0 84% 60%" };
@@ -62,24 +62,45 @@ export default function AuditRoom() {
   const [cName, setCName] = useState("");
   const [cEmail, setCEmail] = useState("");
   const [cText, setCText] = useState("");
+  const [cPriority, setCPriority] = useState("normal");
   const [submitting, setSubmitting] = useState(false);
   const [sent, setSent] = useState(false);
+  const [sha, setSha] = useState("");
+  const [integrity, setIntegrity] = useState(null);
+  const [verifying, setVerifying] = useState(false);
+  const [subEmail, setSubEmail] = useState("");
+  const [subscribed, setSubscribed] = useState(false);
+  const [subBusy, setSubBusy] = useState(false);
 
   const loadComments = () => api.get(`/agents/public/evidence-room/${token}/comments`).then(({ data }) => setComments(data.comments || [])).catch(() => {});
   useEffect(() => {
     api.get(`/agents/public/evidence-room/${token}`)
-      .then(({ data }) => { setSnap(data.snapshot); setMeta({ created_at: data.created_at, expires_at: data.expires_at }); })
+      .then(({ data }) => { setSnap(data.snapshot); setMeta({ created_at: data.created_at, expires_at: data.expires_at }); setSha(data.snapshot_sha256 || ""); setSubscribed(!!data.digest_subscribed); })
       .catch((e) => setError(e?.response?.data?.detail || "This auditor room link is invalid or has expired."))
       .finally(() => setLoading(false));
     loadComments();
   }, [token]);
+
+  const verifyIntegrity = async () => {
+    setVerifying(true);
+    try { const { data } = await api.get(`/agents/public/evidence-room/${token}/integrity`); setIntegrity(data); }
+    catch { setIntegrity({ verified: false, error: true }); }
+    finally { setVerifying(false); }
+  };
+
+  const subscribeDigest = async () => {
+    if (!subEmail.trim() || !subEmail.includes("@")) return;
+    setSubBusy(true);
+    try { await api.post(`/agents/public/evidence-room/${token}/subscribe`, { email: subEmail }); setSubscribed(true); setSubEmail(""); }
+    catch { /* inline */ } finally { setSubBusy(false); }
+  };
 
   const pdfUrl = `${process.env.REACT_APP_BACKEND_URL}/api/agents/public/evidence-room/${token}/pack.pdf${dlName ? `?who=${encodeURIComponent(dlName)}` : ""}`;
 
   const submitQuestion = async () => {
     if (!cText.trim()) return;
     setSubmitting(true);
-    try { await api.post(`/agents/public/evidence-room/${token}/comment`, { author: cName, email: cEmail, text: cText }); setCText(""); setSent(true); loadComments(); }
+    try { await api.post(`/agents/public/evidence-room/${token}/comment`, { author: cName, email: cEmail, text: cText, priority: cPriority }); setCText(""); setCPriority("normal"); setSent(true); loadComments(); }
     catch { /* inline */ } finally { setSubmitting(false); }
   };
 
@@ -101,8 +122,12 @@ export default function AuditRoom() {
           <div className="flex flex-wrap items-center gap-2 mt-2">
             <input data-testid="audit-room-dl-name" value={dlName} onChange={(e) => setDlName(e.target.value)} placeholder="Your name (stamped on the PDF)" className="bg-white/[0.06] border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-ai/60 w-56" />
             <a href={pdfUrl} data-testid="audit-room-download" className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-ai text-[#050810] font-head font-bold text-sm hover:opacity-90 transition-opacity"><FileText className="w-4 h-4" /> Download signed PDF</a>
+            <button data-testid="audit-room-verify" onClick={verifyIntegrity} disabled={verifying} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-white/15 text-sm font-head font-bold hover:bg-white/[0.06] transition-colors disabled:opacity-50">{verifying ? <Loader2 className="w-4 h-4 animate-spin" /> : <BadgeCheck className="w-4 h-4 text-ai" />} Verify integrity</button>
+            {integrity && (integrity.verified
+              ? <span data-testid="audit-room-integrity-ok" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-head font-bold" style={{ background: "hsl(142 70% 45% / 0.14)", color: "hsl(142 70% 55%)" }}><BadgeCheck className="w-4 h-4" /> Untampered · {integrity.short}</span>
+              : <span data-testid="audit-room-integrity-bad" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-head font-bold" style={{ background: "hsl(0 84% 60% / 0.14)", color: "hsl(0 84% 66%)" }}><AlertTriangle className="w-4 h-4" /> Altered — do not rely</span>)}
           </div>
-          <p className="text-[11px] text-white/30">Each download is watermarked with your name + timestamp and a QR back to this live room for a tamper-evident trail.</p>
+          <p className="text-[11px] text-white/30">Each download is watermarked with your name + timestamp, a QR back to this live room, and a "Verified by Obserra" integrity seal. Click <span className="text-white/50">Verify integrity</span> to re-hash the evidence live (SHA-256){sha ? ` · ${sha.slice(0, 12)}` : ""}.</p>
         </header>
 
         <section className="rounded-xl border border-white/10 bg-white/[0.03] p-4" data-testid="audit-room-attestation">
@@ -176,10 +201,31 @@ export default function AuditRoom() {
               <div className="flex flex-wrap gap-2">
                 <input data-testid="audit-room-q-name" value={cName} onChange={(e) => setCName(e.target.value)} placeholder="Your name" className="flex-1 min-w-[160px] bg-white/[0.06] border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-ai/60" />
                 <input data-testid="audit-room-q-email" value={cEmail} onChange={(e) => setCEmail(e.target.value)} placeholder="Email (optional — for the reply)" className="flex-1 min-w-[160px] bg-white/[0.06] border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-ai/60" />
+                <select data-testid="audit-room-q-priority" value={cPriority} onChange={(e) => setCPriority(e.target.value)} className="bg-white/[0.06] border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-ai/60 text-white/80 cursor-pointer">
+                  <option value="low">Low priority</option>
+                  <option value="normal">Normal priority</option>
+                  <option value="high">High priority</option>
+                  <option value="urgent">Urgent</option>
+                </select>
               </div>
               <textarea data-testid="audit-room-q-text" value={cText} onChange={(e) => setCText(e.target.value)} placeholder="Your question about this evidence…" rows={3} className="w-full bg-white/[0.06] border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-ai/60 resize-none" />
               <button data-testid="audit-room-q-submit" onClick={submitQuestion} disabled={submitting || !cText.trim()} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-ai text-[#050810] font-head font-bold text-sm hover:opacity-90 transition-opacity disabled:opacity-40">{submitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send question</button>
             </div>
+          )}
+        </section>
+
+        <section className="rounded-xl border border-white/10 bg-white/[0.03] p-4" data-testid="audit-room-subscribe">
+          <div className="flex items-center gap-2 mb-1.5"><Bell className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Weekly summary</h2></div>
+          {subscribed ? (
+            <p data-testid="audit-room-subscribed" className="text-sm text-white/70 flex items-center gap-2"><CheckCircle2 className="w-4 h-4 text-low" /> You'll get a weekly email summary of new evidence and answered questions in this room.</p>
+          ) : (
+            <>
+              <p className="text-[12px] text-white/50 mb-2">Get a weekly email summary of new evidence and answered questions in this room. No account needed.</p>
+              <div className="flex flex-wrap gap-2">
+                <input data-testid="audit-room-sub-email" value={subEmail} onChange={(e) => setSubEmail(e.target.value)} placeholder="you@auditfirm.com" className="flex-1 min-w-[200px] bg-white/[0.06] border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-ai/60" />
+                <button data-testid="audit-room-sub-btn" onClick={subscribeDigest} disabled={subBusy || !subEmail.includes("@")} className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border border-ai/40 text-ai font-head font-bold text-sm hover:bg-ai/10 transition-colors disabled:opacity-40">{subBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Bell className="w-4 h-4" />} Email me weekly</button>
+              </div>
+            </>
           )}
         </section>
 
