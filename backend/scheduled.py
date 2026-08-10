@@ -427,11 +427,12 @@ async def daily_drift_digest(request: Request, background_tasks: BackgroundTasks
     background_tasks.add_task(run_health_alerts)
     from deploy import _run_audit_room_expiry_reminders
     background_tasks.add_task(_run_audit_room_expiry_reminders)
-    from agents import _run_agent_room_expiry_reminders, _run_auditor_question_sla_nudge, _run_auditor_question_escalation, _run_board_evidence_digest
+    from agents import _run_agent_room_expiry_reminders, _run_auditor_question_sla_nudge, _run_auditor_question_escalation, _run_board_evidence_digest, _run_scheduled_fire_drills
     background_tasks.add_task(_run_agent_room_expiry_reminders)
     background_tasks.add_task(_run_auditor_question_sla_nudge)
     background_tasks.add_task(_run_auditor_question_escalation)
     background_tasks.add_task(_run_board_evidence_digest, None, False, True)
+    background_tasks.add_task(_run_scheduled_fire_drills)
     return {"status": "accepted"}
 
 

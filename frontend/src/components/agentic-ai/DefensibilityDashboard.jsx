@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Activity, CheckCircle2, Clock, Copy, Database, DoorOpen, Download, Eye, FileText, Loader2, MessageSquare, Paperclip, Plus, RefreshCw, Send, Settings2, ShieldCheck, Terminal, Trash2, X, XCircle, Zap } from "lucide-react";
+import { Activity, Calendar, CheckCircle2, Clock, Copy, Database, DoorOpen, Download, Eye, FileText, Loader2, MessageSquare, Paperclip, PlayCircle, Plus, RefreshCw, Send, Settings2, ShieldCheck, Terminal, Trash2, X, XCircle, Zap } from "lucide-react";
 import { toast } from "sonner";
 import { DataClassBadge, Panel } from "@/components/agentic-ai/shared";
 import { useDeepDive } from "@/context/DeepDiveContext";
@@ -119,6 +119,8 @@ function AuditorRoomCard() {
   const [latest, setLatest] = useState(null);
   const [logOpen, setLogOpen] = useState(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [poc, setPoc] = useState(null);
+  const [pocBusy, setPocBusy] = useState(false);
   const { openDeepDive } = useDeepDive();
   const load = () => api.get("/agents/runtime/evidence-rooms").then(({ data }) => setRooms(data.rooms || [])).catch(() => {});
   useEffect(() => { load(); }, []);
@@ -142,6 +144,17 @@ function AuditorRoomCard() {
     try { const { data } = await api.post("/agents/runtime/evidence-room/renew", { token, days: 14 }); toast.success(`Renewed — now expires ${fmtDT(data.expires_at)}`); load(); }
     catch (e) { toast.error(e.response?.data?.detail || "Renew failed."); }
   };
+  const runPoc = async () => {
+    setPocBusy(true);
+    try {
+      const { data } = await api.post("/agents/runtime/proof-of-control");
+      setPoc(data);
+      try { await navigator.clipboard.writeText(data.url); } catch { /* ignore */ }
+      toast.success(data.controlled ? "Proof-of-Control confirmed — link created & copied." : "Link created, but the runtime did not confirm control.");
+      load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not create the Proof-of-Control link. Enable the Live Enforcement Simulator or wire a runtime webhook first."); }
+    finally { setPocBusy(false); }
+  };
 
   return (
     <>
@@ -153,10 +166,24 @@ function AuditorRoomCard() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             <button data-testid="digest-preview-btn" onClick={() => setShowPreview(true)} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-ai/40 text-ai text-xs font-head font-bold hover:bg-ai/10 transition-colors"><FileText className="w-3.5 h-3.5" /> Preview &amp; send board digest</button>
+            <button data-testid="proof-of-control-btn" onClick={runPoc} disabled={pocBusy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-ai/40 text-ai text-xs font-head font-bold hover:bg-ai/10 transition-colors disabled:opacity-50">{pocBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />} Board Proof-of-Control</button>
             <button data-testid="auditor-room-create-btn" onClick={create} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Create auditor room</button>
           </div>
         }
       >
+        {poc && (
+          <div data-testid="proof-of-control-result" className={`mb-4 rounded-lg border p-3 ${poc.controlled ? "border-low/30 bg-low/5" : "border-crit/30 bg-crit/5"}`}>
+            <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider mb-1.5">
+              {poc.controlled ? <ShieldCheck className="w-3 h-3 text-low" /> : <XCircle className="w-3 h-3 text-crit" />}
+              <span className={poc.controlled ? "text-low" : "text-crit"}>{poc.controlled ? "Control confirmed" : "Control not confirmed"} · fresh signed receipt · HTTP {poc.receipt?.status_code || "—"} · {poc.receipt?.latency_ms}ms · {poc.receipt?.signed ? "signed" : "unsigned"}</span>
+            </div>
+            <p className="text-[11px] text-muted-foreground mb-2">One auditor link bundling this fresh kill-switch receipt with the sealed AI Enforcement Evidence Pack. Share it with your board.</p>
+            <div className="flex items-center gap-2">
+              <input readOnly data-testid="proof-of-control-url" value={poc.url} onFocus={(e) => e.target.select()} className="flex-1 min-w-0 bg-secondary/50 rounded-md px-2.5 py-2 text-xs font-mono outline-none" />
+              <button data-testid="proof-of-control-copy" onClick={() => copyText(poc.url)} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-ai/40 text-ai text-xs font-head font-bold hover:bg-ai/10 transition-colors shrink-0"><Copy className="w-3.5 h-3.5" /> Copy</button>
+            </div>
+          </div>
+        )}
         {latest && (
           <div data-testid="auditor-room-latest" className="mb-4 rounded-lg border border-ai/30 bg-ai/5 p-3">
             <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider text-ai mb-1.5"><DoorOpen className="w-3 h-3" /> New link — share with your auditor · expires {fmtDT(latest.expires_at)}</div>
@@ -347,6 +374,28 @@ function RuntimePlaybooksCard() {
   useEffect(() => { api.get("/agents/runtime/webhook/playbooks").then(({ data }) => setPb(data)).catch(() => {}); }, []);
   if (!pb) return null;
   const payloadStr = JSON.stringify({ payload: pb.payload, headers: pb.headers }, null, 2);
+  const webhookUrl = pb.webhook_url || "";
+  const secret = pb.signing_secret || "";
+  const secretLiteral = secret ? JSON.stringify(secret) : '"<your signing secret>"';
+  const verifySnippet =
+`import hmac, hashlib
+# Obserra HMAC verification — signature = sha256 over "<timestamp>." + raw request body
+OBSERRA_WEBHOOK_SECRET = ${secretLiteral}
+def verify_obserra(raw_body: bytes, ts: str, sig: str) -> bool:
+    expected = "sha256=" + hmac.new(OBSERRA_WEBHOOK_SECRET.encode(), (ts + ".").encode() + raw_body, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, sig or "")`;
+  const prefilled = (p) =>
+`# Obserra -> ${p.name} enforcement receiver — prefilled for your org (one paste)
+# Obserra POSTs signed Suspend / Kill / Resume events to:
+#   ${webhookUrl || "<connect a webhook or enable the Live Enforcement Simulator>"}
+${verifySnippet}
+
+# In your HTTP handler:
+#   raw = await request.body()
+#   if not verify_obserra(raw, request.headers["X-Obserra-Timestamp"], request.headers["X-Obserra-Signature"]):
+#       return Response(status_code=401)
+#   evt = json.loads(raw)   # {"agent_ref","action","mode",...}
+${p.example}`;
   const testPing = async () => {
     setTesting(true); setResult(null);
     try { const { data } = await api.post("/agents/runtime/webhook/test"); setResult(data); if (data.ok) toast.success(`Runtime received the test enforcement — HTTP ${data.status_code} · ${data.latency_ms}ms`); else toast.error(`No 2xx from runtime — ${data.status_code || data.error || "unreachable"}`); }
@@ -354,7 +403,19 @@ function RuntimePlaybooksCard() {
     finally { setTesting(false); }
   };
   return (
-    <Panel title="Runtime enforcement playbooks" subtitle="Obserra dispatches this signed webhook on every Suspend / Kill / Resume. Use a per-provider adapter to map it to your agent runtime's stop API, then send a test enforcement to confirm it lands." testid="agentic-runtime-playbooks">
+    <Panel title="Runtime enforcement playbooks" subtitle="Obserra dispatches this signed webhook on every Suspend / Kill / Resume. Copy a per-provider adapter — prefilled with your own webhook URL + signing secret — so wiring a real runtime is one paste, then send a test enforcement to confirm it lands." testid="agentic-runtime-playbooks">
+      <div className="rounded-lg border border-ai/25 bg-ai/[0.03] p-3 mb-3" data-testid="runtime-adapter-prefill">
+        <div className="flex items-center gap-2 flex-wrap mb-1.5">
+          <span className="text-[10px] font-mono uppercase tracking-wider text-ai">Your prefilled receiver</span>
+          {pb.managed === "simulator" && <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-low/10 text-low border border-low/25">built-in simulator</span>}
+          <button data-testid="adapter-copy-skeleton" onClick={() => copyText(verifySnippet)} className="ml-auto inline-flex items-center gap-1 px-2 py-1 rounded border border-ai/40 text-ai text-xs hover:bg-ai/10 transition-colors"><Copy className="w-3 h-3" /> Copy verify()</button>
+        </div>
+        <div className="flex items-center gap-2 mb-1.5">
+          <span className="text-[10px] font-mono text-muted-foreground shrink-0">POST URL</span>
+          <input readOnly data-testid="adapter-webhook-url" value={webhookUrl || "— connect a webhook or enable the simulator —"} onFocus={(e) => e.target.select()} className="flex-1 min-w-0 bg-secondary/50 rounded px-2 py-1.5 text-[11px] font-mono outline-none" />
+        </div>
+        <div className="text-[10px] font-mono text-muted-foreground">Signing secret: {secret ? `${"\u2022".repeat(10)} (embedded in the copied adapters below)` : "not set — enable the simulator or save a webhook secret"}</div>
+      </div>
       <div className="rounded-lg border border-border bg-secondary/20 p-3 mb-3">
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Signed webhook contract</span>
@@ -371,8 +432,8 @@ function RuntimePlaybooksCard() {
                 <p className="text-xs text-muted-foreground">{p.blurb}</p>
                 <div className="grid sm:grid-cols-3 gap-2">{Object.entries(p.map || {}).map(([k, v]) => (<div key={k} className="rounded border border-border p-2"><div className="text-[10px] font-mono uppercase text-ai">{k}</div><div className="text-[11px] text-muted-foreground mt-1">{v}</div></div>))}</div>
                 <div className="rounded bg-secondary/30 p-2">
-                  <div className="flex items-center justify-between mb-1"><span className="text-[10px] font-mono uppercase text-muted-foreground">adapter</span><button data-testid={`playbook-copy-${p.id}`} onClick={() => copyText(p.example)} className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-border text-[10px] hover:bg-secondary"><Copy className="w-3 h-3" /> Copy</button></div>
-                  <pre className="text-[11px] font-mono whitespace-pre-wrap overflow-x-auto">{p.example}</pre>
+                  <div className="flex items-center justify-between mb-1"><span className="text-[10px] font-mono uppercase text-muted-foreground">prefilled adapter — verify() + your secret + action mapping</span><button data-testid={`playbook-copy-prefilled-${p.id}`} onClick={() => copyText(prefilled(p))} className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-ai/40 text-ai text-[10px] hover:bg-ai/10 transition-colors"><Copy className="w-3 h-3" /> Copy prefilled receiver</button></div>
+                  <pre className="text-[11px] font-mono whitespace-pre-wrap overflow-x-auto max-h-72 overflow-y-auto">{prefilled(p)}</pre>
                 </div>
                 <div className="flex flex-wrap items-center gap-2">
                   <a href={p.docs} target="_blank" rel="noreferrer" className="text-[11px] font-mono text-ai underline">Provider docs →</a>
@@ -392,6 +453,82 @@ function RuntimePlaybooksCard() {
   );
 }
 
+function KillReplayDrillCard({ agents = [] }) {
+  const [drills, setDrills] = useState([]);
+  const [agentRef, setAgentRef] = useState("");
+  const [notify, setNotify] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [sched, setSched] = useState(null);
+  const [savingSched, setSavingSched] = useState(false);
+  const pickable = (agents || []).filter((a) => a.ref && a.status !== "killed");
+  const load = () => api.get("/agents/runtime/fire-drills").then(({ data }) => setDrills(data.drills || [])).catch(() => {});
+  useEffect(() => { load(); api.get("/agents/runtime/governance-settings").then(({ data }) => setSched(data)).catch(() => {}); }, []);
+  useEffect(() => { if (!agentRef && pickable.length) setAgentRef(pickable[0].ref); }, [agents]); // eslint-disable-line react-hooks/exhaustive-deps
+  const run = async () => {
+    if (!agentRef) { toast.error("Pick an agent to drill."); return; }
+    setBusy(true);
+    try { const { data } = await api.post("/agents/runtime/fire-drill", { agent_ref: agentRef, notify }); const d = data.drill; toast.success(d.controlled ? `Control confirmed — ${d.agent_name} suspended (${d.suspend_ms}ms) & resumed (${d.resume_ms}ms).` : "Drill ran, but the runtime did not confirm control."); load(); }
+    catch (e) { toast.error(e.response?.data?.detail || "Fire-drill failed."); }
+    finally { setBusy(false); }
+  };
+  const saveSched = async () => {
+    setSavingSched(true);
+    try { const { data } = await api.put("/agents/runtime/governance-settings", { fire_drill_enabled: !!sched.fire_drill_enabled, fire_drill_day: Number(sched.fire_drill_day) || 1, fire_drill_agent_ref: sched.fire_drill_agent_ref || "" }); setSched(data); toast.success("Fire-drill schedule saved"); }
+    catch (e) { toast.error(e.response?.data?.detail || "Save failed."); }
+    finally { setSavingSched(false); }
+  };
+  const fld = "mt-1.5 w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary";
+  const lbl = "text-[11px] font-mono uppercase tracking-wider text-muted-foreground";
+  return (
+    <Panel title="Kill Replay Drill" subtitle="Prove your kill-switch actually fires — run a Suspend → Resume replay against any agent (timed, signed, receipted) and optionally email the board a proof-of-control receipt. Schedule a monthly fire-drill so control is proven on autopilot." testid="agentic-fire-drill"
+      actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <select data-testid="fire-drill-agent" value={agentRef} onChange={(e) => setAgentRef(e.target.value)} className="text-xs font-mono bg-secondary/60 border border-border rounded-md px-2 py-1.5 outline-none cursor-pointer max-w-[180px]">
+            {pickable.length === 0 && <option value="">No agents</option>}
+            {pickable.map((a) => <option key={a.ref} value={a.ref}>{a.name} ({a.ref})</option>)}
+          </select>
+          <label className="flex items-center gap-1.5 text-xs cursor-pointer"><input data-testid="fire-drill-notify" type="checkbox" checked={notify} onChange={(e) => setNotify(e.target.checked)} className="w-3.5 h-3.5 accent-ai" /> Email board</label>
+          <button data-testid="fire-drill-run" onClick={run} disabled={busy || !agentRef} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <PlayCircle className="w-3.5 h-3.5" />} Run fire-drill now</button>
+        </div>
+      }>
+      {sched && (
+        <div className="rounded-lg border border-border bg-secondary/20 p-3 mb-4" data-testid="fire-drill-schedule">
+          <div className="flex items-center gap-2 mb-2"><Calendar className="w-4 h-4 text-ai" /><span className="font-head font-bold text-sm">Scheduled monthly fire-drill</span>
+            <button data-testid="fire-drill-schedule-save" onClick={saveSched} disabled={savingSched} className="ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-ai/40 text-ai text-xs font-head font-bold hover:bg-ai/10 transition-colors disabled:opacity-50">{savingSched ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Settings2 className="w-3.5 h-3.5" />} Save schedule</button>
+          </div>
+          <div className="grid sm:grid-cols-3 gap-3">
+            <label className="flex items-center gap-2 cursor-pointer"><input data-testid="fire-drill-enabled" type="checkbox" checked={!!sched.fire_drill_enabled} onChange={(e) => setSched({ ...sched, fire_drill_enabled: e.target.checked })} className="w-4 h-4 accent-ai" /><span className="text-sm">Enabled</span></label>
+            <label className="block"><span className={lbl}>Day of month</span><input data-testid="fire-drill-day" type="number" min={1} max={28} value={sched.fire_drill_day || 1} onChange={(e) => setSched({ ...sched, fire_drill_day: e.target.value })} className={fld} /></label>
+            <label className="block"><span className={lbl}>Agent</span>
+              <select data-testid="fire-drill-schedule-agent" value={sched.fire_drill_agent_ref || ""} onChange={(e) => setSched({ ...sched, fire_drill_agent_ref: e.target.value })} className={fld}>
+                <option value="">First active agent</option>
+                {pickable.map((a) => <option key={a.ref} value={a.ref}>{a.name} ({a.ref})</option>)}
+              </select>
+            </label>
+          </div>
+        </div>
+      )}
+      {drills.length === 0 ? (
+        <div className="text-sm text-muted-foreground" data-testid="fire-drill-empty">No fire-drills yet. Run one to produce a timed, signed proof-of-control receipt.</div>
+      ) : (
+        <div className="space-y-2" data-testid="fire-drill-list">
+          {drills.map((d, i) => (
+            <div key={i} data-testid={`fire-drill-${i}`} className="flex items-center gap-2 flex-wrap rounded-lg border border-border bg-secondary/10 px-3 py-2.5 text-xs">
+              {d.controlled ? <ShieldCheck className="w-4 h-4 text-low shrink-0" /> : <XCircle className="w-4 h-4 text-crit shrink-0" />}
+              <span className="font-head font-bold">{d.agent_name}</span>
+              <span className="font-mono text-muted-foreground">{d.agent_ref}</span>
+              {d.scheduled && <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-ai/10 text-ai">scheduled</span>}
+              <span className="text-[10px] font-mono text-muted-foreground">suspend {d.suspend_ms}ms · resume {d.resume_ms}ms</span>
+              <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${d.signed ? "bg-low/10 text-low" : "bg-secondary/60 text-muted-foreground"}`}>{d.signed ? "signed" : "unsigned"}</span>
+              <span className="ml-auto font-mono text-[10px] text-muted-foreground">{fmtDTT(d.at)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 export default function DefensibilityDashboard({ data, sourceStatus, isAdmin }) {
   const connectors = data?.connectorHealth?.connectors || [];
   const summary = data?.connectorHealth?.summary || {};
@@ -401,6 +538,7 @@ export default function DefensibilityDashboard({ data, sourceStatus, isAdmin }) 
       {isAdmin && <GovernanceSettingsCard />}
       {isAdmin && <AuditorQuestionsCard />}
       {isAdmin && <RuntimePlaybooksCard />}
+      {isAdmin && <KillReplayDrillCard agents={data?.agents || []} />}
 
       <div className="grid xl:grid-cols-3 gap-5">
         <Panel title="Data source status" subtitle="Unavailable sources are surfaced rather than replaced with synthetic data." testid="agentic-source-status">

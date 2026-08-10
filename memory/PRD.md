@@ -1,6 +1,14 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Proof-of-Control suite (iteration_101, frontend 4/4 100%): prefilled runtime adapters, Kill Replay Drill, digest trend charts, one-click Board Proof-of-Control
+Second 4-item batch ("all"), all live/no-mock:
+- **Runtime Adapter Snippets**: playbooks endpoint returns the org's own webhook URL + signing secret; per-provider "Copy prefilled receiver" emits a one-paste HMAC-verifying adapter (`RuntimePlaybooksCard`).
+- **Kill Replay Drill** (`KillReplayDrillCard`): run/scheduled Suspend→Resume fire-drill (`POST /runtime/fire-drill`, `GET /runtime/fire-drills`, `_run_scheduled_fire_drills` in daily cron, gov settings `fire_drill_*`) with an optional board proof-of-control email. "Email board" defaults OFF.
+- **Digest Trend Charts**: `_digest_trend_page()` appends a month-over-month kill/suspend/toxic line-chart page to the board evidence PDF (real `agent_enforcements` buckets + `db.toxic_history`).
+- **Board Proof-of-Control** (`POST /runtime/proof-of-control`): fires a fresh signed receipt and bundles it + the sealed evidence pack into a single expiring auditor link (`extra_md` embedded in `public_evidence_room_pdf`).
+
+
 ## Status (Jun 2026) — 4-feature v1 build: Live Enforcement Simulator + Toxicity Heatmap upgrade + richer Board Digest + deeper Go-Live (iteration_100, 100%)
 Shipped the user's 4-item batch ("all"), all live/no-mock, testing_agent iteration_100 backend 7/7 + frontend 4/4:
 - **Live Enforcement Simulator** (`agents.py`): a first-party agent-runtime receiver Obserra hosts for itself so the FULL signed-webhook enforcement path is provable end-to-end without a customer runtime. `POST /runtime/simulator/{enable,disable,clear}`, `GET /runtime/simulator`, and PUBLIC `POST /runtime/simulator/inbound/{token}` (verifies the `X-Obserra-Signature` HMAC-SHA256 over `'<ts>.'+raw`, records each event to `runtime_simulator_events`, returns a receipt). Enable wires the org `agent_runtime_webhook` to the app's own public inbound URL + a generated signing secret (`agent_runtime_webhook_managed:"simulator"`). Verified: enable→active→signed; a real Suspend on AGT-002 dispatched over the ingress and was recorded signature-valid. UI: simulator section in `RuntimeConnectorCard` (Settings) — toggle, received/verified KPIs, event inbox.

@@ -93,6 +93,64 @@ def _qa_markdown(qa):
 
 
 # ── Board digest builder (shared by send + preview) + preview / access-log endpoints ──
+def _digest_trend_page(monthly):
+    """One-page LETTER PDF with a month-over-month enforcement + toxic trend chart. `monthly` is a list of
+    {month, kills, suspends, toxic?} oldest→newest. Returns bytes (b'' when <2 months of data)."""
+    try:
+        from io import BytesIO
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import LETTER
+        from reportlab.lib import colors
+        from reportlab.lib.units import inch
+        from reportlab.graphics.shapes import Drawing
+        from reportlab.graphics.charts.linecharts import HorizontalLineChart
+        from reportlab.graphics.charts.legends import Legend
+        from reportlab.graphics import renderPDF
+        if len(monthly) < 2:
+            return b""
+        labels = [m["month"] for m in monthly]
+        data = [[m.get("kills", 0) for m in monthly], [m.get("suspends", 0) for m in monthly]]
+        names = ["Kills", "Suspends"]
+        cols = ["#dc2626", "#d97706"]
+        toxic_vals = [m.get("toxic") for m in monthly]
+        if sum(1 for t in toxic_vals if t is not None) >= 2:
+            data.append([t or 0 for t in toxic_vals]); names.append("Toxic agents"); cols.append("#7c3aed")
+        W, H = LETTER
+        buf = BytesIO()
+        c = canvas.Canvas(buf, pagesize=LETTER)
+        c.setFillColor(colors.HexColor("#0f1e3d")); c.setFont("Helvetica-Bold", 16)
+        c.drawString(0.9 * inch, H - 1.0 * inch, "AI Enforcement \u2014 Month-over-Month Trend")
+        c.setFillColor(colors.grey); c.setFont("Helvetica", 9)
+        note = "Real monthly counts of kill / suspend enforcement actions" + (
+            " and current toxic-agent estate." if len(names) == 3 else "; toxic-agent trend accrues monthly.")
+        c.drawString(0.9 * inch, H - 1.22 * inch, note)
+        d = Drawing(470, 250)
+        lc = HorizontalLineChart()
+        lc.x = 46; lc.y = 34; lc.width = 380; lc.height = 176
+        lc.data = data
+        lc.categoryAxis.categoryNames = labels
+        lc.categoryAxis.labels.fontSize = 8
+        lc.valueAxis.valueMin = 0
+        lc.valueAxis.labels.fontSize = 8
+        for i, col in enumerate(cols):
+            lc.lines[i].strokeColor = colors.HexColor(col)
+            lc.lines[i].strokeWidth = 2.4
+        d.add(lc)
+        leg = Legend()
+        leg.x = 46; leg.y = 238; leg.deltax = 96; leg.dxTextSpace = 5; leg.fontSize = 8
+        leg.alignment = "right"; leg.columnMaximum = 1
+        leg.colorNamePairs = [(colors.HexColor(cols[i]), names[i]) for i in range(len(names))]
+        d.add(leg)
+        renderPDF.draw(d, c, 0.9 * inch, H - 5.0 * inch)
+        c.setFillColor(colors.grey); c.setFont("Helvetica", 7.5)
+        c.drawString(0.9 * inch, 0.7 * inch,
+                     "Obserra \u2014 Agentic AI Security Control & Governance \u00b7 figures computed from the live Defensibility Ledger.")
+        c.showPage(); c.save()
+        return buf.getvalue()
+    except Exception:
+        return b""
+
+
 async def _build_board_digest(org):
     import base64
     from datetime import datetime, timezone, timedelta
@@ -111,6 +169,45 @@ async def _build_board_digest(org):
     qa = await db.evidence_room_comments.find({"org_id": oid}, {"_id": 0}).sort("at", 1).to_list(500)
     open_qs = sum(1 for q in qa if q.get("status") != "Resolved")
     pdf_bytes = _evidence_pdf(snap, _qa_markdown(qa)).getvalue()
+    # Append a month-over-month enforcement + toxic trend chart page (real monthly counts)
+    try:
+        ev6 = await db.agent_enforcements.find(
+            {"org_id": oid, "at": {"$gte": (now - timedelta(days=190)).isoformat()}},
+            {"_id": 0, "at": 1, "action": 1}).to_list(5000)
+        yy, mm, mkeys = now.year, now.month, []
+        for _ in range(6):
+            mkeys.append((yy, mm)); mm -= 1
+            if mm == 0:
+                mm = 12; yy -= 1
+        mkeys = mkeys[::-1]
+        buckets = {f"{a:04d}-{b:02d}": {"kills": 0, "suspends": 0} for (a, b) in mkeys}
+        for e in ev6:
+            k = (e.get("at") or "")[:7]
+            if k in buckets:
+                if e.get("action") == "kill":
+                    buckets[k]["kills"] += 1
+                elif e.get("action") == "suspend":
+                    buckets[k]["suspends"] += 1
+        cur = f"{now.year:04d}-{now.month:02d}"
+        await db.toxic_history.update_one({"org_id": oid, "month": cur},
+            {"$set": {"org_id": oid, "month": cur, "toxic": c.get("toxic", 0), "at": now.isoformat()}}, upsert=True)
+        th = {t["month"]: t["toxic"] for t in await db.toxic_history.find(
+            {"org_id": oid}, {"_id": 0, "month": 1, "toxic": 1}).to_list(100)}
+        monthly = [{"month": f"{b:02d}/{str(a)[2:]}", "kills": buckets[f"{a:04d}-{b:02d}"]["kills"],
+                    "suspends": buckets[f"{a:04d}-{b:02d}"]["suspends"], "toxic": th.get(f"{a:04d}-{b:02d}")}
+                   for (a, b) in mkeys]
+        page = _digest_trend_page(monthly)
+        if page:
+            from io import BytesIO as _BIO
+            from pypdf import PdfReader as _PR, PdfWriter as _PW
+            wtr = _PW()
+            for p in _PR(_BIO(pdf_bytes)).pages:
+                wtr.add_page(p)
+            for p in _PR(_BIO(page)).pages:
+                wtr.add_page(p)
+            _o = _BIO(); wtr.write(_o); pdf_bytes = _o.getvalue()
+    except Exception:
+        pass
     att = [{"filename": "obserra-ai-enforcement-evidence.pdf", "content": base64.b64encode(pdf_bytes).decode()}]
     oname = org.get("name") or "your organization"
 

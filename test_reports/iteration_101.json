@@ -1,0 +1,25 @@
+{
+  "summary": "Frontend E2E of the 4 new Defensibility features on /app/agentic-ai-security. All four features work end-to-end with live backend. (1) Runtime Adapter Snippets: agentic-runtime-playbooks + runtime-adapter-prefill render; adapter-webhook-url (INPUT) value=https://cyber-dashboard-48.preview.emergentagent.com/api/agents/runtime/simulator/inbound/xzVF3xlS1wjXHw (simulator inbound, managed by Obserra as expected); adapter-copy-skeleton present; playbook-langgraph expands with prefilled snippet containing the org webhook URL and 'secret' text; playbook-copy-prefilled-langgraph present; playbook-test-langgraph -> playbook-test-result 'Runtime received it — HTTP 200 · 192ms · 1 try · signed'. (2) Kill Replay Drill: agentic-fire-drill card renders; fire-drill-agent SELECT lists AGT-002/001/003; ran fire-drill (with fire-drill-notify unchecked) -> fire-drill-0 row shows 'Invoice Reconciliation Agent · AGT-001 · suspend 607ms · resume 312ms · signed'; schedule save with fire-drill-enabled+day=15+schedule-agent produced 'Fire-drill schedule saved' toast. (3) Digest Trend Charts: digest-preview-btn opens digest-preview-modal; GET /api/agents/runtime/board-evidence-digest/preview.pdf returned 200 application/pdf 224079 bytes valid %PDF header. (4) Board Proof-of-Control: proof-of-control-btn -> proof-of-control-result 'Control confirmed · fresh signed receipt · HTTP 200 · 170ms · signed'; proof-of-control-url (INPUT) = https://cyber-dashboard-48.preview.emergentagent.com/audit-room/U8pz9and1STG0-hHCqo_rg; auditor room loaded 200 text/html showing 'Read-only Auditor Room · AI Enforcement Evidence Pack'; proof-of-control-copy present.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Defensibility → Kill Replay Drill", "issues": ["fire-drill-notify (Email board) checkbox appears to be checked by default. Since sending real emails from a test/drill is potentially undesirable, consider defaulting to unchecked. (Testing agent explicitly unchecked before run per instruction.)"]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "adapter-webhook-url is an <input readonly> so its content is exposed via .value, not text_content. Not a bug, but ensure any automated screenshotting/telemetry doesn't accidentally leak the signed webhook URL to logs.",
+    "Consider defaulting fire-drill-notify to unchecked to avoid accidental email sends during operator experimentation."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-focused this run; all backing APIs returned 200/expected data via UI)", "frontend": "100% (4/4 features)"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin/owner, from review request)",
+  "seed_data_creation": "None. A new fire-drill record and a proof-of-control audit-room token were created as a natural side-effect of exercising the flows (as designed).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Direct navigation via URL to /agentic-ai-security or /app/agentic-ai-security lands on Executive Overview after login — click sidebar 'Agentic AI Security' link instead. Onboarding tour 'Skip' overlay may appear on first login; dismiss it first. Defensibility tab data-testid=agentic-tab-defensibility. adapter-webhook-url and proof-of-control-url are <input readonly> elements — use .value (or evaluate) to read them.",
+  "rca of the issue": "N/A — no issues found."
+}

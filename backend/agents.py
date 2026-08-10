@@ -451,6 +451,168 @@ async def simulator_inbound(token: str, request: Request):
             "agent_ref": body.get("agent_ref"), "action": body.get("action"), "verified": verified}
 
 
+# ---- Kill Replay Drill (proof-of-control fire-drill) ----
+async def _email_fire_drill(org_id, drill):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    recips = org.get("board_digest_recipients") or []
+    if not recips:
+        recips = [u["email"] for u in await db.users.find(
+            {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200) if u.get("email")]
+    if not recips:
+        return
+    controlled = drill.get("controlled")
+    color = "#16a34a" if controlled else "#dc2626"
+    verdict = "CONTROL CONFIRMED" if controlled else "CONTROL NOT CONFIRMED"
+    sr = drill.get("suspend_receipt") or {}
+    runtime = "built-in simulator" if drill.get("runtime") == "obserra-simulator" else (
+        "external agent runtime" if drill.get("runtime") == "external-webhook" else "internal control plane")
+    html = (
+        f"<div style='font-family:Arial;max-width:600px'>"
+        f"<div style='background:#0f1e3d;padding:18px 22px;border-radius:10px 10px 0 0'>"
+        f"<div style='color:#12b4d6;font:700 12px Arial;letter-spacing:2px'>OBSERRA · PROOF OF CONTROL</div>"
+        f"<div style='color:#fff;font:800 20px Arial;margin-top:4px'>AI Kill-Switch Fire-Drill</div></div>"
+        f"<div style='border:1px solid #e5e7eb;border-top:none;padding:22px;border-radius:0 0 10px 10px'>"
+        f"<div style='display:inline-block;background:{color};color:#fff;font:800 13px Arial;padding:6px 14px;border-radius:999px'>{verdict}</div>"
+        f"<p style='font:400 14px Arial;color:#374151;margin:16px 0'>On {drill.get('at','')[:16].replace('T',' ')} UTC, Obserra fired a live "
+        f"<strong>Suspend → Resume</strong> replay against <strong>{drill.get('agent_name')}</strong> "
+        f"(<code>{drill.get('agent_ref')}</code>) via the {runtime}.</p>"
+        f"<table style='width:100%;border-collapse:collapse;font:400 13px Arial;color:#374151'>"
+        f"<tr><td style='padding:6px 0;color:#6b7280'>Suspend dispatched in</td><td style='text-align:right;font-weight:700'>{drill.get('suspend_ms')} ms</td></tr>"
+        f"<tr><td style='padding:6px 0;color:#6b7280'>Resume dispatched in</td><td style='text-align:right;font-weight:700'>{drill.get('resume_ms')} ms</td></tr>"
+        f"<tr><td style='padding:6px 0;color:#6b7280'>Total drill time</td><td style='text-align:right;font-weight:700'>{drill.get('total_ms')} ms</td></tr>"
+        f"<tr><td style='padding:6px 0;color:#6b7280'>Runtime response</td><td style='text-align:right;font-weight:700'>HTTP {sr.get('status_code') or '—'}</td></tr>"
+        f"<tr><td style='padding:6px 0;color:#6b7280'>Signature</td><td style='text-align:right;font-weight:700'>{'HMAC-SHA256 signed' if drill.get('signed') else 'unsigned'}</td></tr>"
+        f"</table>"
+        f"<p style='font:400 12px Arial;color:#9ca3af;margin-top:16px'>This is an automated proof-of-control receipt — the agent was returned to its "
+        f"prior state immediately after the drill. Recorded on the immutable Defensibility Ledger.</p></div></div>")
+    subj = f"AI Kill-Switch Fire-Drill — {verdict} ({drill.get('agent_name')})"
+    for em in recips:
+        try:
+            await notifications.send_email(em, subj, html)
+        except Exception:
+            pass
+
+
+async def _run_fire_drill(org_id, actor, agent_ref, notify=True, scheduled=False):
+    """Suspend then immediately resume an agent, timing each dispatch, to prove the kill-switch fires live."""
+    import time as _time
+    a = await db.ai_agents.find_one({"org_id": org_id, "ref": agent_ref})
+    if not a:
+        return {"ok": False, "error": "Agent not found"}
+    started = _now()
+    t0 = _time.perf_counter()
+    suspend_res = await _do_enforce(org_id, actor, agent_ref, "suspend", source="fire-drill")
+    t1 = _time.perf_counter()
+    resume_res = await _do_enforce(org_id, actor, agent_ref, "resume", source="fire-drill")
+    t2 = _time.perf_counter()
+    enf_s = suspend_res.get("enforcement", suspend_res) if isinstance(suspend_res, dict) else {}
+    enf_r = resume_res.get("enforcement", resume_res) if isinstance(resume_res, dict) else {}
+    sr = (enf_s or {}).get("receipt") or {}
+    rr = (enf_r or {}).get("receipt") or {}
+    runtime = (enf_s or {}).get("runtime")
+    controlled = bool((enf_s or {}).get("external_ok")) if runtime in ("external-webhook", "obserra-simulator") else True
+    drill = {
+        "org_id": org_id, "agent_ref": agent_ref, "agent_name": a.get("name"), "by": actor,
+        "scheduled": scheduled, "at": started if isinstance(started, str) else str(started),
+        "suspend_ms": round((t1 - t0) * 1000), "resume_ms": round((t2 - t1) * 1000),
+        "total_ms": round((t2 - t0) * 1000), "runtime": runtime, "controlled": controlled,
+        "suspend_receipt": sr, "resume_receipt": rr,
+        "signed": bool(sr.get("signed")), "signature_ok": bool(sr.get("ok"))}
+    await db.fire_drills.insert_one(dict(drill))
+    await _log_audit(org_id, actor, "agent.fire_drill",
+                     f"Kill-replay drill on {agent_ref} ({'control confirmed' if controlled else 'runtime unreachable'})")
+    if notify:
+        await _email_fire_drill(org_id, drill)
+    return {"ok": True, "drill": drill}
+
+
+class FireDrillBody(BaseModel):
+    agent_ref: str
+    notify: bool = True
+
+
+@agents_router.post("/runtime/fire-drill")
+async def run_fire_drill(body: FireDrillBody, admin: dict = Depends(require_roles("admin"))):
+    if not (body.agent_ref or "").strip():
+        raise HTTPException(400, "Pick an agent to run the fire-drill against.")
+    res = await _run_fire_drill(admin["org_id"], admin["email"], body.agent_ref.strip(), notify=body.notify)
+    if not res.get("ok"):
+        raise HTTPException(404, res.get("error") or "Fire-drill failed.")
+    return res
+
+
+@agents_router.get("/runtime/fire-drills")
+async def list_fire_drills(admin: dict = Depends(require_roles("admin"))):
+    rows = await db.fire_drills.find({"org_id": admin["org_id"]}, {"_id": 0}).sort("at", -1).to_list(50)
+    return {"drills": rows}
+
+
+async def _run_scheduled_fire_drills():
+    """Daily cron: orgs with fire_drill_enabled get one kill-replay drill on their configured day-of-month."""
+    import calendar
+    now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+    ym = now.strftime("%Y-%m")
+    orgs = await db.organizations.find({"fire_drill_enabled": True}).to_list(1000)
+    for org in orgs:
+        try:
+            oid = str(org["_id"])
+            day = min(int(org.get("fire_drill_day") or 1), calendar.monthrange(now.year, now.month)[1])
+            if now.day != day or org.get("fire_drill_last_run") == ym:
+                continue
+            ref = org.get("fire_drill_agent_ref")
+            if not ref:
+                a = await db.ai_agents.find_one({"org_id": oid, "status": {"$ne": "killed"}}, {"ref": 1})
+                ref = a and a.get("ref")
+            if not ref:
+                continue
+            await _run_fire_drill(oid, "cron:fire-drill", ref, notify=True, scheduled=True)
+            await db.organizations.update_one({"_id": org["_id"]}, {"$set": {"fire_drill_last_run": ym}})
+        except Exception:
+            pass
+
+
+# ---- Board Proof-of-Control (fresh signed receipt + sealed evidence pack → one auditor link) ----
+@agents_router.post("/runtime/proof-of-control")
+async def proof_of_control(admin: dict = Depends(require_roles("admin"))):
+    import os, secrets
+    from datetime import datetime, timezone, timedelta
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}) or {}
+    webhook = org.get("agent_runtime_webhook")
+    if not webhook:
+        raise HTTPException(400, "No runtime connected. Enable the Live Enforcement Simulator or wire an agent-runtime webhook first.")
+    receipt = await _dispatch_webhook(
+        webhook, org.get("agent_runtime_webhook_secret"),
+        {"agent_ref": "PROOF-OF-CONTROL", "action": "test", "mode": "noop", "org_id": admin["org_id"],
+         "event": "obserra.runtime.proof", "at": _now()}, attempts=2)
+    snap = await _evidence_snapshot(admin["org_id"])
+    managed = org.get("agent_runtime_webhook_managed") == "simulator"
+    ok = bool(receipt.get("ok"))
+    extra_md = "\n".join([
+        "## Proof of Control — Live Kill-Switch Receipt",
+        f"At {_now()} Obserra dispatched a signed enforcement command to the connected agent runtime "
+        f"({'built-in enforcement simulator' if managed else 'external agent-runtime webhook'}) and received a "
+        f"{'verified' if ok else 'FAILED'} response — demonstrating that the kill-switch actually fires.",
+        f"Runtime response: HTTP {receipt.get('status_code') or 'no response'}",
+        f"Round-trip latency: {receipt.get('latency_ms')} ms",
+        f"Signature: {'HMAC-SHA256 signed' if receipt.get('signed') else 'unsigned'}",
+        f"Delivery attempts: {receipt.get('attempts')}", ""])
+    token = secrets.token_urlsafe(16)
+    now = datetime.now(timezone.utc)
+    expires = (now + timedelta(days=14)).isoformat()
+    snap_hash = _canonical_snapshot_hash(snap)
+    await db.evidence_rooms.insert_one({
+        "token": token, "org_id": admin["org_id"], "snapshot": snap, "snapshot_sha256": snap_hash,
+        "extra_md": extra_md, "proof_of_control": receipt, "kind": "proof-of-control",
+        "created_at": now.isoformat(), "created_by": admin["email"], "expires_at": expires, "opens": 0})
+    await _log_audit(admin["org_id"], admin["email"], "agent.proof_of_control",
+                     f"Board Proof-of-Control link created (runtime {'confirmed' if ok else 'unreachable'})")
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    return {"token": token, "url": f"{frontend}/audit-room/{token}", "expires_at": expires,
+            "receipt": receipt, "controlled": ok}
+
+
 @agents_router.get("/runtime/enforcement-log")
 async def enforcement_log(user: dict = Depends(get_current_user)):
     """Live feed of every runtime enforcement (suspend / kill / resume) — who, when, which agent,
@@ -698,7 +860,10 @@ async def public_evidence_room_pdf(token: str, who: str = "", request: Request =
         brand = _resolve_brand(_org)
     except Exception:
         brand = None
-    buf = _build_pdf(_evidence_markdown(snap), "AI Enforcement Evidence Pack", cover=True,
+    _md = _evidence_markdown(snap)
+    if doc.get("extra_md"):
+        _md += "\n" + doc["extra_md"]
+    buf = _build_pdf(_md, "AI Enforcement Evidence Pack", cover=True,
                      org_name=snap.get("org_name"), brand=brand,
                      exec_summary=f"{c.get('agents', 0)} governed agents, {c.get('toxic', 0)} toxic; "
                                   f"{c.get('events', 0)} runtime enforcement actions with verifiable receipts.")
@@ -1198,6 +1363,9 @@ class GovSettingsBody(BaseModel):
     auditor_question_sla_by_priority: dict | None = None
     auditor_question_escalation_multiplier: float | None = None
     auditor_oncall_rotation: list[str] | None = None
+    fire_drill_enabled: bool | None = None
+    fire_drill_day: int | None = None
+    fire_drill_agent_ref: str | None = None
 
 
 @agents_router.get("/runtime/governance-settings")
@@ -1213,7 +1381,10 @@ async def get_governance_settings(admin: dict = Depends(require_roles("admin")))
             "auditor_question_escalation_to": org.get("auditor_question_escalation_to") or "",
             "auditor_question_sla_by_priority": {p: _sla_for(org, p) for p in ("urgent", "high", "normal", "low")},
             "auditor_question_escalation_multiplier": float(org.get("auditor_question_escalation_multiplier") or 2),
-            "auditor_oncall_rotation": org.get("auditor_oncall_rotation") or []}
+            "auditor_oncall_rotation": org.get("auditor_oncall_rotation") or [],
+            "fire_drill_enabled": bool(org.get("fire_drill_enabled", False)),
+            "fire_drill_day": int(org.get("fire_drill_day") or 1),
+            "fire_drill_agent_ref": org.get("fire_drill_agent_ref") or ""}
 
 
 @agents_router.put("/runtime/governance-settings")
@@ -1247,6 +1418,12 @@ async def set_governance_settings(body: GovSettingsBody, admin: dict = Depends(r
         upd["auditor_question_escalation_multiplier"] = max(1.0, min(20.0, float(body.auditor_question_escalation_multiplier)))
     if body.auditor_oncall_rotation is not None:
         upd["auditor_oncall_rotation"] = [e.strip() for e in body.auditor_oncall_rotation if e and "@" in e][:50]
+    if body.fire_drill_enabled is not None:
+        upd["fire_drill_enabled"] = bool(body.fire_drill_enabled)
+    if body.fire_drill_day is not None:
+        upd["fire_drill_day"] = max(1, min(28, int(body.fire_drill_day)))
+    if body.fire_drill_agent_ref is not None:
+        upd["fire_drill_agent_ref"] = (body.fire_drill_agent_ref or "").strip()
     if upd:
         await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": upd})
     await _log_audit(admin["org_id"], admin["email"], "agent.governance_settings", "Updated AI governance settings")
@@ -1291,10 +1468,17 @@ async def evidence_room_access_log(token: str, admin: dict = Depends(require_rol
 @agents_router.get("/runtime/webhook/playbooks")
 async def runtime_webhook_playbooks(admin: dict = Depends(require_roles("admin"))):
     """Reference templates showing how to translate the signed Obserra enforcement webhook into each
-    runtime's stop/pause/resume API."""
+    runtime's stop/pause/resume API — prefilled with this org's own webhook URL + signing secret."""
+    from bson import ObjectId
+    org = await db.organizations.find_one(
+        {"_id": ObjectId(admin["org_id"])},
+        {"agent_runtime_webhook": 1, "agent_runtime_webhook_secret": 1, "agent_runtime_webhook_managed": 1}) or {}
     return {"payload": {"agent_ref": "AGT-001", "action": "kill|suspend|resume", "mode": "hard|soft",
                         "org_id": "<org>", "event": "obserra.runtime.enforce", "at": "<iso8601>"},
             "headers": {"X-Obserra-Signature": "sha256=<hmac of the raw body>", "X-Obserra-Timestamp": "<iso8601>"},
+            "webhook_url": org.get("agent_runtime_webhook") or "",
+            "signing_secret": org.get("agent_runtime_webhook_secret") or "",
+            "managed": org.get("agent_runtime_webhook_managed") or "",
             "playbooks": _RUNTIME_PLAYBOOKS}
 
 
