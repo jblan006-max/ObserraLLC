@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
-import { SapInsight } from "@/components/SapInsight";
+import { AIInsight } from "@/components/AIInsight";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -42,7 +42,7 @@ export default function HrReconciliation() {
         <p className="text-sm text-muted-foreground mt-1">Dual-authority workforce truth across ADP & IZ8 HR with a conflict state machine and security-hold safeguards on termination-critical fields.</p>
       </div>
 
-      <SapInsight dashboard="HR Reconciliation" focus="ADP vs IZ8 HR conflicts and termination security holds" accent="330 82% 60%" auto slug="hr-reconciliation" />
+      <AIInsight dashboard="HR Reconciliation" focus="ADP vs IZ8 HR conflicts and termination security holds" accent="330 82% 60%" auto slug="hr-reconciliation" />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="ADP population" value={d.coverage.ADP} sub="US-authoritative" accent="190 90% 50%" icon={Building} testid="hr-adp" />

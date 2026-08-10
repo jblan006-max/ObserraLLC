@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
-import { SapInsight } from "@/components/SapInsight";
+import { AIInsight } from "@/components/AIInsight";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -43,7 +43,7 @@ export default function Certifications() {
         <Button data-testid="cert-new" onClick={() => setCreating(true)} className="gap-1.5"><Plus className="w-4 h-4" /> New Campaign</Button>
       </div>
 
-      <SapInsight dashboard="Access Certifications" focus="recertification campaign progress and revocation risk" accent="142 70% 45%" auto slug="certifications" />
+      <AIInsight dashboard="Access Certifications" focus="recertification campaign progress and revocation risk" accent="142 70% 45%" auto slug="certifications" />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {d.campaigns.map((c) => (

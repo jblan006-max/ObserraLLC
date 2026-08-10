@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
-import { SapInsight } from "@/components/SapInsight";
+import { AIInsight } from "@/components/AIInsight";
 import { useDeepDive } from "@/context/DeepDiveContext";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -65,7 +65,7 @@ export default function PrivilegedAccess() {
         <p className="text-sm text-muted-foreground mt-1">SAP_ALL, security-admin and Basis-superuser access across the landscape, including shared and dormant privileged accounts.</p>
       </div>
 
-      <SapInsight dashboard="Privileged Access" focus="SAP_ALL and privileged access least-privilege exposure" accent="266 85% 66%" auto slug="privileged-access" />
+      <AIInsight dashboard="Privileged Access" focus="SAP_ALL and privileged access least-privilege exposure" accent="266 85% 66%" auto slug="privileged-access" />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Privileged accounts" value={d.total} accent="266 85% 66%" icon={KeyRound} testid="priv-total" />
         <StatCard label="Hold SAP_ALL" value={d.sap_all} accent="0 84% 60%" icon={ShieldAlert} testid="priv-sapall" />

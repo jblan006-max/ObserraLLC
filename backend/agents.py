@@ -174,6 +174,39 @@ class EnforceBody(BaseModel):
     action: str  # suspend | kill | resume
 
 
+async def _dispatch_webhook(webhook, secret, payload, attempts=3):
+    """POST an enforcement event to the agent-runtime webhook. Signs the body with HMAC-SHA256 when a
+    shared secret is configured (X-Obserra-Signature: sha256=<hex> over '<ts>.' + raw body) and retries a
+    few times on failure / non-2xx. Returns a receipt {ok,status_code,latency_ms,response,error,attempts,signed}."""
+    import httpx, time as _time, json as _json, hmac, hashlib, asyncio
+    raw = _json.dumps(payload, separators=(",", ":"), default=str).encode()
+    headers = {"Content-Type": "application/json"}
+    if secret:
+        ts = str(int(_time.time()))
+        sig = hmac.new(secret.encode(), (ts + ".").encode() + raw, hashlib.sha256).hexdigest()
+        headers["X-Obserra-Timestamp"] = ts
+        headers["X-Obserra-Signature"] = f"sha256={sig}"
+    last = {"status_code": None, "response": "", "error": "not attempted", "ok": False}
+    tried, t0 = 0, _time.perf_counter()
+    for i in range(max(1, attempts)):
+        tried = i + 1
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.post(webhook, content=raw, headers=headers)
+            ok = 200 <= r.status_code < 300
+            last = {"status_code": r.status_code, "response": (r.text or "")[:280], "error": None, "ok": ok}
+            if ok:
+                break
+        except Exception as e:
+            last = {"status_code": None, "response": "", "error": str(e)[:200], "ok": False}
+        if i < attempts - 1:
+            await asyncio.sleep(0.6 * (i + 1))
+    return {"ok": bool(last["ok"]), "status_code": last["status_code"],
+            "latency_ms": round((_time.perf_counter() - t0) * 1000),
+            "response": last.get("response", ""), "error": last.get("error"),
+            "attempts": tried, "signed": bool(secret), "at": _now(), "url": webhook}
+
+
 async def _do_enforce(org_id, actor, ref, action, source="manual"):
     """Shared runtime enforcement — flips the agent runtime status (suspend/kill/resume), records the
     action to the Defensibility Ledger and alerts Slack/Teams. If an external agent-runtime webhook is
@@ -190,31 +223,25 @@ async def _do_enforce(org_id, actor, ref, action, source="manual"):
     org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
     webhook = org.get("agent_runtime_webhook")
     enforced = action != "resume"
-    external_ok, runtime, receipt = None, "obserra-control-plane", None
+    external_ok, runtime, receipt, runtime_unreachable = None, "obserra-control-plane", None, False
     if webhook:
-        import time as _time
         runtime = "external-webhook"
-        t0 = _time.perf_counter()
-        try:
-            async with httpx.AsyncClient(timeout=10) as c:
-                r = await c.post(webhook, json={"agent_ref": ref, "action": action,
-                                                "mode": m["mode"], "org_id": org_id})
-            external_ok = 200 <= r.status_code < 300
-            receipt = {"status_code": r.status_code, "latency_ms": round((_time.perf_counter() - t0) * 1000),
-                       "response": (r.text or "")[:280], "ok": external_ok, "at": _now(), "url": webhook}
-        except Exception as e:
-            external_ok = False
-            receipt = {"status_code": None, "latency_ms": round((_time.perf_counter() - t0) * 1000),
-                       "response": "", "error": str(e)[:200], "ok": False, "at": _now(), "url": webhook}
+        receipt = await _dispatch_webhook(
+            webhook, org.get("agent_runtime_webhook_secret"),
+            {"agent_ref": ref, "action": action, "mode": m["mode"], "org_id": org_id})
+        external_ok = receipt["ok"]
+        runtime_unreachable = (not external_ok) and action != "resume"
     note = ("Enforcement dispatched to the connected agent-runtime webhook." if webhook
             else "Enforced in the Obserra control plane — the agent governance status changed and every "
                  "downstream policy check now honours it. Wire an agent-runtime webhook to push this to an "
                  "external execution environment.")
     enforcement = {"enforced": enforced, "mode": m["mode"], "action": action,
                    "runtime": runtime, "external_ok": external_ok, "note": note,
-                   "receipt": receipt, "at": _now(), "by": actor, "source": source}
+                   "receipt": receipt, "runtime_unreachable": runtime_unreachable,
+                   "at": _now(), "by": actor, "source": source}
     await db.ai_agents.update_one({"_id": a["_id"]},
-        {"$set": {"status": m["status"], "enforced": enforced, "enforcement": enforcement}})
+        {"$set": {"status": m["status"], "enforced": enforced, "enforcement": enforcement,
+                  "runtime_unreachable": runtime_unreachable}})
     await _log_audit(org_id, actor, "agent.enforce",
                      f"{ref} {m['verb']} (mode {m['mode']}, via {source})")
     try:
@@ -222,7 +249,7 @@ async def _do_enforce(org_id, actor, ref, action, source="manual"):
             "org_id": org_id, "ref": ref, "name": a.get("name"), "action": action,
             "verb": m["verb"], "mode": m["mode"], "status": m["status"], "source": source,
             "by": actor, "runtime": runtime, "external_ok": external_ok, "receipt": receipt,
-            "at": enforcement["at"]})
+            "runtime_unreachable": runtime_unreachable, "at": enforcement["at"]})
     except Exception:
         pass
     try:
@@ -261,13 +288,16 @@ async def enforce_from_advisor(org_id, actor, ref, action):
 # ---- Agent runtime connector (enforcement webhook) ----
 class WebhookBody(BaseModel):
     webhook: str = ""
+    secret: str | None = None
 
 
 @agents_router.get("/runtime/webhook")
 async def get_runtime_webhook(user: dict = Depends(get_current_user)):
     from bson import ObjectId
-    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}, {"agent_runtime_webhook": 1}) or {}
-    return {"webhook": org.get("agent_runtime_webhook") or ""}
+    org = await db.organizations.find_one(
+        {"_id": ObjectId(user["org_id"])}, {"agent_runtime_webhook": 1, "agent_runtime_webhook_secret": 1}) or {}
+    return {"webhook": org.get("agent_runtime_webhook") or "",
+            "secret_set": bool(org.get("agent_runtime_webhook_secret"))}
 
 
 @agents_router.put("/runtime/webhook")
@@ -276,38 +306,35 @@ async def set_runtime_webhook(body: WebhookBody, admin: dict = Depends(require_r
     url = (body.webhook or "").strip()
     if url and not url.lower().startswith(("http://", "https://")):
         raise HTTPException(400, "Webhook must be a valid http(s) URL.")
-    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])},
-                                      {"$set": {"agent_runtime_webhook": url}})
+    update = {"agent_runtime_webhook": url}
+    if body.secret is not None:
+        update["agent_runtime_webhook_secret"] = body.secret.strip()
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": update})
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])},
+                                          {"agent_runtime_webhook_secret": 1}) or {}
     await _log_audit(admin["org_id"], admin["email"], "agent.runtime_webhook",
                      "Set agent runtime webhook" if url else "Cleared agent runtime webhook")
-    return {"webhook": url}
+    return {"webhook": url, "secret_set": bool(org.get("agent_runtime_webhook_secret"))}
 
 
 @agents_router.post("/runtime/webhook/test")
 async def test_runtime_webhook(admin: dict = Depends(require_roles("admin"))):
-    """Send a synthetic 'test' event to the configured agent-runtime webhook so an admin can confirm
-    their execution environment actually receives Obserra enforcement before relying on it."""
+    """Send a synthetic 'test' event to the configured agent-runtime webhook (signed + retried) so an
+    admin can confirm their execution environment actually receives Obserra enforcement."""
     from bson import ObjectId
-    import httpx, time as _time
-    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}, {"agent_runtime_webhook": 1}) or {}
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])},
+                                          {"agent_runtime_webhook": 1, "agent_runtime_webhook_secret": 1}) or {}
     webhook = org.get("agent_runtime_webhook")
     if not webhook:
         raise HTTPException(400, "No agent runtime webhook configured. Save a webhook URL first.")
-    payload = {"agent_ref": "TEST-PING", "action": "test", "mode": "noop",
-               "org_id": admin["org_id"], "event": "obserra.runtime.test", "at": _now()}
-    t0 = _time.perf_counter()
-    try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.post(webhook, json=payload)
-        latency = round((_time.perf_counter() - t0) * 1000)
-        await _log_audit(admin["org_id"], admin["email"], "agent.runtime_webhook_test",
-                         f"Test event → HTTP {r.status_code} ({latency}ms)")
-        return {"ok": 200 <= r.status_code < 300, "status_code": r.status_code,
-                "latency_ms": latency, "response": (r.text or "")[:280], "url": webhook}
-    except Exception as e:
-        latency = round((_time.perf_counter() - t0) * 1000)
-        return {"ok": False, "status_code": None, "latency_ms": latency,
-                "error": str(e)[:200], "url": webhook}
+    receipt = await _dispatch_webhook(
+        webhook, org.get("agent_runtime_webhook_secret"),
+        {"agent_ref": "TEST-PING", "action": "test", "mode": "noop", "org_id": admin["org_id"],
+         "event": "obserra.runtime.test", "at": _now()}, attempts=2)
+    await _log_audit(admin["org_id"], admin["email"], "agent.runtime_webhook_test",
+                     f"Test event → {receipt['status_code'] or 'no response'} "
+                     f"({receipt['latency_ms']}ms, {receipt['attempts']} try)")
+    return receipt
 
 
 @agents_router.get("/runtime/enforcement-log")
@@ -316,6 +343,93 @@ async def enforcement_log(user: dict = Depends(get_current_user)):
     via advisor / bulk-neutralise / manual, and the runtime receipt."""
     rows = await db.agent_enforcements.find({"org_id": user["org_id"]}, {"_id": 0}).sort("at", -1).to_list(50)
     return {"events": rows}
+
+
+@agents_router.get("/runtime/enforcement-log/export")
+async def export_enforcement_log(format: str = "csv", user: dict = Depends(get_current_user)):
+    """Export the runtime enforcement (Kill) audit trail as CSV or a board / auditor PDF."""
+    import io
+    from datetime import datetime, timezone
+    from fastapi.responses import StreamingResponse
+    rows = await db.agent_enforcements.find({"org_id": user["org_id"]}, {"_id": 0}).sort("at", -1).to_list(1000)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    if format == "pdf":
+        from bson import ObjectId
+        from reports import _build_pdf
+        org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}, {"name": 1}) or {}
+        lines = ["## Runtime Enforcement Audit Trail",
+                 f"Generated {datetime.now(timezone.utc).strftime('%B %d, %Y %H:%M UTC')} · {len(rows)} enforcement event(s)", ""]
+        for e in rows:
+            rc = e.get("receipt") or {}
+            runtime = ("runtime OK" if e.get("external_ok") else
+                       ("runtime UNREACHABLE" if e.get("runtime") == "external-webhook" else "control-plane"))
+            lines.append(f"## {e.get('name') or e.get('ref')} — {(e.get('verb') or e.get('action') or '').upper()}")
+            lines += [f"When: {e.get('at')}", f"By: {e.get('by')} · via {e.get('source')}",
+                      f"Agent: {e.get('ref')} · mode {e.get('mode')} · status {e.get('status')}",
+                      "Runtime: " + runtime + (f" · HTTP {rc.get('status_code')} · {rc.get('latency_ms')}ms · "
+                      f"{rc.get('attempts')} attempt(s) · {'signed' if rc.get('signed') else 'unsigned'}" if rc else ""), ""]
+        buf = _build_pdf("\n".join(lines), "Runtime Enforcement Audit Trail", cover=True, org_name=org.get("name"))
+        return StreamingResponse(buf, media_type="application/pdf",
+                                 headers={"Content-Disposition": f'attachment; filename="obserra-enforcement-audit-{stamp}.pdf"'})
+    import csv
+    sbuf = io.StringIO()
+    w = csv.writer(sbuf)
+    w.writerow(["at", "agent_ref", "agent_name", "action", "status", "mode", "by", "source",
+                "runtime", "external_ok", "http_status", "latency_ms", "attempts", "signed"])
+    for e in rows:
+        rc = e.get("receipt") or {}
+        w.writerow([e.get("at"), e.get("ref"), e.get("name"), e.get("action"), e.get("status"),
+                    e.get("mode"), e.get("by"), e.get("source"), e.get("runtime"), e.get("external_ok"),
+                    rc.get("status_code"), rc.get("latency_ms"), rc.get("attempts"), rc.get("signed")])
+    return StreamingResponse(io.BytesIO(sbuf.getvalue().encode()), media_type="text/csv",
+                             headers={"Content-Disposition": f'attachment; filename="obserra-enforcement-audit-{stamp}.csv"'})
+
+
+@agents_router.get("/runtime/evidence-pack.pdf")
+async def evidence_pack(admin: dict = Depends(require_roles("admin"))):
+    """One-tap auditor evidence pack — bundles the enforcement audit trail + runtime receipts + a live
+    AI-agent toxicity snapshot into a single board-grade PDF an auditor can trust."""
+    from datetime import datetime, timezone
+    from bson import ObjectId
+    from fastapi.responses import StreamingResponse
+    from reports import _build_pdf
+    org = await db.organizations.find_one(
+        {"_id": ObjectId(admin["org_id"])},
+        {"name": 1, "agent_runtime_webhook": 1, "agent_runtime_webhook_secret": 1}) or {}
+    agents = await db.ai_agents.find({"org_id": admin["org_id"]}, {"_id": 0}).to_list(500)
+    events = await db.agent_enforcements.find({"org_id": admin["org_id"]}, {"_id": 0}).sort("at", -1).to_list(1000)
+    toxic = [a for a in agents if _is_toxic(a)]
+    signed = "HMAC-signed" if org.get("agent_runtime_webhook_secret") else "unsigned"
+    connector = f"connected ({signed})" if org.get("agent_runtime_webhook") else "control-plane only"
+    lines = [
+        "## Attestation",
+        f"This evidence pack was generated by Obserra — Agentic AI Security Control Plane for "
+        f"{org.get('name') or 'the organization'} on {datetime.now(timezone.utc).strftime('%B %d, %Y at %H:%M UTC')}. "
+        f"Runtime connector: {connector}. Every enforcement below carries a runtime receipt.", "",
+        "## AI Agent Toxicity Snapshot",
+        f"{len(agents)} governed agent(s) · {len(toxic)} with a toxic capability combination · "
+        f"{sum(1 for a in agents if a.get('status') == 'killed')} killed · "
+        f"{sum(1 for a in agents if a.get('status') == 'restricted')} restricted.", ""]
+    for a in agents:
+        tv = _tool_violations(a)
+        lines.append(f"## {a.get('name')} ({a.get('ref')})")
+        lines += [f"Status: {a.get('status')} · authority: {a.get('authority', '—')}",
+                  "Toxic combination: " + (("YES — " + ", ".join(tv)) if tv else "none detected"), ""]
+    lines += ["## Runtime Enforcement Audit Trail", f"{len(events)} enforcement event(s) recorded.", ""]
+    for e in events:
+        rc = e.get("receipt") or {}
+        runtime = ("runtime OK" if e.get("external_ok") else
+                   ("runtime UNREACHABLE" if e.get("runtime") == "external-webhook" else "control-plane"))
+        lines.append(f"## {e.get('name') or e.get('ref')} — {(e.get('verb') or e.get('action') or '').upper()}")
+        lines += [f"When: {e.get('at')} · by {e.get('by')} · via {e.get('source')}",
+                  "Receipt: " + runtime + (f" · HTTP {rc.get('status_code')} · {rc.get('latency_ms')}ms · "
+                  f"{rc.get('attempts')} attempt(s) · {'signed' if rc.get('signed') else 'unsigned'}" if rc else ""), ""]
+    buf = _build_pdf("\n".join(lines), "AI Enforcement Evidence Pack", cover=True, org_name=org.get("name"),
+                     exec_summary=(f"{len(agents)} governed agents, {len(toxic)} toxic; {len(events)} runtime "
+                                   f"enforcement actions with verifiable receipts. Runtime connector: {connector}."))
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename="obserra-evidence-pack-{stamp}.pdf"'})
 
 
 # ---- One-tap bulk 'Neutralise' from the Toxicity Map ----

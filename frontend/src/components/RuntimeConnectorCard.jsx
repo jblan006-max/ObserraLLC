@@ -11,10 +11,13 @@ export function RuntimeConnectorCard() {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState(null);
+  const [secret, setSecret] = useState("");
+  const [secretSet, setSecretSet] = useState(false);
+  const [secretDirty, setSecretDirty] = useState(false);
 
   useEffect(() => {
     api.get("/agents/runtime/webhook")
-      .then(({ data }) => { setUrl(data.webhook || ""); setConnected(!!data.webhook); })
+      .then(({ data }) => { setUrl(data.webhook || ""); setConnected(!!data.webhook); setSecretSet(!!data.secret_set); })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
@@ -22,9 +25,13 @@ export function RuntimeConnectorCard() {
   const save = async () => {
     setSaving(true);
     try {
-      const { data } = await api.put("/agents/runtime/webhook", { webhook: url.trim() });
+      const payload = { webhook: url.trim() };
+      if (secretDirty) payload.secret = secret;
+      const { data } = await api.put("/agents/runtime/webhook", payload);
       setConnected(!!data.webhook);
       setUrl(data.webhook || "");
+      setSecretSet(!!data.secret_set);
+      setSecret(""); setSecretDirty(false);
       toast.success(data.webhook ? "Agent runtime connector saved." : "Agent runtime connector cleared.");
     } catch (e) {
       toast.error(e.response?.data?.detail || "Invalid webhook URL.");
@@ -57,6 +64,11 @@ export function RuntimeConnectorCard() {
         <span className={`ml-auto text-[10px] font-mono px-2 py-0.5 rounded-full border ${connected ? "bg-low/10 text-low border-low/25" : "bg-secondary/60 text-muted-foreground border-border"}`}>
           {connected ? "Connected" : "Not connected"}
         </span>
+        {secretSet && (
+          <span data-testid="runtime-webhook-signed" className="text-[10px] font-mono px-2 py-0.5 rounded-full border bg-ai/10 text-ai border-ai/25">
+            Signed
+          </span>
+        )}
       </div>
       <p className="text-sm text-muted-foreground">
         Paste your agent execution environment's enforcement webhook. When set, Suspend / Kill / Resume in the Agentic AI
@@ -90,6 +102,19 @@ export function RuntimeConnectorCard() {
             {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />} Send test event
           </button>
         )}
+      </div>
+      <div className="flex items-center gap-2 flex-wrap">
+        <input
+          data-testid="runtime-webhook-secret"
+          type="password"
+          value={secret}
+          onChange={(e) => { setSecret(e.target.value); setSecretDirty(true); }}
+          placeholder={secretSet ? "•••••••• (signing secret set — type to replace)" : "Optional HMAC signing secret"}
+          className="flex-1 min-w-[240px] bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary"
+        />
+        <span className="text-[11px] text-muted-foreground max-w-[280px]">
+          Signs each enforcement with HMAC-SHA256 (<span className="font-mono">X-Obserra-Signature</span>) so your runtime can verify it genuinely came from Obserra.
+        </span>
       </div>
       {testResult && (
         <div

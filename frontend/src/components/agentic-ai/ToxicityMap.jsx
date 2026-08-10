@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, ArrowRight, Ban, Bot, Database, History, KeyRound, Loader2, PauseCircle, PlayCircle, ShieldOff } from "lucide-react";
+import { AlertTriangle, ArrowRight, Ban, Bot, Database, Download, FileText, History, KeyRound, Loader2, PauseCircle, PlayCircle, ShieldCheck, ShieldOff } from "lucide-react";
 import { toast } from "sonner";
 import { useDeepDive } from "@/context/DeepDiveContext";
 import { Panel } from "@/components/agentic-ai/shared";
@@ -45,6 +45,18 @@ export default function ToxicityMap({ agents, isAdmin, onReload }) {
   const loadLog = () =>
     api.get("/agents/runtime/enforcement-log").then(({ data }) => setLog(data.events || [])).catch(() => {});
   useEffect(() => { loadLog(); }, []);
+
+  const download = async (path, filename) => {
+    try {
+      const { data } = await api.get(path, { responseType: "blob" });
+      const u = URL.createObjectURL(data);
+      const a = document.createElement("a");
+      a.href = u; a.download = filename; a.click();
+      URL.revokeObjectURL(u);
+    } catch {
+      toast.error("Export failed.");
+    }
+  };
   const model = toxicityModel(agents || []);
   const nodes = model.nodes;
   const resources = [...new Set(nodes.flatMap((n) => (n.edges || []).map((e) => e.resource)))];
@@ -226,6 +238,31 @@ export default function ToxicityMap({ agents, isAdmin, onReload }) {
           <div className="pt-3 border-t border-border" data-testid="toxicity-enforcement-feed">
             <div className="flex items-center gap-2 text-[10px] font-mono uppercase text-muted-foreground mb-2">
               <History className="w-3 h-3" /> Runtime enforcement activity
+              <div className="ml-auto flex items-center gap-1.5 normal-case">
+                <button
+                  data-testid="export-audit-csv"
+                  onClick={() => download("/agents/runtime/enforcement-log/export?format=csv", "obserra-enforcement-audit.csv")}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-border hover:bg-secondary transition-colors"
+                >
+                  <Download className="w-3 h-3" /> CSV
+                </button>
+                <button
+                  data-testid="export-audit-pdf"
+                  onClick={() => download("/agents/runtime/enforcement-log/export?format=pdf", "obserra-enforcement-audit.pdf")}
+                  className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-border hover:bg-secondary transition-colors"
+                >
+                  <FileText className="w-3 h-3" /> PDF
+                </button>
+                {isAdmin && (
+                  <button
+                    data-testid="evidence-pack-btn"
+                    onClick={() => download("/agents/runtime/evidence-pack.pdf", "obserra-evidence-pack.pdf")}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-ai/40 text-ai hover:bg-ai/10 transition-colors"
+                  >
+                    <ShieldCheck className="w-3 h-3" /> Evidence pack
+                  </button>
+                )}
+              </div>
             </div>
             {log.length === 0 ? (
               <div className="text-xs text-muted-foreground">No suspend / kill actions recorded yet.</div>
@@ -240,8 +277,10 @@ export default function ToxicityMap({ agents, isAdmin, onReload }) {
                       <span className="font-head font-bold truncate max-w-[36%]">{e.name || e.ref}</span>
                       <span className="font-mono text-[10px]" style={{ color: `hsl(${tone})` }}>{e.verb || e.action}</span>
                       <span className="text-muted-foreground truncate">· {e.by} · via {e.source}</span>
-                      <span className="ml-auto font-mono text-[10px] text-muted-foreground shrink-0">
-                        {e.runtime === "external-webhook" ? (e.external_ok ? "runtime ✓" : "runtime ✗") : "control-plane"}
+                      <span className={`ml-auto font-mono text-[10px] shrink-0 ${e.runtime_unreachable ? "text-crit" : "text-muted-foreground"}`}>
+                        {e.runtime === "external-webhook"
+                          ? (e.external_ok ? "runtime ✓" : `⚠ never reached runtime${e.receipt?.attempts ? ` (${e.receipt.attempts} tries)` : ""}`)
+                          : "control-plane"}
                         {e.at ? ` · ${new Date(e.at).toLocaleTimeString()}` : ""}
                       </span>
                     </div>

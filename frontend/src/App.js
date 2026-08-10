@@ -27,7 +27,7 @@ const lazyWithRetry = (importer) => lazy(async () => {
 });
 
 // Route-level code splitting — Obserra Agentic AI Security dashboards.
-const SapOverview = lazyWithRetry(() => import("@/pages/SapOverview"));
+const AccessOverview = lazyWithRetry(() => import("@/pages/AccessOverview"));
 const SodCommandCenter = lazyWithRetry(() => import("@/pages/SodCommandCenter"));
 const Identities = lazyWithRetry(() => import("@/pages/Identities"));
 const PrivilegedAccess = lazyWithRetry(() => import("@/pages/PrivilegedAccess"));
@@ -37,9 +37,9 @@ const HrReconciliation = lazyWithRetry(() => import("@/pages/HrReconciliation"))
 const RoleIntelligence = lazyWithRetry(() => import("@/pages/RoleIntelligence"));
 const AccessRequests = lazyWithRetry(() => import("@/pages/AccessRequests"));
 const Certifications = lazyWithRetry(() => import("@/pages/Certifications"));
-const SapSystems = lazyWithRetry(() => import("@/pages/SapSystems"));
+const ConnectorHealth = lazyWithRetry(() => import("@/pages/ConnectorHealth"));
 const UserActivation = lazyWithRetry(() => import("@/pages/UserActivation"));
-const SapAnalytics = lazyWithRetry(() => import("@/pages/SapAnalytics"));
+const AccessAnalytics = lazyWithRetry(() => import("@/pages/AccessAnalytics"));
 const WorkflowActivity = lazyWithRetry(() => import("@/pages/WorkflowActivity"));
 const SystemHealth = lazyWithRetry(() => import("@/pages/SystemHealth"));
 const AgenticAISecurity = lazyWithRetry(() => import("@/pages/AgenticAISecurity"));
@@ -97,9 +97,9 @@ function AppRoutes() {
           <Route path="roles" element={<RoleIntelligence />} />
           <Route path="access-requests" element={<AccessRequests />} />
           <Route path="certifications" element={<Certifications />} />
-          <Route path="systems" element={<SapSystems />} />
+          <Route path="systems" element={<ConnectorHealth />} />
           <Route path="activation" element={<UserActivation />} />
-          <Route path="analytics" element={<SapAnalytics />} />
+          <Route path="analytics" element={<AccessAnalytics />} />
           <Route path="workflow" element={<WorkflowActivity />} />
           <Route path="agentic-ai-security" element={<AgenticAISecurity />} />
           <Route path="system-health" element={<SystemHealth />} />

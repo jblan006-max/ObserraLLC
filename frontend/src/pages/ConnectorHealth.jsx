@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
-import { SapInsight } from "@/components/SapInsight";
+import { AIInsight } from "@/components/AIInsight";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Plug, Server, Clock, CheckCircle2, AlertTriangle, RefreshCw, Activity } from "lucide-react";
@@ -14,7 +14,7 @@ const HEALTH = {
 };
 const fmtAge = (m) => (m == null ? "—" : m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ${m % 60}m ago`);
 
-export default function SapSystems() {
+export default function ConnectorHealth() {
   const [d, setD] = useState(null);
   const [probing, setProbing] = useState(false);
   const load = useCallback(async () => { const { data } = await api.get("/sap/systems"); setD(data); }, []);
@@ -48,7 +48,7 @@ export default function SapSystems() {
         </div>
       </div>
 
-      <SapInsight dashboard="Connector Health" focus="connector coverage, credential readiness and data freshness" accent="190 90% 50%" auto slug="sap-systems" />
+      <AIInsight dashboard="Connector Health" focus="connector coverage, credential readiness and data freshness" accent="190 90% 50%" auto slug="sap-systems" />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="SAP systems" value={d.systems.length} accent="210 92% 62%" icon={Server} testid="sys-count" />

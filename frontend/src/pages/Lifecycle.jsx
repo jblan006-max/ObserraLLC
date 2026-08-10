@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
-import { SapInsight } from "@/components/SapInsight";
+import { AIInsight } from "@/components/AIInsight";
 import { useDeepDive } from "@/context/DeepDiveContext";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -175,7 +175,7 @@ export default function Lifecycle() {
         <p className="text-sm text-muted-foreground mt-1">Workforce lifecycle correlated with SAP access — click any worker for details and kick off a live ServiceNow access workflow.</p>
       </div>
 
-      <SapInsight dashboard="Joiner / Mover / Leaver" focus="leaver residual access, mover access accumulation and joiner provisioning gaps" accent="142 70% 45%" auto slug="lifecycle" />
+      <AIInsight dashboard="Joiner / Mover / Leaver" focus="leaver residual access, mover access accumulation and joiner provisioning gaps" accent="142 70% 45%" auto slug="lifecycle" />
       <div className="grid grid-cols-3 gap-4">
         <StatCard label="Joiners (21d)" value={d.counts.joiners} accent="142 70% 45%" icon={UserPlus} testid="jml-joiners" />
         <StatCard label="Movers (in-flight transfers)" value={d.counts.movers} accent="260 85% 66%" icon={ArrowLeftRight} testid="jml-movers" />

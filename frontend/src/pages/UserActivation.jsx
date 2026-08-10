@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
-import { SapInsight } from "@/components/SapInsight";
+import { AIInsight } from "@/components/AIInsight";
 import { toast } from "sonner";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter, DialogDescription,
@@ -154,7 +154,7 @@ export default function UserActivation() {
       </div>
 
       {/* AI summary (Obserra standard) */}
-      <SapInsight dashboard="User Access Activation" accent="35 90% 55%" auto slug="user-activation" />
+      <AIInsight dashboard="User Access Activation" accent="35 90% 55%" auto slug="user-activation" />
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 lg:grid-cols-6 gap-4">

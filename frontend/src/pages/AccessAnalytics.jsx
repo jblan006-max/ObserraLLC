@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
-import { SapInsight } from "@/components/SapInsight";
+import { AIInsight } from "@/components/AIInsight";
 import { useDeepDive } from "@/context/DeepDiveContext";
 import {
   PieChart, Pie, Cell, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
@@ -58,7 +58,7 @@ const Panel = ({ title, sub, icon: Icon, children, className = "" }) => (
   </div>
 );
 
-export default function SapAnalytics() {
+export default function AccessAnalytics() {
   const [d, setD] = useState(null);
   const [region, setRegion] = useState("");
   const [department, setDepartment] = useState("");
@@ -171,7 +171,7 @@ export default function SapAnalytics() {
 
       <SodWatchlist />
 
-      <SapInsight dashboard="SAP Analytics" focus="access, license and risk analytics" accent="199 89% 48%" auto slug="sap-analytics" />
+      <AIInsight dashboard="SAP Analytics" focus="access, license and risk analytics" accent="199 89% 48%" auto slug="sap-analytics" />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="SAP identities" value={k.identities} sub={`${k.accounts} accounts`} accent="190 90% 50%" icon={Users} testid="an-identities" />

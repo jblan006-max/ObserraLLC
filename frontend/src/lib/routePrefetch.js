@@ -3,8 +3,8 @@
 // so a prefetched chunk is reused — not re-downloaded — when the route actually mounts.
 // Keep this map in sync with the routes in App.js.
 const IMPORTERS = {
-  "/app": () => import("@/pages/SapOverview"),
-  "/app/analytics": () => import("@/pages/SapAnalytics"),
+  "/app": () => import("@/pages/AccessOverview"),
+  "/app/analytics": () => import("@/pages/AccessAnalytics"),
   "/app/sod": () => import("@/pages/SodCommandCenter"),
   "/app/privileged": () => import("@/pages/PrivilegedAccess"),
   "/app/monitoring": () => import("@/pages/AccessMonitoring"),
@@ -16,7 +16,7 @@ const IMPORTERS = {
   "/app/certifications": () => import("@/pages/Certifications"),
   "/app/roles": () => import("@/pages/RoleIntelligence"),
   "/app/workflow": () => import("@/pages/WorkflowActivity"),
-  "/app/systems": () => import("@/pages/SapSystems"),
+  "/app/systems": () => import("@/pages/ConnectorHealth"),
   "/app/audit": () => import("@/pages/AuditLog"),
   "/app/team": () => import("@/pages/Team"),
   "/app/settings": () => import("@/pages/Settings"),

@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
-import { SapInsight } from "@/components/SapInsight";
-import { SapAIFix } from "@/components/SapAIFix";
+import { AIInsight } from "@/components/AIInsight";
+import { AIFix } from "@/components/AIFix";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -104,7 +104,7 @@ export default function Identities() {
         <p className="text-sm text-muted-foreground mt-1">Canonical identities correlated across ADP / IZ8 / AD / Entra / SAP — click any identity to view details and kick off a live ServiceNow access workflow.</p>
       </div>
 
-      <SapInsight dashboard="Identities" focus="highest-risk identities and their access-risk drivers" accent="190 90% 50%" auto slug="identities" />
+      <AIInsight dashboard="Identities" focus="highest-risk identities and their access-risk drivers" accent="190 90% 50%" auto slug="identities" />
 
       <div className="bg-card fact-border rounded-xl">
         <div className="flex flex-wrap items-center gap-2 p-3 border-b border-border">
@@ -170,7 +170,7 @@ export default function Identities() {
                 <div><span className="text-muted-foreground text-xs">HR authority</span><div>{detail.person.hr_authority} · match {Math.round(detail.person.match_confidence * 100)}%</div></div>
               </div>
 
-              <div className="mb-4"><SapAIFix entity="identity" refId={detail.person.ref} accent="190 90% 50%" onApplied={() => { open(detail.person.ref); load(); }} /></div>
+              <div className="mb-4"><AIFix entity="identity" refId={detail.person.ref} accent="190 90% 50%" onApplied={() => { open(detail.person.ref); load(); }} /></div>
 
               <Section title="Access Risk Factors" icon={ShieldAlert}>
                 <div className="space-y-1.5">{detail.risk.factors.map((f, i) => (

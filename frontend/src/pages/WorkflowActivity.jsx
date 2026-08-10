@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
-import { SapInsight } from "@/components/SapInsight";
+import { AIInsight } from "@/components/AIInsight";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Search, Workflow, CheckCircle2, Timer, Zap, ArrowRight, Download, FileText, MessagesSquare } from "lucide-react";
@@ -79,7 +79,7 @@ export default function WorkflowActivity() {
         </div>
       </div>
 
-      <SapInsight dashboard="Workflow Activity" focus="ServiceNow ticket automation volume, cross-system reach and remediation throughput" accent="265 80% 66%" auto slug="workflow-activity" />
+      <AIInsight dashboard="Workflow Activity" focus="ServiceNow ticket automation volume, cross-system reach and remediation throughput" accent="265 80% 66%" auto slug="workflow-activity" />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Total workflows" value={s.total} sub={`${d.by_prefix.REQ || 0} REQ · ${d.by_prefix.INC || 0} INC · ${d.by_prefix.CHG || 0} CHG`} accent="265 80% 66%" icon={Workflow} testid="wf-total" />

@@ -5,7 +5,7 @@ import { useDeepDive } from "@/context/DeepDiveContext";
 import { api } from "@/lib/api";
 import { Link } from "react-router-dom";
 import { StatCard, Spinner } from "@/components/dash";
-import { SapInsight } from "@/components/SapInsight";
+import { AIInsight } from "@/components/AIInsight";
 import { ChartBox } from "@/components/ChartBox";
 import {
   PieChart, Pie, Cell, Tooltip, LineChart, Line, XAxis, YAxis, CartesianGrid, ResponsiveContainer,
@@ -26,7 +26,7 @@ const SectionLabel = ({ children, icon: Icon }) => (
   </div>
 );
 
-export default function SapOverview() {
+export default function AccessOverview() {
   const { mode } = useAuth();
   const { openDeepDive } = useDeepDive();
   const [d, setD] = useState(null);
@@ -99,7 +99,7 @@ export default function SapOverview() {
         </Link>
       )}
 
-      <SapInsight dashboard="SAP Access Overview" accent="190 90% 50%" auto slug="sap-overview" />
+      <AIInsight dashboard="SAP Access Overview" accent="190 90% 50%" auto slug="sap-overview" />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         {kpis.map((k) => <StatCard key={k.label} {...k} />)}

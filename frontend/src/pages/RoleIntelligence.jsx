@@ -1,8 +1,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
-import { SapInsight } from "@/components/SapInsight";
-import { SapAIFix } from "@/components/SapAIFix";
+import { AIInsight } from "@/components/AIInsight";
+import { AIFix } from "@/components/AIFix";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -43,7 +43,7 @@ export default function RoleIntelligence() {
         <p className="text-sm text-muted-foreground mt-1">SAP role catalog with composition, assignment usage, privilege severity and single-role toxic combinations.</p>
       </div>
 
-      <SapInsight dashboard="Role Intelligence" focus="toxic composite roles and over-privileged role design" accent="35 90% 55%" auto slug="role-intelligence" />
+      <AIInsight dashboard="Role Intelligence" focus="toxic composite roles and over-privileged role design" accent="35 90% 55%" auto slug="role-intelligence" />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="Roles in catalog" value={d.total} accent="280 80% 66%" icon={Layers} testid="role-total" />
         <StatCard label="Privileged roles" value={privileged} accent="0 84% 60%" icon={KeyRound} testid="role-priv" />
@@ -94,7 +94,7 @@ export default function RoleIntelligence() {
                 <Button size="sm" variant="outline" data-testid="role-recertify" disabled={acting} onClick={() => roleAction("recertify")} className="h-8 gap-1.5"><ShieldCheck className="w-3.5 h-3.5" /> Recertify role</Button>
                 {detail.internal_sod.length > 0 && <Button size="sm" data-testid="role-remediate" disabled={acting} onClick={() => roleAction("remediate")} className="h-8 gap-1.5 bg-amber hover:bg-amber/90 text-[#050810]"><Wrench className="w-3.5 h-3.5" /> Remediate toxic role</Button>}
               </div>
-              <div className="mb-3"><SapAIFix entity="role" refId={detail.role.ref} accent="35 90% 55%" onApplied={() => { open(detail.role.ref); load(); }} /></div>
+              <div className="mb-3"><AIFix entity="role" refId={detail.role.ref} accent="35 90% 55%" onApplied={() => { open(detail.role.ref); load(); }} /></div>
               {detail.internal_sod.length > 0 && (
                 <div className="mb-3"><h3 className="font-head font-bold text-sm mb-1">Internal SoD Conflicts</h3>{detail.internal_sod.map((s) => <div key={s.ref} className="text-sm flex items-center gap-2 mb-1"><Chip v={s.severity} />{s.name}</div>)}</div>
               )}

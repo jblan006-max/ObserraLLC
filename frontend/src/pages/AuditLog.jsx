@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import { Loader2, ScrollText, ShieldCheck } from "lucide-react";
-import { SapInsight } from "@/components/SapInsight";
+import { AIInsight } from "@/components/AIInsight";
 
 export default function AuditLog() {
   const [logs, setLogs] = useState(null);
@@ -24,7 +24,7 @@ export default function AuditLog() {
         <p className="text-sm text-muted-foreground mt-1">Every action, decision and access change recorded with tenant isolation. Append-only.</p>
       </div>
 
-      <SapInsight dashboard="Audit Log" focus="who changed SAP access, remediation and de-provisioning actions, and any unusual privileged activity in the audit trail" accent="168 76% 46%" auto slug="audit-log" />
+      <AIInsight dashboard="Audit Log" focus="who changed SAP access, remediation and de-provisioning actions, and any unusual privileged activity in the audit trail" accent="168 76% 46%" auto slug="audit-log" />
 
       <div className="flex flex-wrap gap-2" data-testid="audit-filters">
         <select data-testid="audit-actor" value={actor} onChange={(e) => setActor(e.target.value)} className="bg-secondary/60 rounded-md px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary">

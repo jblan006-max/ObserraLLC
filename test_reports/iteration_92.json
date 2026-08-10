@@ -1,0 +1,31 @@
+{
+  "summary": "Frontend E2E validated for Obserra v1 enforcement observability round. Signed webhook + Signed badge persistence works; enforcement export CSV/PDF + evidence pack all return 200 with correct content-types; toxic bulk-neutralise renders 15 enforcement-row-N feed items showing 'runtime ✓' tags; legacy renamed routes (/app, /app/systems, /app/analytics) mount without ChunkLoadError. One regression: AgentDetailModal for AGT-002 visually renders the Runtime Receipt tile (HTTP 200 · 931ms) but the required data-testid attributes agent-enforcement-status and agent-enforcement-receipt are NOT present in the DOM (0 matches out of 79 modal testids).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AgentDetailModal", "issue": "Runtime Receipt tile renders visibly ('RUNTIME RECEIPT: HTTP 200 · 931ms') but the required data-testid=\"agent-enforcement-status\" and data-testid=\"agent-enforcement-receipt\" attributes are missing from the rendered DOM. Enumerated 79 testids inside the modal for AGT-002; zero contained 'enforcement' or 'receipt'. Regression from previously shipped feature.", "selector": "[data-testid=agent-enforcement-status], [data-testid=agent-enforcement-receipt]", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/app/systems (ConnectorHealth)", "issues": ["React hydration warning: 'In HTML, <span> cannot be a child of <option>'. Non-blocking (page still renders), but should be cleaned up in the Select/dropdown component."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Re-add data-testid=\"agent-enforcement-status\" and data-testid=\"agent-enforcement-receipt\" to the Runtime Receipt section of AgentDetailModal (they were dropped during the recent modal refactor).",
+    "Fix <span> inside <option> hydration warning on /app/systems (ConnectorHealth) select component.",
+    "Restore AGT-001 to 'sanctioned' baseline — bulk-neutralise ran during Test 3 left AGT-001 as 'restricted'. The action_id shapes I tried (agent_sanction / agent_restore / agent_activate) all returned 400 'Malformed agent action.' via /api/actions/run. Main agent should restore via correct action_id or direct DB update. Current DB state: AGT-001=restricted, AGT-002=restricted (correct), AGT-003=sanctioned (correct)."
+  ],
+  "critical_code_review_comments": [
+    "AgentDetailModal regression: shipped testids removed silently — add a test that asserts these testids exist so this doesn't regress again.",
+    "actions/available endpoint returns 404, making it impossible for testers to discover valid action_id values. Consider exposing a lightweight registry or documenting exact accepted action_id strings."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped)", "frontend": "90%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (cookie auth) — verified working",
+  "seed_data_creation": "None. Cleanup performed: runtime webhook URL + secret cleared via PUT /api/agents/runtime/webhook {webhook:'',secret:''} — confirmed GET returns {webhook:'', secret_set:false}. Signed badge on Settings disappears after clear.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "5/5 requested flows executed. PASSED: (1) Signed webhook — badge appears on save, persists on reload with masked placeholder '•••••••• (signing secret set — type to replace)', and disappears when both URL+secret cleared. (2) Export buttons — network verified: /api/agents/runtime/enforcement-log/export?format=csv → 200 text/csv, format=pdf → 200 application/pdf, /api/agents/runtime/evidence-pack.pdf → 200 application/pdf. All three buttons visible incl. admin-only evidence-pack-btn. (3) Bulk-neutralise (toxicity-neutralise-btn → toxicity-neutralise-confirm) rendered 15 enforcement-row-N items with 'runtime ✓' tag (webhook was set to httpbin at that time and reached). (5) Legacy routes /app, /app/systems, /app/analytics all mount (body text 5466/13462/5988 chars, no ChunkLoadError). FAILED: (4) AgentDetailModal missing testids — visual data present, DOM testids absent. Baseline drift: AGT-001 is now 'restricted' (should be 'sanctioned'); needs manual fix.",
+  "rca_of_the_issue": "AgentDetailModal Runtime Receipt tile: visually confirmed via screenshot that 'RUNTIME RECEIPT — HTTP 200 · 931ms' renders inside the modal, but the elements lack the data-testid attributes that were previously present. Likely the recent modal refactor (or tile-layout redesign converting the receipt into the generic tile grid) dropped the data-testid props. Fix: locate the JSX where RUNTIME RECEIPT label is rendered in AgentDetailModal (probably components/AgentDetailModal.jsx or similar) and re-add data-testid=\"agent-enforcement-status\" to the parent container and data-testid=\"agent-enforcement-receipt\" to the value line. Reproduction: Login as admin → /app/agents → dismiss Executive Tour if present → click [data-testid=overview-agent-AGT-002] → modal opens → querySelector for the two testids returns null."
+}

@@ -251,7 +251,7 @@ async def discover_shadow_ai(admin: dict = Depends(require_roles("admin"))):
         except Exception:
             pass
         try:
-            import notifications
+            from kernel import notifications
             await notifications.create(
                 org_id, "ai_governance", "New shadow AI discovered",
                 f"{added} new unsanctioned AI system(s) surfaced by live discovery. Review the Shadow AI queue.",
