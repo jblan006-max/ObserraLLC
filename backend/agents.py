@@ -1302,8 +1302,14 @@ async def card_share_stats(token: str, admin: dict = Depends(require_roles("admi
 
 
 async def _card_engage_alert(token, doc, event, who=None):
-    """Ping org admins/execs the FIRST time a shared card is opened/downloaded (best-effort, once per event)."""
+    """Ping org admins/execs the FIRST time a shared card is opened/downloaded (best-effort, once per event).
+    Gated by the org's engagement cadence — only fires when cadence == 'instant'."""
     import html as _html, os as _os
+    from bson import ObjectId
+    org = await db.organizations.find_one(
+        {"_id": ObjectId(doc.get("org_id"))}, {"card_engagement_cadence": 1}) if doc.get("org_id") else None
+    if ((org or {}).get("card_engagement_cadence") or "instant") != "instant":
+        return
     flag = f"alerted_{event}"
     if doc.get(flag):
         return
@@ -1383,7 +1389,7 @@ def _parse_ua(ua: str) -> str:
 
 
 async def _geo_lookup_many(ips):
-    """Best-effort city/country per public IP via keyless ip-api.com batch (silent on failure)."""
+    """Best-effort city/country + lat/lon per public IP via keyless ip-api.com batch (silent on failure)."""
     import httpx
     out = {}
     valid = [ip for ip in ips if ip and ":" not in ip
@@ -1392,39 +1398,57 @@ async def _geo_lookup_many(ips):
     if not valid:
         return out
     try:
-        payload = [{"query": ip, "fields": "status,country,city,query"} for ip in valid[:100]]
+        payload = [{"query": ip, "fields": "status,country,city,lat,lon,query"} for ip in valid[:100]]
         async with httpx.AsyncClient(timeout=4.0) as client:
             r = await client.post("http://ip-api.com/batch", json=payload)
         if r.status_code == 200:
             for item in r.json():
                 if item.get("status") == "success":
                     loc = ", ".join([x for x in [item.get("city"), item.get("country")] if x])
-                    if loc:
-                        out[item.get("query")] = loc
+                    out[item.get("query")] = {"loc": loc, "lat": item.get("lat"), "lon": item.get("lon")}
     except Exception:
         pass
     return out
 
 
 async def _card_access_enriched(token, org_id):
-    """Fetch a card's access rows enriched with parsed device + best-effort geo (cached back to db)."""
+    """Access rows enriched with device (offline UA parse), best-effort geo + lat/lon (cached back),
+    and a 'new country/device' anomaly flag relative to the card's own earlier history."""
     d = await db.card_shares.find_one({"token": token, "org_id": org_id}, {"_id": 0})
     if not d:
         return None, []
     rows = await db.card_share_access.find(
         {"token": token, "org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(500)
-    need = sorted({r.get("ip") for r in rows if r.get("ip") and not r.get("geo")})
+    need = sorted({r.get("ip") for r in rows if r.get("ip") and r.get("geo_lat") is None})
     geo_map = await _geo_lookup_many(need) if need else {}
     for r in rows:
-        if not r.get("geo") and r.get("ip") in geo_map:
-            r["geo"] = geo_map[r["ip"]]
+        g = geo_map.get(r.get("ip"))
+        if g and r.get("geo_lat") is None:
+            r["geo"] = r.get("geo") or g.get("loc") or ""
+            r["geo_lat"] = g.get("lat")
+            r["geo_lon"] = g.get("lon")
             try:
                 await db.card_share_access.update_one(
                     {"token": token, "org_id": org_id, "ip": r["ip"], "at": r["at"]},
-                    {"$set": {"geo": r["geo"]}})
+                    {"$set": {"geo": r["geo"], "geo_lat": r["geo_lat"], "geo_lon": r["geo_lon"]}})
             except Exception:
                 pass
         r["device"] = _parse_ua(r.get("ua") or "")
+    seen_c, seen_dev = set(), set()
+    for r in sorted(rows, key=lambda x: x.get("at") or ""):
+        country = (r.get("geo") or "").split(",")[-1].strip() if r.get("geo") else ""
+        device = r.get("device") or ""
+        reasons = []
+        if country:
+            if seen_c and country not in seen_c:
+                reasons.append("new country")
+            seen_c.add(country)
+        if device:
+            if seen_dev and device not in seen_dev:
+                reasons.append("new device")
+            seen_dev.add(device)
+        r["anomaly"] = bool(reasons)
+        r["anomaly_reason"] = " \u00b7 ".join(reasons)
     return d, rows
 
 
@@ -1451,10 +1475,11 @@ async def card_share_access_log_csv(token: str, admin: dict = Depends(require_ro
     w.writerow(["Card", snap.get("title") or "Detail card", "Ref", snap.get("ref") or ""])
     w.writerow(["Opens", d.get("opens", 0), "Downloads", d.get("downloads", 0)])
     w.writerow([])
-    w.writerow(["Event", "Who", "IP", "Location", "Device", "Timestamp (UTC)"])
+    w.writerow(["Event", "Who", "IP", "Location", "Device", "Anomaly", "Timestamp (UTC)"])
     for r in rows:
         w.writerow([r.get("kind"), r.get("who") or "", r.get("ip") or "", r.get("geo") or "",
-                    r.get("device") or "", r.get("at") or ""])
+                    r.get("device") or "", ("\u26a0 " + r["anomaly_reason"]) if r.get("anomaly") else "",
+                    r.get("at") or ""])
     return StreamingResponse(io.BytesIO(buf.getvalue().encode("utf-8")), media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="obserra-card-access-log.csv"'})
 
@@ -1483,7 +1508,8 @@ async def card_share_access_log_pdf(token: str, admin: dict = Depends(require_ro
     for r in rows:
         who = r.get("who") or ("opened" if r.get("kind") == "open" else "download")
         bits = " \u00b7 ".join([str(x) for x in [r.get("ip"), r.get("geo"), r.get("device")] if x])
-        lines.append(f"- **{r.get('kind')}** — {who}" + (f" \u00b7 {bits}" if bits else "") + f" \u00b7 {r.get('at')}")
+        flag = f" \u26a0 {r['anomaly_reason']}" if r.get("anomaly") else ""
+        lines.append(f"- **{r.get('kind')}** — {who}" + (f" \u00b7 {bits}" if bits else "") + flag + f" \u00b7 {r.get('at')}")
     buf = _build_pdf("\n".join(lines), "Shared card — chain of custody", cover=True,
                      org_name=snap.get("org_name"), brand=brand)
     raw = buf.getvalue()
@@ -1536,6 +1562,11 @@ async def _run_card_engagement_weekly_digest():
     org_ids = await db.card_share_access.distinct("org_id", {"at": {"$gte": since}})
     for oid in org_ids:
         try:
+            from bson import ObjectId
+            org = await db.organizations.find_one(
+                {"_id": ObjectId(oid)}, {"card_engagement_cadence": 1}) if oid else None
+            if ((org or {}).get("card_engagement_cadence") or "instant") != "weekly":
+                continue
             events = await db.card_share_access.find(
                 {"org_id": oid, "at": {"$gte": since}}, {"_id": 0}).to_list(5000)
             if not events:
@@ -2015,6 +2046,7 @@ class GovSettingsBody(BaseModel):
     fire_drill_agent_ref: str | None = None
     control_assurance_sla_enabled: bool | None = None
     control_assurance_sla_min: int | None = None
+    card_engagement_cadence: str | None = None
 
 
 @agents_router.get("/runtime/governance-settings")
@@ -2035,7 +2067,8 @@ async def get_governance_settings(admin: dict = Depends(require_roles("admin")))
             "fire_drill_day": int(org.get("fire_drill_day") or 1),
             "fire_drill_agent_ref": org.get("fire_drill_agent_ref") or "",
             "control_assurance_sla_enabled": bool(org.get("control_assurance_sla_enabled", False)),
-            "control_assurance_sla_min": int(org.get("control_assurance_sla_min") or 90)}
+            "control_assurance_sla_min": int(org.get("control_assurance_sla_min") or 90),
+            "card_engagement_cadence": org.get("card_engagement_cadence") or "instant"}
 
 
 @agents_router.put("/runtime/governance-settings")
@@ -2079,6 +2112,8 @@ async def set_governance_settings(body: GovSettingsBody, admin: dict = Depends(r
         upd["control_assurance_sla_enabled"] = bool(body.control_assurance_sla_enabled)
     if body.control_assurance_sla_min is not None:
         upd["control_assurance_sla_min"] = max(1, min(100, int(body.control_assurance_sla_min)))
+    if body.card_engagement_cadence is not None:
+        upd["card_engagement_cadence"] = body.card_engagement_cadence if body.card_engagement_cadence in ("off", "weekly", "instant") else "instant"
     if upd:
         await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": upd})
     await _log_audit(admin["org_id"], admin["email"], "agent.governance_settings", "Updated AI governance settings")

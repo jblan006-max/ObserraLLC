@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Activity, Calendar, CheckCircle2, Clock, Copy, Database, DoorOpen, Download, Eye, FileText, Loader2, MessageSquare, Paperclip, PlayCircle, Plus, RefreshCw, Send, Settings2, ShieldCheck, Terminal, Trash2, X, XCircle, Zap } from "lucide-react";
+import { Activity, AlertTriangle, Calendar, CheckCircle2, Clock, Copy, Database, DoorOpen, Download, Eye, FileText, Globe, Loader2, MessageSquare, Paperclip, PlayCircle, Plus, RefreshCw, Send, Settings2, ShieldCheck, Terminal, Trash2, X, XCircle, Zap } from "lucide-react";
+import { WorldMapThumb } from "./WorldMapThumb";
 import { toast } from "sonner";
 import { DataClassBadge, Panel } from "@/components/agentic-ai/shared";
 import { useDeepDive } from "@/context/DeepDiveContext";
@@ -96,6 +97,7 @@ function AccessLog({ token, endpoint, exportBase }) {
   useEffect(() => { api.get(endpoint || `/agents/runtime/evidence-room/${token}/access-log`).then(({ data }) => setLog(data)).catch(() => setLog({ access: [] })); }, [token, endpoint]);
   if (!log) return <div className="p-3 flex justify-center"><Loader2 className="w-4 h-4 animate-spin text-ai" /></div>;
   const base = process.env.REACT_APP_BACKEND_URL;
+  const geoPts = (log.access || []).filter((a) => typeof a.geo_lat === "number" && typeof a.geo_lon === "number").map((a) => ({ lat: a.geo_lat, lon: a.geo_lon, kind: a.kind, anomaly: a.anomaly, label: `${a.kind === "download" ? (a.who || "download") : "opened"}${a.geo ? " · " + a.geo : ""}${a.device ? " · " + a.device : ""}` }));
   return (
     <div className="mt-2 rounded-lg border border-border bg-background/40 p-2.5" data-testid={`access-log-${token}`}>
       <div className="flex items-center gap-2 mb-1.5">
@@ -107,6 +109,7 @@ function AccessLog({ token, endpoint, exportBase }) {
           </div>
         )}
       </div>
+      {geoPts.length > 0 && <div className="mb-2" data-testid={`access-log-map-wrap-${token}`}><WorldMapThumb points={geoPts} /></div>}
       {(!log.access || log.access.length === 0) ? (
         <div className="text-xs text-muted-foreground">No access recorded yet.</div>
       ) : (
@@ -115,6 +118,7 @@ function AccessLog({ token, endpoint, exportBase }) {
             <div key={i} className="flex items-center gap-2 text-xs">
               {a.kind === "download" ? <Download className="w-3 h-3 text-ai shrink-0" /> : <Eye className="w-3 h-3 text-muted-foreground shrink-0" />}
               <span className="font-medium">{a.kind === "download" ? (a.who || "download") : "opened"}</span>
+              {a.anomaly && <span data-testid={`access-anomaly-${i}`} className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded-full bg-crit/15 text-crit"><AlertTriangle className="w-3 h-3" /> {a.anomaly_reason || "unusual"}</span>}
               {a.geo && <span className="text-muted-foreground">{a.geo}</span>}
               {a.device && <span className="text-muted-foreground">· {a.device}</span>}
               {a.ip && <span className="text-muted-foreground/60 font-mono text-[10px]">{a.ip}</span>}
@@ -326,6 +330,7 @@ function GovernanceSettingsCard() {
         },
         auditor_question_escalation_multiplier: Number(s.auditor_question_escalation_multiplier) || 2,
         auditor_oncall_rotation: oncall.split(",").map((x) => x.trim()).filter(Boolean),
+        card_engagement_cadence: s.card_engagement_cadence || "instant",
       });
       setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); toast.success("Governance settings saved");
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed."); }
@@ -354,6 +359,13 @@ function GovernanceSettingsCard() {
         <label className="block"><span className={lbl}>Fallback second approver (blank = executives)</span><input data-testid="gov-escalation-to" value={s.auditor_question_escalation_to || ""} onChange={(e) => setS({ ...s, auditor_question_escalation_to: e.target.value })} placeholder="ciso@company.com" className={fld} /></label>
         <label className="block md:col-span-2"><span className={lbl}>Board digest recipients (comma-separated emails — blank = all admins &amp; execs)</span><input data-testid="gov-digest-recipients" value={recips} onChange={(e) => setRecips(e.target.value)} placeholder="board@company.com, ciso@company.com" className={fld} /></label>
         <label className="flex items-center gap-2 md:col-span-2 cursor-pointer"><input data-testid="gov-digest-enabled" type="checkbox" checked={!!s.board_digest_enabled} onChange={(e) => setS({ ...s, board_digest_enabled: e.target.checked })} className="w-4 h-4 accent-ai" /><span className="text-sm">Send the monthly board evidence digest automatically</span></label>
+        <label className="block md:col-span-2"><span className={lbl}>Shared-card engagement digest cadence</span>
+          <select data-testid="gov-card-cadence" value={s.card_engagement_cadence || "instant"} onChange={(e) => setS({ ...s, card_engagement_cadence: e.target.value })} className={fld}>
+            <option value="instant">Instant — ping me the first time each card is opened or downloaded</option>
+            <option value="weekly">Weekly — a Monday summary of last week's card activity</option>
+            <option value="off">Off — no engagement notifications</option>
+          </select>
+        </label>
       </div>
     </Panel>
   );

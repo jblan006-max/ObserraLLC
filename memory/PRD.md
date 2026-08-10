@@ -1,6 +1,14 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Anomaly Flags + Digest Cadence + World-map (iteration_109, backend 14/14 + frontend 100%)
+Share Center access-log follow-ups, all live/no-mock:
+- **Anomaly Flags**: `_card_access_enriched` computes per-row `anomaly`/`anomaly_reason` ("new country" / "new device") relative to the card's OWN earlier history (chronological; first of each establishes baseline). UI shows an amber/red badge (`access-anomaly-<i>`); CSV adds an Anomaly column; PDF appends a ⚠ marker.
+- **Digest Cadence**: `card_engagement_cadence` (off|weekly|instant, default instant) in Governance settings (`gov-card-cadence` dropdown). Gates both paths: `_card_engage_alert` fires only when 'instant'; `_run_card_engagement_weekly_digest` runs only for 'weekly' orgs. Verified via DB: weekly/off → alerted_open False; instant → True.
+- **World-map thumbnail**: new `WorldMapThumb.jsx` (equirectangular SVG, simplified continents + graticule) plots each access event from `geo_lat`/`geo_lon` (ip-api.com, cached back) — green=open, cyan=download, red=anomaly (`access-log-map`).
+- Regression pytest: `/app/backend/tests/test_iter109_anomaly_cadence_worldmap.py` (14/14). Non-blocking backlog: pre-existing dev-only React DOM-nesting warning (`<span>` in `<option>`, fire-drill select); low-severity anomaly edge if geo ever returns bare-city (single segment) — `_geo_lookup_many` always returns "City, Country" so not observed.
+
+
 ## Status (Jun 2026) — Custody Export + Weekly Engagement Digest + Geo/Device (iteration_108, backend 11/11 + frontend 100%)
 Share Center follow-ups, all live/no-mock:
 - **Custody Export**: `GET /api/agents/runtime/card-share/{token}/access-log.csv` and `.../access-log.pdf` (admin). CSV = full chain of custody (Event/Who/IP/Location/Device/Timestamp); PDF = branded, watermarked, integrity-sealed "Shared card — chain of custody". CSV/PDF buttons render in the expanded access-log panel (`access-log-csv-<token>`, `access-log-pdf-<token>`).
