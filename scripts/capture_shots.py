@@ -53,6 +53,7 @@ PASSWORD = os.environ.get("SHOT_PASSWORD", "Obserra2026!")
 # (route under /app, screenshot filename, scroll_y) — must match gen_docs.py SECTIONS
 PAGES = [
     ("", "02_exec_overview", 0),
+    ("systems", "20_go_live", 0),
     ("analytics", "03_sap_analytics", 0),
     ("sod", "04_sod_command_center", 0),
     ("sod", "05_sod_watchlist_leaderboard", 520),
@@ -100,10 +101,25 @@ def _settle(page):
         pass
 
 
+def _chromium_exe():
+    import glob
+    base = os.environ.get("PLAYWRIGHT_BROWSERS_PATH", "/pw-browsers")
+    for pat in ("chromium_headless_shell-*/chrome-linux/headless_shell",
+                "chromium-*/chrome-linux/chrome"):
+        matches = sorted(glob.glob(os.path.join(base, pat)))
+        if matches:
+            return matches[-1]
+    return None
+
+
 def run():
     from playwright.sync_api import sync_playwright
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True, args=["--no-sandbox"])
+        _exe = _chromium_exe()
+        _lk = {"headless": True, "args": ["--no-sandbox"]}
+        if _exe:
+            _lk["executable_path"] = _exe
+        browser = p.chromium.launch(**_lk)
         page = browser.new_page(viewport={"width": 1440, "height": 900})
         # Login (SAP UAC auth form lives on the landing route "/")
         page.goto(f"{BASE}/", wait_until="domcontentloaded", timeout=45000)
@@ -119,6 +135,10 @@ def run():
         _settle(page)
         _dismiss_overlays(page)
         pages = [p for p in PAGES if p[1] in TOUR_MAP] if os.environ.get("SHOT_TOUR_ONLY") else PAGES
+        only = os.environ.get("SHOT_ONLY")
+        if only:
+            wanted = set(only.split(","))
+            pages = [p for p in pages if p[1] in wanted]
         for route, name, scroll_y in pages:
             try:
                 page.goto(f"{BASE}/app/{route}", wait_until="domcontentloaded", timeout=45000)

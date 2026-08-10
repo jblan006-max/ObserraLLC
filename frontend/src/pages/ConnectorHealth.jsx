@@ -1,11 +1,12 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
 import { AIInsight } from "@/components/AIInsight";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Plug, Server, Clock, CheckCircle2, AlertTriangle, RefreshCw, Activity, XCircle, Rocket } from "lucide-react";
+import { Plug, Server, Clock, CheckCircle2, AlertTriangle, RefreshCw, Activity, XCircle, Rocket, BookOpen } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, ReferenceLine } from "recharts";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -50,6 +51,19 @@ function GoLiveChecklist() {
     return () => clearInterval(t);
   }, [load]);
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
+  const [guideBusy, setGuideBusy] = useState(false);
+  const openGuide = async () => {
+    setGuideBusy(true);
+    try {
+      const res = await api.get("/deploy/guide.pdf", { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not open the guide"); }
+    setGuideBusy(false);
+  };
   const [fixing, setFixing] = useState("");
   const [webhookOpen, setWebhookOpen] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState("");
@@ -98,6 +112,11 @@ function GoLiveChecklist() {
               <div className="font-head font-black text-2xl leading-none" style={{ color: `hsl(${tone})` }} data-testid="go-live-score">{d.score}%</div>
               <div className="text-[10px] font-mono uppercase tracking-wider" style={{ color: `hsl(${tone})` }} data-testid="go-live-status">{d.ready ? "Production ready" : `${d.failed} blocker(s)`}</div>
             </div>
+          )}
+          {isAdmin && (
+            <Button size="sm" variant="ghost" className="gap-1.5" data-testid="go-live-guide-link" onClick={openGuide} disabled={guideBusy}>
+              <BookOpen className="w-3.5 h-3.5" />{guideBusy ? "Opening…" : "Read the Go-Live guide"}
+            </Button>
           )}
           <Button size="sm" variant="outline" className="gap-1.5" data-testid="go-live-recheck" onClick={load} disabled={loading}>
             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />{loading ? "Checking…" : "Re-check"}

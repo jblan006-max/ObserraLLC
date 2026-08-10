@@ -1,5 +1,12 @@
 # Obserra EIOS — CHANGELOG
 
+## 2026-06 — Guide screenshots refreshed + in-app Go-Live guide link (+ useAuth bugfix)
+- **Playwright capture fixed**: `scripts/capture_shots.py` now resolves the installed Chromium via glob (`_chromium_exe`) instead of the pinned build the Python lib expected (wanted build 1234; `/pw-browsers` only has 1208). This also unblocks Settings → Refresh visuals and the weekly guide cron.
+- **Fresh figures**: added a Go-Live capture (systems page → `20_go_live.jpg`) and embedded it in the guide's new "Going Live" section; recaptured login/exec/settings against the rebranded "Control & Governance" UI; regenerated all three guides (PDF + DOCX).
+- **In-app Go-Live guide link**: admin-only "Read the Go-Live guide" button (`go-live-guide-link`) on the Connector Health Go-Live card opens the Install & User Guide PDF (with the Going Live walkthrough) in a new tab.
+- **Bugfix**: the `useAuth` import in `ConnectorHealth.jsx` was silently dropped during a multi-edit batch → "useAuth is not defined" on the systems page. Re-added the import; verified the page renders clean (94% score, guide link present, no error overlay) and recaptured a clean screenshot.
+
+
 ## 2026-06 — Guides updated for go-live + rebrand
 - Rewrote the shared guide content in `scripts/gen_docs.py`: rebranded `TAGLINE` and the "Agentic AI Security Control Plane" section heading to "Control & Governance", refreshed the About section with the new positioning, and added a new **"Going Live — Production Setup Checklist"** walkthrough: (1) connect sources + re-probe, (2) run the Go-Live Readiness checklist (8 live checks), (3) wire the agent-runtime enforcement webhook via the one-click Fix / Settings, (4) confirm 100% + Board Readiness badge + daily trend, (5) export the SHA-256-sealed Evidence Pack.
 - Regenerated all three guides (Install & User, Executive, Admin & Operator) in PDF + DOCX via `gen_docs.generate_all()`. Verified by text extraction: "Going Live" + "Control & Governance" present in all three; old "Control Plane — machine authority" tagline removed. Served unchanged from `/api/deploy/guide*.{pdf,docx}` (admins → Settings → Deployment & Documentation).

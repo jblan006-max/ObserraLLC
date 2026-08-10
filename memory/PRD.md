@@ -1,6 +1,10 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Guide screenshots refreshed + in-app Go-Live guide link
+Fixed Playwright capture (`capture_shots.py` resolves the installed Chromium build via glob — also unblocks Settings → Refresh visuals + weekly cron), added a Go-Live systems capture (`20_go_live.jpg`) embedded in the guide's Going Live section, recaptured login/exec/settings against the rebranded UI, and regenerated all three guides. Added an admin-only "Read the Go-Live guide" button (`go-live-guide-link`) on the Connector Health Go-Live card. Also fixed a dropped `useAuth` import in `ConnectorHealth.jsx` ("useAuth is not defined") — systems page now renders clean (94%, guide link, no error overlay).
+
+
 ## Status (Jun 2026) — Guides updated for go-live + rebrand
 Updated the shared guide source (`scripts/gen_docs.py`) and regenerated all three guides (Install & User, Executive, Admin & Operator; PDF + DOCX): rebranded tagline/headings to "Agentic AI Security Control & Governance", refreshed the About/positioning copy, and added a new **"Going Live — Production Setup Checklist"** walkthrough (connect sources → Go-Live Readiness checklist → wire runtime webhook → confirm 100% + badge + daily trend → export sealed Evidence Pack). Verified by text extraction across all three PDFs; served from `/api/deploy/guide*.{pdf,docx}`.
 

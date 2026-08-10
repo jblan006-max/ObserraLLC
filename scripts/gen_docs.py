@@ -92,7 +92,7 @@ SECTIONS = [
         "5) Export the proof. Download the signed Evidence Pack — every page-one cover carries a "
         "SHA-256 'Verified by Obserra' integrity seal — and share it with auditors or fold the "
         "score into the emailed board digest.",
-    ], None, ALL),
+    ], "20_go_live.jpg", ALL),
 
     ("Executive Overview", [
         "The landing dashboard is the complete rollup of the AI security estate: modelled agent "
