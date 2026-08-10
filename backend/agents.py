@@ -1216,6 +1216,67 @@ async def public_card_share_pdf(token: str, who: str = "", request: Request = No
         headers={"Content-Disposition": 'attachment; filename="obserra-detail-card.pdf"'})
 
 
+# ── Share Center — admin management of every shared detail-card link ──
+@agents_router.get("/runtime/card-shares")
+async def list_card_shares(admin: dict = Depends(require_roles("admin"))):
+    import os
+    from datetime import datetime, timezone
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    now_iso = datetime.now(timezone.utc).isoformat()
+    out = []
+    async for d in db.card_shares.find({"org_id": admin["org_id"]}).sort("created_at", -1):
+        snap = d.get("snapshot") or {}
+        out.append({
+            "token": d["token"], "url": f"{frontend}/card/{d['token']}",
+            "title": snap.get("title") or "Detail card", "ref": snap.get("ref") or "",
+            "rating": snap.get("rating"), "created_at": d.get("created_at"), "created_by": d.get("created_by"),
+            "expires_at": d.get("expires_at"),
+            "expired": bool(d.get("expires_at") and now_iso > d["expires_at"]),
+            "opens": d.get("opens", 0), "downloads": d.get("downloads", 0),
+            "last_opened_at": d.get("last_opened_at"), "last_downloaded_at": d.get("last_downloaded_at"),
+            "attach_to_board": bool(d.get("attach_to_board")),
+        })
+    return {"cards": out}
+
+
+class CardTokenBody(BaseModel):
+    token: str
+
+
+@agents_router.post("/runtime/card-share/revoke")
+async def revoke_card_share(body: CardTokenBody, admin: dict = Depends(require_roles("admin"))):
+    res = await db.card_shares.delete_one({"token": body.token, "org_id": admin["org_id"]})
+    if not res.deleted_count:
+        raise HTTPException(404, "Shared card not found.")
+    await _log_audit(admin["org_id"], admin["email"], "agent.card_share_revoke",
+                     f"Shared card revoked ({body.token[:8]}\u2026)")
+    return {"revoked": True}
+
+
+class CardAttachBody(BaseModel):
+    token: str
+    attach: bool = True
+
+
+@agents_router.post("/runtime/card-share/attach")
+async def attach_card_share(body: CardAttachBody, admin: dict = Depends(require_roles("admin"))):
+    res = await db.card_shares.update_one({"token": body.token, "org_id": admin["org_id"]},
+        {"$set": {"attach_to_board": bool(body.attach)}})
+    if not res.matched_count:
+        raise HTTPException(404, "Shared card not found.")
+    return {"attach_to_board": bool(body.attach)}
+
+
+@agents_router.get("/runtime/card-share/{token}/stats")
+async def card_share_stats(token: str, admin: dict = Depends(require_roles("admin"))):
+    d = await db.card_shares.find_one({"token": token, "org_id": admin["org_id"]}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Shared card not found.")
+    return {"opens": d.get("opens", 0), "downloads": d.get("downloads", 0),
+            "last_opened_at": d.get("last_opened_at"), "last_downloaded_at": d.get("last_downloaded_at"),
+            "expires_at": d.get("expires_at"), "attach_to_board": bool(d.get("attach_to_board"))}
+
+
 # ── Auditor notes — external auditors leave read-only questions on the public room ──
 class RoomCommentBody(BaseModel):
     author: str = ""

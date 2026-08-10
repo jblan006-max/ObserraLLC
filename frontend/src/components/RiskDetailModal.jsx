@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { X, Loader2, Wrench, ShieldX, Users, CheckCircle2, XCircle, Clock, Terminal, ShieldCheck, ListPlus, Plug, Share2, Copy, Check, ExternalLink } from "lucide-react";
+import { useState, useEffect } from "react";
+import { X, Loader2, Wrench, ShieldX, Users, CheckCircle2, XCircle, Clock, Terminal, ShieldCheck, ListPlus, Plug, Share2, Copy, Check, ExternalLink, Eye, Download } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { AIExplain } from "@/components/AIExplain";
 import { useAuth } from "@/context/AuthContext";
@@ -186,6 +186,15 @@ function ShareCardButton({ item, accent }) {
   const [state, setState] = useState("idle");
   const [link, setLink] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [stats, setStats] = useState(null);
+  useEffect(() => {
+    if (!link?.token) return;
+    let ok = true;
+    const poll = () => api.get(`/agents/runtime/card-share/${link.token}/stats`).then(({ data }) => { if (ok) setStats(data); }).catch(() => {});
+    poll();
+    const t = setInterval(poll, 15000);
+    return () => { ok = false; clearInterval(t); };
+  }, [link]);
   if (user?.role !== "admin") return null;
 
   const share = async () => {
@@ -223,8 +232,13 @@ function ShareCardButton({ item, accent }) {
     return (
       <div data-testid="card-share-result" className="w-full rounded-xl border p-3 space-y-2"
         style={{ borderColor: `hsl(${accent} / 0.4)`, background: `hsl(${accent} / 0.06)` }}>
-        <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wider" style={{ color: `hsl(${accent})` }}>
-          <Share2 className="w-3.5 h-3.5" /> Shareable auditor link · expires {new Date(link.expires_at).toLocaleDateString()}
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wider" style={{ color: `hsl(${accent})` }}>
+            <Share2 className="w-3.5 h-3.5" /> Shareable auditor link · expires {new Date(link.expires_at).toLocaleDateString()}
+          </div>
+          <div data-testid="card-share-stats" className="text-[10px] font-mono text-muted-foreground inline-flex items-center gap-1.5">
+            <Eye className="w-3 h-3" /> {stats?.opens ?? 0} viewed <Download className="w-3 h-3 ml-1" /> {stats?.downloads ?? 0} downloaded
+          </div>
         </div>
         <div className="flex items-start gap-3">
           <div className="bg-white p-1.5 rounded-md shrink-0"><QRCodeSVG value={link.url} size={72} level="M" /></div>

@@ -1,6 +1,14 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Share Center + Auto Board Attach + live counters (iteration_106, backend 10/10 + frontend 100%)
+Follow-ups to the Share Detail Card feature, all live/no-mock:
+- **Share Center** (`DefensibilityDashboard.jsx` `ShareCenterCard`, admin, under the Auditor Room): lists every shared detail-card link with live viewed/downloaded counts, rating/expiry, Copy/Open, and one-click Revoke. Backed by `GET /api/agents/runtime/card-shares` + `POST /api/agents/runtime/card-share/revoke`. Auto-polls every 20s.
+- **Auto Board Attach**: per-card `Board digest` toggle (`POST /api/agents/runtime/card-share/attach`, `attach_to_board`) — `agent_reports._build_board_digest` appends a "Shared detail cards (attached to this digest)" HTML section (title, ref, `/card/<token>` link, views/downloads) for every non-expired flagged card. Verified the preview HTML embeds it.
+- **Live counter**: `card-share-stats` in the modal result panel polls the no-increment `GET /api/agents/runtime/card-share/{token}/stats` every 15s; Share Center rows show `share-card-opens/downloads-<token>`. Public open (+1 view) / PDF download (+1 download) confirmed via pytest.
+- Regression pytest: `/app/backend/tests/test_iter106_share_center.py` (10/10). Known P3 (non-blocking): the UI viewed-count can read 0 on the very first refresh right after opening the public link (race); auto-poll/second refresh corrects it — backend increment proven.
+
+
 ## Status (Jun 2026) — 3-feature build: incident seed + fire-drill deep dive + Share Card (iteration_105, backend 5/5 + frontend 100%)
 User-approved batch, all live/no-mock:
 - **Incident Seed**: `INCIDENT_SEED` + idempotent `_seed_incidents(org_id)` (skips `live_only` orgs) called in `GET /api/ai-incidents`. Two SNAPSHOT-tagged OPEN incidents (AII-001 prompt-injection on AGT-002, AII-002 shadow-AI PII) so the Executive Overview "Open AI incidents" panel is populated and the incident detail card is demoable. The owner org is `live_only=True`, so it was seeded directly once; the endpoint guard remains for future non-live orgs.

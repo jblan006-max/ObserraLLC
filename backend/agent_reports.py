@@ -314,6 +314,32 @@ async def _build_board_digest(org):
         toxic_html = (f"<div style='font:600 12px Arial;color:#dc2626;margin:18px 0 4px'>Top toxic agents (current)</div>"
                       f"<ul style='margin:0;padding-left:18px;font:400 13px Arial;color:#374151'>{rows}</ul>")
 
+    # Board-attached shared detail cards — admin flagged these to ride along with the digest email
+    cards_html = ""
+    try:
+        import os as _osc
+        scards = await db.card_shares.find(
+            {"org_id": oid, "attach_to_board": True}, {"_id": 0}).sort("created_at", -1).to_list(50)
+        scards = [c for c in scards if not (c.get("expires_at") and c["expires_at"] < now.isoformat())]
+        if scards:
+            frontend = _osc.environ.get("FRONTEND_URL", "").rstrip("/")
+            RTONE = {"Critical": "#dc2626", "High": "#d97706", "Medium": "#ca8a04", "Low": "#16a34a"}
+            li = []
+            for cc in scards:
+                s = cc.get("snapshot") or {}
+                url = f"{frontend}/card/{cc['token']}"
+                col = RTONE.get(s.get("rating"), "#0f1e3d")
+                rating = f"<span style='color:{col};font-weight:700'>{s.get('rating')}</span> " if s.get("rating") else ""
+                li.append(
+                    f"<li style='margin-bottom:6px'>{rating}<strong>{s.get('title', 'Detail card')}</strong> "
+                    f"<span style='color:#6b7280'>({s.get('ref', '')})</span><br>"
+                    f"<a href='{url}' style='color:#12b4d6;font-size:12px'>{url}</a> "
+                    f"<span style='color:#9ca3af;font-size:11px'>&middot; {cc.get('opens', 0)} views &middot; {cc.get('downloads', 0)} downloads</span></li>")
+            cards_html = (f"<div style='font:600 12px Arial;color:#0f1e3d;margin:18px 0 4px'>Shared detail cards (attached to this digest)</div>"
+                          f"<ul style='margin:0;padding-left:18px;font:400 13px Arial;color:#374151'>{''.join(li)}</ul>")
+    except Exception:
+        cards_html = ""
+
     def row(k, v, col):
         return (f"<tr><td style='padding:8px 12px;border-bottom:1px solid #eef2f7;font:600 13px Arial;color:#374151'>{k}</td>"
                 f"<td style='padding:8px 12px;border-bottom:1px solid #eef2f7;font:800 15px Arial;color:{col};text-align:right'>{v}</td></tr>")
@@ -335,6 +361,7 @@ async def _build_board_digest(org):
             f"{trend_html}"
             f"{chart_html}"
             f"{toxic_html}"
+            f"{cards_html}"
             f"<p style='font:400 13px Arial;color:#374151;margin-top:14px'>The full, signed AI Enforcement Evidence Pack — with every runtime enforcement receipt, the live toxicity snapshot and the complete auditor Q&amp;A trail — is attached as a PDF for the board / audit committee.</p>"
             f"<p style='font-size:11px;color:#9ca3af'>Obserra — Agentic AI Security Control & Governance · Defensibility Ledger</p></div>")
     cfg = org.get("board_digest_recipients") or []

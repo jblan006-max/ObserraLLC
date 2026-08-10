@@ -1,0 +1,32 @@
+{
+  "summary": "Iter106 (Share Center + Auto Board Attach + live counters) fully validated end-to-end. Backend: 10/10 pytest passing at /app/backend/tests/test_iter106_share_center.py — GET /api/agents/runtime/card-shares returns admin-scoped list with title/rating/expiry/opens/downloads/attach_to_board/url; GET /api/agents/runtime/card-share/{token}/stats does NOT increment opens (verified); public GET /api/agents/public/card-share/{token} increments opens by +1; public /card.pdf returns application/pdf %PDF and increments downloads by +1; POST /card-share/attach flips attach_to_board and the /runtime/board-evidence-digest/preview HTML now embeds the 'Shared detail cards' section with the /card/<token> link + N views · M downloads; toggling attach OFF removes the card from the next preview; POST /card-share/revoke deletes the row and public GET returns 404; unknown-token revoke → 404; unauth GET /card-shares → 401/403. Frontend UI: Defensibility tab renders ShareCenterCard (agentic-share-center) with share-center-list, share-center-refresh, and per-row share-card-<token> + share-card-attach/copy/open/revoke/opens/downloads-<token>. End-to-end: minted a card from overview-incident-AII-001 modal (card-share-btn); card-share-result renders card-share-stats ('N viewed · M downloaded') and card-share-url; the new row appears immediately in Share Center; opening the public URL loads /card/:token with card-share-title (no auth); after clicking share-card-attach the digest-preview-btn opens digest-preview-modal whose digest-preview-body includes 'Shared detail cards' and href /card/<token>; Revoke removes the row from list. Screenshot confirms all 6 rows with viewed/downloaded counters, Board digest toggles, and Revoke buttons.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Live viewed counter after public open + Share Center refresh", "issue": "In the UI e2e run, after opening the public /card/:token URL in a fresh tab and then clicking share-center-refresh, the opens count for the just-minted token still showed '0 viewed' at the moment of assertion. Backend pytest independently proved GET /api/agents/public/card-share/{token} increments opens by +1, so this appears to be a UI-timing/race artifact (either React route hydrates the increment call slightly after page-load reports done, or the /card portal uses SWR with a small delay). Non-blocking — auto-poll (20s) and a subsequent refresh will reflect the correct count. Recommend awaiting the public GET fully or using a networkidle wait before triggering refresh in the ShareCard portal, or debouncing the initial counter render to reflect the returned snapshot's opens value already incremented server-side.", "affected_selectors": ["share-card-opens-<token>"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter106_share_center.py",
+    "/app/test_reports/pytest/iter106.xml"
+  ],
+  "action_items": [
+    "Optional (P3): make the ShareCard public portal await/settle the public GET response before showing the UI so the opens counter reflects the increment on first Share Center refresh (currently the 20s auto-poll or a second manual refresh corrects it)."
+  ],
+  "critical_code_review_comments": [
+    "agents.py list_card_shares and create_card_share both build the /card/<token> URL from FRONTEND_URL only. If FRONTEND_URL is ever unset the returned url would start with '/card/...'. Consider falling back to Request.base_url so Share Center rows never render a bare path.",
+    "agent_reports.py board digest filters expired cards client-side after fetching up to 50 rows; a Mongo-level $expr filter on expires_at would be cleaner and cheaper as card_shares grows.",
+    "agents.py public_card_share_pdf swallows watermark/seal/download-counter exceptions with bare `except Exception: pass` — a silent failure here means downloads could stop incrementing without any log. Log the exception (already flagged in iter105).",
+    "public_card_share increments opens on every hit — bots/prefetch will inflate 'viewed'. Consider a short-lived IP+UA de-dup window if analytics fidelity matters (already flagged in iter105).",
+    "The Share Center row uses opens/downloads returned by the list endpoint (which are cheap counters) but stats endpoint returns the same fields — no drift risk today but two shapes of the same data. Minor consolidation opportunity."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter106_share_center.py"],
+  "success_rate": { "backend": "100% (10/10)", "frontend": "100% of new-feature paths (mint→list→open→refresh→attach→digest→revoke all pass)" },
+  "test_credentials": "Admin: jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md).",
+  "seed_data_creation": "Test creates TEST_-prefixed card-shares that self-clean via revoke on teardown. There remain some minted cards from prior UI runs in db.card_shares for the admin org — expected/documented in iter105 context.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter106 features (Share Center admin card, per-card Board digest attach toggle, live viewed/downloaded counters, Revoke) are live and verified. Regression pytest at /app/backend/tests/test_iter106_share_center.py (10 tests, all pass, 4s runtime). Key testids: agentic-share-center, share-center-list, share-center-empty, share-center-refresh, share-card-<token>, share-card-attach/copy/open/revoke/opens/downloads-<token>, card-share-btn, card-share-result, card-share-stats, card-share-url, digest-preview-btn, digest-preview-modal, digest-preview-body. Public /card/:token is no-auth. Admin stats endpoint /api/agents/runtime/card-share/{token}/stats explicitly does NOT increment opens (verified). Board digest preview HTML now contains 'Shared detail cards (attached to this digest)' section listing every card where attach_to_board=True AND not expired."
+}

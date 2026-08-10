@@ -233,6 +233,56 @@ function AuditorRoomCard() {
 
 const PRIORITY_TONE = { urgent: "bg-crit/15 text-crit", high: "bg-high/15 text-high", normal: "bg-secondary/60 text-muted-foreground", low: "bg-ai/10 text-ai" };
 
+// Share Center — every shared detail-card link with live view/download counts, a Board-digest attach
+// toggle, copy/open, and one-click Revoke. Mirrors the Auditor Room manager; polls for live engagement.
+function ShareCenterCard() {
+  const [cards, setCards] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const load = () => api.get("/agents/runtime/card-shares").then(({ data }) => setCards(data.cards || [])).catch(() => {}).finally(() => setLoading(false));
+  useEffect(() => { load(); const t = setInterval(load, 20000); return () => clearInterval(t); }, []);
+  const revoke = async (token) => {
+    if (!window.confirm("Revoke this shared card link? Anyone with the link will lose access immediately.")) return;
+    try { await api.post("/agents/runtime/card-share/revoke", { token }); toast.success("Shared card revoked"); load(); }
+    catch (e) { toast.error(e.response?.data?.detail || "Revoke failed."); }
+  };
+  const toggleAttach = async (card) => {
+    try { await api.post("/agents/runtime/card-share/attach", { token: card.token, attach: !card.attach_to_board }); toast.success(!card.attach_to_board ? "Card will ride along with the board digest" : "Card removed from the board digest"); load(); }
+    catch (e) { toast.error(e.response?.data?.detail || "Update failed."); }
+  };
+  return (
+    <Panel title="Share Center" subtitle="Every shared detail-card link — live view & download counts, one-click Revoke, and a toggle to attach any card to the monthly Board Evidence Digest email." testid="agentic-share-center"
+      actions={<button data-testid="share-center-refresh" onClick={load} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border text-xs font-head font-bold hover:bg-secondary transition-colors"><RefreshCw className="w-3.5 h-3.5" /> Refresh</button>}>
+      {loading && cards.length === 0 ? (
+        <div className="py-6 flex justify-center"><Loader2 className="w-5 h-5 animate-spin text-ai" /></div>
+      ) : cards.length === 0 ? (
+        <div className="text-sm text-muted-foreground" data-testid="share-center-empty">No shared cards yet. Open any detail card and click “Share this card” to mint an expiring, watermarked auditor link.</div>
+      ) : (
+        <div className="space-y-2" data-testid="share-center-list">
+          {cards.map((card) => (
+            <div key={card.token} data-testid={`share-card-${card.token}`} className="rounded-lg border border-border bg-secondary/20 px-3 py-2.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <FileText className={`w-4 h-4 shrink-0 ${card.expired ? "text-muted-foreground" : "text-ai"}`} />
+                <span className="font-head font-bold text-sm truncate max-w-[24%]">{card.title}</span>
+                {card.ref && <span className="font-mono text-[10px] text-muted-foreground">{card.ref}</span>}
+                {card.rating && <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${RATING_PILL[card.rating] || "bg-low/10 text-low"}`}>{card.rating}</span>}
+                <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${card.expired ? "bg-crit/10 text-crit" : "bg-low/10 text-low"}`}>{card.expired ? "expired" : `expires ${fmtDT(card.expires_at)}`}</span>
+                <span data-testid={`share-card-opens-${card.token}`} className="text-[10px] font-mono text-muted-foreground inline-flex items-center gap-1"><Eye className="w-3 h-3" /> {card.opens} viewed</span>
+                <span data-testid={`share-card-downloads-${card.token}`} className="text-[10px] font-mono text-muted-foreground inline-flex items-center gap-1"><Download className="w-3 h-3" /> {card.downloads} downloaded</span>
+                <div className="ml-auto flex items-center gap-1.5">
+                  <button data-testid={`share-card-attach-${card.token}`} onClick={() => toggleAttach(card)} className={`inline-flex items-center gap-1 px-2 py-1 rounded border text-xs transition-colors ${card.attach_to_board ? "border-ai/50 text-ai bg-ai/10" : "border-border hover:bg-secondary"}`}>{card.attach_to_board ? <CheckCircle2 className="w-3 h-3" /> : <Paperclip className="w-3 h-3" />} Board digest</button>
+                  <button data-testid={`share-card-copy-${card.token}`} onClick={() => copyText(card.url)} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-xs hover:bg-secondary transition-colors"><Copy className="w-3 h-3" /> Copy</button>
+                  <a data-testid={`share-card-open-${card.token}`} href={card.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 px-2 py-1 rounded border border-border text-xs hover:bg-secondary transition-colors"><DoorOpen className="w-3 h-3" /> Open</a>
+                  <button data-testid={`share-card-revoke-${card.token}`} onClick={() => revoke(card.token)} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-crit/30 text-crit text-xs hover:bg-crit/10 transition-colors"><Trash2 className="w-3 h-3" /> Revoke</button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 function GovernanceSettingsCard() {
   const [s, setS] = useState(null);
   const [recips, setRecips] = useState("");
@@ -569,6 +619,7 @@ export default function DefensibilityDashboard({ data, sourceStatus, isAdmin }) 
   return (
     <div className="space-y-5">
       {isAdmin && <AuditorRoomCard />}
+      {isAdmin && <ShareCenterCard />}
       {isAdmin && <GovernanceSettingsCard />}
       {isAdmin && <AuditorQuestionsCard />}
       {isAdmin && <RuntimePlaybooksCard />}
