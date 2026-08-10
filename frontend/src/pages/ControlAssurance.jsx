@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { Panel } from "@/components/agentic-ai/shared";
+import { useDeepDive } from "@/context/DeepDiveContext";
+import { drillDeepDive } from "@/lib/agenticDeepDive";
 import { toast } from "sonner";
 import { Gauge, ShieldCheck, XCircle, Timer, Flame, RefreshCw, Loader2, TrendingUp, FileDown, AlertTriangle } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, Cell } from "recharts";
@@ -25,6 +27,7 @@ function Tile({ label, value, sub, iconClass, Icon }) {
 export default function ControlAssurance() {
   const [d, setD] = useState(null);
   const [loading, setLoading] = useState(true);
+  const { openDeepDive } = useDeepDive();
   const load = () => {
     setLoading(true);
     api.get("/agents/runtime/control-assurance").then(({ data }) => setD(data)).catch(() => toast.error("Could not load Control Assurance")).finally(() => setLoading(false));
@@ -143,7 +146,8 @@ export default function ControlAssurance() {
           <Panel title="Recent fire-drills" subtitle="The latest kill-switch replay drills and their signed receipts." testid="ca-recent">
             <div className="space-y-2" data-testid="ca-recent-list">
               {(d.recent || []).map((r, i) => (
-                <div key={i} data-testid={`ca-recent-${i}`} className="flex items-center gap-2 flex-wrap rounded-lg border border-border bg-secondary/10 px-3 py-2.5 text-xs">
+                <button key={i} data-testid={`ca-recent-${i}`} onClick={() => openDeepDive(drillDeepDive(r))}
+                  className="w-full text-left flex items-center gap-2 flex-wrap rounded-lg border border-border bg-secondary/10 px-3 py-2.5 text-xs hover:bg-secondary/30 transition-colors">
                   {r.controlled ? <ShieldCheck className="w-4 h-4 text-low shrink-0" /> : <XCircle className="w-4 h-4 text-crit shrink-0" />}
                   <span className="font-head font-bold">{r.agent_name}</span>
                   <span className="font-mono text-muted-foreground">{r.agent_ref}</span>
@@ -151,7 +155,7 @@ export default function ControlAssurance() {
                   <span className="text-[10px] font-mono text-muted-foreground">suspend {r.suspend_ms}ms · resume {r.resume_ms}ms</span>
                   <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${r.signed ? "bg-low/10 text-low" : "bg-secondary/60 text-muted-foreground"}`}>{r.signed ? "signed" : "unsigned"}</span>
                   <span className="ml-auto font-mono text-[10px] text-muted-foreground">{fmtDTT(r.at)}</span>
-                </div>
+                </button>
               ))}
             </div>
           </Panel>

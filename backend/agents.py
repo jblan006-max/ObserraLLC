@@ -1063,6 +1063,159 @@ async def public_evidence_room_pdf(token: str, who: str = "", request: Request =
         headers={"Content-Disposition": 'attachment; filename="obserra-evidence-pack.pdf"'})
 
 
+# ── Shareable card evidence — mint an expiring, watermarked auditor link for a single detail card ──
+class CardShareBody(BaseModel):
+    title: str = "Detail card"
+    ref: str = ""
+    kind: str = ""
+    rating: str | None = None
+    score: float | None = None
+    ale: float | None = None
+    compliance_pct: float | None = None
+    connectors: list = []
+    facets: list = []
+    recommendations: list = []
+    compliance_refs: list = []
+    summary: str = ""
+    days: int = 14
+
+
+def _fmt_money(n):
+    if n is None:
+        return "\u2014"
+    n = float(n)
+    if n >= 1e6:
+        return f"${n / 1e6:.2f}M"
+    if n >= 1e3:
+        return f"${round(n / 1e3)}k"
+    return f"${round(n)}"
+
+
+def _card_markdown(snap: dict) -> str:
+    lines = []
+    if snap.get("ref"):
+        lines.append(f"**Reference:** {snap['ref']}")
+    scoreline = []
+    if snap.get("rating"):
+        scoreline.append(f"{snap['rating']} risk")
+    if snap.get("score") is not None:
+        scoreline.append(f"score {snap['score']}/100")
+    if snap.get("ale") is not None:
+        scoreline.append(f"ALE {_fmt_money(snap['ale'])}")
+    if scoreline:
+        lines.append("**Risk & rating:** " + " \u00b7 ".join(scoreline))
+    if snap.get("compliance_refs"):
+        pct = f" ({snap['compliance_pct']}% area coverage)" if snap.get("compliance_pct") is not None else ""
+        lines.append(f"**Compliance alignment{pct}:** " + ", ".join(str(c) for c in snap["compliance_refs"]))
+    if snap.get("summary"):
+        lines.append("## AI strategic brief")
+        lines.append(snap["summary"])
+    if snap.get("facets"):
+        lines.append("## Details")
+        for f in snap["facets"]:
+            if isinstance(f, dict) and f.get("label"):
+                lines.append(f"- **{f.get('label')}:** {f.get('value', '—')}")
+    if snap.get("connectors"):
+        lines.append("## Connectors & data sources")
+        for c in snap["connectors"]:
+            if isinstance(c, dict):
+                extra = " \u00b7 ".join([str(x) for x in [c.get("detail"), c.get("status")] if x])
+                lines.append(f"- {c.get('name', '')}" + (f" ({extra})" if extra else ""))
+            else:
+                lines.append(f"- {c}")
+    if snap.get("recommendations"):
+        lines.append("## Recommendations & fixes")
+        for r in snap["recommendations"]:
+            lines.append(f"- {r}")
+    return "\n".join(lines)
+
+
+@agents_router.post("/runtime/card-share")
+async def create_card_share(body: CardShareBody, admin: dict = Depends(require_roles("admin"))):
+    import os, secrets
+    from datetime import datetime, timezone, timedelta
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}) or {}
+    snap = {
+        "title": body.title, "ref": body.ref, "kind": body.kind,
+        "rating": body.rating, "score": body.score, "ale": body.ale,
+        "compliance_pct": body.compliance_pct,
+        "connectors": body.connectors or [], "facets": body.facets or [],
+        "recommendations": body.recommendations or [], "compliance_refs": body.compliance_refs or [],
+        "summary": body.summary or "", "org_name": org.get("name") or "Organization",
+        "generated_at": _now(), "shared_by": admin["email"],
+    }
+    token = secrets.token_urlsafe(16)
+    days = max(1, min(90, int(body.days or 14)))
+    now = datetime.now(timezone.utc)
+    expires = (now + timedelta(days=days)).isoformat()
+    snap_hash = _canonical_snapshot_hash(snap)
+    await db.card_shares.insert_one({
+        "token": token, "org_id": admin["org_id"], "snapshot": snap, "snapshot_sha256": snap_hash,
+        "created_at": now.isoformat(), "created_by": admin["email"], "expires_at": expires,
+        "opens": 0, "downloads": 0})
+    await _log_audit(admin["org_id"], admin["email"], "agent.card_share",
+                     f"Detail card shared: {body.title} (expires {expires[:10]})")
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    return {"token": token, "url": f"{frontend}/card/{token}", "expires_at": expires, "days": days}
+
+
+@agents_router.get("/public/card-share/{token}")
+async def public_card_share(token: str, request: Request = None):
+    from datetime import datetime, timezone
+    doc = await db.card_shares.find_one({"token": token}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "This shared card link is invalid.")
+    if doc.get("expires_at") and datetime.now(timezone.utc).isoformat() > doc["expires_at"]:
+        raise HTTPException(410, "This shared card link has expired.")
+    sha = doc.get("snapshot_sha256") or _canonical_snapshot_hash(doc.get("snapshot") or {})
+    await db.card_shares.update_one({"token": token},
+        {"$inc": {"opens": 1}, "$set": {"last_opened_at": datetime.now(timezone.utc).isoformat()}})
+    return {"snapshot": doc["snapshot"], "created_at": doc.get("created_at"),
+            "created_by": doc.get("created_by"), "expires_at": doc.get("expires_at"), "snapshot_sha256": sha}
+
+
+@agents_router.get("/public/card-share/{token}/card.pdf")
+async def public_card_share_pdf(token: str, who: str = "", request: Request = None):
+    from datetime import datetime, timezone
+    from fastapi.responses import StreamingResponse
+    from reports import _build_pdf, _resolve_brand
+    import io, os as _os
+    from bson import ObjectId as _OID
+    doc = await db.card_shares.find_one({"token": token}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "This shared card link is invalid.")
+    if doc.get("expires_at") and datetime.now(timezone.utc).isoformat() > doc["expires_at"]:
+        raise HTTPException(410, "This shared card link has expired.")
+    snap = doc["snapshot"]
+    brand = None
+    try:
+        _org = await db.organizations.find_one({"_id": _OID(doc.get("org_id"))}) if doc.get("org_id") else None
+        brand = _resolve_brand(_org)
+    except Exception:
+        brand = None
+    md = _card_markdown(snap)
+    buf = _build_pdf(md, snap.get("title") or "Detail card evidence", cover=True,
+                     org_name=snap.get("org_name"), brand=brand,
+                     exec_summary=snap.get("summary") or None)
+    raw = buf.getvalue()
+    seal = doc.get("snapshot_sha256") or _canonical_snapshot_hash(snap)
+    try:
+        auditor = (who or "").strip()[:120] or "External auditor"
+        access = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        card_url = f"{_os.environ.get('FRONTEND_URL', '').rstrip('/')}/card/{token}"
+        raw = await _brand_watermark_pdf(raw, org_id=doc.get("org_id"), room_url=card_url,
+            subtext=f"Downloaded by {auditor} \u00b7 {access} \u00b7 link expires {(doc.get('expires_at') or '')[:10]}")
+        raw = _stamp_verified_seal(raw, seal)
+        await db.card_shares.update_one({"token": token},
+            {"$inc": {"downloads": 1},
+             "$set": {"last_downloaded_at": datetime.now(timezone.utc).isoformat(), "last_downloaded_by": auditor}})
+    except Exception:
+        pass
+    return StreamingResponse(io.BytesIO(raw), media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="obserra-detail-card.pdf"'})
+
+
 # ── Auditor notes — external auditors leave read-only questions on the public room ──
 class RoomCommentBody(BaseModel):
     author: str = ""

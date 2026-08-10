@@ -1,0 +1,27 @@
+{
+  "summary": "All 3 new features validated end-to-end (backend + frontend + public portal). (1) Incident Seed: /api/ai-incidents returns 2 open incidents (AII-001 Prompt-injection on IT Support Copilot / AGT-002, AII-002 Shadow AI on Unknown Marketing GPT) for the admin org. On the Executive Overview, overview-incident-AII-001 row opens the universal risk-detail-modal with deep-dive-connectors showing 'IT Support Copilot · affected system' and 'AGT-002 · agent'. (2) Assurance Row Deep Dive: /app/control-assurance ca-recent-0 is now a BUTTON. Clicking it opens risk-detail-modal titled 'Kill Replay Drill · IT Support Copilot' with all 6 sections (deep-dive-scores 'Low RISK · Score 12/100', deep-dive-connectors 'Agent runtime · signed webhook' + 'AGT-002 · target agent', deep-dive-facets Outcome/Suspend/Resume/Receipt/Trigger/Run at, deep-dive-recommendations, compliance alignment NIST AI RMF MANAGE + ISO 42001 + SOC 2). No crash. This fully addresses the low-priority integration bug from iter104. (3) Share Detail Card: card-share-btn visible for admin, click POSTs /api/agents/runtime/card-share and renders inline card-share-result with QR + card-share-url (/card/<token>) + card-share-copy + card-share-open. Public portal at /card/:token loads WITHOUT auth showing card-share, card-share-title, card-share-scores, card-share-connectors, card-share-recommendations, card-share-download (href → /api/agents/public/card-share/{token}/card.pdf, returns application/pdf starting with %PDF, watermarked + integrity-sealed SHA-256). Invalid tokens → 404. Unauthenticated POST → 401/403. 5/5 pytest tests pass.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter105_card_share_and_incidents.py",
+    "/app/test_reports/pytest/iter105.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "agents.py card-share POST uses FRONTEND_URL env var to build the /card/<token> URL. If FRONTEND_URL is unset the URL would be '/card/<token>' (missing origin). In this env it is set correctly and the returned URL matches REACT_APP_BACKEND_URL host. Consider falling back to request.headers.origin/host for defense-in-depth so the shared link is never broken.",
+    "public GET /public/card-share/{token} increments opens counter on every request — a bot / prefetch could inflate the count. Non-blocking, but worth throttling per IP if analytics matter.",
+    "_seed_incidents skips live_only orgs; the admin/owner org was pre-seeded directly (as noted). Endpoint remains idempotent for future non-live orgs — verified by only 2 incidents present.",
+    "PDF endpoint swallows watermark/seal exceptions with bare `except Exception: pass` and still returns the un-sealed PDF. Prefer logging so a silent breakage is observable."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "100% (5/5)", "frontend": "100% of new-feature paths" },
+  "test_credentials": "Admin: jblan2026@gmail.com / Obserra2026! (role=admin, org owner). Login testids: auth-email, auth-password, auth-submit.",
+  "seed_data_creation": "None additional. Backend test creates a card-share doc in db.card_shares per run (short-lived, 7d expiry, unique token) — no cleanup required. Existing seeded incidents AII-001/AII-002 already present in admin org.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter105 features (incident seed, ca-recent-* fire-drill deep dive, card-share admin flow, public /card/:token portal + PDF) are all live and verified. Backend regression pytest at /app/backend/tests/test_iter105_card_share_and_incidents.py — reads REACT_APP_BACKEND_URL from env OR /app/frontend/.env. To exercise the public portal: POST /api/agents/runtime/card-share (admin cookie) → open the returned url in a fresh incognito context — NO auth required. PDF check: response content-type must start with application/pdf AND body[:4] == b'%PDF'. Onboarding tour Skip loop is still needed on first login."
+}

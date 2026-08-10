@@ -1,4 +1,4 @@
-import { Ban, Bot, CheckCircle2, Database, KeyRound, PauseCircle, PlayCircle, ShieldCheck, ShieldOff, UserCheck, Wrench } from "lucide-react";
+import { Ban, Bot, CheckCircle2, Database, KeyRound, PauseCircle, PlayCircle, ShieldCheck, ShieldOff, Timer, UserCheck, Wrench } from "lucide-react";
 import { agentToxicity } from "@/lib/agenticToxicity";
 
 const RATING_FROM_SCORE = (score = 0) =>
@@ -155,5 +155,38 @@ export function incidentDeepDive(incident = {}) {
     explainTitle: `${incident.title || "AI incident"} response`,
     explainKind: "ai security incident response",
     explainContext: incident,
+  };
+}
+
+// Universal deep-dive for a Kill Replay fire-drill (Control Assurance recent rows) — same detail card.
+export function drillDeepDive(r = {}) {
+  const controlled = !!r.controlled;
+  return {
+    accent: "190 80% 50%",
+    refLabel: r.agent_ref || "FIRE-DRILL",
+    title: `Kill Replay Drill · ${r.agent_name || r.agent_ref || "Agent"}`,
+    rating: controlled ? "Low" : "Critical",
+    score: controlled ? 12 : 88,
+    connectors: [
+      { name: "Agent runtime", detail: r.signed ? "signed webhook" : "control-plane", status: controlled ? "ok" : "down" },
+      ...(r.agent_ref ? [{ name: r.agent_ref, detail: "target agent", status: controlled ? "ok" : "warn" }] : []),
+    ],
+    facets: [
+      { label: "Outcome", value: controlled ? "Control confirmed" : "Control NOT confirmed", icon: controlled ? ShieldCheck : Ban },
+      { label: "Suspend latency", value: r.suspend_ms != null ? `${r.suspend_ms}ms` : "—", icon: Timer },
+      { label: "Resume latency", value: r.resume_ms != null ? `${r.resume_ms}ms` : "—", icon: Timer },
+      { label: "Receipt", value: r.signed ? "Signed" : "Unsigned", icon: ShieldCheck },
+      { label: "Trigger", value: r.scheduled ? "Scheduled" : "Manual" },
+      { label: "Run at", value: r.at ? new Date(r.at).toLocaleString() : "—" },
+    ],
+    complianceRefs: ["NIST AI RMF MANAGE", "ISO 42001", "SOC 2"],
+    recommendedActions: controlled
+      ? ["Control confirmed — keep the scheduled fire-drill cadence to maintain your proof-of-control streak.",
+         "Export the Control Assurance report to attach this timed, signed receipt to the board pack."]
+      : ["Control was NOT confirmed — verify the agent-runtime webhook is reachable and the signing secret matches.",
+         "Re-run the fire-drill after fixing the runtime connector, then confirm the receipt is signed."],
+    explainTitle: `Kill replay drill for ${r.agent_name || r.agent_ref || "agent"}`,
+    explainKind: "kill switch fire drill proof of control runtime enforcement latency",
+    explainContext: r,
   };
 }

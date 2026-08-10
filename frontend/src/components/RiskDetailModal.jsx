@@ -1,6 +1,8 @@
 import { useState } from "react";
-import { X, Loader2, Wrench, ShieldX, Users, CheckCircle2, XCircle, Clock, Terminal, ShieldCheck, ListPlus, Plug } from "lucide-react";
+import { X, Loader2, Wrench, ShieldX, Users, CheckCircle2, XCircle, Clock, Terminal, ShieldCheck, ListPlus, Plug, Share2, Copy, Check, ExternalLink } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import { AIExplain } from "@/components/AIExplain";
+import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -176,6 +178,85 @@ function StandardActions({ actions, accent }) {
   );
 }
 
+// One-click: mint an expiring, watermarked, read-only auditor link for THIS detail card (admin only).
+// The public portal + signed PDF carry the card's risk/rating, connectors, recommendations and compliance,
+// stamped with a "Verified by Obserra" integrity seal. Turns any card into board-ready evidence on the spot.
+function ShareCardButton({ item, accent }) {
+  const { user } = useAuth();
+  const [state, setState] = useState("idle");
+  const [link, setLink] = useState(null);
+  const [copied, setCopied] = useState(false);
+  if (user?.role !== "admin") return null;
+
+  const share = async () => {
+    setState("sharing");
+    try {
+      const facets = (item.facets || []).map((f) => ({ label: f.label, value: f.value == null ? "" : String(f.value) }));
+      const { data } = await api.post("/agents/runtime/card-share", {
+        title: item.title || "Detail card",
+        ref: item.refLabel || "",
+        kind: item.explainKind || "deep-dive",
+        rating: item.rating || null,
+        score: item.score ?? null,
+        ale: item.ale ?? null,
+        compliance_pct: item.compliancePct ?? null,
+        connectors: deriveConnectors(item),
+        facets,
+        recommendations: item.recommendedActions || [],
+        compliance_refs: item.complianceRefs || [],
+        days: 14,
+      });
+      setLink(data);
+      setState("done");
+      try { await navigator.clipboard.writeText(data.url); setCopied(true); } catch { /* clipboard blocked */ }
+      toast.success("Shareable auditor link created — copied to clipboard");
+    } catch (e) {
+      setState("idle");
+      toast.error(e?.response?.data?.detail || "Could not create share link");
+    }
+  };
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(link.url); setCopied(true); toast.success("Link copied"); } catch { /* blocked */ }
+  };
+
+  if (link) {
+    return (
+      <div data-testid="card-share-result" className="w-full rounded-xl border p-3 space-y-2"
+        style={{ borderColor: `hsl(${accent} / 0.4)`, background: `hsl(${accent} / 0.06)` }}>
+        <div className="flex items-center gap-2 text-[10px] font-mono uppercase tracking-wider" style={{ color: `hsl(${accent})` }}>
+          <Share2 className="w-3.5 h-3.5" /> Shareable auditor link · expires {new Date(link.expires_at).toLocaleDateString()}
+        </div>
+        <div className="flex items-start gap-3">
+          <div className="bg-white p-1.5 rounded-md shrink-0"><QRCodeSVG value={link.url} size={72} level="M" /></div>
+          <div className="min-w-0 flex-1 space-y-2">
+            <div data-testid="card-share-url" className="text-[11px] font-mono break-all bg-secondary/50 rounded-md px-2 py-1.5">{link.url}</div>
+            <div className="flex flex-wrap gap-2">
+              <button data-testid="card-share-copy" onClick={copy}
+                className="inline-flex items-center gap-1.5 text-[11px] font-head font-bold px-2.5 py-1.5 rounded-md border"
+                style={{ borderColor: `hsl(${accent} / 0.5)`, color: `hsl(${accent})` }}>
+                {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />} {copied ? "Copied" : "Copy link"}
+              </button>
+              <a data-testid="card-share-open" href={link.url} target="_blank" rel="noreferrer"
+                className="inline-flex items-center gap-1.5 text-[11px] font-head font-bold px-2.5 py-1.5 rounded-md border border-border text-foreground">
+                <ExternalLink className="w-3.5 h-3.5" /> Open
+              </a>
+            </div>
+          </div>
+        </div>
+        <p className="text-[10px] text-muted-foreground">Read-only, expiring, watermarked with the downloader's name + a "Verified by Obserra" integrity seal. No login needed.</p>
+      </div>
+    );
+  }
+
+  return (
+    <button data-testid="card-share-btn" disabled={state !== "idle"} onClick={share}
+      className="flex items-center gap-1.5 text-xs font-head font-bold px-3 py-2 rounded-lg border disabled:opacity-70 transition-colors"
+      style={{ borderColor: `hsl(${accent} / 0.5)`, color: `hsl(${accent})` }}>
+      {state === "sharing" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Share2 className="w-3.5 h-3.5" />} Share this card
+    </button>
+  );
+}
+
 // Standardized universal Deep-Dive panel — Risk Score & Rating (FAIR), AI Strategic Brief,
 // Recommended Actions, and an Integrated Action Hub whose buttons dispatch REAL remediations
 // and surface the honest outcome inline. Reused across every engine-backed surface.
@@ -284,8 +365,11 @@ export function RiskDetailModal({ item, accent = "255 85% 66%", busy, result, on
           </div>
         )}
 
-        {/* Add any card to the tracked remediation plan */}
-        <div className="pt-1"><AddToPlanButton key={`${item.refLabel || ""}|${item.title || ""}`} item={item} accent={accent} /></div>
+        {/* Add any card to the tracked remediation plan · Share this card as an expiring auditor link */}
+        <div className="pt-1 flex flex-wrap gap-2 items-center">
+          <AddToPlanButton key={`${item.refLabel || ""}|${item.title || ""}`} item={item} accent={accent} />
+          <ShareCardButton item={item} accent={accent} />
+        </div>
 
         {/* Standard executable actions (agent Suspend/Kill/Resume, AI-system Sanction/Block) */}
         {item.executableActions?.length > 0 && <StandardActions actions={item.executableActions} accent={accent} />}

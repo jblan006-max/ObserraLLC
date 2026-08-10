@@ -1,6 +1,13 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — 3-feature build: incident seed + fire-drill deep dive + Share Card (iteration_105, backend 5/5 + frontend 100%)
+User-approved batch, all live/no-mock:
+- **Incident Seed**: `INCIDENT_SEED` + idempotent `_seed_incidents(org_id)` (skips `live_only` orgs) called in `GET /api/ai-incidents`. Two SNAPSHOT-tagged OPEN incidents (AII-001 prompt-injection on AGT-002, AII-002 shadow-AI PII) so the Executive Overview "Open AI incidents" panel is populated and the incident detail card is demoable. The owner org is `live_only=True`, so it was seeded directly once; the endpoint guard remains for future non-live orgs.
+- **Assurance Row Deep Dive**: `drillDeepDive(r)` in `agenticDeepDive.js`; `ControlAssurance.jsx` `ca-recent-<i>` rows are now buttons that open the SAME universal `RiskDetailModal` — title "Kill Replay Drill · <agent>", live rating/score, connectors (Agent runtime signed-webhook + target agent), latency/receipt facets, recommendations. Closes the optional polish flagged in iteration_104.
+- **Share Detail Card**: admin-gated `ShareCardButton` in `RiskDetailModal` → `POST /api/agents/runtime/card-share` mints an expiring, watermarked, read-only auditor link (QR + copy + open, inline). New public portal `CardShare.jsx` at route `/card/:token` (no login) + `GET /api/agents/public/card-share/{token}` and `.../card.pdf` (branded, `_brand_watermark_pdf` + `_stamp_verified_seal` SHA-256). Stored in `db.card_shares`. Backend regression: `/app/backend/tests/test_iter105_card_share_and_incidents.py` (5/5).
+
+
 ## Status (Jun 2026) — P0 fix: Deep Dive detail card crash (iteration_104, frontend 100%)
 The app-wide "Action Detail Card" (`RiskDetailModal`, mounted once via `DeepDiveContext`) was crashing with a ReferenceError because the prior unification edit referenced `deriveConnectors()` and `CONN_TONE` without ever defining them. Defined both at the top of `RiskDetailModal.jsx`: `CONN_TONE` (status→HSL: ok/healthy=green, warn/action-capable/degraded=amber, down/unavailable=red, unknown=grey) and `deriveConnectors(item)` (prefers `item.connectors`, else derives from provider/sources/tools/resources so EVERY detail card shows a "Connectors & data sources" section). testing_agent iteration_104: modal opens with no ReferenceError across AI Executive Overview, Mission Control, and Agent Inventory; all 6 required sections render (Risk+Rating score, Connectors w/ live health colors, AI Strategic Brief, Recommendations & fixes, facets, compliance alignment); zero console errors. Open OPTIONAL polish only: `ca-recent-*` rows on Control Assurance are non-interactive; no `overview-incident-*` seed present to exercise the incident row path (modal is source-agnostic so path is covered).
 

@@ -263,8 +263,32 @@ async def discover_shadow_ai(admin: dict = Depends(require_roles("admin"))):
     return {"ok": True, "added": added, "shadow_total": total_shadow, "sources": sources}
 
 
+# Demo AI incidents (SNAPSHOT) — auto-seeded so every dashboard shows an open incident + detail card
+# until a live incident feed is wired. Mirrors the idempotent agent seed; skipped for live_only orgs.
+INCIDENT_SEED = [
+    {"ref": "AII-001", "title": "Prompt-injection attempt on IT Support Copilot",
+     "severity": "High", "system": "IT Support Copilot", "agent_ref": "AGT-002",
+     "status": "Investigating", "mode": "warn", "confidence": 0.8, "demo_label": "SNAPSHOT"},
+    {"ref": "AII-002", "title": "Shadow AI tool detected processing customer PII",
+     "severity": "Critical", "system": "Unknown Marketing GPT",
+     "status": "Contained", "mode": "block", "confidence": 0.72, "demo_label": "SNAPSHOT"},
+]
+
+
+async def _seed_incidents(org_id):
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"live_only": 1})
+    if org and org.get("live_only"):
+        return
+    if await db.ai_incidents.count_documents({"org_id": org_id}) == 0:
+        now = datetime.now(timezone.utc)
+        docs = [{**inc, "org_id": org_id, "opened": (now - timedelta(days=i + 1)).isoformat()}
+                for i, inc in enumerate(INCIDENT_SEED)]
+        await db.ai_incidents.insert_many(docs)
+
+
 @api.get("/ai-incidents")
 async def list_incidents(user: dict = Depends(get_current_user)):
+    await _seed_incidents(user["org_id"])
     return await db.ai_incidents.find({"org_id": user["org_id"]}, {"_id": 0}).sort("opened", -1).to_list(500)
 
 

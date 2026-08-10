@@ -55,6 +55,7 @@ const PaymentSuccess = lazyWithRetry(() => import("@/pages/PaymentSuccess"));
 const QRApprove = lazyWithRetry(() => import("@/pages/QRApprove"));
 const ShareDigest = lazyWithRetry(() => import("@/pages/ShareDigest"));
 const AuditRoom = lazyWithRetry(() => import("@/pages/AuditRoom"));
+const CardShare = lazyWithRetry(() => import("@/pages/CardShare"));
 
 function PageLoader() {
   return (
@@ -88,6 +89,7 @@ function AppRoutes() {
         <Route path="/qr-approve/:token" element={<QRApprove />} />
         <Route path="/share/digest/:token" element={<ShareDigest />} />
         <Route path="/audit-room/:token" element={<AuditRoom />} />
+        <Route path="/card/:token" element={<CardShare />} />
         <Route path="/payment/success" element={<Gate><PaymentSuccess /></Gate>} />
         <Route path="/app" element={<Gate><AppShell /></Gate>}>
           <Route index element={<AIExecutiveOverview />} />
