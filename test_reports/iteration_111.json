@@ -1,0 +1,32 @@
+{
+  "summary": "Iter111: Tested Access Alert Rules (trusted_countries), Custody Map in Auditor Room PDF, and Org-Wide Access Globe. All 7 backend pytest cases passed (globe shape+auth, governance GET/PUT trim+dedupe/clear, PDF with & without geo). Frontend: Control Assurance Access Globe (ca-access-globe, access-log-map, ca-globe-refresh) renders KPIs (112 total, 82 opens, 30 downloads, 2 countries) and pins; Refresh works. Agentic AI Security -> Defensibility -> Governance settings: gov-trusted-countries input accepts 'United States, Canada', gov-save fires 'Governance settings saved' toast, value persists after reload. Trusted_countries reset to [] at end.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Agentic AI Security > Defensibility (KillReplayDrillCard fire-drill select)", "issues": ["React hydration warning: <span> rendered as child of <option> for the fire-drill agent picker (dynamic wrapping). Pre-existing, non-blocking, but noisy in console."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter111_access_globe_governance.py",
+    "/app/test_reports/pytest/iter111.xml"
+  ],
+  "action_items": [
+    "Optional: address the <span> inside <option> hydration warning in DefensibilityDashboard fire-drill select (line ~579) — not caused by this batch but visible on the same screen."
+  ],
+  "critical_code_review_comments": [
+    "access-globe endpoint correctly returns aggregated points with lat/lon and kind, admin-gated (401 without cookie).",
+    "governance-settings PUT correctly trims whitespace, drops empty strings, and dedupes case-sensitively, preserving order.",
+    "public evidence-room PDF appends 'Where this evidence was accessed' page only when geo rows exist; no-geo room still returns a valid PDF."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter111_access_globe_governance.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin/owner)",
+  "seed_data_creation": "None. trusted_countries mutated during test but reset to [] via UI at end (baseline preserved).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter111 batch (Access Alert Rules trusted_countries + Custody Map in evidence-room PDF + Control Assurance Access Globe) verified end-to-end backend+frontend. Use pytest file test_iter111_access_globe_governance.py as regression. Geo-enabled evidence room token RhtjoHWa_8YAwjqWg3ydEA embeds the custody-map caption; no-geo token UxKT1G2IqUBEeHpZGvfjew returns valid PDF without map page."
+}

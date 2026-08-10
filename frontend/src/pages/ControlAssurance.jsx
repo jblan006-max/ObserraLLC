@@ -5,8 +5,9 @@ import { Panel } from "@/components/agentic-ai/shared";
 import { useDeepDive } from "@/context/DeepDiveContext";
 import { drillDeepDive } from "@/lib/agenticDeepDive";
 import { toast } from "sonner";
-import { Gauge, ShieldCheck, XCircle, Timer, Flame, RefreshCw, Loader2, TrendingUp, FileDown, AlertTriangle } from "lucide-react";
+import { Gauge, ShieldCheck, XCircle, Timer, Flame, RefreshCw, Loader2, TrendingUp, FileDown, AlertTriangle, Globe } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, Cell } from "recharts";
+import { WorldMapThumb } from "@/components/agentic-ai/WorldMapThumb";
 
 const fmtDTT = (s) => (s ? new Date(s).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—");
 const rateColor = (r) => (r == null ? "hsl(var(--muted-foreground))" : r >= 90 ? "hsl(142 70% 45%)" : r >= 60 ? "hsl(35 90% 55%)" : "hsl(0 84% 60%)");
@@ -21,6 +22,49 @@ function Tile({ label, value, sub, iconClass, Icon }) {
       <div className="font-head font-black text-3xl mt-1">{value}</div>
       {sub && <div className="text-xs text-muted-foreground mt-0.5">{sub}</div>}
     </div>
+  );
+}
+
+function AccessGlobe() {
+  const [g, setG] = useState(null);
+  const [busy, setBusy] = useState(true);
+  const loadG = () => {
+    setBusy(true);
+    api.get("/agents/runtime/access-globe").then(({ data }) => setG(data)).catch(() => {}).finally(() => setBusy(false));
+  };
+  useEffect(() => { loadG(); }, []);
+  const points = g?.points || [];
+  return (
+    <Panel title="Evidence access globe" subtitle="Every place your shared detail-cards and auditor rooms have been opened or downloaded — geo-located live from the chain-of-custody ledger."
+      testid="ca-access-globe"
+      actions={<button data-testid="ca-globe-refresh" onClick={loadG} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border text-xs font-head font-bold hover:bg-secondary transition-colors disabled:opacity-50">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Refresh</button>}>
+      {busy && !g ? (
+        <div className="py-10 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-ai" /></div>
+      ) : points.length === 0 ? (
+        <div className="py-8 text-center" data-testid="ca-globe-empty">
+          <Globe className="w-9 h-9 text-muted-foreground mx-auto" />
+          <p className="text-sm text-muted-foreground mt-3 max-w-md mx-auto">No geo-located evidence access yet. Once an auditor opens a shared card or evidence room from a public network, it plots here — with location, device and anomaly context.</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <Tile label="Total accesses" value={g.total} sub={`${g.opens} opens · ${g.downloads} downloads`} Icon={Globe} iconClass="text-ai" />
+            <Tile label="Located" value={g.located} sub="geo-pinned events" Icon={ShieldCheck} iconClass="text-low" />
+            <Tile label="Countries" value={(g.countries || []).length} sub={(g.countries || []).slice(0, 3).join(", ") || "—"} Icon={Gauge} iconClass="text-high" />
+            <Tile label="Sources" value={`${g.cards + g.rooms}`} sub={`${g.cards} card · ${g.rooms} room`} Icon={Flame} iconClass="text-crit" />
+          </div>
+          <div className="flex justify-center rounded-xl border border-border bg-[#0a1120] p-3">
+            <WorldMapThumb points={points} width={720} height={360} />
+          </div>
+          <div className="flex flex-wrap items-center gap-4 text-[11px] text-muted-foreground">
+            <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: "hsl(142 70% 50%)" }} /> open</span>
+            <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: "hsl(190 90% 55%)" }} /> download</span>
+            <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: "hsl(0 84% 62%)" }} /> anomaly</span>
+            <span className="ml-auto">Dot size scales with the number of accesses at each location.</span>
+          </div>
+        </div>
+      )}
+    </Panel>
   );
 }
 
@@ -77,6 +121,8 @@ export default function ControlAssurance() {
           </button>
         </div>
       </div>
+
+      <AccessGlobe />
 
       {loading && !d ? (
         <div className="py-24 flex justify-center"><Loader2 className="w-7 h-7 animate-spin text-ai" /></div>

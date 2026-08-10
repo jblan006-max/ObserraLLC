@@ -310,8 +310,9 @@ function GovernanceSettingsCard() {
   const [s, setS] = useState(null);
   const [recips, setRecips] = useState("");
   const [oncall, setOncall] = useState("");
+  const [trusted, setTrusted] = useState("");
   const [saving, setSaving] = useState(false);
-  useEffect(() => { api.get("/agents/runtime/governance-settings").then(({ data }) => { setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); }).catch(() => {}); }, []);
+  useEffect(() => { api.get("/agents/runtime/governance-settings").then(({ data }) => { setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); setTrusted((data.trusted_countries || []).join(", ")); }).catch(() => {}); }, []);
   if (!s) return null;
   const sbp = s.auditor_question_sla_by_priority || {};
   const setSbp = (k, v) => setS({ ...s, auditor_question_sla_by_priority: { ...sbp, [k]: v } });
@@ -331,8 +332,9 @@ function GovernanceSettingsCard() {
         auditor_question_escalation_multiplier: Number(s.auditor_question_escalation_multiplier) || 2,
         auditor_oncall_rotation: oncall.split(",").map((x) => x.trim()).filter(Boolean),
         card_engagement_cadence: s.card_engagement_cadence || "instant",
+        trusted_countries: trusted.split(",").map((x) => x.trim()).filter(Boolean),
       });
-      setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); toast.success("Governance settings saved");
+      setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); setTrusted((data.trusted_countries || []).join(", ")); toast.success("Governance settings saved");
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed."); }
     finally { setSaving(false); }
   };
@@ -366,6 +368,7 @@ function GovernanceSettingsCard() {
             <option value="off">Off — no engagement notifications</option>
           </select>
         </label>
+        <label className="block md:col-span-2"><span className={lbl}>Trusted access countries (comma-separated — opens from these won't raise a "new country" anomaly)</span><input data-testid="gov-trusted-countries" value={trusted} onChange={(e) => setTrusted(e.target.value)} placeholder="United States, United Kingdom, Canada" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Match the country names shown in your access logs. New-device alerts still fire from any location.</span></label>
       </div>
     </Panel>
   );

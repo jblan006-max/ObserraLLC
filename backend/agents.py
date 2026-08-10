@@ -1034,6 +1034,11 @@ async def public_evidence_room_pdf(token: str, who: str = "", request: Request =
                      exec_summary=f"{c.get('agents', 0)} governed agents, {c.get('toxic', 0)} toxic; "
                                   f"{c.get('events', 0)} runtime enforcement actions with verifiable receipts.")
     raw = buf.getvalue()
+    try:
+        _rows = await _room_access_geo(token, doc.get("org_id"))
+        raw = _append_custody_map_page(raw, _rows)
+    except Exception:
+        pass
     seal = doc.get("snapshot_sha256") or _canonical_snapshot_hash(snap)
     # Tamper-evident provenance watermark — org logo + QR back to the live room + downloader stamp.
     try:
@@ -1419,6 +1424,9 @@ async def _card_access_enriched(token, org_id):
     d = await db.card_shares.find_one({"token": token, "org_id": org_id}, {"_id": 0})
     if not d:
         return None, []
+    from bson import ObjectId as _OID
+    _org = await db.organizations.find_one({"_id": _OID(org_id)}, {"trusted_countries": 1}) if org_id else None
+    _trusted = {(c or "").strip().lower() for c in ((_org or {}).get("trusted_countries") or [])}
     rows = await db.card_share_access.find(
         {"token": token, "org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(500)
     need = sorted({r.get("ip") for r in rows if r.get("ip") and r.get("geo_lat") is None})
@@ -1442,7 +1450,7 @@ async def _card_access_enriched(token, org_id):
         device = r.get("device") or ""
         reasons = []
         if country:
-            if seen_c and country not in seen_c:
+            if seen_c and country not in seen_c and country.strip().lower() not in _trusted:
                 reasons.append("new country")
             seen_c.add(country)
         if device:
@@ -1511,6 +1519,48 @@ def _render_world_png(rows, width=1000, height=500):
     return out.getvalue()
 
 
+async def _room_access_geo(token, org_id):
+    """Evidence-room access rows enriched with best-effort geo lat/lon (cached back) for the custody map."""
+    rows = await db.evidence_room_access.find(
+        {"token": token, "org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(500)
+    need = sorted({r.get("ip") for r in rows if r.get("ip") and r.get("geo_lat") is None})
+    geo_map = await _geo_lookup_many(need) if need else {}
+    for r in rows:
+        g = geo_map.get(r.get("ip"))
+        if g and r.get("geo_lat") is None:
+            r["geo"] = r.get("geo") or g.get("loc") or ""
+            r["geo_lat"] = g.get("lat")
+            r["geo_lon"] = g.get("lon")
+            try:
+                await db.evidence_room_access.update_one(
+                    {"token": token, "org_id": org_id, "ip": r["ip"], "at": r["at"]},
+                    {"$set": {"geo": r["geo"], "geo_lat": r["geo_lat"], "geo_lon": r["geo_lon"]}})
+            except Exception:
+                pass
+    return rows
+
+
+def _append_custody_map_page(raw, rows, title="Where this evidence was accessed"):
+    """Append a dark equirectangular world-map custody page (heat-sized dots) to a PDF when geo rows exist."""
+    try:
+        if any(isinstance(r.get("geo_lat"), (int, float)) for r in rows):
+            import pymupdf
+            png = _render_world_png(rows)
+            pdfdoc = pymupdf.open(stream=raw, filetype="pdf")
+            page = pdfdoc.new_page(width=612, height=430)
+            page.insert_text((40, 46), title, fontsize=13, color=(0.06, 0.12, 0.24))
+            page.insert_image(pymupdf.Rect(40, 64, 572, 330), stream=png)
+            page.insert_text((40, 350),
+                             f"{len(_map_clusters(rows))} location(s) \u00b7 dot size = number of accesses \u00b7 "
+                             f"green = open \u00b7 cyan = download \u00b7 red = anomaly",
+                             fontsize=8, color=(0.4, 0.45, 0.5))
+            raw = pdfdoc.tobytes()
+            pdfdoc.close()
+    except Exception:
+        pass
+    return raw
+
+
 async def _card_anomaly_autocheck(token, org_id, ip, ua, kind, who=None):
     """Immediately alert org staff when THIS access is from a new country/device vs the card's history.
     Fires regardless of engagement cadence (unless cadence == 'off'). Best-effort; dedup per token+ip+kind."""
@@ -1542,14 +1592,15 @@ async def _card_anomaly_autocheck(token, org_id, ip, ua, kind, who=None):
             dv = _parse_ua(r.get("ua") or "")
             if dv:
                 seen_dev.add(dv)
+        org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"card_engagement_cadence": 1, "trusted_countries": 1}) if org_id else None
+        trusted = {(c or "").strip().lower() for c in ((org or {}).get("trusted_countries") or [])}
         reasons = []
-        if country and seen_c and country not in seen_c:
+        if country and seen_c and country not in seen_c and country.strip().lower() not in trusted:
             reasons.append("new country")
         if device and seen_dev and device not in seen_dev:
             reasons.append("new device")
         if not reasons:
             return
-        org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"card_engagement_cadence": 1}) if org_id else None
         if ((org or {}).get("card_engagement_cadence") or "instant") == "off":
             return
         doc = await db.card_shares.find_one({"token": token}, {"_id": 0, "snapshot": 1})
@@ -2186,6 +2237,7 @@ class GovSettingsBody(BaseModel):
     control_assurance_sla_enabled: bool | None = None
     control_assurance_sla_min: int | None = None
     card_engagement_cadence: str | None = None
+    trusted_countries: list[str] | None = None
 
 
 @agents_router.get("/runtime/governance-settings")
@@ -2207,7 +2259,8 @@ async def get_governance_settings(admin: dict = Depends(require_roles("admin")))
             "fire_drill_agent_ref": org.get("fire_drill_agent_ref") or "",
             "control_assurance_sla_enabled": bool(org.get("control_assurance_sla_enabled", False)),
             "control_assurance_sla_min": int(org.get("control_assurance_sla_min") or 90),
-            "card_engagement_cadence": org.get("card_engagement_cadence") or "instant"}
+            "card_engagement_cadence": org.get("card_engagement_cadence") or "instant",
+            "trusted_countries": org.get("trusted_countries") or []}
 
 
 @agents_router.put("/runtime/governance-settings")
@@ -2253,6 +2306,13 @@ async def set_governance_settings(body: GovSettingsBody, admin: dict = Depends(r
         upd["control_assurance_sla_min"] = max(1, min(100, int(body.control_assurance_sla_min)))
     if body.card_engagement_cadence is not None:
         upd["card_engagement_cadence"] = body.card_engagement_cadence if body.card_engagement_cadence in ("off", "weekly", "instant") else "instant"
+    if body.trusted_countries is not None:
+        seen = []
+        for cty in body.trusted_countries:
+            cty = (cty or "").strip()
+            if cty and cty not in seen:
+                seen.append(cty)
+        upd["trusted_countries"] = seen[:60]
     if upd:
         await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": upd})
     await _log_audit(admin["org_id"], admin["email"], "agent.governance_settings", "Updated AI governance settings")
@@ -2292,6 +2352,48 @@ async def evidence_room_access_log(token: str, admin: dict = Depends(require_rol
         {"token": token, "org_id": admin["org_id"]}, {"_id": 0}).sort("at", -1).to_list(500)
     return {"opens": room.get("opens", 0), "downloads": room.get("downloads", 0),
             "last_downloaded_by": room.get("last_downloaded_by"), "access": rows}
+
+
+@agents_router.get("/runtime/access-globe")
+async def access_globe(admin: dict = Depends(require_roles("admin"))):
+    """Org-wide evidence-access globe — every shared detail-card and auditor-room open/download,
+    geo-located (best-effort, cached back) and returned as map points for the Control Assurance dashboard."""
+    org_id = admin["org_id"]
+    card_rows = await db.card_share_access.find({"org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(2000)
+    room_rows = await db.evidence_room_access.find({"org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(2000)
+    need = sorted({r.get("ip") for r in (card_rows + room_rows)
+                   if r.get("ip") and r.get("geo_lat") is None})
+    geo_map = await _geo_lookup_many(need) if need else {}
+
+    async def _cache(rows, coll):
+        for r in rows:
+            g = geo_map.get(r.get("ip"))
+            if g and r.get("geo_lat") is None:
+                r["geo"] = r.get("geo") or g.get("loc") or ""
+                r["geo_lat"] = g.get("lat")
+                r["geo_lon"] = g.get("lon")
+                try:
+                    await coll.update_one(
+                        {"token": r.get("token"), "org_id": org_id, "ip": r["ip"], "at": r["at"]},
+                        {"$set": {"geo": r["geo"], "geo_lat": r["geo_lat"], "geo_lon": r["geo_lon"]}})
+                except Exception:
+                    pass
+    await _cache(card_rows, db.card_share_access)
+    await _cache(room_rows, db.evidence_room_access)
+    points, countries = [], set()
+    for r in (card_rows + room_rows):
+        lat, lon = r.get("geo_lat"), r.get("geo_lon")
+        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+            points.append({"lat": lat, "lon": lon, "kind": r.get("kind") or "open",
+                           "anomaly": bool(r.get("anomaly")), "label": r.get("geo") or ""})
+            if r.get("geo"):
+                countries.add(r["geo"].split(",")[-1].strip())
+    all_rows = card_rows + room_rows
+    return {"points": points, "total": len(all_rows),
+            "opens": sum(1 for r in all_rows if r.get("kind") == "open"),
+            "downloads": sum(1 for r in all_rows if r.get("kind") == "download"),
+            "located": len(points), "countries": sorted(c for c in countries if c),
+            "cards": len(card_rows), "rooms": len(room_rows)}
 
 
 @agents_router.get("/runtime/webhook/playbooks")
