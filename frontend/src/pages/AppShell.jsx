@@ -30,6 +30,7 @@ const ROUTE_ACCENT = [
   ["/app/access-requests", "142 70% 45%"],
   ["/app/certifications", "38 92% 55%"],
   ["/app/roles", "280 80% 66%"],
+  ["/app/agentic-ai-security", "330 81% 60%"],
   ["/app/systems", "210 92% 62%"],
   ["/app/audit", "35 90% 55%"],
   ["/app/team", "200 85% 56%"],
@@ -81,6 +82,9 @@ const NAV_SECTIONS = [
     { to: "/app/certifications", label: "Certifications", icon: ShieldCheck },
     { to: "/app/roles", label: "Role Intelligence", icon: Layers },
     { to: "/app/workflow", label: "Workflow Activity", icon: Network },
+  ]},
+  { section: "AI Security", cat: true, color: "ai", items: [
+    { to: "/app/agentic-ai-security", label: "Agentic AI Security", icon: Bot },
   ]},
   { section: "Sources", cat: true, color: "primary", items: [
     { to: "/app/systems", label: "Connector Health", icon: Plug },
