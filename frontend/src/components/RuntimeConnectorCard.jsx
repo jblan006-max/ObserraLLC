@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2, Plug, Save, Zap } from "lucide-react";
+import { CheckCircle2, FlaskConical, Loader2, Plug, Power, Save, Trash2, XCircle, Zap } from "lucide-react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -14,13 +14,14 @@ export function RuntimeConnectorCard() {
   const [secret, setSecret] = useState("");
   const [secretSet, setSecretSet] = useState(false);
   const [secretDirty, setSecretDirty] = useState(false);
+  const [sim, setSim] = useState(null);
+  const [simBusy, setSimBusy] = useState(false);
 
-  useEffect(() => {
-    api.get("/agents/runtime/webhook")
-      .then(({ data }) => { setUrl(data.webhook || ""); setConnected(!!data.webhook); setSecretSet(!!data.secret_set); })
-      .catch(() => {})
-      .finally(() => setLoading(false));
-  }, []);
+  const loadWebhook = () => api.get("/agents/runtime/webhook")
+    .then(({ data }) => { setUrl(data.webhook || ""); setConnected(!!data.webhook); setSecretSet(!!data.secret_set); })
+    .catch(() => {});
+  const loadSim = () => api.get("/agents/runtime/simulator").then(({ data }) => setSim(data)).catch(() => {});
+  useEffect(() => { loadWebhook().finally(() => setLoading(false)); loadSim(); }, []);
 
   const save = async () => {
     setSaving(true);
@@ -45,6 +46,7 @@ export function RuntimeConnectorCard() {
     try {
       const { data } = await api.post("/agents/runtime/webhook/test");
       setTestResult(data);
+      loadSim();
       if (data.ok) toast.success(`Runtime received the test event — HTTP ${data.status_code} · ${data.latency_ms}ms`);
       else toast.error(data.status_code ? `Runtime responded HTTP ${data.status_code}` : `No response: ${data.error || "unreachable"}`);
     } catch (e) {
@@ -52,6 +54,23 @@ export function RuntimeConnectorCard() {
     } finally {
       setTesting(false);
     }
+  };
+
+  const toggleSim = async (on) => {
+    setSimBusy(true);
+    try {
+      const { data } = await api.post(`/agents/runtime/simulator/${on ? "enable" : "disable"}`);
+      setSim(data);
+      await loadWebhook();
+      toast.success(on
+        ? "Live enforcement simulator enabled — enforcement now round-trips through a signed webhook."
+        : "Simulator disabled.");
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not toggle the simulator."); }
+    finally { setSimBusy(false); }
+  };
+  const clearSim = async () => {
+    try { const { data } = await api.post("/agents/runtime/simulator/clear"); setSim(data); toast.success("Simulator inbox cleared."); }
+    catch { toast.error("Clear failed."); }
   };
 
   if (loading) return null;
@@ -126,6 +145,60 @@ export function RuntimeConnectorCard() {
             : testResult.status_code
               ? `✗ Runtime responded HTTP ${testResult.status_code} · ${testResult.latency_ms}ms`
               : `✗ No response — ${testResult.error || "unreachable"} · ${testResult.latency_ms}ms`}
+        </div>
+      )}
+
+      {sim && (
+        <div className="rounded-lg border border-ai/25 bg-ai/[0.03] p-4 space-y-3" data-testid="runtime-simulator">
+          <div className="flex items-center gap-2 flex-wrap">
+            <FlaskConical className="w-4 h-4 text-ai" />
+            <span className="font-head font-bold text-sm">Live Enforcement Simulator</span>
+            <span data-testid="simulator-status" className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${sim.active ? "bg-low/10 text-low border-low/25" : "bg-secondary/60 text-muted-foreground border-border"}`}>
+              {sim.active ? "Active" : "Off"}
+            </span>
+            <button
+              data-testid="simulator-toggle"
+              disabled={simBusy}
+              onClick={() => toggleSim(!sim.enabled)}
+              className={`ml-auto inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-head font-bold disabled:opacity-50 transition-colors ${sim.enabled ? "border border-crit/30 text-crit hover:bg-crit/10" : "bg-ai text-white hover:bg-ai/90"}`}
+            >
+              {simBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Power className="w-3.5 h-3.5" />}
+              {sim.enabled ? "Disable simulator" : "Enable simulator"}
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            No agent runtime yet? Enable Obserra's built-in receiver to prove the full enforcement path end-to-end. Every
+            Suspend / Kill / Resume is POSTed to a first-party HTTPS endpoint over the real ingress, HMAC-signed, and the
+            receipt is verified below — no customer runtime required.
+          </p>
+          {sim.enabled && (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-md bg-secondary/40 p-2.5"><div className="text-[10px] font-mono uppercase text-muted-foreground">Events received</div><div className="font-head font-black text-xl" data-testid="simulator-received">{sim.received}</div></div>
+                <div className="rounded-md bg-secondary/40 p-2.5"><div className="text-[10px] font-mono uppercase text-muted-foreground">Signature verified</div><div className="font-head font-black text-xl text-low" data-testid="simulator-verified">{sim.verified}</div></div>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Received enforcement events</span>
+                {sim.events?.length > 0 && (
+                  <button data-testid="simulator-clear" onClick={clearSim} className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-crit"><Trash2 className="w-3 h-3" /> Clear</button>
+                )}
+              </div>
+              {sim.events?.length ? (
+                <div className="space-y-1 max-h-44 overflow-y-auto" data-testid="simulator-events">
+                  {sim.events.map((ev, i) => (
+                    <div key={i} data-testid={`simulator-event-${i}`} className="flex items-center gap-2 text-[11px] rounded-md border border-border px-2.5 py-1.5">
+                      {ev.signature_valid ? <CheckCircle2 className="w-3.5 h-3.5 text-low shrink-0" /> : <XCircle className="w-3.5 h-3.5 text-crit shrink-0" />}
+                      <span className="font-mono">{ev.action || "—"}</span>
+                      <span className="font-head font-bold truncate">{ev.agent_ref || "—"}</span>
+                      <span className={`ml-auto font-mono text-[10px] shrink-0 ${ev.signature_valid ? "text-low" : "text-crit"}`}>{ev.signature_valid ? "signature ✓" : "unsigned"}{ev.at ? ` · ${new Date(ev.at).toLocaleTimeString()}` : ""}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs text-muted-foreground" data-testid="simulator-empty">No events yet. Click <span className="font-medium text-foreground">Send test event</span> above, or run a Suspend / Kill from the Toxicity Map — it lands here with a verified signature.</div>
+              )}
+            </>
+          )}
         </div>
       )}
     </div>

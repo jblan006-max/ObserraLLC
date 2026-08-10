@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, ArrowRight, Ban, Bot, Database, Download, FileText, History, KeyRound, Loader2, PauseCircle, PlayCircle, ShieldCheck, ShieldOff } from "lucide-react";
+import { AlertTriangle, ArrowRight, Ban, Bot, Database, Download, FileText, Filter, History, KeyRound, Loader2, PauseCircle, PlayCircle, ShieldCheck, ShieldOff } from "lucide-react";
 import { toast } from "sonner";
 import { useDeepDive } from "@/context/DeepDiveContext";
 import { Panel } from "@/components/agentic-ai/shared";
-import { toxicityModel } from "@/lib/agenticToxicity";
+import { toxicityModel, cellScore } from "@/lib/agenticToxicity";
 import { agentDeepDive } from "@/lib/agenticDeepDive";
 import { api } from "@/lib/api";
 
@@ -42,6 +42,9 @@ export default function ToxicityMap({ agents, isAdmin, onReload }) {
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState([]);
+  const [levelFilter, setLevelFilter] = useState("all"); // all | toxic | critical
+  const [resourceFilter, setResourceFilter] = useState("all");
+  const [remediating, setRemediating] = useState("");
   const loadLog = () =>
     api.get("/agents/runtime/enforcement-log").then(({ data }) => setLog(data.events || [])).catch(() => {});
   useEffect(() => { loadLog(); }, []);
@@ -58,9 +61,29 @@ export default function ToxicityMap({ agents, isAdmin, onReload }) {
     }
   };
   const model = toxicityModel(agents || []);
-  const nodes = model.nodes;
-  const resources = [...new Set(nodes.flatMap((n) => (n.edges || []).map((e) => e.resource)))];
-  const toxicRefs = nodes.filter((n) => n.toxicity.toxic).map((n) => n.ref);
+  const allNodes = model.nodes;
+  const resources = [...new Set(allNodes.flatMap((n) => (n.edges || []).map((e) => e.resource)))];
+  const nodes = allNodes.filter((n) => {
+    if (levelFilter === "critical" && n.toxicity.level !== "critical") return false;
+    if (levelFilter === "toxic" && !n.toxicity.toxic) return false;
+    if (resourceFilter !== "all" && !(n.edges || []).some((e) => e.resource === resourceFilter)) return false;
+    return true;
+  });
+  const toxicRefs = allNodes.filter((n) => n.toxicity.toxic).map((n) => n.ref);
+
+  const remediate = async (ref, action) => {
+    setRemediating(ref + action);
+    try {
+      await api.post(`/agents/${ref}/enforce`, { action });
+      toast.success(`${action === "kill" ? "Killed" : "Suspended"} ${ref} — enforcement dispatched.`);
+      onReload && onReload();
+      loadLog();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Enforcement failed.");
+    } finally {
+      setRemediating("");
+    }
+  };
 
   const neutralise = async (action) => {
     setBusy(true);
@@ -128,10 +151,35 @@ export default function ToxicityMap({ agents, isAdmin, onReload }) {
         </div>
       }
     >
-      {nodes.length === 0 ? (
+      {allNodes.length === 0 ? (
         <div className="text-sm text-muted-foreground">No agents to map.</div>
       ) : (
         <div className="space-y-5">
+          <div className="flex flex-wrap items-center gap-2" data-testid="toxicity-filters">
+            <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase text-muted-foreground"><Filter className="w-3 h-3" /> Filter</span>
+            {[["all", "All"], ["toxic", `Toxic (${model.toxic})`], ["critical", `Critical (${model.critical})`]].map(([k, label]) => (
+              <button
+                key={k}
+                data-testid={`toxicity-filter-${k}`}
+                onClick={() => setLevelFilter(k)}
+                className={`px-2.5 py-1 rounded-full text-[10px] font-mono border transition-colors ${levelFilter === k ? "bg-crit/15 text-crit border-crit/30" : "bg-secondary/60 text-muted-foreground border-border hover:bg-secondary"}`}
+              >
+                {label}
+              </button>
+            ))}
+            <select
+              data-testid="toxicity-resource-filter"
+              value={resourceFilter}
+              onChange={(e) => setResourceFilter(e.target.value)}
+              className="ml-auto text-[10px] font-mono bg-secondary/60 border border-border rounded-md px-2 py-1 outline-none cursor-pointer"
+            >
+              <option value="all">All resources</option>
+              {resources.map((r) => (<option key={r} value={r}>{r}</option>))}
+            </select>
+          </div>
+          {nodes.length === 0 && (
+            <div data-testid="toxicity-filter-empty" className="text-sm text-muted-foreground">No agents match this filter.</div>
+          )}
           <div className="overflow-x-auto" data-testid="toxicity-heatmap">
             <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2">
               Blast-radius heatmap — resource exposure by agent
@@ -155,15 +203,16 @@ export default function ToxicityMap({ agents, isAdmin, onReload }) {
                     </td>
                     {resources.map((r) => {
                       const tone = cellTone(n.edges, r);
+                      const sc = cellScore(n.edges, r);
                       return (
                         <td key={r} className="p-0">
                           <button
                             onClick={() => openDeepDive(agentDeepDive(n, { isAdmin, onReload }))}
                             data-testid={`toxicity-cell-${n.ref}-${r.replace(/[^A-Za-z]+/g, "")}`}
-                            title={`${n.name} · ${r}${tone ? "" : " · no access"}`}
+                            title={`${n.name} · ${r}${tone ? ` · blast severity ${sc}` : " · no access"}`}
                             className="w-full h-7 rounded transition-transform hover:scale-110"
                             style={{
-                              background: tone ? `hsl(${tone} / 0.85)` : "hsl(var(--secondary) / 0.4)",
+                              background: tone ? `hsl(${tone} / ${(0.3 + 0.6 * sc / 100).toFixed(2)})` : "hsl(var(--secondary) / 0.4)",
                               border: tone ? `1px solid hsl(${tone})` : "1px solid hsl(var(--border))",
                             }}
                           />
@@ -187,13 +236,16 @@ export default function ToxicityMap({ agents, isAdmin, onReload }) {
               const lv = LEVEL[n.toxicity.level] || LEVEL.none;
               const perms = [...new Set((n.edges || []).map((e) => e.permission))];
               const nodeResources = [...new Set((n.edges || []).map((e) => e.resource))];
+              const canRemediate = isAdmin && n.toxicity.toxic && n.status !== "killed";
               return (
-                <button
+                <div
                   key={n.ref}
+                  role="button"
+                  tabIndex={0}
                   onMouseEnter={() => warm(agentDeepDive(n))}
                   onClick={() => openDeepDive(agentDeepDive(n, { isAdmin, onReload }))}
                   data-testid={`toxicity-agent-${n.ref}`}
-                  className="w-full text-left rounded-xl border p-3 hover:bg-secondary/30 transition-colors"
+                  className="w-full text-left rounded-xl border p-3 hover:bg-secondary/30 transition-colors cursor-pointer"
                   style={{
                     borderColor: `hsl(${lv.c} / ${n.toxicity.toxic ? 0.5 : 0.2})`,
                     background: n.toxicity.toxic ? `hsl(${lv.c} / 0.05)` : undefined,
@@ -220,8 +272,32 @@ export default function ToxicityMap({ agents, isAdmin, onReload }) {
                       <Database className="w-3 h-3 text-muted-foreground" />
                       {nodeResources.map((r) => (<Chip key={r} label={r} tone="266 70% 66%" />))}
                     </span>
-                    <span className="ml-auto text-[10px] font-mono px-2 py-0.5 rounded-full shrink-0" style={{ background: `hsl(${lv.c} / 0.14)`, color: `hsl(${lv.c})` }}>
-                      {lv.label}
+                    <span className="ml-auto inline-flex items-center gap-1.5 shrink-0">
+                      <span className="text-[10px] font-mono px-2 py-0.5 rounded-full" style={{ background: `hsl(${lv.c} / 0.14)`, color: `hsl(${lv.c})` }}>
+                        {lv.label} · {n.toxicity.score}
+                      </span>
+                      {canRemediate && (
+                        <>
+                          <button
+                            data-testid={`toxicity-suspend-${n.ref}`}
+                            disabled={remediating === n.ref + "suspend"}
+                            onClick={(e) => { e.stopPropagation(); remediate(n.ref, "suspend"); }}
+                            title="Suspend this agent"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-high/40 text-high text-[10px] font-head font-bold hover:bg-high/10 transition-colors disabled:opacity-50"
+                          >
+                            {remediating === n.ref + "suspend" ? <Loader2 className="w-3 h-3 animate-spin" /> : <PauseCircle className="w-3 h-3" />} Suspend
+                          </button>
+                          <button
+                            data-testid={`toxicity-kill-${n.ref}`}
+                            disabled={remediating === n.ref + "kill"}
+                            onClick={(e) => { e.stopPropagation(); remediate(n.ref, "kill"); }}
+                            title="Kill this agent"
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-crit/15 border border-crit/30 text-crit text-[10px] font-head font-bold hover:bg-crit/25 transition-colors disabled:opacity-50"
+                          >
+                            {remediating === n.ref + "kill" ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />} Kill
+                          </button>
+                        </>
+                      )}
                     </span>
                   </div>
                   {n.toxicity.reasons.length > 0 && (
@@ -230,7 +306,7 @@ export default function ToxicityMap({ agents, isAdmin, onReload }) {
                       <span>{n.toxicity.reasons.join(" · ")}</span>
                     </div>
                   )}
-                </button>
+                </div>
               );
             })}
           </div>

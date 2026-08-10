@@ -25,6 +25,15 @@ export function toolPermission(tool = "") {
   return WRITE_TOKENS.some((w) => t.includes(w)) ? "write" : "read";
 }
 
+// Blast-radius severity (0-100) for one agent's exposure to a resource domain.
+export function cellScore(edges = [], resource) {
+  const es = (edges || []).filter((e) => e.resource === resource);
+  if (!es.length) return 0;
+  if (es.some((e) => e.danger)) return 100;
+  if (es.some((e) => e.permission === "write")) return 65;
+  return 30;
+}
+
 // Classify the toxic capability combinations for one agent.
 export function agentToxicity(agent = {}) {
   const g = agent.guardrails || {};

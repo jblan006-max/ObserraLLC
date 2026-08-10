@@ -137,6 +137,42 @@ async def _build_board_digest(org):
                       f"<span style='font-family:monospace;font-size:16px;color:{gl_col}'>{_spark(gl_trend)}</span> "
                       f"<span style='color:#6b7280'>({gl_trend[0]}% \u2192 {gl_trend[-1]}%)</span></div>")
 
+    # 4-week enforcement activity (weekly buckets) — a mini bar chart for the email
+    from datetime import datetime as _dt
+    weeks = [0, 0, 0, 0]  # oldest → newest (3w, 2w, 1w, now)
+    for e in events:
+        try:
+            dt = _dt.fromisoformat((e.get("at") or "").replace("Z", "+00:00"))
+            wk = min(3, max(0, 3 - int((now - dt).days // 7)))
+            weeks[wk] += 1
+        except Exception:
+            pass
+    wmax = max(weeks) or 1
+    bars = "".join(
+        f"<td style='vertical-align:bottom;padding:0 6px;text-align:center'>"
+        f"<div style='height:{max(3, round(64 * w / wmax))}px;width:28px;background:#12b4d6;border-radius:4px 4px 0 0;margin:0 auto'></div>"
+        f"<div style='font:700 11px Arial;color:#0f1e3d;margin-top:4px'>{w}</div>"
+        f"<div style='font:400 9px Arial;color:#9ca3af'>{lbl}</div></td>"
+        for w, lbl in zip(weeks, ["3w ago", "2w ago", "1w ago", "this wk"]))
+    chart_html = (f"<div style='font:600 12px Arial;color:#374151;margin:18px 0 4px'>Enforcement actions \u2014 last 4 weeks</div>"
+                  f"<table style='border-collapse:collapse'><tr>{bars}</tr></table>")
+
+    # Top toxic agents (current)
+    toxic_agents = [a for a in snap.get("agents", []) if a.get("toxic")][:5]
+    toxic_html = ""
+    if toxic_agents:
+        EMD = "\u2014"
+        MID = "\u00b7"
+        li = []
+        for a in toxic_agents:
+            tv = a.get("tool_violations") or []
+            reason = (" " + EMD + " " + "; ".join(tv)) if tv else ""
+            li.append(f"<li style='margin-bottom:5px'><strong>{a.get('name')}</strong> "
+                      f"<span style='color:#6b7280'>({a.get('ref')} {MID} {a.get('status')})</span>{reason}</li>")
+        rows = "".join(li)
+        toxic_html = (f"<div style='font:600 12px Arial;color:#dc2626;margin:18px 0 4px'>Top toxic agents (current)</div>"
+                      f"<ul style='margin:0;padding-left:18px;font:400 13px Arial;color:#374151'>{rows}</ul>")
+
     def row(k, v, col):
         return (f"<tr><td style='padding:8px 12px;border-bottom:1px solid #eef2f7;font:600 13px Arial;color:#374151'>{k}</td>"
                 f"<td style='padding:8px 12px;border-bottom:1px solid #eef2f7;font:800 15px Arial;color:{col};text-align:right'>{v}</td></tr>")
@@ -156,6 +192,8 @@ async def _build_board_digest(org):
             f"{row('Go-Live readiness', gl_val, gl_col)}"
             f"</table>"
             f"{trend_html}"
+            f"{chart_html}"
+            f"{toxic_html}"
             f"<p style='font:400 13px Arial;color:#374151;margin-top:14px'>The full, signed AI Enforcement Evidence Pack — with every runtime enforcement receipt, the live toxicity snapshot and the complete auditor Q&amp;A trail — is attached as a PDF for the board / audit committee.</p>"
             f"<p style='font-size:11px;color:#9ca3af'>Obserra — Agentic AI Security Control & Governance · Defensibility Ledger</p></div>")
     cfg = org.get("board_digest_recipients") or []

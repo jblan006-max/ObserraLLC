@@ -1,6 +1,15 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — 4-feature v1 build: Live Enforcement Simulator + Toxicity Heatmap upgrade + richer Board Digest + deeper Go-Live (iteration_100, 100%)
+Shipped the user's 4-item batch ("all"), all live/no-mock, testing_agent iteration_100 backend 7/7 + frontend 4/4:
+- **Live Enforcement Simulator** (`agents.py`): a first-party agent-runtime receiver Obserra hosts for itself so the FULL signed-webhook enforcement path is provable end-to-end without a customer runtime. `POST /runtime/simulator/{enable,disable,clear}`, `GET /runtime/simulator`, and PUBLIC `POST /runtime/simulator/inbound/{token}` (verifies the `X-Obserra-Signature` HMAC-SHA256 over `'<ts>.'+raw`, records each event to `runtime_simulator_events`, returns a receipt). Enable wires the org `agent_runtime_webhook` to the app's own public inbound URL + a generated signing secret (`agent_runtime_webhook_managed:"simulator"`). Verified: enable→active→signed; a real Suspend on AGT-002 dispatched over the ingress and was recorded signature-valid. UI: simulator section in `RuntimeConnectorCard` (Settings) — toggle, received/verified KPIs, event inbox.
+- **Toxicity Heatmap upgrade** (`ToxicityMap.jsx` + `agenticToxicity.cellScore`): level filter chips (all/toxic/critical) + resource dropdown, blast-severity cell intensity, per-agent severity score, and admin inline one-click Suspend/Kill per row (stopPropagation so the deep-dive still opens on the row body).
+- **Board Evidence Digest enhancements** (`agent_reports._build_board_digest`): the email now carries a 4-week enforcement bar chart + a "Top toxic agents (current)" list alongside the readiness table/sparkline.
+- **Go-Live Readiness deepening** (`sap_uac.compute_go_live`): 3 new live checks — Toxic agents contained, Enforcement audit trail, Board evidence digest scheduled (now 11 checks). New admin `GET /api/sap/go-live-report.pdf` branded readiness report + an "Export report" button on the Go-Live card.
+- Minor polish: `RuntimeConnectorCard.sendTest` now re-fetches simulator status so the received/verified KPIs stay live after a test ping.
+
+
 ## Status (Jun 2026) — Guide screenshots refreshed + in-app Go-Live guide link
 Fixed Playwright capture (`capture_shots.py` resolves the installed Chromium build via glob — also unblocks Settings → Refresh visuals + weekly cron), added a Go-Live systems capture (`20_go_live.jpg`) embedded in the guide's Going Live section, recaptured login/exec/settings against the rebranded UI, and regenerated all three guides. Added an admin-only "Read the Go-Live guide" button (`go-live-guide-link`) on the Connector Health Go-Live card. Also fixed a dropped `useAuth` import in `ConnectorHealth.jsx` ("useAuth is not defined") — systems page now renders clean (94%, guide link, no error overlay).
 

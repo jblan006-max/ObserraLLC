@@ -308,6 +308,51 @@ async def compute_go_live(org_id: str):
     except Exception as e:
         add("runtime", "Agent-runtime enforcement webhook", "warn", str(e))
 
+    # 8 — Toxic agents contained (active toxic agents must be suspended/killed before go-live)
+    try:
+        from agents import _is_toxic
+        ai_agents = await db.ai_agents.find({"org_id": org_id}, {"_id": 0}).to_list(500)
+        toxic_active = [a for a in ai_agents if _is_toxic(a) and a.get("status") not in ("killed", "restricted")]
+        if not ai_agents:
+            add("toxic", "Toxic agents contained", "warn",
+                "No AI agents are under governance yet.", "Run Shadow AI discovery to inventory agents.")
+        elif toxic_active:
+            add("toxic", "Toxic agents contained", "warn",
+                f"{len(toxic_active)} active agent(s) hold a toxic capability combination.",
+                "Suspend or Kill them from the Tool Toxicity Map before go-live.")
+        else:
+            add("toxic", "Toxic agents contained", "pass",
+                f"All {len(ai_agents)} governed agent(s) are contained \u2014 no active toxic combinations.")
+    except Exception as e:
+        add("toxic", "Toxic agents contained", "warn", str(e))
+
+    # 9 — Enforcement audit trail (at least one runtime receipt recorded)
+    try:
+        n_events = await db.agent_enforcements.count_documents({"org_id": org_id})
+        if n_events:
+            add("audit", "Enforcement audit trail", "pass",
+                f"{n_events} runtime enforcement action(s) recorded with verifiable receipts.")
+        else:
+            add("audit", "Enforcement audit trail", "warn",
+                "No enforcement actions recorded yet.",
+                "Fire a Suspend / Kill (or a runtime test ping) to produce the first signed receipt.")
+    except Exception as e:
+        add("audit", "Enforcement audit trail", "warn", str(e))
+
+    # 10 — Board evidence digest scheduled
+    try:
+        orgd = await db.organizations.find_one(
+            {"_id": ObjectId(org_id)}, {"board_digest_enabled": 1, "board_digest_day": 1}) or {}
+        if orgd.get("board_digest_enabled", True):
+            add("digest", "Board evidence digest scheduled", "pass",
+                f"Monthly board evidence digest is scheduled (day {orgd.get('board_digest_day') or 1}).")
+        else:
+            add("digest", "Board evidence digest scheduled", "warn",
+                "Automatic board evidence digest is disabled.",
+                "Enable the monthly digest in the Defensibility tab \u2192 Governance settings.")
+    except Exception as e:
+        add("digest", "Board evidence digest scheduled", "warn", str(e))
+
     passed = sum(1 for i in items if i["status"] == "pass")
     warned = sum(1 for i in items if i["status"] == "warn")
     failed = sum(1 for i in items if i["status"] == "fail")
@@ -330,6 +375,37 @@ async def compute_go_live(org_id: str):
 @sap_router.get("/go-live-checklist")
 async def go_live_checklist(user: dict = Depends(get_current_user)):
     return await compute_go_live(user["org_id"])
+
+
+@sap_router.get("/go-live-report.pdf")
+async def go_live_report_pdf(admin: dict = Depends(require_roles("admin"))):
+    """Exportable production-readiness report — the live checklist rendered as a branded, board-grade PDF."""
+    from fastapi.responses import StreamingResponse
+    from reports import _build_pdf
+    d = await compute_go_live(admin["org_id"])
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}, {"name": 1}) or {}
+    now = _now()
+    tag = {"pass": "PASS", "warn": "ATTENTION", "fail": "BLOCKER"}
+    lines = ["## Production-Readiness Assessment",
+             f"Generated {now.strftime('%B %d, %Y %H:%M UTC')} \u00b7 readiness score {d['score']}% \u00b7 "
+             f"{'PRODUCTION READY' if d['ready'] else str(d['failed']) + ' blocker(s)'}",
+             f"{d['passed']} passing \u00b7 {d['warned']} attention \u00b7 {d['failed']} blocker(s) across {d['total']} live checks.", ""]
+    for it in d["items"]:
+        lines.append(f"## {it['label']} \u2014 {tag.get(it['status'], it['status'].upper())}")
+        lines.append(it["detail"])
+        if it.get("fix") and it["status"] != "pass":
+            lines.append(f"Recommended action: {it['fix']}")
+        lines.append("")
+    trend = d.get("trend") or []
+    if len(trend) >= 2:
+        lines += ["## Readiness Trend",
+                  f"{len(trend)} day(s) of daily checks: {trend[0]['score']}% ({trend[0]['date']}) "
+                  f"\u2192 {trend[-1]['score']}% ({trend[-1]['date']}).", ""]
+    buf = _build_pdf("\n".join(lines), "Go-Live Readiness Report", cover=True, org_name=org.get("name"),
+                     exec_summary=f"Live production-readiness {d['score']}% \u2014 {d['passed']}/{d['total']} checks passing, "
+                                  f"{d['failed']} blocker(s), {d['warned']} needing attention.")
+    return StreamingResponse(buf, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="obserra-go-live-report-{now.strftime("%Y%m%d-%H%M")}.pdf"'})
 
 
 

@@ -2,9 +2,9 @@
 """Generate the Obserra SAP UAC guides as PDF and Word (.docx).
 
 Produces three role-targeted guides from ONE set of sections + screenshots:
-  - Install & User Guide  (full)      -> Obserra-Install-and-User-Guide.{pdf,docx}
-  - Executive Guide       (short)     -> Obserra-SAP-UAC-Executive-Guide.{pdf,docx}
-  - Admin & Operator Guide(deep)      -> Obserra-SAP-UAC-Admin-Operator-Guide.{pdf,docx}
+  - Install & User Guide  (full)      -> Obserra-Agentic-AI-Security-Install-and-User-Guide.{pdf,docx}
+  - Executive Guide       (short)     -> Obserra-Agentic-AI-Security-Executive-Guide.{pdf,docx}
+  - Admin & Operator Guide(deep)      -> Obserra-Agentic-AI-Security-Admin-Operator-Guide.{pdf,docx}
 
 Every guide opens with a branded cover (logo) + a numbered Contents page. Screenshots
 are read from /app/scripts/shots and embedded.
@@ -321,11 +321,11 @@ def generate_all():
     """Regenerate all role guides. Keeps pdf/docx/pdf_size/docx_size = the full guide."""
     exec_secs = [s for s in SECTIONS if E in s[3]]
     full_pdf, full_docx = _build(SECTIONS, "Install & User Guide",
-                                 "Obserra-Install-and-User-Guide.pdf", "Obserra-Install-and-User-Guide.docx")
+                                 "Obserra-Agentic-AI-Security-Install-and-User-Guide.pdf", "Obserra-Agentic-AI-Security-Install-and-User-Guide.docx")
     exec_pdf, exec_docx = _build(exec_secs, "Executive Guide",
-                                 "Obserra-SAP-UAC-Executive-Guide.pdf", "Obserra-SAP-UAC-Executive-Guide.docx")
+                                 "Obserra-Agentic-AI-Security-Executive-Guide.pdf", "Obserra-Agentic-AI-Security-Executive-Guide.docx")
     admin_pdf, admin_docx = _build(SECTIONS, "Admin & Operator Guide",
-                                   "Obserra-SAP-UAC-Admin-Operator-Guide.pdf", "Obserra-SAP-UAC-Admin-Operator-Guide.docx")
+                                   "Obserra-Agentic-AI-Security-Admin-Operator-Guide.pdf", "Obserra-Agentic-AI-Security-Admin-Operator-Guide.docx")
     return {"pdf": full_pdf, "docx": full_docx,
             "pdf_size": os.path.getsize(full_pdf), "docx_size": os.path.getsize(full_docx),
             "exec_pdf": exec_pdf, "exec_docx": exec_docx,

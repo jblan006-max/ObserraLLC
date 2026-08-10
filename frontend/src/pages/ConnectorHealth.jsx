@@ -6,7 +6,7 @@ import { StatCard, Spinner } from "@/components/dash";
 import { AIInsight } from "@/components/AIInsight";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Plug, Server, Clock, CheckCircle2, AlertTriangle, RefreshCw, Activity, XCircle, Rocket, BookOpen } from "lucide-react";
+import { Plug, Server, Clock, CheckCircle2, AlertTriangle, RefreshCw, Activity, XCircle, Rocket, BookOpen, FileDown } from "lucide-react";
 import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, ReferenceLine } from "recharts";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -64,6 +64,17 @@ function GoLiveChecklist() {
     } catch (e) { toast.error(e.response?.data?.detail || "Could not open the guide"); }
     setGuideBusy(false);
   };
+  const [reportBusy, setReportBusy] = useState(false);
+  const exportReport = async () => {
+    setReportBusy(true);
+    try {
+      const res = await api.get("/sap/go-live-report.pdf", { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a"); a.href = url; a.download = "obserra-go-live-report.pdf"; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not export report"); }
+    setReportBusy(false);
+  };
   const [fixing, setFixing] = useState("");
   const [webhookOpen, setWebhookOpen] = useState(false);
   const [webhookUrl, setWebhookUrl] = useState("");
@@ -116,6 +127,11 @@ function GoLiveChecklist() {
           {isAdmin && (
             <Button size="sm" variant="ghost" className="gap-1.5" data-testid="go-live-guide-link" onClick={openGuide} disabled={guideBusy}>
               <BookOpen className="w-3.5 h-3.5" />{guideBusy ? "Opening…" : "Read the Go-Live guide"}
+            </Button>
+          )}
+          {isAdmin && (
+            <Button size="sm" variant="ghost" className="gap-1.5" data-testid="go-live-export-report" onClick={exportReport} disabled={reportBusy}>
+              <FileDown className="w-3.5 h-3.5" />{reportBusy ? "Exporting…" : "Export report"}
             </Button>
           )}
           <Button size="sm" variant="outline" className="gap-1.5" data-testid="go-live-recheck" onClick={load} disabled={loading}>

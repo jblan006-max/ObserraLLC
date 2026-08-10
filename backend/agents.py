@@ -343,6 +343,114 @@ async def test_runtime_webhook(admin: dict = Depends(require_roles("admin"))):
     return receipt
 
 
+# ---- Built-in Live Enforcement Simulator ----
+# A first-party agent-runtime endpoint Obserra hosts for itself so an admin can prove the FULL
+# signed-webhook enforcement path end-to-end (real HTTP round-trip through the ingress + HMAC
+# verification + receipt) without standing up a customer runtime. Enabling it points the org's
+# agent_runtime_webhook at this app's own public inbound URL with a generated signing secret.
+def _simulator_inbound_url(token: str) -> str:
+    import os
+    base = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    return f"{base}/api/agents/runtime/simulator/inbound/{token}" if token else ""
+
+
+async def _simulator_status(org_id):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    token = org.get("runtime_simulator_token")
+    url = _simulator_inbound_url(token)
+    events = await db.runtime_simulator_events.find({"org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(50)
+    received = await db.runtime_simulator_events.count_documents({"org_id": org_id})
+    verified = await db.runtime_simulator_events.count_documents({"org_id": org_id, "signature_valid": True})
+    return {"enabled": bool(org.get("runtime_simulator_enabled")), "url": url,
+            "active": bool(token and org.get("agent_runtime_webhook") == url),
+            "signed": bool(org.get("runtime_simulator_secret")),
+            "received": received, "verified": verified, "events": events}
+
+
+@agents_router.get("/runtime/simulator")
+async def get_simulator(admin: dict = Depends(require_roles("admin"))):
+    return await _simulator_status(admin["org_id"])
+
+
+@agents_router.post("/runtime/simulator/enable")
+async def enable_simulator(admin: dict = Depends(require_roles("admin"))):
+    """Provision the built-in runtime simulator and wire the org's enforcement webhook to it (signed)."""
+    import secrets as _secrets
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}) or {}
+    token = org.get("runtime_simulator_token") or _secrets.token_urlsafe(10)
+    secret = org.get("runtime_simulator_secret") or _secrets.token_urlsafe(24)
+    url = _simulator_inbound_url(token)
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {
+        "runtime_simulator_token": token, "runtime_simulator_secret": secret,
+        "runtime_simulator_enabled": True, "agent_runtime_webhook": url,
+        "agent_runtime_webhook_secret": secret, "agent_runtime_webhook_managed": "simulator"}})
+    await _log_audit(admin["org_id"], admin["email"], "agent.runtime_simulator",
+                     "Enabled the built-in live enforcement simulator")
+    return await _simulator_status(admin["org_id"])
+
+
+@agents_router.post("/runtime/simulator/disable")
+async def disable_simulator(admin: dict = Depends(require_roles("admin"))):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}) or {}
+    upd = {"runtime_simulator_enabled": False}
+    if org.get("agent_runtime_webhook_managed") == "simulator":
+        upd.update({"agent_runtime_webhook": "", "agent_runtime_webhook_secret": "",
+                    "agent_runtime_webhook_managed": None})
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": upd})
+    await _log_audit(admin["org_id"], admin["email"], "agent.runtime_simulator",
+                     "Disabled the built-in live enforcement simulator")
+    return await _simulator_status(admin["org_id"])
+
+
+@agents_router.post("/runtime/simulator/clear")
+async def clear_simulator_events(admin: dict = Depends(require_roles("admin"))):
+    await db.runtime_simulator_events.delete_many({"org_id": admin["org_id"]})
+    return await _simulator_status(admin["org_id"])
+
+
+@agents_router.post("/runtime/simulator/inbound/{token}")
+async def simulator_inbound(token: str, request: Request):
+    """PUBLIC agent-runtime receiver — verifies the HMAC signature Obserra dispatched, records the
+    enforcement event and returns a runtime receipt. This is the far end of the signed webhook."""
+    import hmac, hashlib, json as _json
+    from datetime import datetime, timezone
+    raw = await request.body()
+    org = await db.organizations.find_one({"runtime_simulator_token": token})
+    if not org:
+        raise HTTPException(404, "Unknown simulator token")
+    secret = org.get("runtime_simulator_secret") or ""
+    sig = request.headers.get("X-Obserra-Signature", "")
+    ts = request.headers.get("X-Obserra-Timestamp", "")
+    verified = False
+    if secret and sig.startswith("sha256="):
+        try:
+            expected = hmac.new(secret.encode(), (ts + ".").encode() + raw, hashlib.sha256).hexdigest()
+            verified = hmac.compare_digest(expected, sig.split("=", 1)[1])
+        except Exception:
+            verified = False
+    try:
+        body = _json.loads(raw.decode() or "{}")
+    except Exception:
+        body = {}
+    now = datetime.now(timezone.utc).isoformat()
+    await db.runtime_simulator_events.insert_one({
+        "org_id": str(org["_id"]), "token": token, "agent_ref": body.get("agent_ref"),
+        "action": body.get("action"), "mode": body.get("mode"), "event": body.get("event"),
+        "signed": bool(sig), "signature_valid": verified, "at": now, "body": body})
+    try:
+        old = await db.runtime_simulator_events.find(
+            {"org_id": str(org["_id"])}, {"_id": 1}).sort("at", -1).skip(200).to_list(1000)
+        if old:
+            await db.runtime_simulator_events.delete_many({"_id": {"$in": [o["_id"] for o in old]}})
+    except Exception:
+        pass
+    return {"ok": True, "received": True, "runtime": "obserra-simulator",
+            "agent_ref": body.get("agent_ref"), "action": body.get("action"), "verified": verified}
+
+
 @agents_router.get("/runtime/enforcement-log")
 async def enforcement_log(user: dict = Depends(get_current_user)):
     """Live feed of every runtime enforcement (suspend / kill / resume) — who, when, which agent,
