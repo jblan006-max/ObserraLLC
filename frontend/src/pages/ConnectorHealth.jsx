@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
 import { AIInsight } from "@/components/AIInsight";
@@ -30,6 +31,18 @@ function GoLiveChecklist() {
     setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
+  const navigate = useNavigate();
+  const [fixing, setFixing] = useState("");
+  const fixItem = async (it) => {
+    if (it.id === "freshness" || it.id === "connectors") {
+      setFixing(it.id);
+      try { await api.post("/sap/systems/reprobe"); toast.success("Connectors re-probed — data refreshed"); await load(); }
+      catch (e) { toast.error("Re-probe failed"); }
+      setFixing("");
+      return;
+    }
+    navigate("/app/settings");
+  };
   const tone = d?.ready ? "142 70% 45%" : (d?.failed ? "0 84% 60%" : "35 90% 55%");
 
   return (
@@ -70,7 +83,12 @@ function GoLiveChecklist() {
                     <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full shrink-0" style={{ background: `hsl(${S.c} / 0.15)`, color: `hsl(${S.c})` }}>{S.label}</span>
                   </div>
                   <div className="text-[11px] text-muted-foreground mt-0.5">{it.detail}</div>
-                  {it.status !== "pass" && it.fix && <div className="text-[11px] mt-1" style={{ color: `hsl(${S.c})` }}>→ {it.fix}</div>}
+                  {it.status !== "pass" && it.fix && (
+                    <button data-testid={`go-live-fix-${it.id}`} onClick={() => fixItem(it)} disabled={fixing === it.id}
+                      className="text-[11px] mt-1 inline-flex items-center gap-1 font-medium underline decoration-dotted underline-offset-2 hover:no-underline disabled:opacity-60" style={{ color: `hsl(${S.c})` }}>
+                      {fixing === it.id ? "Fixing…" : `Fix → ${it.fix}`}
+                    </button>
+                  )}
                 </div>
               </div>
             ); })}

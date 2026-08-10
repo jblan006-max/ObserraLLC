@@ -153,7 +153,7 @@ export function RiskDetailModal({ item, accent = "255 85% 66%", busy, result, on
   return (
     <div data-testid="deep-dive-modal" onClick={onClose}
       className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/65 backdrop-blur-sm">
-      <div onClick={(e) => e.stopPropagation()}
+      <div onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true" aria-label={item.title || "Deep-dive"} data-testid="risk-detail-modal"
         className="bg-card border border-border rounded-2xl w-full max-w-2xl max-h-[88vh] overflow-y-auto p-6 space-y-4"
         style={{ boxShadow: `0 0 0 1px hsl(${accent} / 0.3), 0 24px 60px -20px hsl(${accent} / 0.4)` }}>
         <header className="flex items-start justify-between gap-3">

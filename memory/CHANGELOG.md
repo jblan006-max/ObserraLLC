@@ -1,5 +1,13 @@
 # Obserra EIOS — CHANGELOG
 
+## 2026-06 — Go-Live polish: one-click Fix, modal a11y, testid disambiguation
+Follow-ups on the iteration_99 batch (user: "add all"):
+- **One-click Fix on the Go-Live checklist**: every non-pass item now renders a `Fix → …` action button (`go-live-fix-<id>`). Runtime-webhook warn deep-links to Settings → Agent runtime connector (`RuntimeConnectorCard`); freshness/connectors trigger an inline connector re-probe + re-check. Verified: runtime Fix navigates to `/app/settings`.
+- **RiskDetailModal a11y/test stability**: inner panel now carries `role="dialog"`, `aria-modal="true"`, `aria-label` and `data-testid="risk-detail-modal"` (outer keeps `deep-dive-modal`).
+- **Testid disambiguation**: Executive Overview KPI cards renamed `overview-kpi-*` → `exec-kpi-*` (they navigate to control-plane tabs) so they no longer collide with the `agentic-tab-*` tab switchers.
+- Corrected the backend runtime fix hint to point at Settings (the webhook is wired there, not the Authority tab). Backend + frontend compile clean.
+
+
 ## 2026-06 — Go-Live Readiness checklist + PDF integrity seal + AI warm-path (iteration_99 — backend 4/4, frontend 100%)
 Closed 3 of the user's 5-item batch (#3 AI Warm Path, #4 Integrity Everywhere, #5 Go-Live checklist); all live, no mocks:
 - **Go-Live Readiness checklist** — new `GET /api/sap/go-live-checklist` (sap_uac.py) evaluates 8 checks against REAL state: DB live ping, source-connector ingestion, data freshness, identity inventory counts, correlation/risk engine, AI advisor key, evidence integrity seal, and agent-runtime enforcement webhook. Returns per-item pass/warn/fail + a readiness score + `ready` boolean. New `GoLiveChecklist` card on Connector Health (`/app/systems`, testid `go-live-checklist`) with score ring, progress bar, per-item rows and a Re-check button. Verified: score **94% / Production ready** (7 pass, 1 warn = runtime webhook not wired).

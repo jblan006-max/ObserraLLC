@@ -305,7 +305,7 @@ async def go_live_checklist(user: dict = Depends(get_current_user)):
         else:
             add("runtime", "Agent-runtime enforcement webhook", "warn",
                 "No external agent-runtime webhook is wired.",
-                "Wire a signed webhook in Agentic AI Security \u2192 Authority so enforcement pushes to your runtime.")
+                "Wire a signed webhook in Settings \u2192 Agent runtime connector so enforcement pushes to your runtime.")
     except Exception as e:
         add("runtime", "Agent-runtime enforcement webhook", "warn", str(e))
 

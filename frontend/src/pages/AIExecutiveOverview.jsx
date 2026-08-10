@@ -97,7 +97,7 @@ export default function AIExecutiveOverview() {
             kind={k.kind}
             accent={k.accent || ACCENT}
             onClick={() => goTab(k.tab)}
-            testid={`overview-kpi-${k.tab}-${k.label.toLowerCase().replace(/[^a-z]+/g, "-")}`}
+            testid={`exec-kpi-${k.tab}-${k.label.toLowerCase().replace(/[^a-z]+/g, "-")}`}
           />
         ))}
       </div>
