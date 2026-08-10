@@ -1,6 +1,10 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Readiness history + trend sparkline + one-click Auto-Wire webhook
+Shipped 3 follow-ups: **Readiness history** (`go_live_checklist` upserts a daily snapshot to `db.go_live_history` and returns `trend[]`; new recharts area chart `go-live-history` on the Go-Live card with a 100% target line + "builds daily" empty state); **Board readiness sparkline** (`AIExecutiveOverview` `MiniSparkline` under the `exec-golive-badge`, `exec-golive-sparkline`); **Auto-Wire webhook** (runtime-item Fix opens `webhook-dialog` → `PUT /api/agents/runtime/webhook` → auto re-check to 100%). Honest note: readiness trend is real daily history (no fabrication) — shows "builds daily" until ≥2 days accrue. Backend `trend` curl-verified; both visuals + dialog verified; services compile clean.
+
+
 ## Status (Jun 2026) — Board Readiness badge + Go-Live auto-refresh + demo-label retirement
 Shipped 3 follow-ups: **Board Readiness Badge** on the Executive Overview header (`exec-golive-badge`, live "94% · PRODUCTION READY" pill → `/app/systems`); **Go-Live checklist auto-refresh** (re-checks every 30s + auto re-probes stale connectors ≤ once/3min); **demo-label retirement** (`MOCKED_LIVE` → honest `SNAPSHOT` across `routes.py` + `seed_data.py`; `IntegrationsPanel` badge shows "SNAPSHOT"; grep MOCKED_LIVE = 0). ⚠️ The identity/SoD/asset data is still an ingested read-only snapshot (NOT a live Entra feed) — a true live data swap awaits Entra OAuth creds the user does not yet have. Backend curl-verified + badge screenshot-verified; both services compile clean.
 

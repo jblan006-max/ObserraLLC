@@ -6,6 +6,9 @@ import { AIInsight } from "@/components/AIInsight";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Plug, Server, Clock, CheckCircle2, AlertTriangle, RefreshCw, Activity, XCircle, Rocket } from "lucide-react";
+import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip, ReferenceLine } from "recharts";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
 
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
 const HEALTH = {
@@ -48,6 +51,22 @@ function GoLiveChecklist() {
   }, [load]);
   const navigate = useNavigate();
   const [fixing, setFixing] = useState("");
+  const [webhookOpen, setWebhookOpen] = useState(false);
+  const [webhookUrl, setWebhookUrl] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [savingWebhook, setSavingWebhook] = useState(false);
+  const saveWebhook = async () => {
+    const url = webhookUrl.trim();
+    if (!url.toLowerCase().startsWith("http")) { toast.error("Enter a valid http(s) webhook URL"); return; }
+    setSavingWebhook(true);
+    try {
+      await api.put("/agents/runtime/webhook", { webhook: url, secret: webhookSecret.trim() || undefined });
+      toast.success("Agent-runtime webhook registered — re-checking readiness");
+      setWebhookOpen(false); setWebhookUrl(""); setWebhookSecret("");
+      await load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not register webhook"); }
+    setSavingWebhook(false);
+  };
   const fixItem = async (it) => {
     if (it.id === "freshness" || it.id === "connectors") {
       setFixing(it.id);
@@ -56,6 +75,7 @@ function GoLiveChecklist() {
       setFixing("");
       return;
     }
+    if (it.id === "runtime") { setWebhookOpen(true); return; }
     navigate("/app/settings");
   };
   const tone = d?.ready ? "142 70% 45%" : (d?.failed ? "0 84% 60%" : "35 90% 55%");
@@ -108,8 +128,52 @@ function GoLiveChecklist() {
               </div>
             ); })}
           </div>
+          {d.trend && d.trend.length >= 2 ? (
+            <div className="mt-4 pt-4 border-t border-border" data-testid="go-live-history">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-xs font-mono uppercase tracking-wider text-muted-foreground">Readiness history</h3>
+                <span className="text-[10px] text-muted-foreground">{d.trend.length} day(s) · target 100%</span>
+              </div>
+              <ResponsiveContainer width="100%" height={120}>
+                <AreaChart data={d.trend} margin={{ top: 4, right: 8, left: -24, bottom: 0 }}>
+                  <defs><linearGradient id="glGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor={`hsl(${tone})`} stopOpacity={0.35} /><stop offset="100%" stopColor={`hsl(${tone})`} stopOpacity={0} /></linearGradient></defs>
+                  <XAxis dataKey="date" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} tickFormatter={(v) => (v ? v.slice(5) : v)} />
+                  <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} width={30} />
+                  <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }} formatter={(v) => [`${v}%`, "Readiness"]} />
+                  <ReferenceLine y={100} stroke="hsl(142 70% 45%)" strokeDasharray="3 3" />
+                  <Area type="monotone" dataKey="score" stroke={`hsl(${tone})`} strokeWidth={2} fill="url(#glGrad)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="mt-4 pt-4 border-t border-border text-[11px] text-muted-foreground" data-testid="go-live-history-empty">
+              Readiness history builds one point per day — the trend chart appears once there are at least two days of checks. Today: {d.score}%.
+            </div>
+          )}
         </>
       )}
+      <Dialog open={webhookOpen} onOpenChange={setWebhookOpen}>
+        <DialogContent data-testid="webhook-dialog">
+          <DialogHeader>
+            <DialogTitle>Wire the agent-runtime enforcement webhook</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            <p className="text-xs text-muted-foreground">Register the signed HTTPS endpoint your agent runtime listens on. Obserra dispatches Kill / Suspend / Resume events (HMAC-SHA256 signed) here. Once saved, this check turns green and readiness reaches 100%.</p>
+            <div>
+              <label className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Webhook URL</label>
+              <Input data-testid="webhook-url-input" value={webhookUrl} onChange={(e) => setWebhookUrl(e.target.value)} placeholder="https://runtime.example.com/obserra/enforce" className="mt-1" />
+            </div>
+            <div>
+              <label className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Signing secret <span className="opacity-60">(optional)</span></label>
+              <Input data-testid="webhook-secret-input" type="password" value={webhookSecret} onChange={(e) => setWebhookSecret(e.target.value)} placeholder="Signs the X-Obserra-Signature header" className="mt-1" />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" size="sm" onClick={() => navigate("/app/settings")}>Open full settings</Button>
+            <Button size="sm" data-testid="webhook-save" onClick={saveWebhook} disabled={savingWebhook}>{savingWebhook ? "Registering…" : "Register & re-check"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

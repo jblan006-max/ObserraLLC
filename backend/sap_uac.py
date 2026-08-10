@@ -314,9 +314,18 @@ async def go_live_checklist(user: dict = Depends(get_current_user)):
     failed = sum(1 for i in items if i["status"] == "fail")
     total = len(items) or 1
     score = round(100 * (passed + 0.5 * warned) / total)
+    now = _now()
+    today = now.strftime("%Y-%m-%d")
+    await db.go_live_history.update_one(
+        {"org_id": org_id, "date": today},
+        {"$set": {"org_id": org_id, "date": today, "score": score, "ready": failed == 0,
+                  "passed": passed, "warned": warned, "failed": failed, "ts": now.isoformat()}},
+        upsert=True)
+    hist = await db.go_live_history.find(
+        {"org_id": org_id}, {"_id": 0, "date": 1, "score": 1, "ready": 1}).sort("date", 1).to_list(60)
     return {"items": items, "passed": passed, "warned": warned, "failed": failed,
             "total": len(items), "score": score, "ready": failed == 0,
-            "last_probe_at": last_probe, "checked_at": _now().isoformat()}
+            "last_probe_at": last_probe, "checked_at": now.isoformat(), "trend": hist}
 
 
 

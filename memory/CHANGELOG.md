@@ -1,5 +1,14 @@
 # Obserra EIOS — CHANGELOG
 
+## 2026-06 — Readiness history + trend sparkline + one-click Auto-Wire webhook
+Shipped the three follow-ups (user: both items + "y"):
+- **Readiness history** (`sap_uac.go_live_checklist`): each check now upserts a daily snapshot into `db.go_live_history` (keyed by org+date) and returns a `trend[]` (last 60 days). New **Readiness history** area chart on the Go-Live card (`go-live-history`, recharts, 100% target ReferenceLine) with a graceful "builds daily" empty state (`go-live-history-empty`) until ≥2 days exist. Verified rendering with 5 climbing points (70→94) via temporary test data, then cleaned up (only today's real point remains).
+- **Board readiness sparkline** (`AIExecutiveOverview.GoLiveBadge` + `MiniSparkline`): the Executive Overview "94% · PRODUCTION READY" badge now renders a crash-proof SVG trend sparkline (`exec-golive-sparkline`) + "Nd trend" beneath it, from the same `trend[]` (shows once ≥2 days).
+- **Auto-Wire webhook (guided one-click)** (`ConnectorHealth`): the runtime-webhook Fix now opens an inline dialog (`webhook-dialog`) — URL + optional signing secret → `PUT /api/agents/runtime/webhook` → auto re-checks so the score reaches 100%. Verified: dialog opens with inputs + "Register & re-check" (`webhook-save`); "Open full settings" fallback retained.
+- HONESTY: the readiness trend is genuine daily history (no fabrication) — it currently shows the "builds daily" state in production since only today's real point exists; it populates as checks run each day.
+- Backend syntax OK + `trend` curl-verified; frontend compiles clean; both visuals + dialog screenshot/assertion-verified.
+
+
 ## 2026-06 — Board Readiness badge, Go-Live auto-refresh, demo-label retirement
 Shipped the three follow-ups (user: "add all" + "y"):
 - **Board Readiness Badge** (`AIExecutiveOverview.jsx` `GoLiveBadge`, testid `exec-golive-badge`): fetches `/api/sap/go-live-checklist` and shows a board-facing "94% · PRODUCTION READY" pill (green ready / amber-red blockers) in the Executive Overview header; clicks through to `/app/systems`. Screenshot-verified.

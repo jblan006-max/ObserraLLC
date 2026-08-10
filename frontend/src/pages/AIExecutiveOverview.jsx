@@ -19,6 +19,21 @@ import { AIInsight } from "@/components/AIInsight";
 
 const ACCENT = "330 81% 60%";
 
+function MiniSparkline({ points, tone }) {
+  if (!points || points.length < 2) return null;
+  const w = 132, h = 22;
+  const step = w / (points.length - 1);
+  const clamp = (p) => Math.max(0, Math.min(100, p));
+  const coords = points.map((p, i) => `${(i * step).toFixed(1)},${(h - (clamp(p) / 100) * h).toFixed(1)}`).join(" ");
+  const last = points[points.length - 1];
+  return (
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h + 2}`} data-testid="exec-golive-sparkline" className="overflow-visible">
+      <polyline points={coords} fill="none" stroke={`hsl(${tone})`} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+      <circle cx={w} cy={h - (clamp(last) / 100) * h} r="2" fill={`hsl(${tone})`} />
+    </svg>
+  );
+}
+
 function GoLiveBadge() {
   const [g, setG] = useState(null);
   const navigate = useNavigate();
@@ -31,13 +46,22 @@ function GoLiveBadge() {
   }, []);
   if (!g) return null;
   const tone = g.ready ? "142 70% 45%" : (g.failed ? "0 84% 60%" : "35 90% 55%");
+  const trend = (g.trend || []).map((t) => t.score);
   return (
-    <button data-testid="exec-golive-badge" onClick={() => navigate("/app/systems")}
-      title="Live production readiness — click for the full Go-Live checklist"
-      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-mono font-bold transition-transform hover:scale-[1.03]"
-      style={{ borderColor: `hsl(${tone} / 0.45)`, background: `hsl(${tone} / 0.12)`, color: `hsl(${tone})` }}>
-      <ShieldCheck className="w-3 h-3" />{g.ready ? `${g.score}% · PRODUCTION READY` : `${g.score}% · ${g.failed} BLOCKER(S)`}
-    </button>
+    <div className="flex flex-col items-start gap-0.5" data-testid="exec-golive-wrap">
+      <button data-testid="exec-golive-badge" onClick={() => navigate("/app/systems")}
+        title="Live production readiness — click for the full Go-Live checklist"
+        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-mono font-bold transition-transform hover:scale-[1.03]"
+        style={{ borderColor: `hsl(${tone} / 0.45)`, background: `hsl(${tone} / 0.12)`, color: `hsl(${tone})` }}>
+        <ShieldCheck className="w-3 h-3" />{g.ready ? `${g.score}% · PRODUCTION READY` : `${g.score}% · ${g.failed} BLOCKER(S)`}
+      </button>
+      {trend.length >= 2 && (
+        <div className="flex items-center gap-1.5 pl-1" title="Readiness trend">
+          <MiniSparkline points={trend} tone={tone} />
+          <span className="text-[9px] font-mono text-muted-foreground">{trend.length}d trend</span>
+        </div>
+      )}
+    </div>
   );
 }
 
