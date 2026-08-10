@@ -46,6 +46,7 @@ export default function AuthorityDashboard({ agents, onSelectAgent, isAdmin, onR
             {(agents || []).map((agent) => (
               <button
                 key={agent.ref}
+                data-testid={`authority-register-${agent.ref}`}
                 onClick={() => onSelectAgent(agent)}
                 className="w-full text-left rounded-xl border border-border bg-secondary/20 p-4 hover:bg-secondary/40"
               >

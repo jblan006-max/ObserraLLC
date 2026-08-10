@@ -56,7 +56,7 @@ export default function GuardrailsDashboard({
             {(agents || []).map((agent) => (
               <div key={agent.ref} className="rounded-xl border border-border bg-secondary/20 p-4">
                 <div className="grid xl:grid-cols-[1.2fr_1.6fr_.8fr] gap-4">
-                  <button onClick={() => onSelectAgent(agent)} className="text-left">
+                  <button data-testid={`guardrails-agent-${agent.ref}`} onClick={() => onSelectAgent(agent)} className="text-left">
                     <div className="font-mono text-[10px] text-ai">{agent.ref}</div>
                     <div className="font-head font-bold mt-1">{agent.name}</div>
                     <div className="text-xs text-muted-foreground mt-1">{agent.owner} · {agent.model}</div>

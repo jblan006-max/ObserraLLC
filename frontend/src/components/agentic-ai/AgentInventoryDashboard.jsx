@@ -1,13 +1,16 @@
 import { useMemo, useState } from "react";
 import { Bot, Plus, Search } from "lucide-react";
 import { EmptyState, Panel, StatusPill } from "@/components/agentic-ai/shared";
+import { useDeepDive } from "@/context/DeepDiveContext";
+import { agentDeepDive } from "@/lib/agenticDeepDive";
 
 export default function AgentInventoryDashboard({
   agents,
   isAdmin,
-  onSelectAgent,
   onRegister,
+  onReload,
 }) {
+  const { openDeepDive, warm } = useDeepDive();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("all");
   const [risk, setRisk] = useState("all");
@@ -24,11 +27,13 @@ export default function AgentInventoryDashboard({
     });
   }, [agents, query, status, risk]);
 
+  const open = (agent) => openDeepDive(agentDeepDive(agent, { isAdmin, onReload }));
+
   return (
     <div className="space-y-5">
       <Panel
         title="Enterprise AI agent inventory"
-        subtitle="Every row is an existing backend agent record. Modeled risk and authority are client-side interpretations."
+        subtitle="Every row is an existing backend agent record. Click a row for the standard deep-dive — live rating, AI brief, recommendations and Suspend / Kill / Resume actions."
         actions={
           isAdmin ? (
             <button
@@ -101,7 +106,9 @@ export default function AgentInventoryDashboard({
                 {filtered.map((agent) => (
                   <tr
                     key={agent.ref}
-                    onClick={() => onSelectAgent(agent)}
+                    data-testid={`inventory-agent-${agent.ref}`}
+                    onMouseEnter={() => warm(agentDeepDive(agent))}
+                    onClick={() => open(agent)}
                     className="border-b border-border/60 hover:bg-secondary/35 cursor-pointer"
                   >
                     <td className="py-3 pr-3">

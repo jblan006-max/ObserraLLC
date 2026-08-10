@@ -1,5 +1,8 @@
 # Obserra EIOS — PRD
 
+## Status (Jun 2026) — Agentic AI Security Control Plane v1: UNIFICATION COMPLETE
+The v1 pivot + all Enforcement Observability features + the final unification phase are done and E2E-verified (iteration_93). Standard universal deep-dive cards (agent Suspend/Kill/Resume, AI-system Sanction/Block via `/api/actions/run`) run across Executive Overview, Agent Inventory, Mission Control, Shadow AI and the Toxicity Map; the bespoke `AgentDetailModal` is kept on Authority & Guardrails for extra detail. The read-only, expiring **Auditor Room** (create/list/copy/revoke UI in the Defensibility tab → public `/audit-room/:token` portal + signed PDF) is live. Connectors are unified (SAP Landscape merged into `connectors_catalog.py`). All live — no placeholders/mocks. Owner/admin test account: `jblan2026@gmail.com` / `Obserra2026!`.
+
 ## Product
 Enterprise SaaS "continuous AI control plane" with Dual-Mode dashboards (Executive $-impact vs Operational counts), Shared Cybersecurity Kernel, live connectors (M365/Copilot/ChatGPT/Teams/SSO), Compliance Posture, Web-Push, JIT provisioning, installable PWA. React + Tailwind / FastAPI + MongoDB. English only.
 

@@ -502,6 +502,40 @@ async def create_evidence_room(body: EvidenceRoomBody, admin: dict = Depends(req
     return {"token": token, "url": f"{frontend}/audit-room/{token}", "expires_at": expires, "days": days}
 
 
+@agents_router.get("/runtime/evidence-rooms")
+async def list_evidence_rooms(admin: dict = Depends(require_roles("admin"))):
+    import os
+    from datetime import datetime, timezone
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    now = datetime.now(timezone.utc).isoformat()
+    rooms = []
+    async for d in db.evidence_rooms.find({"org_id": admin["org_id"]}).sort("created_at", -1):
+        rooms.append({
+            "token": d["token"],
+            "url": f"{frontend}/audit-room/{d['token']}",
+            "created_at": d.get("created_at"),
+            "created_by": d.get("created_by"),
+            "expires_at": d.get("expires_at"),
+            "opens": d.get("opens", 0),
+            "expired": bool(d.get("expires_at") and now > d["expires_at"]),
+        })
+    return {"rooms": rooms}
+
+
+class RoomRevokeBody(BaseModel):
+    token: str
+
+
+@agents_router.post("/runtime/evidence-room/revoke")
+async def revoke_evidence_room(body: RoomRevokeBody, admin: dict = Depends(require_roles("admin"))):
+    res = await db.evidence_rooms.delete_one({"token": body.token, "org_id": admin["org_id"]})
+    if not res.deleted_count:
+        raise HTTPException(404, "Auditor room not found.")
+    await _log_audit(admin["org_id"], admin["email"], "agent.evidence_room_revoke",
+                     f"Read-only auditor room revoked ({body.token[:8]}…)")
+    return {"revoked": True}
+
+
 @agents_router.get("/public/evidence-room/{token}")
 async def public_evidence_room(token: str):
     from datetime import datetime, timezone

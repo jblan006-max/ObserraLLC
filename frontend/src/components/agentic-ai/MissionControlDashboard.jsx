@@ -11,6 +11,8 @@ import {
 import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { MetricCard, Panel, ProgressBar, StatusPill } from "@/components/agentic-ai/shared";
 import { authorityDistribution, guardrailDistribution } from "@/lib/agenticAIModels";
+import { useDeepDive } from "@/context/DeepDiveContext";
+import { agentDeepDive } from "@/lib/agenticDeepDive";
 
 const AUTH_COLORS = {
   Autonomous: "hsl(0 84% 60%)",
@@ -20,7 +22,8 @@ const AUTH_COLORS = {
   Disabled: "hsl(215 20% 50%)",
 };
 
-export default function MissionControlDashboard({ data, onOpenTab, onSelectAgent }) {
+export default function MissionControlDashboard({ data, onOpenTab, isAdmin, onReload }) {
+  const { openDeepDive, warm } = useDeepDive();
   const summary = data.agentSummary || {};
   const systems = data.systemSummary || {};
   const incidents = data.incidentSummary || {};
@@ -179,7 +182,7 @@ export default function MissionControlDashboard({ data, onOpenTab, onSelectAgent
 
       <Panel
         title="Highest risk AI agents"
-        subtitle="Prioritized using the client-side modeled risk score. Click an agent for evidence and AI analysis."
+        subtitle="Prioritized using the client-side modeled risk score. Click an agent for the standard deep-dive — evidence, AI analysis and Suspend / Kill / Resume actions."
         testid="agentic-top-agents"
       >
         {topAgents.length === 0 ? (
@@ -191,7 +194,9 @@ export default function MissionControlDashboard({ data, onOpenTab, onSelectAgent
             {topAgents.map((agent) => (
               <button
                 key={agent.ref}
-                onClick={() => onSelectAgent(agent)}
+                data-testid={`mc-agent-${agent.ref}`}
+                onMouseEnter={() => warm(agentDeepDive(agent))}
+                onClick={() => openDeepDive(agentDeepDive(agent, { isAdmin, onReload }))}
                 className="text-left rounded-xl border border-border bg-secondary/20 p-4 hover:bg-secondary/40 transition-colors"
               >
                 <div className="flex items-start justify-between gap-3">

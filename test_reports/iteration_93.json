@@ -1,0 +1,29 @@
+{
+  "summary": "Iter 93 — Full end-to-end validation of the Auditor Room (create/list/copy/revoke + public read-only + PDF + invalid-token error) AND the universal Standard deep-dive on Agent Inventory, Mission Control, Shadow AI, and Toxicity Map, while regressing the bespoke AgentDetailModal on Delegated Authority Register + Guardrails. Backend pytest (3/3) + Frontend E2E all PASS. Baseline restored (AGT-001 sanctioned, all auditor rooms revoked).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter93_auditor_room.py",
+    "/app/test_reports/pytest/iter93.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Delegated Authority Register rows in AuthorityDashboard have no per-row data-testid (e.g., `authority-register-<REF>`). Clicking a row correctly opens the bespoke AgentDetailModal (verified via DOM fallback), but automation currently needs a JS fallback selector. Recommend adding data-testid=`authority-register-${agent.ref}` on the register row buttons for future test stability.",
+    "GuardrailsDashboard.jsx: the agent-name <button> that triggers onSelectAgent has no data-testid (e.g., `guardrails-agent-<REF>`). Same recommendation — this would let tests bypass fragile textContent-based selectors.",
+    "Auditor Room latest-URL is rendered as <input readOnly>, so tests need `.input_value()` (not `.text_content()`) — worth documenting."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter93_auditor_room.py"
+  ],
+  "success_rate": {"backend": "100% (3/3 pytest)", "frontend": "100% of requested flows"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! — cookie auth verified working.",
+  "seed_data_creation": "None persisted. Cleanup done: (a) AGT-001 resumed back to `sanctioned` via POST /api/actions/run {agent_resume:AGT-001}. (b) All auditor rooms created during test run (2 tokens, incl. the UI-created one _YR8fMPNiy-ZTckR-AjjAw + the backend-test-created one) were revoked via POST /api/agents/runtime/evidence-room/revoke; GET /api/agents/runtime/evidence-rooms now returns `rooms: []`. Final baseline: AGT-001 sanctioned, AGT-002 restricted, AGT-003 sanctioned; 0 auditor rooms outstanding.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Everything requested for iter 93 is GREEN. Details of what was verified: (1) Backend pytest test_iter93_auditor_room.py 3/3 PASS: create room -> list contains it -> public JSON + pack.pdf serve -> invalid token 404/410 -> revoke -> list no longer contains it -> public JSON 404/410 after revoke; agent_suspend:AGT-001 + agent_resume:AGT-001 + aisys_sanction:SHAI-LLM-openai all 200. (2) FE Defensibility tab: agentic-auditor-room card shown for admin, auditor-room-create-btn creates a room, auditor-room-latest-url input contains /audit-room/<token> URL, auditor-room-<token> row appears in auditor-room-list. (3) Public /audit-room/<token> (opened in a fresh browser context — no cookies) renders audit-room, audit-room-counts, audit-room-agents, audit-room-trail, and audit-room-download with href pointing to /api/agents/public/evidence-room/<token>/pack.pdf. (4) /audit-room/bogus123nonexistent shows audit-room-error. (5) Revoke removes the row and re-opening the public URL now shows audit-room-error. (6) Inventory: clicking inventory-agent-AGT-001 opens deep-dive-modal with deep-dive-compliance + standard-actions + std-action-suspend/kill. Clicking std-action-suspend produced banner: '✓ AGT-001 suspended — enforced in the control plane. · written to the audit trail + Defensibility Ledger' via a REAL POST /api/actions/run (verified by subsequent GET /api/agents showing AGT-001 restricted; then restored to sanctioned via API). (7) Mission Control: mc-agent-AGT-002 (top agent card) clicked → deep-dive-modal + standard-actions render. (8) Shadow AI: shadow-system-SHAI-LLM-anthropic → deep-dive-modal + std-action-sanction + std-action-block render. (9) Authority & Tools: agentic-toxicity-map renders; toxicity-agent-AGT-001 click → standard deep-dive-modal opens. (10) Delegated Authority Register row (no per-row testid — clicked via DOM lookup) → BESPOKE AgentDetailModal opens (agent-enforce-suspend present). (11) Guardrails & Red Team: clicking AGT-001 name → BESPOKE AgentDetailModal opens (agent-enforce-suspend/kill/resume present). (12) toxicity-neutralise-btn is present (not clicked this run to avoid noise; validated in iter 91/92).",
+  "rca_of_the_issue": "No functional bugs. Only ergonomic gap: delegated-authority-register rows and guardrails agent-name buttons lack per-row data-testid attributes, requiring a DOM/text lookup instead of a stable selector. Non-blocking."
+}

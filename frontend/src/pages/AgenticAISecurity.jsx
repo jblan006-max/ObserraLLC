@@ -296,7 +296,8 @@ export default function AgenticAISecurity() {
         <MissionControlDashboard
           data={data}
           onOpenTab={openTab}
-          onSelectAgent={setSelectedAgent}
+          isAdmin={isAdmin}
+          onReload={reload}
         />
       )}
 
@@ -304,7 +305,7 @@ export default function AgenticAISecurity() {
         <AgentInventoryDashboard
           agents={data?.agents || []}
           isAdmin={isAdmin}
-          onSelectAgent={setSelectedAgent}
+          onReload={reload}
           onRegister={() => setRegisterOpen(true)}
         />
       )}
@@ -338,6 +339,7 @@ export default function AgenticAISecurity() {
           onSanction={sanctionSystem}
           onDiscover={discoverShadowAI}
           discovering={discovering}
+          onReload={reload}
         />
       )}
 
@@ -349,7 +351,7 @@ export default function AgenticAISecurity() {
       )}
 
       {activeTab === "defensibility" && (
-        <DefensibilityDashboard data={data} sourceStatus={sourceStatus} />
+        <DefensibilityDashboard data={data} sourceStatus={sourceStatus} isAdmin={isAdmin} />
       )}
 
       {selectedAgent && (
