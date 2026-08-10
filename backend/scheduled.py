@@ -121,8 +121,6 @@ async def monthly_board_report(request: Request, background_tasks: BackgroundTas
     background_tasks.add_task(run_sap_board_pack)
     from agents import _run_ai_board_brief
     background_tasks.add_task(_run_ai_board_brief, "monthly")
-    from agents import _run_board_evidence_digest
-    background_tasks.add_task(_run_board_evidence_digest)
     from datetime import datetime, timezone
     _cad = {"monthly"}
     if datetime.now(timezone.utc).month in (1, 4, 7, 10):
@@ -408,8 +406,10 @@ async def daily_drift_digest(request: Request, background_tasks: BackgroundTasks
     background_tasks.add_task(run_health_alerts)
     from deploy import _run_audit_room_expiry_reminders
     background_tasks.add_task(_run_audit_room_expiry_reminders)
-    from agents import _run_agent_room_expiry_reminders
+    from agents import _run_agent_room_expiry_reminders, _run_auditor_question_sla_nudge, _run_board_evidence_digest
     background_tasks.add_task(_run_agent_room_expiry_reminders)
+    background_tasks.add_task(_run_auditor_question_sla_nudge)
+    background_tasks.add_task(_run_board_evidence_digest, None, False, True)
     return {"status": "accepted"}
 
 
