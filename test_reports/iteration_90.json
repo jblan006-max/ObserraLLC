@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 90 — Validated all 5 newly-wired live features end-to-end for Obserra Agentic v1. Backend: 10/10 pytest passed covering /api/agents/runtime/webhook GET/PUT/clear/invalid, /api/agents/runtime/enforce-bulk (suspend + invalid action), /api/actions/run (advisor agent_suspend/agent_resume), /api/ai-systems/discover, and single-agent /enforce regression. Frontend E2E: (1) RuntimeConnectorCard on Settings connects/clears with success toast and Connected/Not connected pill. (2) Agentic AI Security page renders all 7 tabs. (3) Tool Toxicity Map renders heatmap grid with 15 cells, 3 agent rows x 5 resource columns. (4) Neutralise button correctly shows 'Neutralise 2 toxic' (model.toxic=2) and reveals Suspend/Kill/Cancel actions with correct testids; clicking Suspend all fires POST /agents/runtime/enforce-bulk with refs=['AGT-001','AGT-002'] returning {ok:true, count:2, action:'suspend'} and shows 'Neutralised 2 toxic agent(s) — suspended across the control plane.' toast. (5) Obserrian Advisor 'Suspend AGT-002' produces exec-agent_suspend:AGT-002 button; clicking it POSTs /api/actions/run and returns 200 with 'AGT-002 suspended — enforced in the control plane.' (6) Shadow AI 'Run discovery' (data-testid=shadow-discover-btn) fires /api/ai-systems/discover returning {ok:true, added:2, shadow_total:2, sources:{connectors:0, telemetry:2, agents:0}} — LIVE ONLY. (7) AgentDetailModal renders Suspend/Kill/Resume buttons for single-agent enforcement (regression OK). Baseline restored via agent_resume for AGT-001/002/003 after each test.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Settings page + Share Digest", "issues": [
+        "SAP copy scrub INCOMPLETE — user directive was to remove all SAP UAC wording. Visible 'SAP UAC' still appears in: /app/frontend/src/pages/Settings.jsx line 554 (Guided Tour helper copy: '...each SAP UAC dashboard...') and /app/frontend/src/pages/ShareDigest.jsx line 42 (visible pill/badge label 'SAP UAC'). Source comments in SapAdvisor.jsx and SapInsight.jsx are non-visible and acceptable, but the two visible strings above must be replaced with 'Agentic AI Security' (or equivalent) to satisfy the scrub directive."
+      ]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter90_agentic_v1_wiring.py",
+    "/app/test_reports/pytest/iter90.xml"
+  ],
+  "action_items": [
+    "Scrub visible 'SAP UAC' wording in /app/frontend/src/pages/Settings.jsx (line ~554) and /app/frontend/src/pages/ShareDigest.jsx (line ~42) — replace with 'Agentic AI Security' or equivalent copy to fulfil the user's 'no SAP UAC' directive."
+  ],
+  "critical_code_review_comments": [
+    "agents.py enforce_bulk correctly honours provided `refs` and passes them through _do_enforce; count returned matches UI toast. Good.",
+    "routes.py /actions/run parses 'verb:ref' safely and delegates to enforce_from_advisor without wrapping in try/except that could hide 500s — verified returns 200 with clear message.",
+    "Legacy component files still named SapAdvisor.jsx / SapInsight.jsx — cosmetic only, but consider renaming during broader scrub for consistency with the Obserra Agentic branding."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter90_agentic_v1_wiring.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "~95% (SAP UAC copy scrub incomplete)"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin)",
+  "seed_data_creation": "None. Restored baseline (AGT-001/002/003 to sanctioned) after each mutation via /actions/run agent_resume.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 5 feature backends are green and their frontend integrations drive them correctly. Only outstanding item is the SAP UAC visible-text scrub in Settings.jsx and ShareDigest.jsx. On retest, load /app/settings and /app/share-digest (or wherever ShareDigest renders) and confirm 'SAP UAC' no longer appears in page body.",
+  "rca of the issue": "SAP UAC copy scrub was applied to headers and card titles but two secondary strings were missed: (a) Settings guided-tour helper paragraph (Settings.jsx:554) which mentions 'each SAP UAC dashboard' and (b) ShareDigest header pill (ShareDigest.jsx:42) with literal text 'SAP UAC'. Fix: replace both with 'Agentic AI Security' to match branding."
+}

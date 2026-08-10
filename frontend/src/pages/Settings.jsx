@@ -113,7 +113,7 @@ export default function Settings() {
 
   const [resetBusy, setResetBusy] = useState(false);
   const resetDemo = async () => {
-    if (!window.confirm("Reset to the demo dataset? This clears this organization's SAP data and reloads the sample dataset.")) return;
+    if (!window.confirm("Reset to the demo dataset? This clears this organization's demo data and reloads the sample dataset.")) return;
     setResetBusy(true);
     try {
       const { data } = await api.post("/deploy/reset-demo");
@@ -484,25 +484,25 @@ export default function Settings() {
       {isAdmin && (
         <div className="bg-card fact-border rounded-xl p-6 space-y-4" data-testid="deployment-docs-settings">
           <div className="flex items-center gap-2"><Server className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Deployment &amp; Documentation</h2></div>
-          <p className="text-sm text-muted-foreground">Obserra SAP UAC installs on any device as a one-click app (PWA) — on desktop use the Install button in the address bar or the in-app banner; on mobile use "Add to Home Screen". For fully self-hosted use, download the self-contained on-premise installer below — it bundles the full app source and a one-click <span className="text-foreground">./install.sh</span>. Every guide opens with a branded cover and contents page: grab the full <span className="text-foreground">Install &amp; User Guide</span>, a short <span className="text-foreground">Executive</span> guide, or the deeper <span className="text-foreground">Admin &amp; Operator</span> guide — each with screenshots and a walkthrough of the SAP UAC dashboards.</p>
+          <p className="text-sm text-muted-foreground">Obserra — Agentic AI Security Control Plane installs on any device as a one-click app (PWA) — on desktop use the Install button in the address bar or the in-app banner; on mobile use "Add to Home Screen". For fully self-hosted use, download the self-contained on-premise installer below — it bundles the full app source and a one-click <span className="text-foreground">./install.sh</span>. Every guide opens with a branded cover and contents page: grab the full <span className="text-foreground">Install &amp; User Guide</span>, a short <span className="text-foreground">Executive</span> guide, or the deeper <span className="text-foreground">Admin &amp; Operator</span> guide — each with screenshots and a walkthrough of the Agentic AI Security dashboards.</p>
           <div className="flex items-center gap-3 flex-wrap">
-            <button data-testid="download-onprem" disabled={dlBusy} onClick={() => downloadFile("/deploy/onprem-package", "Obserra-SAP-UAC-OnPrem.zip", "onprem")} title="Self-contained one-click installer — bundles backend + frontend source, Docker Compose, and ./install.sh"
+            <button data-testid="download-onprem" disabled={dlBusy} onClick={() => downloadFile("/deploy/onprem-package", "Obserra-Agentic-AI-Security-OnPrem.zip", "onprem")} title="Self-contained one-click installer — bundles backend + frontend source, Docker Compose, and ./install.sh"
               className="px-4 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">
               {dlBusy === "onprem" ? <Loader2 className="w-4 h-4 animate-spin" /> : <Package className="w-4 h-4" />} On‑premise package (.zip)
             </button>
-            <button data-testid="download-guide-pdf" disabled={dlBusy} onClick={() => downloadFile("/deploy/guide.pdf", "Obserra-SAP-UAC-Install-and-User-Guide.pdf", "pdf")}
+            <button data-testid="download-guide-pdf" disabled={dlBusy} onClick={() => downloadFile("/deploy/guide.pdf", "Obserra-Agentic-AI-Security-Install-and-User-Guide.pdf", "pdf")}
               className="px-4 py-2.5 rounded-md border border-primary/40 text-foreground hover:bg-primary/10 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
               {dlBusy === "pdf" ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4 text-primary" />} Install &amp; User Guide (PDF)
             </button>
-            <button data-testid="download-guide-docx" disabled={dlBusy} onClick={() => downloadFile("/deploy/guide.docx", "Obserra-SAP-UAC-Install-and-User-Guide.docx", "docx")}
+            <button data-testid="download-guide-docx" disabled={dlBusy} onClick={() => downloadFile("/deploy/guide.docx", "Obserra-Agentic-AI-Security-Install-and-User-Guide.docx", "docx")}
               className="px-4 py-2.5 rounded-md border border-primary/40 text-foreground hover:bg-primary/10 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
               {dlBusy === "docx" ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4 text-primary" />} Install &amp; User Guide (Word)
             </button>
-            <button data-testid="download-guide-exec" disabled={dlBusy} onClick={() => downloadFile("/deploy/guide-exec.pdf", "Obserra-SAP-UAC-Executive-Guide.pdf", "exec")}
+            <button data-testid="download-guide-exec" disabled={dlBusy} onClick={() => downloadFile("/deploy/guide-exec.pdf", "Obserra-Agentic-AI-Security-Executive-Guide.pdf", "exec")}
               className="px-4 py-2.5 rounded-md border border-primary/40 text-foreground hover:bg-primary/10 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
               {dlBusy === "exec" ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4 text-ai" />} Executive Guide (PDF)
             </button>
-            <button data-testid="download-guide-admin" disabled={dlBusy} onClick={() => downloadFile("/deploy/guide-admin.pdf", "Obserra-SAP-UAC-Admin-Operator-Guide.pdf", "admin")}
+            <button data-testid="download-guide-admin" disabled={dlBusy} onClick={() => downloadFile("/deploy/guide-admin.pdf", "Obserra-Agentic-AI-Security-Admin-Operator-Guide.pdf", "admin")}
               className="px-4 py-2.5 rounded-md border border-primary/40 text-foreground hover:bg-primary/10 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
               {dlBusy === "admin" ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4 text-primary" />} Admin &amp; Operator Guide (PDF)
             </button>
@@ -518,7 +518,7 @@ export default function Settings() {
               className="px-4 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 hover:opacity-90 transition-opacity">
               {allVisualsBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} Refresh all visuals
             </button>
-            <button data-testid="reset-demo" disabled={resetBusy} onClick={resetDemo} title="Clear this organization's SAP data and reload the realistic sample dataset (demo / trial)"
+            <button data-testid="reset-demo" disabled={resetBusy} onClick={resetDemo} title="Clear this organization's demo data and reload the realistic sample dataset (demo / trial)"
               className="px-4 py-2.5 rounded-md border border-border text-muted-foreground hover:text-foreground hover:border-crit/50 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors">
               {resetBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />} Reset to demo dataset
             </button>

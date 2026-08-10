@@ -26,7 +26,7 @@ const lazyWithRetry = (importer) => lazy(async () => {
   }
 });
 
-// Route-level code splitting — Obserra SAP UAC dashboards.
+// Route-level code splitting — Obserra Agentic AI Security dashboards.
 const SapOverview = lazyWithRetry(() => import("@/pages/SapOverview"));
 const SodCommandCenter = lazyWithRetry(() => import("@/pages/SodCommandCenter"));
 const Identities = lazyWithRetry(() => import("@/pages/Identities"));

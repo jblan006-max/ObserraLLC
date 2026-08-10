@@ -53,7 +53,7 @@ export const UpdateBanner = () => {
       >
         <ArrowUpCircle className="w-4 h-4 shrink-0" />
         <span data-testid="update-banner-text">
-          Obserra SAP UAC <b>v{info.latest}</b> is available — you're on v{info.current}.
+          Obserra <b>v{info.latest}</b> is available — you're on v{info.current}.
         </span>
         <button
           data-testid="update-banner-view"

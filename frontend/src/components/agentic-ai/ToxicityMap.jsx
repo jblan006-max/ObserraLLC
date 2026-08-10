@@ -44,12 +44,14 @@ export default function ToxicityMap({ agents, isAdmin, onReload }) {
   const model = toxicityModel(agents || []);
   const nodes = model.nodes;
   const resources = [...new Set(nodes.flatMap((n) => (n.edges || []).map((e) => e.resource)))];
+  const toxicRefs = nodes.filter((n) => n.toxicity.toxic).map((n) => n.ref);
 
-  const neutralise = async () => {
+  const neutralise = async (action) => {
     setBusy(true);
     try {
-      const { data } = await api.post("/agents/runtime/enforce-bulk", { action: "suspend", selector: "toxic" });
-      toast.success(`Neutralised ${data.count} toxic agent(s) — suspended in the control plane.`);
+      const { data } = await api.post("/agents/runtime/enforce-bulk", { action, selector: "toxic", refs: toxicRefs });
+      const verb = action === "kill" ? "killed" : "suspended";
+      toast.success(`Neutralised ${data.count} toxic agent(s) — ${verb} across the control plane.`);
       setConfirm(false);
       onReload && onReload();
     } catch (e) {
@@ -79,14 +81,22 @@ export default function ToxicityMap({ agents, isAdmin, onReload }) {
           )}
           {isAdmin && confirm && (
             <span className="inline-flex items-center gap-1.5">
-              <span className="text-crit">Suspend {model.toxic} agent(s)?</span>
+              <span className="text-crit">Neutralise {model.toxic} toxic agent(s)?</span>
               <button
                 data-testid="toxicity-neutralise-confirm"
                 disabled={busy}
-                onClick={neutralise}
+                onClick={() => neutralise("suspend")}
                 className="px-2 py-1 rounded-md bg-crit text-white font-head font-bold disabled:opacity-50 inline-flex items-center gap-1"
               >
-                {busy && <Loader2 className="w-3 h-3 animate-spin" />} Confirm
+                {busy && <Loader2 className="w-3 h-3 animate-spin" />} Suspend all
+              </button>
+              <button
+                data-testid="toxicity-neutralise-kill"
+                disabled={busy}
+                onClick={() => neutralise("kill")}
+                className="px-2 py-1 rounded-md border border-crit/40 text-crit font-head font-bold disabled:opacity-50"
+              >
+                Kill all
               </button>
               <button
                 data-testid="toxicity-neutralise-cancel"

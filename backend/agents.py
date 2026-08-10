@@ -174,29 +174,29 @@ class EnforceBody(BaseModel):
     action: str  # suspend | kill | resume
 
 
-@agents_router.post("/{ref}/enforce")
-async def enforce_agent(ref: str, body: EnforceBody, admin: dict = Depends(require_roles("admin"))):
-    """Runtime enforcement connector — actually flips the agent runtime status (suspend/kill/resume),
-    records the action to the Defensibility Ledger and alerts Slack/Teams. If an external agent-runtime
-    webhook is configured on the org it also dispatches the enforcement command there (best-effort)."""
+async def _do_enforce(org_id, actor, ref, action, source="manual"):
+    """Shared runtime enforcement — flips the agent runtime status (suspend/kill/resume), records the
+    action to the Defensibility Ledger and alerts Slack/Teams. If an external agent-runtime webhook is
+    configured on the org it also dispatches the enforcement command there (best-effort). Reused by the
+    single enforce endpoint, the bulk 'Neutralise' action and the Obserrian Advisor."""
     from bson import ObjectId
     import httpx
-    m = ENFORCE_MAP.get((body.action or "").lower())
+    m = ENFORCE_MAP.get((action or "").lower())
     if not m:
         raise HTTPException(400, "Unknown enforcement action")
-    a = await db.ai_agents.find_one({"org_id": admin["org_id"], "ref": ref})
+    a = await db.ai_agents.find_one({"org_id": org_id, "ref": ref})
     if not a:
         raise HTTPException(404, "Agent not found")
-    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}) or {}
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
     webhook = org.get("agent_runtime_webhook")
-    enforced = body.action != "resume"
+    enforced = action != "resume"
     external_ok, runtime = None, "obserra-control-plane"
     if webhook:
         runtime = "external-webhook"
         try:
             async with httpx.AsyncClient(timeout=10) as c:
-                r = await c.post(webhook, json={"agent_ref": ref, "action": body.action,
-                                                "mode": m["mode"], "org_id": admin["org_id"]})
+                r = await c.post(webhook, json={"agent_ref": ref, "action": action,
+                                                "mode": m["mode"], "org_id": org_id})
             external_ok = 200 <= r.status_code < 300
         except Exception:
             external_ok = False
@@ -204,17 +204,17 @@ async def enforce_agent(ref: str, body: EnforceBody, admin: dict = Depends(requi
             else "Enforced in the Obserra control plane — the agent governance status changed and every "
                  "downstream policy check now honours it. Wire an agent-runtime webhook to push this to an "
                  "external execution environment.")
-    enforcement = {"enforced": enforced, "mode": m["mode"], "action": body.action,
+    enforcement = {"enforced": enforced, "mode": m["mode"], "action": action,
                    "runtime": runtime, "external_ok": external_ok, "note": note,
-                   "at": _now(), "by": admin.get("email")}
+                   "at": _now(), "by": actor, "source": source}
     await db.ai_agents.update_one({"_id": a["_id"]},
         {"$set": {"status": m["status"], "enforced": enforced, "enforcement": enforcement}})
-    await _log_audit(admin["org_id"], admin["email"], "agent.enforce",
-                     f"{ref} {m['verb']} (mode {m['mode']})")
+    await _log_audit(org_id, actor, "agent.enforce",
+                     f"{ref} {m['verb']} (mode {m['mode']}, via {source})")
     try:
         from risk_engine import _ledger
-        await _ledger(admin["org_id"], {
-            "action": "agent-enforce", "task_id": ref, "by": admin.get("email"),
+        await _ledger(org_id, {
+            "action": "agent-enforce", "task_id": ref, "by": actor,
             "provider": runtime, "verified": bool(external_ok) if webhook else True,
             "status": m["status"], "message": f"{a['name']} ({ref}) {m['verb']} — {note}",
             "external": {"webhook": bool(webhook), "external_ok": external_ok, "mode": m["mode"]},
@@ -223,14 +223,82 @@ async def enforce_agent(ref: str, body: EnforceBody, admin: dict = Depends(requi
         pass
     try:
         from self_scan import _post_chat_alert
-        emoji = "🛑" if body.action == "kill" else "⏸" if body.action == "suspend" else "▶"
-        await _post_chat_alert(admin["org_id"], f"{emoji} AI agent {m['verb']}: {a['name']} ({ref})",
-                               f"Runtime enforcement '{body.action}' applied (mode {m['mode']}). {note}")
+        emoji = "🛑" if action == "kill" else "⏸" if action == "suspend" else "▶"
+        await _post_chat_alert(org_id, f"{emoji} AI agent {m['verb']}: {a['name']} ({ref})",
+                               f"Runtime enforcement '{action}' applied (mode {m['mode']}). {note}")
     except Exception:
         pass
-    updated = await db.ai_agents.find_one({"org_id": admin["org_id"], "ref": ref}, {"_id": 0})
+    updated = await db.ai_agents.find_one({"org_id": org_id, "ref": ref}, {"_id": 0})
     updated["tool_violations"] = _tool_violations(updated)
     return {"ok": True, "agent": updated, "enforcement": enforcement}
+
+
+@agents_router.post("/{ref}/enforce")
+async def enforce_agent(ref: str, body: EnforceBody, admin: dict = Depends(require_roles("admin"))):
+    """Runtime enforcement connector — see _do_enforce."""
+    return await _do_enforce(admin["org_id"], admin["email"], ref, body.action, source="manual")
+
+
+async def enforce_from_advisor(org_id, actor, ref, action):
+    """Enforce an agent from the Obserrian Advisor chat (called by routes /actions/run)."""
+    return await _do_enforce(org_id, actor, ref, action, source="advisor")
+
+
+# ---- Agent runtime connector (enforcement webhook) ----
+class WebhookBody(BaseModel):
+    webhook: str = ""
+
+
+@agents_router.get("/runtime/webhook")
+async def get_runtime_webhook(user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}, {"agent_runtime_webhook": 1}) or {}
+    return {"webhook": org.get("agent_runtime_webhook") or ""}
+
+
+@agents_router.put("/runtime/webhook")
+async def set_runtime_webhook(body: WebhookBody, admin: dict = Depends(require_roles("admin"))):
+    from bson import ObjectId
+    url = (body.webhook or "").strip()
+    if url and not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(400, "Webhook must be a valid http(s) URL.")
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])},
+                                      {"$set": {"agent_runtime_webhook": url}})
+    await _log_audit(admin["org_id"], admin["email"], "agent.runtime_webhook",
+                     "Set agent runtime webhook" if url else "Cleared agent runtime webhook")
+    return {"webhook": url}
+
+
+# ---- One-tap bulk 'Neutralise' from the Toxicity Map ----
+class BulkEnforceBody(BaseModel):
+    action: str = "suspend"      # suspend | kill
+    selector: str = "toxic"      # toxic | all
+    refs: list[str] | None = None
+
+
+@agents_router.post("/runtime/enforce-bulk")
+async def enforce_bulk(body: BulkEnforceBody, admin: dict = Depends(require_roles("admin"))):
+    """Neutralise every red-flagged agent in one tap. Enforces `action` (suspend or kill) on the given
+    `refs`, or on all currently-toxic agents (selector='toxic'), or every live agent (selector='all')."""
+    action = (body.action or "suspend").lower()
+    if action not in ("suspend", "kill"):
+        raise HTTPException(400, "Bulk action must be 'suspend' or 'kill'.")
+    agents = await db.ai_agents.find({"org_id": admin["org_id"]}, {"_id": 0}).to_list(500)
+    if body.refs:
+        wanted = set(body.refs)
+        targets = [a for a in agents if a.get("ref") in wanted and a.get("status") != "killed"]
+    elif body.selector == "all":
+        targets = [a for a in agents if a.get("status") != "killed"]
+    else:
+        targets = [a for a in agents if _is_toxic(a)]
+    results = []
+    for a in targets:
+        try:
+            res = await _do_enforce(admin["org_id"], admin["email"], a["ref"], action, source="bulk-neutralise")
+            results.append({"ref": a["ref"], "name": a.get("name"), "status": res["agent"]["status"]})
+        except Exception:
+            pass
+    return {"ok": True, "count": len(results), "action": action, "agents": results}
 
 
 # ---- AI Security Executive Board Brief (Resend email + cron cadence) ----
