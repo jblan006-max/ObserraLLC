@@ -1,0 +1,45 @@
+{
+  "summary": "Iter110 — validated 3 Share Center follow-ups. Backend pytest 7/8 passing in /app/backend/tests/test_iter110_anomaly_autoalert_custody_map.py (~47s). ONE CRITICAL BUG FOUND: Anomaly Auto-Alert does NOT fire for anomalous DOWNLOADs — _card_anomaly_autocheck is only awaited in public_card_share (open, agents.py:1186) and is NOT called from public_card_share_pdf (download, agents.py:1191-1241). Review request explicitly requires it for both; anomalous AU download under cadence='weekly' produced 0 notifications (expected 1). Everything else works: (1) Anomalous OPEN fires exactly 1 notification with dedupe_key=card-anomaly:{token}:{ip}:{kind} under 'weekly' cadence (weekly→1, off→0, re-open dedupes to 1); (2) Custody PDF at /api/agents/runtime/card-share/{token}/access-log.pdf returns valid %PDF, includes a 'Where this evidence was accessed' page with embedded world-map image when geo rows exist (verified via pymupdf: multi-page, 'Where this evidence was accessed' heading present, ≥1 embedded image); no-geo card correctly returns valid PDF without map page; (3) Heat-trail WorldMapThumb.jsx code inspected — clusters by rounded lat/lon (1dp), sizes dot by sqrt(count), shows numeric count label when count>1, colors: green=open, cyan=download, red=anomaly (matches spec). Frontend UI rendering was verified in iter109; no re-run needed here. Regression: access-log JSON includes geo/anomaly/anomaly_reason; CSV export includes 'Anomaly' column. Cadence restored to 'instant' at teardown.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "GET /api/agents/public/card-share/{token}/card.pdf",
+        "issue": "Anomaly Auto-Alert does NOT fire for anomalous downloads. _card_anomaly_autocheck(token, org_id, ip, ua, 'download', who=auditor) is missing from public_card_share_pdf (agents.py, function starts line 1191). Only _card_engage_alert is called after the download event insert (line 1237). Test: with cadence='weekly', US baseline open then AU/Firefox download produces 0 'Unusual shared-card access' notifications; expected exactly 1 with dedupe_key card-anomaly:{token}:1.1.1.1:download. The open path (line 1186) is wired correctly.",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter110_anomaly_autoalert_custody_map.py",
+    "/app/test_reports/pytest/iter110.xml"
+  ],
+  "action_items": [
+    "Add `await _card_anomaly_autocheck(token, doc.get('org_id'), ip, ua, 'download', who=auditor)` to public_card_share_pdf (agents.py ~line 1237, right after the existing `await _card_engage_alert(token, doc, 'download', who=auditor)` inside the try block). This is the single line needed to satisfy the review-request requirement that anomalous downloads fire the alert under cadence='instant'|'weekly' and NOT under 'off' (the helper itself already gates on cadence)."
+  ],
+  "critical_code_review_comments": [
+    "agents.py public_card_share_pdf (line 1191) is missing the _card_anomaly_autocheck call that its sibling public_card_share (line 1186) has — asymmetry between open and download paths breaks the stated 'open OR download' requirement.",
+    "_card_anomaly_autocheck (agents.py:1513) gates correctly on cadence=='off' (line 1552) — no fix needed there.",
+    "_card_anomaly_autocheck derives country via `geo.split(',')[-1].strip()` — same low-severity edge case flagged in iter109 review (single-segment geo would fail cleanly to '' and not fire, so safe but brittle).",
+    "WorldMapThumb.jsx dot radius uses `Math.min(15, 3 + 2.8 * Math.sqrt(count))` for the halo and `Math.min(4.5, 2 + count * 0.35)` for the core — matches the 'size dots by number of accesses' spec, and shows count label only when count>1 per spec.",
+    "In access-log.pdf (agents.py:1611) the map-page injection is best-effort wrapped in try/except swallowing all errors silently — consider logger.warning to surface PIL/pymupdf failures during CI."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter110_anomaly_autoalert_custody_map.py"
+  ],
+  "success_rate": {
+    "backend": "87.5% (7/8 pytest)",
+    "frontend": "N/A (code review only; UI rendering verified in iter109)"
+  },
+  "test_credentials": "Admin: jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md). Cadence restored to 'instant' at teardown.",
+  "seed_data_creation": "Pytest mints ~8 TEST_Iter110 card-share tokens with public opens/downloads from IP_US=8.8.8.8 (Chrome/mac) and IP_AU=1.1.1.1 (Firefox/win) then revokes on teardown. Notifications with dedupe_key prefix 'card-anomaly:{token}' land in db.notifications; not cleaned up (they are dedupe-idempotent and scoped to expired test tokens).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter110 validated 3 Share Center follow-ups. Only OPEN path of Anomaly Auto-Alert is wired; DOWNLOAD path is missing the _card_anomaly_autocheck call in agents.py public_card_share_pdf. Regression file /app/backend/tests/test_iter110_anomaly_autoalert_custody_map.py verifies: (a) notification count via direct MongoDB peek at db.notifications matching dedupe_key regex '^card-anomaly:{token}[:...]', (b) custody PDF map page via pymupdf text search for 'Where this evidence was accessed' + image count, (c) CSV Anomaly column. Uses X-Forwarded-For 8.8.8.8=US and 1.1.1.1=AU with real Chrome/mac vs Firefox/win UAs. Cadence gating handled in _card_anomaly_autocheck itself (line 1552 of agents.py).",
+  "rca of the issue": "RCA — Anomaly Auto-Alert on download not firing: the helper _card_anomaly_autocheck exists and works (proven by OPEN test), and it internally checks cadence!=='off' as required, but the download endpoint public_card_share_pdf (agents.py line 1191-1241) never invokes it. When a public GET /api/agents/public/card-share/{token}/card.pdf request lands, the code inserts the card_share_access row (line 1235) and calls _card_engage_alert (line 1237) but stops there. Fix: add one line — `await _card_anomaly_autocheck(token, doc.get('org_id'), ip, ua, 'download', who=auditor)` — immediately after line 1237 (still inside the try block, before line 1238 `except`). Reproduction: cadence 'weekly' → mint card → open US → download AU (curl -H 'X-Forwarded-For: 1.1.1.1' -H 'User-Agent: <firefox>' '{base}/api/agents/public/card-share/{token}/card.pdf?who=Alice') → count docs in db.notifications matching {dedupe_key: /^card-anomaly:{token}:1.1.1.1:download/} yields 0, expected 1."
+}

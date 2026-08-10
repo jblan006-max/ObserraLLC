@@ -19,16 +19,31 @@ export function WorldMapThumb({ points = [], width = 300, height = 150 }) {
       {[1, 2, 3].map((i) => <line key={`h${i}`} x1="0" x2={width} y1={(height / 4) * i} y2={(height / 4) * i} stroke="hsl(215 30% 22%)" strokeWidth="0.5" />)}
       {[1, 2, 3, 4, 5].map((i) => <line key={`v${i}`} y1="0" y2={height} x1={(width / 6) * i} x2={(width / 6) * i} stroke="hsl(215 30% 22%)" strokeWidth="0.5" />)}
       {CONTINENTS.map((c, i) => <polygon key={i} points={poly(c)} fill="hsl(215 25% 30% / 0.55)" stroke="hsl(215 25% 42%)" strokeWidth="0.5" />)}
-      {dots.map((p, i) => {
-        const [x, y] = proj(p.lon, p.lat);
-        const color = p.anomaly ? "hsl(0 84% 62%)" : p.kind === "download" ? "hsl(190 90% 55%)" : "hsl(142 70% 50%)";
-        return (
-          <g key={i}>
-            <circle cx={x} cy={y} r="5.5" fill={color} opacity="0.25" />
-            <circle cx={x} cy={y} r="2.6" fill={color}><title>{p.label}</title></circle>
-          </g>
-        );
-      })}
+      {(() => {
+        const clusters = {};
+        dots.forEach((p) => {
+          const key = `${p.lat.toFixed(1)},${p.lon.toFixed(1)}`;
+          const c = clusters[key] || (clusters[key] = { lat: p.lat, lon: p.lon, count: 0, download: false, anomaly: false, labels: [] });
+          c.count += 1;
+          if (p.kind === "download") c.download = true;
+          if (p.anomaly) c.anomaly = true;
+          if (p.label) c.labels.push(p.label);
+        });
+        return Object.values(clusters).map((c, i) => {
+          const [x, y] = proj(c.lon, c.lat);
+          const r = Math.min(15, 3 + 2.8 * Math.sqrt(c.count));
+          const color = c.anomaly ? "hsl(0 84% 62%)" : c.download ? "hsl(190 90% 55%)" : "hsl(142 70% 50%)";
+          return (
+            <g key={i}>
+              <circle cx={x} cy={y} r={r} fill={color} opacity="0.22" />
+              <circle cx={x} cy={y} r={Math.min(4.5, 2 + c.count * 0.35)} fill={color}>
+                <title>{`${c.count} access(es)${c.labels[0] ? " · " + c.labels[0] : ""}`}</title>
+              </circle>
+              {c.count > 1 && <text x={x} y={y + 2.6} textAnchor="middle" fontSize="6.5" fill="#0a1120" fontWeight="700">{c.count}</text>}
+            </g>
+          );
+        });
+      })()}
     </svg>
   );
 }

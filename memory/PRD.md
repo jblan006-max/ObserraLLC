@@ -1,6 +1,14 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Anomaly Auto-Alert + Custody Map in PDF + Heat trail (iteration_110, backend fixed 8/8 + frontend verified)
+Share Center follow-ups, all live/no-mock:
+- **Anomaly Auto-Alert**: `_card_anomaly_autocheck` geo-looks-up each public open/download IP, compares country/device to the card's earlier history, and (unless cadence=='off') immediately fires an "Unusual shared-card access" notification (dedupe `card-anomaly:{token}:{ip}:{kind}`). Wired into BOTH `public_card_share` (open) and `public_card_share_pdf` (download). Verified: weekly→1 (open), weekly→1 (download), off→0.
+- **Custody Map in PDF**: `card_share_access_log.pdf` appends a "Where this evidence was accessed" page with a PIL-rendered world map (embedded via pymupdf) when geo rows exist. Verified: 3-page PDF, embedded image, valid %PDF; no-geo cards return a valid PDF without the map page.
+- **Heat trail**: `_render_world_png` (PDF) and `WorldMapThumb.jsx` (UI) both cluster access points by rounded lat/lon and size dots by √count (count label when >1); green=open, cyan=download, red=anomaly.
+- Regression pytest: `/app/backend/tests/test_iter110_anomaly_autoalert_custody_map.py`. NOTE: iter110 caught a silent revert of the download-path anomaly call (known fork hazard) — re-applied and re-verified. Non-blocking backlog: pre-existing dev-only `<span>`-in-`<option>` hydration warning; single-segment-geo anomaly edge (never observed, ip-api always returns City, Country).
+
+
 ## Status (Jun 2026) — Anomaly Flags + Digest Cadence + World-map (iteration_109, backend 14/14 + frontend 100%)
 Share Center access-log follow-ups, all live/no-mock:
 - **Anomaly Flags**: `_card_access_enriched` computes per-row `anomaly`/`anomaly_reason` ("new country" / "new device") relative to the card's OWN earlier history (chronological; first of each establishes baseline). UI shows an amber/red badge (`access-anomaly-<i>`); CSV adds an Anomaly column; PDF appends a ⚠ marker.

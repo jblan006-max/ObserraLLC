@@ -1183,6 +1183,7 @@ async def public_card_share(token: str, request: Request = None):
     await db.card_share_access.insert_one({"token": token, "org_id": doc.get("org_id"),
         "kind": "open", "who": None, "ip": ip, "ua": ua, "at": now})
     await _card_engage_alert(token, doc, "open")
+    await _card_anomaly_autocheck(token, doc.get("org_id"), ip, ua, "open")
     return {"snapshot": doc["snapshot"], "created_at": doc.get("created_at"),
             "created_by": doc.get("created_by"), "expires_at": doc.get("expires_at"), "snapshot_sha256": sha}
 
@@ -1234,6 +1235,7 @@ async def public_card_share_pdf(token: str, who: str = "", request: Request = No
         await db.card_share_access.insert_one({"token": token, "org_id": doc.get("org_id"),
             "kind": "download", "who": auditor, "ip": ip, "ua": ua, "at": _dl_now})
         await _card_engage_alert(token, doc, "download", who=auditor)
+        await _card_anomaly_autocheck(token, doc.get("org_id"), ip, ua, "download", who=auditor)
     except Exception:
         pass
     return StreamingResponse(io.BytesIO(raw), media_type="application/pdf",
@@ -1452,6 +1454,129 @@ async def _card_access_enriched(token, org_id):
     return d, rows
 
 
+def _map_clusters(rows):
+    """Aggregate geo-located access rows into location clusters with counts (for the heat map)."""
+    clusters = {}
+    for r in rows:
+        lat, lon = r.get("geo_lat"), r.get("geo_lon")
+        if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
+            continue
+        key = f"{round(lat, 1)},{round(lon, 1)}"
+        c = clusters.get(key)
+        if not c:
+            c = {"lat": lat, "lon": lon, "count": 0, "downloads": 0, "anomaly": False, "label": r.get("geo") or ""}
+            clusters[key] = c
+        c["count"] += 1
+        if r.get("kind") == "download":
+            c["downloads"] += 1
+        if r.get("anomaly"):
+            c["anomaly"] = True
+    return list(clusters.values())
+
+
+_MAP_CONTINENTS = [
+    [(-168, 66), (-95, 68), (-52, 60), (-80, 25), (-105, 20), (-125, 40), (-140, 60)],
+    [(-80, 10), (-60, 5), (-35, -8), (-40, -23), (-65, -55), (-75, -45), (-82, -5)],
+    [(-10, 60), (0, 50), (15, 55), (30, 60), (40, 48), (20, 40), (0, 43), (-9, 44)],
+    [(-17, 35), (10, 37), (35, 32), (51, 12), (40, -15), (20, -35), (10, -20), (-5, 5), (-16, 15)],
+    [(30, 60), (60, 70), (100, 72), (140, 66), (170, 66), (145, 45), (120, 30), (100, 10), (78, 8), (60, 25), (45, 40), (35, 45)],
+    [(113, -22), (130, -12), (145, -15), (153, -28), (146, -39), (130, -32), (115, -35)],
+]
+
+
+def _render_world_png(rows, width=1000, height=500):
+    """Render a dark equirectangular world map PNG with heat-sized dots for the custody PDF."""
+    from PIL import Image, ImageDraw
+    import io, math
+    def proj(lon, lat):
+        return (int((lon + 180) / 360 * width), int((90 - lat) / 180 * height))
+    img = Image.new("RGB", (width, height), (10, 17, 32))
+    d = ImageDraw.Draw(img, "RGBA")
+    for i in range(1, 4):
+        y = height // 4 * i
+        d.line([(0, y), (width, y)], fill=(60, 80, 110, 90), width=1)
+    for i in range(1, 6):
+        x = width // 6 * i
+        d.line([(x, 0), (x, height)], fill=(60, 80, 110, 90), width=1)
+    for cont in _MAP_CONTINENTS:
+        d.polygon([proj(lon, lat) for (lon, lat) in cont], fill=(70, 85, 110, 150), outline=(90, 110, 140, 200))
+    for c in _map_clusters(rows):
+        x, y = proj(c["lon"], c["lat"])
+        r = min(int(6 + 5 * math.sqrt(c["count"])), 34)
+        col = (239, 68, 68) if c["anomaly"] else (34, 200, 235) if c["downloads"] else (52, 211, 120)
+        d.ellipse([x - r, y - r, x + r, y + r], fill=col + (70,))
+        d.ellipse([x - 4, y - 4, x + 4, y + 4], fill=col + (255,))
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
+async def _card_anomaly_autocheck(token, org_id, ip, ua, kind, who=None):
+    """Immediately alert org staff when THIS access is from a new country/device vs the card's history.
+    Fires regardless of engagement cadence (unless cadence == 'off'). Best-effort; dedup per token+ip+kind."""
+    try:
+        import html as _html, os as _os
+        from bson import ObjectId
+        geo = ""
+        lat = lon = None
+        if ip:
+            g = (await _geo_lookup_many([ip])).get(ip)
+            if g:
+                geo = g.get("loc") or ""
+                lat, lon = g.get("lat"), g.get("lon")
+                try:
+                    await db.card_share_access.update_one(
+                        {"token": token, "org_id": org_id, "ip": ip, "geo_lat": None},
+                        {"$set": {"geo": geo, "geo_lat": lat, "geo_lon": lon}})
+                except Exception:
+                    pass
+        country = geo.split(",")[-1].strip() if geo else ""
+        device = _parse_ua(ua or "")
+        rows = await db.card_share_access.find({"token": token, "org_id": org_id}, {"_id": 0}).to_list(500)
+        prior = sorted(rows, key=lambda x: x.get("at") or "")[:-1]
+        seen_c, seen_dev = set(), set()
+        for r in prior:
+            gg = r.get("geo") or ""
+            if gg:
+                seen_c.add(gg.split(",")[-1].strip())
+            dv = _parse_ua(r.get("ua") or "")
+            if dv:
+                seen_dev.add(dv)
+        reasons = []
+        if country and seen_c and country not in seen_c:
+            reasons.append("new country")
+        if device and seen_dev and device not in seen_dev:
+            reasons.append("new device")
+        if not reasons:
+            return
+        org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"card_engagement_cadence": 1}) if org_id else None
+        if ((org or {}).get("card_engagement_cadence") or "instant") == "off":
+            return
+        doc = await db.card_shares.find_one({"token": token}, {"_id": 0, "snapshot": 1})
+        snap = (doc or {}).get("snapshot") or {}
+        frontend = _os.environ.get("FRONTEND_URL", "").rstrip("/")
+        url = f"{frontend}/card/{token}"
+        title = _html.escape(snap.get("title") or "Detail card")
+        actor = _html.escape(who or "An auditor")
+        where = _html.escape(geo or ip or "an unknown location")
+        dev = _html.escape(device or "an unknown device")
+        reason_txt = " and ".join(reasons)
+        verb = "downloaded" if kind == "download" else "opened"
+        html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
+                f"<h2 style='color:#b91c1c'>\u26a0 Unusual shared-card access</h2>"
+                f"<p><strong>{actor}</strong> just {verb} the shared detail card <strong>{title}</strong> "
+                f"from <strong>{where}</strong> on <strong>{dev}</strong> — flagged as <strong>{reason_txt}</strong> "
+                f"versus this card's earlier access.</p>"
+                f"<p><a href='{url}' style='color:#12b4d6'>{url}</a></p>"
+                f"<p style='font-size:11px;color:#9ca3af'>Obserra — Share Center · Anomaly auto-alert</p></div>")
+        await _notify_org_staff(org_id, "\u26a0 Unusual shared-card access — Obserra", html,
+            "Unusual shared-card access",
+            f"{actor} {verb} \u201c{snap.get('title') or 'a card'}\u201d from {geo or ip} ({reason_txt}).",
+            dedupe_key=f"card-anomaly:{token}:{ip}:{kind}")
+    except Exception:
+        pass
+
+
 @agents_router.get("/runtime/card-share/{token}/access-log")
 async def card_share_access_log(token: str, admin: dict = Depends(require_roles("admin"))):
     d, rows = await _card_access_enriched(token, admin["org_id"])
@@ -1513,6 +1638,20 @@ async def card_share_access_log_pdf(token: str, admin: dict = Depends(require_ro
     buf = _build_pdf("\n".join(lines), "Shared card — chain of custody", cover=True,
                      org_name=snap.get("org_name"), brand=brand)
     raw = buf.getvalue()
+    try:
+        if any(isinstance(r.get("geo_lat"), (int, float)) for r in rows):
+            import pymupdf
+            png = _render_world_png(rows)
+            pdfdoc = pymupdf.open(stream=raw, filetype="pdf")
+            page = pdfdoc.new_page(width=612, height=430)
+            page.insert_text((40, 46), "Where this evidence was accessed", fontsize=13, color=(0.06, 0.12, 0.24))
+            page.insert_image(pymupdf.Rect(40, 64, 572, 330), stream=png)
+            page.insert_text((40, 350), f"{len(_map_clusters(rows))} location(s) \u00b7 dot size = number of accesses \u00b7 red = anomaly",
+                             fontsize=8, color=(0.4, 0.45, 0.5))
+            raw = pdfdoc.tobytes()
+            pdfdoc.close()
+    except Exception:
+        pass
     try:
         seal = _canonical_snapshot_hash({"token": token, "rows": rows})
         raw = await _brand_watermark_pdf(raw, org_id=admin["org_id"], room_url="",
