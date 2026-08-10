@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Loader2, Plug, Save } from "lucide-react";
+import { Loader2, Plug, Save, Zap } from "lucide-react";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -9,6 +9,8 @@ export function RuntimeConnectorCard() {
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState(null);
 
   useEffect(() => {
     api.get("/agents/runtime/webhook")
@@ -28,6 +30,20 @@ export function RuntimeConnectorCard() {
       toast.error(e.response?.data?.detail || "Invalid webhook URL.");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const sendTest = async () => {
+    setTesting(true); setTestResult(null);
+    try {
+      const { data } = await api.post("/agents/runtime/webhook/test");
+      setTestResult(data);
+      if (data.ok) toast.success(`Runtime received the test event — HTTP ${data.status_code} · ${data.latency_ms}ms`);
+      else toast.error(data.status_code ? `Runtime responded HTTP ${data.status_code}` : `No response: ${data.error || "unreachable"}`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Test failed.");
+    } finally {
+      setTesting(false);
     }
   };
 
@@ -64,7 +80,29 @@ export function RuntimeConnectorCard() {
         >
           {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save
         </button>
+        {connected && (
+          <button
+            data-testid="runtime-webhook-test"
+            disabled={testing}
+            onClick={sendTest}
+            className="px-4 py-2.5 rounded-md border border-ai/40 text-ai hover:bg-ai/10 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50 transition-colors"
+          >
+            {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />} Send test event
+          </button>
+        )}
       </div>
+      {testResult && (
+        <div
+          data-testid="runtime-webhook-test-result"
+          className={`text-xs font-mono rounded-md px-3 py-2 border ${testResult.ok ? "bg-low/10 border-low/25 text-low" : "bg-crit/10 border-crit/25 text-crit"}`}
+        >
+          {testResult.ok
+            ? `✓ Runtime received the test event — HTTP ${testResult.status_code} · ${testResult.latency_ms}ms`
+            : testResult.status_code
+              ? `✗ Runtime responded HTTP ${testResult.status_code} · ${testResult.latency_ms}ms`
+              : `✗ No response — ${testResult.error || "unreachable"} · ${testResult.latency_ms}ms`}
+        </div>
+      )}
     </div>
   );
 }

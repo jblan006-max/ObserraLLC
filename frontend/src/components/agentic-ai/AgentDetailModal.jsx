@@ -191,6 +191,17 @@ export default function AgentDetailModal({
                     </span>
                   </div>
                   <p className="text-muted-foreground mt-1">{agent.enforcement.note}</p>
+                  {agent.enforcement.receipt && (
+                    <div className="mt-2 pt-2 border-t border-ai/15 font-mono text-[10px] text-muted-foreground" data-testid="agent-enforcement-receipt">
+                      <div>Runtime receipt · {agent.enforcement.receipt.at ? new Date(agent.enforcement.receipt.at).toLocaleString() : "—"}</div>
+                      <div>
+                        {agent.enforcement.receipt.status_code != null
+                          ? `HTTP ${agent.enforcement.receipt.status_code} · ${agent.enforcement.receipt.latency_ms}ms`
+                          : `no response · ${agent.enforcement.receipt.error || "unreachable"}`}
+                      </div>
+                      {agent.enforcement.receipt.response && <div className="truncate">resp: {agent.enforcement.receipt.response}</div>}
+                    </div>
+                  )}
                 </div>
               )}
               <p className="text-xs text-muted-foreground mb-3">

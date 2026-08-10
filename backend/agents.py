@@ -190,27 +190,41 @@ async def _do_enforce(org_id, actor, ref, action, source="manual"):
     org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
     webhook = org.get("agent_runtime_webhook")
     enforced = action != "resume"
-    external_ok, runtime = None, "obserra-control-plane"
+    external_ok, runtime, receipt = None, "obserra-control-plane", None
     if webhook:
+        import time as _time
         runtime = "external-webhook"
+        t0 = _time.perf_counter()
         try:
             async with httpx.AsyncClient(timeout=10) as c:
                 r = await c.post(webhook, json={"agent_ref": ref, "action": action,
                                                 "mode": m["mode"], "org_id": org_id})
             external_ok = 200 <= r.status_code < 300
-        except Exception:
+            receipt = {"status_code": r.status_code, "latency_ms": round((_time.perf_counter() - t0) * 1000),
+                       "response": (r.text or "")[:280], "ok": external_ok, "at": _now(), "url": webhook}
+        except Exception as e:
             external_ok = False
+            receipt = {"status_code": None, "latency_ms": round((_time.perf_counter() - t0) * 1000),
+                       "response": "", "error": str(e)[:200], "ok": False, "at": _now(), "url": webhook}
     note = ("Enforcement dispatched to the connected agent-runtime webhook." if webhook
             else "Enforced in the Obserra control plane — the agent governance status changed and every "
                  "downstream policy check now honours it. Wire an agent-runtime webhook to push this to an "
                  "external execution environment.")
     enforcement = {"enforced": enforced, "mode": m["mode"], "action": action,
                    "runtime": runtime, "external_ok": external_ok, "note": note,
-                   "at": _now(), "by": actor, "source": source}
+                   "receipt": receipt, "at": _now(), "by": actor, "source": source}
     await db.ai_agents.update_one({"_id": a["_id"]},
         {"$set": {"status": m["status"], "enforced": enforced, "enforcement": enforcement}})
     await _log_audit(org_id, actor, "agent.enforce",
                      f"{ref} {m['verb']} (mode {m['mode']}, via {source})")
+    try:
+        await db.agent_enforcements.insert_one({
+            "org_id": org_id, "ref": ref, "name": a.get("name"), "action": action,
+            "verb": m["verb"], "mode": m["mode"], "status": m["status"], "source": source,
+            "by": actor, "runtime": runtime, "external_ok": external_ok, "receipt": receipt,
+            "at": enforcement["at"]})
+    except Exception:
+        pass
     try:
         from risk_engine import _ledger
         await _ledger(org_id, {
@@ -267,6 +281,41 @@ async def set_runtime_webhook(body: WebhookBody, admin: dict = Depends(require_r
     await _log_audit(admin["org_id"], admin["email"], "agent.runtime_webhook",
                      "Set agent runtime webhook" if url else "Cleared agent runtime webhook")
     return {"webhook": url}
+
+
+@agents_router.post("/runtime/webhook/test")
+async def test_runtime_webhook(admin: dict = Depends(require_roles("admin"))):
+    """Send a synthetic 'test' event to the configured agent-runtime webhook so an admin can confirm
+    their execution environment actually receives Obserra enforcement before relying on it."""
+    from bson import ObjectId
+    import httpx, time as _time
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}, {"agent_runtime_webhook": 1}) or {}
+    webhook = org.get("agent_runtime_webhook")
+    if not webhook:
+        raise HTTPException(400, "No agent runtime webhook configured. Save a webhook URL first.")
+    payload = {"agent_ref": "TEST-PING", "action": "test", "mode": "noop",
+               "org_id": admin["org_id"], "event": "obserra.runtime.test", "at": _now()}
+    t0 = _time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.post(webhook, json=payload)
+        latency = round((_time.perf_counter() - t0) * 1000)
+        await _log_audit(admin["org_id"], admin["email"], "agent.runtime_webhook_test",
+                         f"Test event → HTTP {r.status_code} ({latency}ms)")
+        return {"ok": 200 <= r.status_code < 300, "status_code": r.status_code,
+                "latency_ms": latency, "response": (r.text or "")[:280], "url": webhook}
+    except Exception as e:
+        latency = round((_time.perf_counter() - t0) * 1000)
+        return {"ok": False, "status_code": None, "latency_ms": latency,
+                "error": str(e)[:200], "url": webhook}
+
+
+@agents_router.get("/runtime/enforcement-log")
+async def enforcement_log(user: dict = Depends(get_current_user)):
+    """Live feed of every runtime enforcement (suspend / kill / resume) — who, when, which agent,
+    via advisor / bulk-neutralise / manual, and the runtime receipt."""
+    rows = await db.agent_enforcements.find({"org_id": user["org_id"]}, {"_id": 0}).sort("at", -1).to_list(50)
+    return {"events": rows}
 
 
 # ---- One-tap bulk 'Neutralise' from the Toxicity Map ----

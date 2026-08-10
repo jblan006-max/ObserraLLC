@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { AlertTriangle, ArrowRight, Bot, Database, KeyRound, Loader2, ShieldOff } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertTriangle, ArrowRight, Ban, Bot, Database, History, KeyRound, Loader2, PauseCircle, PlayCircle, ShieldOff } from "lucide-react";
 import { toast } from "sonner";
 import { useDeepDive } from "@/context/DeepDiveContext";
 import { Panel } from "@/components/agentic-ai/shared";
@@ -41,6 +41,10 @@ export default function ToxicityMap({ agents, isAdmin, onReload }) {
   const { openDeepDive, warm } = useDeepDive();
   const [confirm, setConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [log, setLog] = useState([]);
+  const loadLog = () =>
+    api.get("/agents/runtime/enforcement-log").then(({ data }) => setLog(data.events || [])).catch(() => {});
+  useEffect(() => { loadLog(); }, []);
   const model = toxicityModel(agents || []);
   const nodes = model.nodes;
   const resources = [...new Set(nodes.flatMap((n) => (n.edges || []).map((e) => e.resource)))];
@@ -54,6 +58,7 @@ export default function ToxicityMap({ agents, isAdmin, onReload }) {
       toast.success(`Neutralised ${data.count} toxic agent(s) — ${verb} across the control plane.`);
       setConfirm(false);
       onReload && onReload();
+      loadLog();
     } catch (e) {
       toast.error(e.response?.data?.detail || "Bulk enforcement failed.");
     } finally {
@@ -216,6 +221,34 @@ export default function ToxicityMap({ agents, isAdmin, onReload }) {
                 </button>
               );
             })}
+          </div>
+
+          <div className="pt-3 border-t border-border" data-testid="toxicity-enforcement-feed">
+            <div className="flex items-center gap-2 text-[10px] font-mono uppercase text-muted-foreground mb-2">
+              <History className="w-3 h-3" /> Runtime enforcement activity
+            </div>
+            {log.length === 0 ? (
+              <div className="text-xs text-muted-foreground">No suspend / kill actions recorded yet.</div>
+            ) : (
+              <div className="space-y-1.5 max-h-52 overflow-y-auto">
+                {log.map((e, i) => {
+                  const Icon = e.action === "kill" ? Ban : e.action === "resume" ? PlayCircle : PauseCircle;
+                  const tone = e.action === "kill" ? "0 84% 60%" : e.action === "resume" ? "142 70% 45%" : "35 90% 55%";
+                  return (
+                    <div key={i} data-testid={`enforcement-row-${i}`} className="flex items-center gap-2 text-[11px] rounded-md border border-border px-2.5 py-1.5">
+                      <Icon className="w-3.5 h-3.5 shrink-0" style={{ color: `hsl(${tone})` }} />
+                      <span className="font-head font-bold truncate max-w-[36%]">{e.name || e.ref}</span>
+                      <span className="font-mono text-[10px]" style={{ color: `hsl(${tone})` }}>{e.verb || e.action}</span>
+                      <span className="text-muted-foreground truncate">· {e.by} · via {e.source}</span>
+                      <span className="ml-auto font-mono text-[10px] text-muted-foreground shrink-0">
+                        {e.runtime === "external-webhook" ? (e.external_ok ? "runtime ✓" : "runtime ✗") : "control-plane"}
+                        {e.at ? ` · ${new Date(e.at).toLocaleTimeString()}` : ""}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

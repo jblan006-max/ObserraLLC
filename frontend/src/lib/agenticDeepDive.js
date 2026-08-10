@@ -23,6 +23,15 @@ export function agentDeepDive(agent = {}) {
       { label: "Action-capable tools", value: (agent.actionTools || []).length, icon: Wrench },
       { label: "Permissions", value: (agent.permissions || []).join(", ") || "None", icon: KeyRound },
       { label: "Toxic combinations", value: tox.toxic ? `${tox.level} · ${tox.reasons.length} pattern(s)` : "None", icon: Database },
+      ...(agent.enforcement?.receipt
+        ? [{
+            label: "Runtime receipt",
+            value: agent.enforcement.receipt.status_code != null
+              ? `HTTP ${agent.enforcement.receipt.status_code} · ${agent.enforcement.receipt.latency_ms}ms`
+              : "no response",
+            icon: ShieldCheck,
+          }]
+        : []),
     ],
     complianceRefs: ["NIST AI RMF", "OWASP LLM Top 10", "ISO 42001", "EU AI Act"],
     compliancePct: agent.guardrailCoverage?.pct,
@@ -42,6 +51,7 @@ export function agentDeepDive(agent = {}) {
       permissions: agent.permissions, guardrails: agent.guardrails,
       tool_violations: agent.tool_violations, toxic_combinations: tox.reasons,
       redteam: agent.last_redteam,
+      enforcement: agent.enforcement,
     },
   };
 }

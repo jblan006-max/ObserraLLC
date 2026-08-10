@@ -240,6 +240,24 @@ async def discover_shadow_ai(admin: dict = Depends(require_roles("admin"))):
     await _audit(org_id, admin["email"], "ai_system.discover",
                  f"Live shadow-AI discovery added {added} system(s): {sources}")
     total_shadow = await db.ai_systems.count_documents({"org_id": org_id, "status": "shadow"})
+    if added:
+        try:
+            from self_scan import _post_chat_alert
+            await _post_chat_alert(
+                org_id, f"🕵️ Shadow AI discovered: {added} new unsanctioned system(s)",
+                f"Live discovery flagged {added} new shadow AI system(s) — connectors {sources['connectors']}, "
+                f"telemetry {sources['telemetry']}, agents {sources['agents']}. Shadow queue now {total_shadow}. "
+                "Review and sanction or block in the Agentic AI Security control plane.")
+        except Exception:
+            pass
+        try:
+            import notifications
+            await notifications.create(
+                org_id, "ai_governance", "New shadow AI discovered",
+                f"{added} new unsanctioned AI system(s) surfaced by live discovery. Review the Shadow AI queue.",
+                ref="agentic-ai-security", dedupe_key=f"shadow-discover:{total_shadow}:{added}")
+        except Exception:
+            pass
     return {"ok": True, "added": added, "shadow_total": total_shadow, "sources": sources}
 
 
