@@ -13,7 +13,7 @@ export function DeepDiveProvider({ children }) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState(null);
 
-  const openDeepDive = useCallback((it) => { setResult(null); setBusy(false); setItem(it || null); }, []);
+  const openDeepDive = useCallback((it) => { setResult(null); setBusy(false); setItem(it || null); if (it) prefetchExplain(it.explainTitle || it.title, it.explainKind || "deep-dive", it.explainContext || {}); }, []);
   const close = useCallback(() => { setItem(null); setBusy(false); setResult(null); }, []);
 
   // Warm the AI brief on hover so the deep-dive shows its insight + $ impact instantly on click.

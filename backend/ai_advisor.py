@@ -381,7 +381,7 @@ async def set_advisor_model(body: ModelPref, user: dict = Depends(get_current_us
     return {"default": mid, "connected": bool(mid)}
 
 
-_LLM_TIMEOUT = 15
+_LLM_TIMEOUT = 22
 
 
 async def _collect_stream(chat, prompt, timeout=_LLM_TIMEOUT):

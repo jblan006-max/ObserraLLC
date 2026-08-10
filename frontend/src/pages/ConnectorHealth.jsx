@@ -4,7 +4,7 @@ import { StatCard, Spinner } from "@/components/dash";
 import { AIInsight } from "@/components/AIInsight";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { Plug, Server, Clock, CheckCircle2, AlertTriangle, RefreshCw, Activity } from "lucide-react";
+import { Plug, Server, Clock, CheckCircle2, AlertTriangle, RefreshCw, Activity, XCircle, Rocket } from "lucide-react";
 
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "—");
 const HEALTH = {
@@ -13,6 +13,73 @@ const HEALTH = {
   degraded: { c: "0 84% 60%", label: "Degraded", Icon: AlertTriangle },
 };
 const fmtAge = (m) => (m == null ? "—" : m < 60 ? `${m}m ago` : `${Math.floor(m / 60)}h ${m % 60}m ago`);
+
+const GL_STATUS = {
+  pass: { c: "142 70% 45%", Icon: CheckCircle2, label: "Ready" },
+  warn: { c: "35 90% 55%", Icon: AlertTriangle, label: "Attention" },
+  fail: { c: "0 84% 60%", Icon: XCircle, label: "Blocker" },
+};
+
+function GoLiveChecklist() {
+  const [d, setD] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try { const { data } = await api.get("/sap/go-live-checklist"); setD(data); }
+    catch (e) { toast.error("Could not run readiness check"); }
+    setLoading(false);
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  const tone = d?.ready ? "142 70% 45%" : (d?.failed ? "0 84% 60%" : "35 90% 55%");
+
+  return (
+    <div className="bg-card fact-border rounded-xl p-5" data-testid="go-live-checklist">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <div className="flex items-center gap-3">
+          <div className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0" style={{ background: `hsl(${tone} / 0.14)` }}>
+            <Rocket className="w-5 h-5" style={{ color: `hsl(${tone})` }} />
+          </div>
+          <div>
+            <h2 className="font-head font-bold text-lg leading-tight">Go-Live Readiness</h2>
+            <p className="text-xs text-muted-foreground">Live production-readiness — every check runs against real state.</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          {d && (
+            <div className="text-right">
+              <div className="font-head font-black text-2xl leading-none" style={{ color: `hsl(${tone})` }} data-testid="go-live-score">{d.score}%</div>
+              <div className="text-[10px] font-mono uppercase tracking-wider" style={{ color: `hsl(${tone})` }} data-testid="go-live-status">{d.ready ? "Production ready" : `${d.failed} blocker(s)`}</div>
+            </div>
+          )}
+          <Button size="sm" variant="outline" className="gap-1.5" data-testid="go-live-recheck" onClick={load} disabled={loading}>
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />{loading ? "Checking…" : "Re-check"}
+          </Button>
+        </div>
+      </div>
+      {!d ? <Spinner /> : (
+        <>
+          <div className="h-2 rounded-full bg-secondary overflow-hidden mb-4">
+            <div className="h-full rounded-full transition-all" style={{ width: `${d.score}%`, background: `hsl(${tone})` }} />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+            {d.items.map((it) => { const S = GL_STATUS[it.status] || GL_STATUS.warn; const I = S.Icon; return (
+              <div key={it.id} className="flex items-start gap-2.5 rounded-lg p-3 bg-secondary/30" data-testid={`go-live-item-${it.id}`}>
+                <I className="w-4 h-4 mt-0.5 shrink-0" style={{ color: `hsl(${S.c})` }} />
+                <div className="min-w-0">
+                  <div className="text-sm font-medium flex items-center gap-2">{it.label}
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-full shrink-0" style={{ background: `hsl(${S.c} / 0.15)`, color: `hsl(${S.c})` }}>{S.label}</span>
+                  </div>
+                  <div className="text-[11px] text-muted-foreground mt-0.5">{it.detail}</div>
+                  {it.status !== "pass" && it.fix && <div className="text-[11px] mt-1" style={{ color: `hsl(${S.c})` }}>→ {it.fix}</div>}
+                </div>
+              </div>
+            ); })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 export default function ConnectorHealth() {
   const [d, setD] = useState(null);
@@ -47,6 +114,8 @@ export default function ConnectorHealth() {
           {d.last_probe_at && <span className="text-[10px] font-mono text-muted-foreground" data-testid="sys-last-probe">Last probe {fmtDT(d.last_probe_at)}</span>}
         </div>
       </div>
+
+      <GoLiveChecklist />
 
       <AIInsight dashboard="Connector Health" focus="connector coverage, credential readiness and data freshness" accent="190 90% 50%" auto slug="sap-systems" />
 

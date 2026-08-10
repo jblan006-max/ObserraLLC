@@ -433,6 +433,11 @@ async def evidence_pack(admin: dict = Depends(require_roles("admin"))):
     buf = _build_pdf("\n".join(lines), "AI Enforcement Evidence Pack", cover=True, org_name=org.get("name"),
                      exec_summary=(f"{len(agents)} governed agents, {len(toxic)} toxic; {len(events)} runtime "
                                    f"enforcement actions with verifiable receipts. Runtime connector: {connector}."))
+    from io import BytesIO
+    seal_src = {"org": org.get("name"),
+                "agents": [{"ref": a.get("ref"), "status": a.get("status")} for a in agents],
+                "events": len(events)}
+    buf = BytesIO(_stamp_verified_seal(buf.getvalue(), _canonical_snapshot_hash(seal_src)))
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
     return StreamingResponse(buf, media_type="application/pdf",
                              headers={"Content-Disposition": f'attachment; filename="obserra-evidence-pack-{stamp}.pdf"'})

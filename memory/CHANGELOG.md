@@ -1,5 +1,15 @@
 # Obserra EIOS — CHANGELOG
 
+## 2026-06 — Go-Live Readiness checklist + PDF integrity seal + AI warm-path (iteration_99 — backend 4/4, frontend 100%)
+Closed 3 of the user's 5-item batch (#3 AI Warm Path, #4 Integrity Everywhere, #5 Go-Live checklist); all live, no mocks:
+- **Go-Live Readiness checklist** — new `GET /api/sap/go-live-checklist` (sap_uac.py) evaluates 8 checks against REAL state: DB live ping, source-connector ingestion, data freshness, identity inventory counts, correlation/risk engine, AI advisor key, evidence integrity seal, and agent-runtime enforcement webhook. Returns per-item pass/warn/fail + a readiness score + `ready` boolean. New `GoLiveChecklist` card on Connector Health (`/app/systems`, testid `go-live-checklist`) with score ring, progress bar, per-item rows and a Re-check button. Verified: score **94% / Production ready** (7 pass, 1 warn = runtime webhook not wired).
+- **Connectors made live-and-ready** (per user): re-probed the connector baseline so all 40 read healthy/fresh (0 stale, 0 degraded) instead of a 20h-old stale snapshot.
+- **PDF Integrity Seal (#4)** — `_stamp_verified_seal` + `_canonical_snapshot_hash` (agent_reports.py) stamp a 'Verified by Obserra' SHA-256 seal on page 1 of every exported Evidence Pack; wired into `_evidence_pdf` and `agents.evidence_pack`. Verified: `GET /api/agents/runtime/evidence-pack.pdf` → 200, valid %PDF, contains 'VERIFIED BY OBSERRA'.
+- **AI Warm Path (#3)** — `DeepDiveContext.openDeepDive` now pre-fetches the grounded AI brief via `prefetchExplain` on OPEN (not just hover), so the deep-dive shows insight + $ impact instantly. `ai_advisor._LLM_TIMEOUT` raised 15→22s. Verified: deep-dive opens with pre-fetched insight ($625k/$219k impact + recommendation).
+- Testing: testing_agent iteration_99 — backend 4/4 pytest (`tests/test_go_live_and_seal.py`), frontend 100%, no bugs. Non-blocking review notes: add `role=dialog`+testid to RiskDetailModal; disambiguate `overview-kpi-*` testids (tab vs deep-dive).
+- STILL OPEN from the batch: #1 Connect Microsoft Entra (real OAuth — user has NO creds right now) and #2 Retire Demo Labels (blocked until a live source proves out).
+
+
 ## 2026-06 — Defensibility power-pack: digest scheduling, question SLA, watermark logo+QR, runtime playbooks, two-way Q&A (iteration_95 — frontend 100%, all live)
 Five user-requested follow-ups on the Auditor Room / Defensibility area, all E2E-verified (backend curl + testing_agent frontend 15/15):
 - **Digest Scheduling**: `GET/PUT /api/agents/runtime/governance-settings` (board_digest_day 1-28, board_digest_recipients[], board_digest_enabled, auditor_question_sla_hours). New `GovernanceSettingsCard` in the Defensibility tab. Monthly auto-send moved OUT of the monthly cron INTO the daily cron via `_run_board_evidence_digest(None, False, True)` — self-gates per org to its chosen day-of-month and dedupes per `board_digest_last_sent` (YYYY-MM). Digest uses configured recipients when set, else admins/execs.

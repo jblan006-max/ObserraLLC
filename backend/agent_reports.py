@@ -61,14 +61,17 @@ def _evidence_markdown(snap):
 
 # ── Shared evidence-PDF builder + Q&A markdown ────────────────────────────────
 def _evidence_pdf(snap, extra_md: str = ""):
+    from io import BytesIO
     from reports import _build_pdf
     c = snap.get("counts", {})
     md = _evidence_markdown(snap)
     if extra_md:
         md += "\n" + extra_md
-    return _build_pdf(md, "AI Enforcement Evidence Pack", cover=True, org_name=snap.get("org_name"),
-                      exec_summary=f"{c.get('agents', 0)} governed agents, {c.get('toxic', 0)} toxic; "
-                                   f"{c.get('events', 0)} runtime enforcement actions with verifiable receipts.")
+    buf = _build_pdf(md, "AI Enforcement Evidence Pack", cover=True, org_name=snap.get("org_name"),
+                     exec_summary=f"{c.get('agents', 0)} governed agents, {c.get('toxic', 0)} toxic; "
+                                  f"{c.get('events', 0)} runtime enforcement actions with verifiable receipts.")
+    sealed = _stamp_verified_seal(buf.getvalue(), _canonical_snapshot_hash(snap))
+    return BytesIO(sealed)
 
 
 def _qa_markdown(qa):
