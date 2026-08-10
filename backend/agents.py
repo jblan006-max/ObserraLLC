@@ -1425,8 +1425,9 @@ async def _card_access_enriched(token, org_id):
     if not d:
         return None, []
     from bson import ObjectId as _OID
-    _org = await db.organizations.find_one({"_id": _OID(org_id)}, {"trusted_countries": 1}) if org_id else None
+    _org = await db.organizations.find_one({"_id": _OID(org_id)}, {"trusted_countries": 1, "trusted_ip_ranges": 1}) if org_id else None
     _trusted = {(c or "").strip().lower() for c in ((_org or {}).get("trusted_countries") or [])}
+    _trusted_ips = (_org or {}).get("trusted_ip_ranges") or []
     rows = await db.card_share_access.find(
         {"token": token, "org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(500)
     need = sorted({r.get("ip") for r in rows if r.get("ip") and r.get("geo_lat") is None})
@@ -1457,6 +1458,8 @@ async def _card_access_enriched(token, org_id):
             if seen_dev and device not in seen_dev:
                 reasons.append("new device")
             seen_dev.add(device)
+        if _ip_in_ranges(r.get("ip"), _trusted_ips):
+            reasons = []
         r["anomaly"] = bool(reasons)
         r["anomaly_reason"] = " \u00b7 ".join(reasons)
     return d, rows
@@ -1561,6 +1564,30 @@ def _append_custody_map_page(raw, rows, title="Where this evidence was accessed"
     return raw
 
 
+def _ip_in_ranges(ip, ranges):
+    """True if `ip` falls within any trusted CIDR / exact IP in `ranges` (best-effort)."""
+    if not ip or not ranges:
+        return False
+    import ipaddress
+    try:
+        addr = ipaddress.ip_address(ip)
+    except Exception:
+        return False
+    for cidr in ranges:
+        cidr = (cidr or "").strip()
+        if not cidr:
+            continue
+        try:
+            if "/" in cidr:
+                if addr in ipaddress.ip_network(cidr, strict=False):
+                    return True
+            elif ipaddress.ip_address(cidr) == addr:
+                return True
+        except Exception:
+            continue
+    return False
+
+
 async def _card_anomaly_autocheck(token, org_id, ip, ua, kind, who=None):
     """Immediately alert org staff when THIS access is from a new country/device vs the card's history.
     Fires regardless of engagement cadence (unless cadence == 'off'). Best-effort; dedup per token+ip+kind."""
@@ -1592,7 +1619,9 @@ async def _card_anomaly_autocheck(token, org_id, ip, ua, kind, who=None):
             dv = _parse_ua(r.get("ua") or "")
             if dv:
                 seen_dev.add(dv)
-        org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"card_engagement_cadence": 1, "trusted_countries": 1}) if org_id else None
+        org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"card_engagement_cadence": 1, "trusted_countries": 1, "trusted_ip_ranges": 1}) if org_id else None
+        if _ip_in_ranges(ip, (org or {}).get("trusted_ip_ranges") or []):
+            return
         trusted = {(c or "").strip().lower() for c in ((org or {}).get("trusted_countries") or [])}
         reasons = []
         if country and seen_c and country not in seen_c and country.strip().lower() not in trusted:
@@ -2238,6 +2267,7 @@ class GovSettingsBody(BaseModel):
     control_assurance_sla_min: int | None = None
     card_engagement_cadence: str | None = None
     trusted_countries: list[str] | None = None
+    trusted_ip_ranges: list[str] | None = None
 
 
 @agents_router.get("/runtime/governance-settings")
@@ -2260,7 +2290,8 @@ async def get_governance_settings(admin: dict = Depends(require_roles("admin")))
             "control_assurance_sla_enabled": bool(org.get("control_assurance_sla_enabled", False)),
             "control_assurance_sla_min": int(org.get("control_assurance_sla_min") or 90),
             "card_engagement_cadence": org.get("card_engagement_cadence") or "instant",
-            "trusted_countries": org.get("trusted_countries") or []}
+            "trusted_countries": org.get("trusted_countries") or [],
+            "trusted_ip_ranges": org.get("trusted_ip_ranges") or []}
 
 
 @agents_router.put("/runtime/governance-settings")
@@ -2313,6 +2344,22 @@ async def set_governance_settings(body: GovSettingsBody, admin: dict = Depends(r
             if cty and cty not in seen:
                 seen.append(cty)
         upd["trusted_countries"] = seen[:60]
+    if body.trusted_ip_ranges is not None:
+        import ipaddress
+        clean_ip = []
+        for cidr in body.trusted_ip_ranges:
+            cidr = (cidr or "").strip()
+            if not cidr or cidr in clean_ip:
+                continue
+            try:
+                if "/" in cidr:
+                    ipaddress.ip_network(cidr, strict=False)
+                else:
+                    ipaddress.ip_address(cidr)
+                clean_ip.append(cidr)
+            except Exception:
+                continue
+        upd["trusted_ip_ranges"] = clean_ip[:60]
     if upd:
         await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": upd})
     await _log_audit(admin["org_id"], admin["email"], "agent.governance_settings", "Updated AI governance settings")
@@ -2354,11 +2401,8 @@ async def evidence_room_access_log(token: str, admin: dict = Depends(require_rol
             "last_downloaded_by": room.get("last_downloaded_by"), "access": rows}
 
 
-@agents_router.get("/runtime/access-globe")
-async def access_globe(admin: dict = Depends(require_roles("admin"))):
-    """Org-wide evidence-access globe — every shared detail-card and auditor-room open/download,
-    geo-located (best-effort, cached back) and returned as map points for the Control Assurance dashboard."""
-    org_id = admin["org_id"]
+async def _gather_access_globe(org_id):
+    """Aggregate every card-share + evidence-room access (geo-enriched, cached back) into drilldown points."""
     card_rows = await db.card_share_access.find({"org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(2000)
     room_rows = await db.evidence_room_access.find({"org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(2000)
     need = sorted({r.get("ip") for r in (card_rows + room_rows)
@@ -2380,20 +2424,92 @@ async def access_globe(admin: dict = Depends(require_roles("admin"))):
                     pass
     await _cache(card_rows, db.card_share_access)
     await _cache(room_rows, db.evidence_room_access)
+    for r in card_rows:
+        r["source"] = "card"
+    for r in room_rows:
+        r["source"] = "room"
+    all_rows = card_rows + room_rows
+    tokens = list({r.get("token") for r in all_rows if r.get("token")})
+    label_map = {}
+    if tokens:
+        for cd in await db.card_shares.find({"org_id": org_id, "token": {"$in": tokens}}, {"_id": 0, "token": 1, "snapshot": 1}).to_list(2000):
+            snap = cd.get("snapshot") or {}
+            label_map[cd["token"]] = (snap.get("title") or "Detail card") + (f" ({snap.get('ref')})" if snap.get("ref") else "")
+        for rd in await db.evidence_rooms.find({"org_id": org_id, "token": {"$in": tokens}}, {"_id": 0, "token": 1}).to_list(2000):
+            label_map.setdefault(rd["token"], "Auditor room")
     points, countries = [], set()
-    for r in (card_rows + room_rows):
+    for r in all_rows:
         lat, lon = r.get("geo_lat"), r.get("geo_lon")
         if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+            title = label_map.get(r.get("token")) or ("Detail card" if r.get("source") == "card" else "Auditor room")
             points.append({"lat": lat, "lon": lon, "kind": r.get("kind") or "open",
-                           "anomaly": bool(r.get("anomaly")), "label": r.get("geo") or ""})
+                           "anomaly": bool(r.get("anomaly")), "label": r.get("geo") or "",
+                           "who": r.get("who") or "", "device": _parse_ua(r.get("ua") or "") or "",
+                           "ip": r.get("ip") or "", "at": r.get("at") or "",
+                           "source": r.get("source"), "title": title, "token": r.get("token") or ""})
             if r.get("geo"):
                 countries.add(r["geo"].split(",")[-1].strip())
-    all_rows = card_rows + room_rows
-    return {"points": points, "total": len(all_rows),
-            "opens": sum(1 for r in all_rows if r.get("kind") == "open"),
-            "downloads": sum(1 for r in all_rows if r.get("kind") == "download"),
-            "located": len(points), "countries": sorted(c for c in countries if c),
-            "cards": len(card_rows), "rooms": len(room_rows)}
+    summary = {"total": len(all_rows),
+               "opens": sum(1 for r in all_rows if r.get("kind") == "open"),
+               "downloads": sum(1 for r in all_rows if r.get("kind") == "download"),
+               "located": len(points), "countries": sorted(c for c in countries if c),
+               "cards": len(card_rows), "rooms": len(room_rows)}
+    return points, summary, all_rows
+
+
+@agents_router.get("/runtime/access-globe")
+async def access_globe(admin: dict = Depends(require_roles("admin"))):
+    """Org-wide evidence-access globe with per-point drilldown (who / device / source / card|room)."""
+    points, summary, _ = await _gather_access_globe(admin["org_id"])
+    return {"points": points, **summary}
+
+
+@agents_router.get("/runtime/access-globe.pdf")
+async def access_globe_pdf(admin: dict = Depends(require_roles("admin"))):
+    """Board Access Map — a branded, sealed PDF of everywhere this org's evidence has been opened worldwide."""
+    import io, json as _json, hashlib as _hl
+    from datetime import datetime, timezone
+    from fastapi.responses import StreamingResponse
+    from reports import _build_pdf, _resolve_brand
+    from agent_reports import _stamp_verified_seal
+    from bson import ObjectId
+    points, summary, all_rows = await _gather_access_globe(admin["org_id"])
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}) or {}
+    try:
+        brand = _resolve_brand(org)
+    except Exception:
+        brand = None
+    now = datetime.now(timezone.utc)
+    geo_rows = [r for r in all_rows if isinstance(r.get("geo_lat"), (int, float)) and isinstance(r.get("geo_lon"), (int, float))]
+    clusters = sorted(_map_clusters(geo_rows), key=lambda c: c["count"], reverse=True)
+    lines = [f"Generated {now.strftime('%B %d, %Y %H:%M UTC')} \u2014 every place your shared detail-cards and auditor rooms have been accessed.",
+             f"**Total accesses:** {summary['total']} ({summary['opens']} opens \u00b7 {summary['downloads']} downloads) "
+             f"\u00b7 **located:** {summary['located']} \u00b7 **countries:** {len(summary['countries'])} "
+             f"\u00b7 **sources:** {summary['cards']} card / {summary['rooms']} room.", ""]
+    if summary["countries"]:
+        lines += ["**Countries:** " + ", ".join(summary["countries"]), ""]
+    lines.append("## Access locations")
+    if clusters:
+        for c in clusters:
+            lines.append(f"- **{c.get('label') or 'Unknown location'}** \u2014 {c['count']} access(es)"
+                         + (f", {c['downloads']} download(s)" if c.get("downloads") else "")
+                         + (" \u00b7 \u26a0 anomaly seen" if c.get("anomaly") else ""))
+    else:
+        lines.append("No geo-located access recorded yet.")
+    buf = _build_pdf("\n".join(lines), "Board Access Map", cover=True, org_name=org.get("name"), brand=brand,
+                     exec_summary=f"Evidence opened from {len(summary['countries'])} countr(y/ies) across {summary['located']} geo-located access event(s).")
+    raw = buf.getvalue()
+    raw = _append_custody_map_page(raw, geo_rows, title="Evidence access map \u2014 worldwide")
+    seal = _hl.sha256(_json.dumps(summary, sort_keys=True, default=str).encode()).hexdigest()
+    try:
+        raw = await _brand_watermark_pdf(raw, org_id=admin["org_id"], room_url="",
+            subtext=f"Board Access Map \u00b7 {summary['total']} accesses \u00b7 {len(summary['countries'])} countries")
+        raw = _stamp_verified_seal(raw, seal)
+    except Exception:
+        pass
+    stamp = now.strftime("%Y%m%d-%H%M")
+    return StreamingResponse(io.BytesIO(raw), media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="obserra-board-access-map-{stamp}.pdf"'})
 
 
 @agents_router.get("/runtime/webhook/playbooks")

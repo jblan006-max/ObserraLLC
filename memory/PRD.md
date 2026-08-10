@@ -1,6 +1,14 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Globe Drilldown + Trusted Networks + Board Access Map PDF (iteration_112, backend 14/14 + frontend 100%)
+User-approved 3-feature enhancement batch (all live/no-mock):
+- **Globe Drilldown**: `GET /api/agents/runtime/access-globe` now returns per-point drilldown fields (kind, source card|room, title, who, device, ip, at, label, token, lat, lon, anomaly) via new `_gather_access_globe(org_id)` helper. `WorldMapThumb` gained an optional `onClusterClick` prop → clickable pins (`globe-pin-<i>`); Control Assurance `AccessGlobe` opens a dialog (`ca-globe-drilldown`) listing each access event at a location (`globe-access-<i>`: kind badge, source, title, auditor, device, IP, timestamp).
+- **Trusted Networks (IP allow-listing)**: new `trusted_ip_ranges` in Governance Settings (CIDR or exact IP; PUT validates via `ipaddress`, trims/dedupes/caps 60). New `_ip_in_ranges(ip, ranges)` helper short-circuits BOTH the shared-card anomaly auto-alert (`_card_anomaly_autocheck` early-return) AND the enriched access-log badge (`_card_access_enriched` resets reasons) so office egress IPs / VPN ranges never raise an anomaly. UI: `gov-trusted-networks` input.
+- **Board Access Map (sealed PDF)**: new `GET /api/agents/runtime/access-globe.pdf` — a branded, watermarked, SHA-256-sealed PDF (title "Board Access Map" + summary + "Access locations" list + a worldwide custody-map page via `_append_custody_map_page`). One-click `ca-globe-export` button on the Access Globe.
+- Regression pytest: `/app/backend/tests/test_iter112_globe_drilldown_trusted_ips.py` (14/14). ⚠️ FORK-HAZARD NOTE: during this batch a large `search_replace` on `agents.py` SILENTLY FAILED to apply and instead appended a corrupted duplicate tail (orphan `pient(s).` + duplicated brief/subscribe/integrity funcs). Recovered by truncating to the clean copy (`head -n 2696`) and re-applying the refactor as a SINGLE edit. Lesson: for large agents.py blocks, apply ONE edit at a time and immediately grep-verify function counts. Playwright note: blob/object-URL anchor downloads aren't caught by expect_download; the PDF endpoint is validated via pytest.
+
+
 ## Status (Jun 2026) — Access Alert Rules + Custody Map Everywhere + Org-Wide Access Globe (iteration_111, backend 7/7 + frontend 100%)
 User-approved 3-feature batch (Message 247), all live/no-mock:
 - **Access Alert Rules** (`trusted_countries`): new admin field in Governance Settings (`GovSettingsBody.trusted_countries`, GET/PUT `/api/agents/runtime/governance-settings`; PUT trims/dedupes/caps at 60, order-preserving). Both the shared-card anomaly auto-alert (`_card_anomaly_autocheck`) AND the enriched access-log badge (`_card_access_enriched`) now suppress the "new country" reason when the access country is in the org's trusted list — new-device alerts still fire from anywhere. UI: `gov-trusted-countries` input in `DefensibilityDashboard.GovernanceSettingsCard`.

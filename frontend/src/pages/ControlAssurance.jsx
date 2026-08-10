@@ -5,9 +5,10 @@ import { Panel } from "@/components/agentic-ai/shared";
 import { useDeepDive } from "@/context/DeepDiveContext";
 import { drillDeepDive } from "@/lib/agenticDeepDive";
 import { toast } from "sonner";
-import { Gauge, ShieldCheck, XCircle, Timer, Flame, RefreshCw, Loader2, TrendingUp, FileDown, AlertTriangle, Globe } from "lucide-react";
+import { Gauge, ShieldCheck, XCircle, Timer, Flame, RefreshCw, Loader2, TrendingUp, FileDown, AlertTriangle, Globe, MapPin, Monitor, User } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, Cell } from "recharts";
 import { WorldMapThumb } from "@/components/agentic-ai/WorldMapThumb";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 const fmtDTT = (s) => (s ? new Date(s).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—");
 const rateColor = (r) => (r == null ? "hsl(var(--muted-foreground))" : r >= 90 ? "hsl(142 70% 45%)" : r >= 60 ? "hsl(35 90% 55%)" : "hsl(0 84% 60%)");
@@ -28,16 +29,37 @@ function Tile({ label, value, sub, iconClass, Icon }) {
 function AccessGlobe() {
   const [g, setG] = useState(null);
   const [busy, setBusy] = useState(true);
+  const [sel, setSel] = useState(null);
+  const [expBusy, setExpBusy] = useState(false);
   const loadG = () => {
     setBusy(true);
     api.get("/agents/runtime/access-globe").then(({ data }) => setG(data)).catch(() => {}).finally(() => setBusy(false));
   };
   useEffect(() => { loadG(); }, []);
+  const exportMap = async () => {
+    setExpBusy(true);
+    try {
+      const res = await api.get("/agents/runtime/access-globe.pdf", { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a"); a.href = url; a.download = "obserra-board-access-map.pdf"; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not export the access map"); }
+    setExpBusy(false);
+  };
   const points = g?.points || [];
   return (
-    <Panel title="Evidence access globe" subtitle="Every place your shared detail-cards and auditor rooms have been opened or downloaded — geo-located live from the chain-of-custody ledger."
+    <Panel title="Evidence access globe" subtitle="Every place your shared detail-cards and auditor rooms have been opened or downloaded — geo-located live from the chain-of-custody ledger. Click any pin to see who, on what device, and which card or room."
       testid="ca-access-globe"
-      actions={<button data-testid="ca-globe-refresh" onClick={loadG} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border text-xs font-head font-bold hover:bg-secondary transition-colors disabled:opacity-50">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Refresh</button>}>
+      actions={
+        <div className="flex items-center gap-2">
+          <button data-testid="ca-globe-export" onClick={exportMap} disabled={expBusy || points.length === 0} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-ai/40 text-ai text-xs font-head font-bold hover:bg-ai/10 transition-colors disabled:opacity-50">
+            {expBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />} Board Access Map
+          </button>
+          <button data-testid="ca-globe-refresh" onClick={loadG} disabled={busy} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border text-xs font-head font-bold hover:bg-secondary transition-colors disabled:opacity-50">
+            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Refresh
+          </button>
+        </div>
+      }>
       {busy && !g ? (
         <div className="py-10 flex justify-center"><Loader2 className="w-6 h-6 animate-spin text-ai" /></div>
       ) : points.length === 0 ? (
@@ -54,16 +76,42 @@ function AccessGlobe() {
             <Tile label="Sources" value={`${g.cards + g.rooms}`} sub={`${g.cards} card · ${g.rooms} room`} Icon={Flame} iconClass="text-crit" />
           </div>
           <div className="flex justify-center rounded-xl border border-border bg-[#0a1120] p-3">
-            <WorldMapThumb points={points} width={720} height={360} />
+            <WorldMapThumb points={points} width={720} height={360} onClusterClick={(c) => setSel(c)} />
           </div>
           <div className="flex flex-wrap items-center gap-4 text-[11px] text-muted-foreground">
             <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: "hsl(142 70% 50%)" }} /> open</span>
             <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: "hsl(190 90% 55%)" }} /> download</span>
             <span className="inline-flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full" style={{ background: "hsl(0 84% 62%)" }} /> anomaly</span>
-            <span className="ml-auto">Dot size scales with the number of accesses at each location.</span>
+            <span className="ml-auto">Click any pin to inspect its access events.</span>
           </div>
         </div>
       )}
+      <Dialog open={!!sel} onOpenChange={(o) => { if (!o) setSel(null); }}>
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto" data-testid="ca-globe-drilldown">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2"><MapPin className="w-4 h-4 text-ai" /> {sel?.label || "Access location"}</DialogTitle>
+          </DialogHeader>
+          <p className="text-xs text-muted-foreground">{(sel?.points || []).length} access event(s) recorded at this location.</p>
+          <div className="space-y-2 mt-2">
+            {(sel?.points || []).map((p, i) => (
+              <div key={i} data-testid={`globe-access-${i}`} className="rounded-lg border border-border bg-secondary/20 p-3 text-xs">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`px-2 py-0.5 rounded-full font-mono text-[10px] ${p.kind === "download" ? "bg-ai/10 text-ai" : "bg-low/10 text-low"}`}>{p.kind}</span>
+                  {p.anomaly && <span className="px-2 py-0.5 rounded-full font-mono text-[10px] bg-crit/10 text-crit">anomaly</span>}
+                  <span className="font-mono text-[10px] text-muted-foreground uppercase">{p.source}</span>
+                  <span className="ml-auto font-mono text-[10px] text-muted-foreground">{fmtDTT(p.at)}</span>
+                </div>
+                <div className="font-head font-bold mt-1.5">{p.title || "—"}</div>
+                <div className="flex items-center gap-3 mt-1 text-muted-foreground flex-wrap">
+                  <span className="inline-flex items-center gap-1"><User className="w-3 h-3" /> {p.who || "—"}</span>
+                  <span className="inline-flex items-center gap-1"><Monitor className="w-3 h-3" /> {p.device || "—"}</span>
+                  <span className="font-mono">{p.ip || "—"}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
     </Panel>
   );
 }

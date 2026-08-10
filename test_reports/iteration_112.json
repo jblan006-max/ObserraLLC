@@ -1,0 +1,29 @@
+{
+  "summary": "Iter112: Verified Globe Drilldown (kind/source/title/who/device/ip/at/label/token/lat/lon/anomaly on every point, dialog opens with 28 access events on pin click), Board Access Map PDF (branded 3-page PDF with 'Board Access Map', 'Access locations', 'Evidence access map' captions, admin-gated), Trusted Networks IP ranges (trim/dedupe/validate: invalid dropped, ['203.0.113.0/24','198.51.100.7'] persisted; clear works; trusted_countries still works), and regression on evidence-room custody PDFs + shared-cards/access-log/defensibility endpoints. Frontend Control Assurance globe pins clickable -> ca-globe-drilldown dialog with globe-access-* rows showing kind/source/title/who/device/ip; ca-globe-export + ca-globe-refresh present. Defensibility Governance settings has BOTH gov-trusted-countries and gov-trusted-networks inputs, gov-save fires 'Governance settings saved' toast, values persist after reload. Baseline restored (both trusted lists cleared).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter112_globe_drilldown_trusted_ips.py",
+    "/app/test_reports/pytest/iter112.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "access-globe drilldown fields land cleanly on every point (kind, source, title, who, device, ip, at, label, token, lat, lon, anomaly).",
+    "access-globe.pdf is admin-gated (401 anon) and returns a valid branded PDF containing the required title/section/map captions.",
+    "governance-settings PUT for trusted_ip_ranges correctly validates via ipaddress parsing, trims whitespace, drops invalid entries and empty strings, dedupes, and persists in-order. Clearing via [] works.",
+    "Regression checks green: shared-cards, access-log.csv, access-log.pdf, evidence-room pack.pdf (with & without geo), and defensibility endpoints all respond <500 after the mid-edit file-truncation recovery."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter112_globe_drilldown_trusted_ips.py"
+  ],
+  "success_rate": {"backend": "100% (14/14)", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin/owner)",
+  "seed_data_creation": "None. trusted_countries and trusted_ip_ranges were mutated during PUT tests but both reset to [] at end (baseline preserved; confirmed via cookie curl).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter112 (Globe Drilldown + Board Access Map PDF + Trusted Networks) fully verified. Regression pytest at /app/backend/tests/test_iter112_globe_drilldown_trusted_ips.py (run with -n 0 to avoid xdist parallel timeouts on the PDF endpoint which can take ~30s). Note: Playwright's expect_download does not detect anchor-triggered blob downloads (object URL + a.click). The Board Access Map PDF endpoint was fully validated via pytest and the UI button is wired correctly; users will get the file downloaded normally. Onboarding tour 'Skip' still appears on fresh sessions; the Obserran Advisor pop-up in bottom-right is expected and doesn't block interactions."
+}

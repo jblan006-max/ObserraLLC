@@ -311,8 +311,9 @@ function GovernanceSettingsCard() {
   const [recips, setRecips] = useState("");
   const [oncall, setOncall] = useState("");
   const [trusted, setTrusted] = useState("");
+  const [trustedIps, setTrustedIps] = useState("");
   const [saving, setSaving] = useState(false);
-  useEffect(() => { api.get("/agents/runtime/governance-settings").then(({ data }) => { setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); setTrusted((data.trusted_countries || []).join(", ")); }).catch(() => {}); }, []);
+  useEffect(() => { api.get("/agents/runtime/governance-settings").then(({ data }) => { setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); setTrusted((data.trusted_countries || []).join(", ")); setTrustedIps((data.trusted_ip_ranges || []).join(", ")); }).catch(() => {}); }, []);
   if (!s) return null;
   const sbp = s.auditor_question_sla_by_priority || {};
   const setSbp = (k, v) => setS({ ...s, auditor_question_sla_by_priority: { ...sbp, [k]: v } });
@@ -333,8 +334,9 @@ function GovernanceSettingsCard() {
         auditor_oncall_rotation: oncall.split(",").map((x) => x.trim()).filter(Boolean),
         card_engagement_cadence: s.card_engagement_cadence || "instant",
         trusted_countries: trusted.split(",").map((x) => x.trim()).filter(Boolean),
+        trusted_ip_ranges: trustedIps.split(",").map((x) => x.trim()).filter(Boolean),
       });
-      setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); setTrusted((data.trusted_countries || []).join(", ")); toast.success("Governance settings saved");
+      setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); setTrusted((data.trusted_countries || []).join(", ")); setTrustedIps((data.trusted_ip_ranges || []).join(", ")); toast.success("Governance settings saved");
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed."); }
     finally { setSaving(false); }
   };
@@ -369,6 +371,7 @@ function GovernanceSettingsCard() {
           </select>
         </label>
         <label className="block md:col-span-2"><span className={lbl}>Trusted access countries (comma-separated — opens from these won't raise a "new country" anomaly)</span><input data-testid="gov-trusted-countries" value={trusted} onChange={(e) => setTrusted(e.target.value)} placeholder="United States, United Kingdom, Canada" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Match the country names shown in your access logs. New-device alerts still fire from any location.</span></label>
+        <label className="block md:col-span-2"><span className={lbl}>Trusted networks — IP ranges (comma-separated IPs or CIDRs — accesses from these never raise an anomaly)</span><input data-testid="gov-trusted-networks" value={trustedIps} onChange={(e) => setTrustedIps(e.target.value)} placeholder="203.0.113.0/24, 198.51.100.7" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Add your office egress IPs / VPN ranges so trusted-network access is never flagged.</span></label>
       </div>
     </Panel>
   );
