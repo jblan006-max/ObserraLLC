@@ -1,4 +1,6 @@
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { api } from "@/lib/api";
 import {
   AlertOctagon, ArrowRight, Bot, EyeOff, Gauge, ShieldAlert, ShieldCheck, Wrench, Zap,
 } from "lucide-react";
@@ -16,6 +18,28 @@ import BoardBriefControl from "@/components/agentic-ai/BoardBriefControl";
 import { AIInsight } from "@/components/AIInsight";
 
 const ACCENT = "330 81% 60%";
+
+function GoLiveBadge() {
+  const [g, setG] = useState(null);
+  const navigate = useNavigate();
+  useEffect(() => {
+    let ok = true;
+    const load = () => api.get("/sap/go-live-checklist").then(({ data }) => { if (ok) setG(data); }).catch(() => {});
+    load();
+    const t = setInterval(load, 60000);
+    return () => { ok = false; clearInterval(t); };
+  }, []);
+  if (!g) return null;
+  const tone = g.ready ? "142 70% 45%" : (g.failed ? "0 84% 60%" : "35 90% 55%");
+  return (
+    <button data-testid="exec-golive-badge" onClick={() => navigate("/app/systems")}
+      title="Live production readiness — click for the full Go-Live checklist"
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-mono font-bold transition-transform hover:scale-[1.03]"
+      style={{ borderColor: `hsl(${tone} / 0.45)`, background: `hsl(${tone} / 0.12)`, color: `hsl(${tone})` }}>
+      <ShieldCheck className="w-3 h-3" />{g.ready ? `${g.score}% · PRODUCTION READY` : `${g.score}% · ${g.failed} BLOCKER(S)`}
+    </button>
+  );
+}
 
 export default function AIExecutiveOverview() {
   const { user } = useAuth();
@@ -63,6 +87,7 @@ export default function AIExecutiveOverview() {
             <h1 className="font-head font-black text-3xl tracking-tight">Executive Overview</h1>
             <span className="px-2 py-1 rounded-full border border-ai/25 bg-ai/10 text-ai text-[10px] font-mono">AI SECURITY ROLLUP</span>
             <span data-testid="overview-version-badge" className="px-2 py-1 rounded-full border border-border bg-secondary/60 text-muted-foreground text-[10px] font-mono font-bold">v1</span>
+            <GoLiveBadge />
           </div>
           <p className="text-sm text-muted-foreground mt-2 max-w-3xl">
             A single board-ready rollup of the whole Agentic AI Security estate — modelled agent risk, delegated

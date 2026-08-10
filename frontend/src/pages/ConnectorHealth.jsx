@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
@@ -31,6 +31,21 @@ function GoLiveChecklist() {
     setLoading(false);
   }, []);
   useEffect(() => { load(); }, [load]);
+  const dRef = useRef(null);
+  useEffect(() => { dRef.current = d; }, [d]);
+  const lastProbeRef = useRef(0);
+  useEffect(() => {
+    const tick = async () => {
+      const cur = dRef.current;
+      if (cur && cur.items.some((i) => i.id === "freshness" && i.status !== "pass") && Date.now() - lastProbeRef.current > 180000) {
+        lastProbeRef.current = Date.now();
+        try { await api.post("/sap/systems/reprobe"); } catch (e) { /* silent — re-check will surface state */ }
+      }
+      load();
+    };
+    const t = setInterval(tick, 30000);
+    return () => clearInterval(t);
+  }, [load]);
   const navigate = useNavigate();
   const [fixing, setFixing] = useState("");
   const fixItem = async (it) => {
@@ -54,7 +69,7 @@ function GoLiveChecklist() {
           </div>
           <div>
             <h2 className="font-head font-bold text-lg leading-tight">Go-Live Readiness</h2>
-            <p className="text-xs text-muted-foreground">Live production-readiness — every check runs against real state.</p>
+            <p className="text-xs text-muted-foreground">Live production-readiness — every check runs against real state · auto-refreshes every 30s.</p>
           </div>
         </div>
         <div className="flex items-center gap-3">

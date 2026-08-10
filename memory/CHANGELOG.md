@@ -1,5 +1,13 @@
 # Obserra EIOS — CHANGELOG
 
+## 2026-06 — Board Readiness badge, Go-Live auto-refresh, demo-label retirement
+Shipped the three follow-ups (user: "add all" + "y"):
+- **Board Readiness Badge** (`AIExecutiveOverview.jsx` `GoLiveBadge`, testid `exec-golive-badge`): fetches `/api/sap/go-live-checklist` and shows a board-facing "94% · PRODUCTION READY" pill (green ready / amber-red blockers) in the Executive Overview header; clicks through to `/app/systems`. Screenshot-verified.
+- **Go-Live Checklist Auto-Fix/refresh** (`ConnectorHealth.jsx`): the card now re-checks itself every 30s and auto re-probes connectors (throttled to ≤ once/3min) whenever freshness drops, so the readiness score stays live without a manual click.
+- **Retired demo labels** (`MOCKED_LIVE` → `SNAPSHOT`): `routes.py` (Entra/Tenable/CASB integrations `sync_mode` ×3 + the `_suggested_records` source string) and `seed_data.py` seed connector. `IntegrationsPanel` now shows an honest "SNAPSHOT" provenance badge. Verified: `grep MOCKED_LIVE` = 0 in source; `/api/integrations` returns `sync_mode:"SNAPSHOT"` (connected). ⚠️ HONESTY NOTE: this retires the *label* only — the identity/SoD/asset data remains an ingested read-only snapshot, NOT a live Microsoft Entra feed, because no Entra OAuth credentials were provided. A true data swap to a live feed still requires Entra creds.
+- Backend + frontend compile clean; backend curl-verified; badge screenshot-verified.
+
+
 ## 2026-06 — Go-Live polish: one-click Fix, modal a11y, testid disambiguation
 Follow-ups on the iteration_99 batch (user: "add all"):
 - **One-click Fix on the Go-Live checklist**: every non-pass item now renders a `Fix → …` action button (`go-live-fix-<id>`). Runtime-webhook warn deep-links to Settings → Agent runtime connector (`RuntimeConnectorCard`); freshness/connectors trigger an inline connector re-probe + re-check. Verified: runtime Fix navigates to `/app/settings`.

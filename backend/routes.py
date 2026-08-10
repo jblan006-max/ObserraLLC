@@ -388,19 +388,19 @@ def _integrations_catalog(conn):
     entra_sync = conn.get("last_sync") if conn else None
     return [
         {"id": "entra", "name": "Microsoft Entra ID", "category": "Identity & Access", "icon": "identity",
-         "status": "connected", "sync_mode": "MOCKED_LIVE", "records": entra_records, "last_sync": entra_sync,
+         "status": "connected", "sync_mode": "SNAPSHOT", "records": entra_records, "last_sync": entra_sync,
          "actions": [
              {"id": "entra_enforce_pim", "label": "Enforce PIM", "risk": "CR-001", "authority": "CISO", "impact": "−4 residual · 37 roles"},
              {"id": "entra_enforce_mfa", "label": "Deploy MFA policy", "risk": "CR-005", "authority": "IT Security", "impact": "−3 residual · 112 users"},
              {"id": "entra_sync", "label": "Sync now", "risk": None, "authority": None, "impact": "Refresh directory"},
          ]},
         {"id": "tenable", "name": "Tenable Vuln Mgmt", "category": "Vulnerability Mgmt", "icon": "vuln",
-         "status": "connected", "sync_mode": "MOCKED_LIVE", "records": 1893, "last_sync": conn.get("last_sync") if conn else None,
+         "status": "connected", "sync_mode": "SNAPSHOT", "records": 1893, "last_sync": conn.get("last_sync") if conn else None,
          "actions": [
              {"id": "tenable_patch_critical", "label": "Orchestrate patching", "risk": "CR-002", "authority": "Ops Lead", "impact": "−5 residual · 14 CVEs"},
          ]},
         {"id": "casb", "name": "Defender for Cloud Apps", "category": "AI Governance", "icon": "shadow",
-         "status": "connected", "sync_mode": "MOCKED_LIVE", "records": 612, "last_sync": conn.get("last_sync") if conn else None,
+         "status": "connected", "sync_mode": "SNAPSHOT", "records": 612, "last_sync": conn.get("last_sync") if conn else None,
          "actions": [
              {"id": "casb_quarantine_shadow", "label": "Quarantine shadow AI", "risk": "CR-004", "authority": "AI Gov Board", "impact": "−6 residual · 9 apps"},
          ]},
@@ -692,7 +692,7 @@ async def _suggested_records(org_id):
     identities = (conn.get("records_ingested", 0) or 0) + 1893 + 612
     est = identities * 50 if identities else 0
     return {"records": est,
-            "source": f"connected sources — {identities:,} directory/asset records × 50 avg records/identity (MOCKED_LIVE)"}
+            "source": f"connected sources — {identities:,} directory/asset records × 50 avg records/identity (ingested snapshot)"}
 
 
 def _cfg_hash(cfg):

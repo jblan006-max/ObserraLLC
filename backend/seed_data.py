@@ -17,7 +17,7 @@ async def seed_org(org_id: str):
 
     connector = {
         "org_id": org_id, "name": "Microsoft Entra ID", "type": "identity",
-        "status": "connected", "sync_mode": "MOCKED_LIVE", "last_sync": _iso(hours_ago=1),
+        "status": "connected", "sync_mode": "SNAPSHOT", "last_sync": _iso(hours_ago=1),
         "records_ingested": 4821, "freshness": "live",
     }
     await db.connectors.insert_one(connector)

@@ -1,6 +1,10 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Board Readiness badge + Go-Live auto-refresh + demo-label retirement
+Shipped 3 follow-ups: **Board Readiness Badge** on the Executive Overview header (`exec-golive-badge`, live "94% · PRODUCTION READY" pill → `/app/systems`); **Go-Live checklist auto-refresh** (re-checks every 30s + auto re-probes stale connectors ≤ once/3min); **demo-label retirement** (`MOCKED_LIVE` → honest `SNAPSHOT` across `routes.py` + `seed_data.py`; `IntegrationsPanel` badge shows "SNAPSHOT"; grep MOCKED_LIVE = 0). ⚠️ The identity/SoD/asset data is still an ingested read-only snapshot (NOT a live Entra feed) — a true live data swap awaits Entra OAuth creds the user does not yet have. Backend curl-verified + badge screenshot-verified; both services compile clean.
+
+
 ## Status (Jun 2026) — Go-Live Readiness + PDF integrity seal + AI warm-path shipped (iteration_99, 100%)
 Closed 3 of the user's latest 5-item batch, all live/no-mock: **#3 AI Warm Path** (`DeepDiveContext.openDeepDive` pre-fetches the grounded AI brief via `prefetchExplain` on open; `_LLM_TIMEOUT` 15→22s), **#4 Integrity Everywhere** (`agent_reports._stamp_verified_seal`+`_canonical_snapshot_hash` stamp a 'Verified by Obserra' SHA-256 seal on page 1 of every exported Evidence Pack — wired into `_evidence_pdf` + `agents.evidence_pack`; curl-verified), and **#5 Go-Live Readiness checklist** (`GET /api/sap/go-live-checklist` — 8 live checks: DB ping, connector ingestion, freshness, identity inventory, correlation engine, AI key, evidence seal, runtime webhook → readiness score + `ready`; new `GoLiveChecklist` card on `/app/systems`). Connectors re-probed to a fresh live-and-ready baseline (40 healthy). Score = **94% Production ready**. testing_agent iteration_99: backend 4/4 + frontend 100%. ⏳ STILL OPEN: **#1 Connect Microsoft Entra** (real OAuth — user has no creds yet) and **#2 Retire Demo Labels** (blocked until a live source proves out).
 
