@@ -1,6 +1,14 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Renew + Engagement Alerts + Access Log (iteration_107, backend 7/7 + frontend 100%)
+Share Center follow-ups, all live/no-mock:
+- **Card Expiry Renew**: `POST /api/agents/runtime/card-share/renew` ({token, days=14, clamped 1–90}); Share Center `share-card-renew-<token>` button extends a card's expiry (reactivates expired links), mirroring the Auditor Room.
+- **Engagement Alerts**: `_card_engage_alert(token, doc, event, who)` fires ONCE per event via atomic `alerted_open`/`alerted_download` latch → `_notify_org_staff` (in-app notification "Shared card engagement" + best-effort email to admins/execs) the first time an auditor opens or downloads a shared card. Idempotent dedupe_key `card-engage:<token>:<event>`.
+- **Per-card Access Log**: `GET /api/agents/runtime/card-share/{token}/access-log` → {opens, downloads, last_downloaded_by, access:[{kind, who, ip, at}]}. Rows written from `public_card_share` (open) and `public_card_share_pdf` (download) into `db.card_share_access`. Share Center `share-card-log-<token>` toggles an inline "Chain of custody" panel (generalized `AccessLog` component now shared with the Auditor Room via an `endpoint` prop).
+- Regression pytest: `/app/backend/tests/test_iter107_share_renew_log_alerts.py` (7/7). Optional future: compound index on `card_share_access(token, org_id, at)` if that collection grows.
+
+
 ## Status (Jun 2026) — Share Center + Auto Board Attach + live counters (iteration_106, backend 10/10 + frontend 100%)
 Follow-ups to the Share Detail Card feature, all live/no-mock:
 - **Share Center** (`DefensibilityDashboard.jsx` `ShareCenterCard`, admin, under the Auditor Room): lists every shared detail-card link with live viewed/downloaded counts, rating/expiry, Copy/Open, and one-click Revoke. Backed by `GET /api/agents/runtime/card-shares` + `POST /api/agents/runtime/card-share/revoke`. Auto-polls every 20s.

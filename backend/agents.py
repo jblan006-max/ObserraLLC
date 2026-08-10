@@ -1168,9 +1168,19 @@ async def public_card_share(token: str, request: Request = None):
         raise HTTPException(404, "This shared card link is invalid.")
     if doc.get("expires_at") and datetime.now(timezone.utc).isoformat() > doc["expires_at"]:
         raise HTTPException(410, "This shared card link has expired.")
+    now = datetime.now(timezone.utc).isoformat()
     sha = doc.get("snapshot_sha256") or _canonical_snapshot_hash(doc.get("snapshot") or {})
+    ip = ""
+    try:
+        ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+              or (request.client.host if request and request.client else ""))
+    except Exception:
+        ip = ""
     await db.card_shares.update_one({"token": token},
-        {"$inc": {"opens": 1}, "$set": {"last_opened_at": datetime.now(timezone.utc).isoformat()}})
+        {"$inc": {"opens": 1}, "$set": {"last_opened_at": now}})
+    await db.card_share_access.insert_one({"token": token, "org_id": doc.get("org_id"),
+        "kind": "open", "who": None, "ip": ip, "at": now})
+    await _card_engage_alert(token, doc, "open")
     return {"snapshot": doc["snapshot"], "created_at": doc.get("created_at"),
             "created_by": doc.get("created_by"), "expires_at": doc.get("expires_at"), "snapshot_sha256": sha}
 
@@ -1207,9 +1217,19 @@ async def public_card_share_pdf(token: str, who: str = "", request: Request = No
         raw = await _brand_watermark_pdf(raw, org_id=doc.get("org_id"), room_url=card_url,
             subtext=f"Downloaded by {auditor} \u00b7 {access} \u00b7 link expires {(doc.get('expires_at') or '')[:10]}")
         raw = _stamp_verified_seal(raw, seal)
+        ip = ""
+        try:
+            ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+                  or (request.client.host if request and request.client else ""))
+        except Exception:
+            ip = ""
+        _dl_now = datetime.now(timezone.utc).isoformat()
         await db.card_shares.update_one({"token": token},
             {"$inc": {"downloads": 1},
-             "$set": {"last_downloaded_at": datetime.now(timezone.utc).isoformat(), "last_downloaded_by": auditor}})
+             "$set": {"last_downloaded_at": _dl_now, "last_downloaded_by": auditor}})
+        await db.card_share_access.insert_one({"token": token, "org_id": doc.get("org_id"),
+            "kind": "download", "who": auditor, "ip": ip, "at": _dl_now})
+        await _card_engage_alert(token, doc, "download", who=auditor)
     except Exception:
         pass
     return StreamingResponse(io.BytesIO(raw), media_type="application/pdf",
@@ -1275,6 +1295,66 @@ async def card_share_stats(token: str, admin: dict = Depends(require_roles("admi
     return {"opens": d.get("opens", 0), "downloads": d.get("downloads", 0),
             "last_opened_at": d.get("last_opened_at"), "last_downloaded_at": d.get("last_downloaded_at"),
             "expires_at": d.get("expires_at"), "attach_to_board": bool(d.get("attach_to_board"))}
+
+
+async def _card_engage_alert(token, doc, event, who=None):
+    """Ping org admins/execs the FIRST time a shared card is opened/downloaded (best-effort, once per event)."""
+    import html as _html, os as _os
+    flag = f"alerted_{event}"
+    if doc.get(flag):
+        return
+    res = await db.card_shares.update_one({"token": token, flag: {"$ne": True}}, {"$set": {flag: True}})
+    if not res.modified_count:
+        return
+    snap = doc.get("snapshot") or {}
+    frontend = _os.environ.get("FRONTEND_URL", "").rstrip("/")
+    url = f"{frontend}/card/{token}"
+    title = _html.escape(snap.get("title") or "Detail card")
+    ref = f" ({_html.escape(snap.get('ref'))})" if snap.get("ref") else ""
+    actor = _html.escape(who or "An auditor")
+    verb = "downloaded the signed PDF of" if event == "download" else "opened"
+    subject = "Shared card downloaded — Obserra" if event == "download" else "Shared card opened — Obserra"
+    html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
+            f"<h2 style='color:#0f1e3d'>Your shared evidence landed</h2>"
+            f"<p><strong>{actor}</strong> just {verb} the shared detail card <strong>{title}</strong>{ref}.</p>"
+            f"<p><a href='{url}' style='color:#12b4d6'>{url}</a></p>"
+            f"<p style='font-size:11px;color:#9ca3af'>Obserra — Agentic AI Security Control & Governance · Share Center · Engagement alerts</p></div>")
+    await _notify_org_staff(doc.get("org_id"), subject, html,
+        "Shared card engagement", f"{who or 'An auditor'} {verb} \u201c{snap.get('title') or 'a detail card'}\u201d.",
+        dedupe_key=f"card-engage:{token}:{event}")
+
+
+class CardRenewBody(BaseModel):
+    token: str
+    days: int = 14
+
+
+@agents_router.post("/runtime/card-share/renew")
+async def renew_card_share(body: CardRenewBody, admin: dict = Depends(require_roles("admin"))):
+    import os
+    from datetime import datetime, timezone, timedelta
+    days = max(1, min(90, int(body.days or 14)))
+    expires = (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
+    res = await db.card_shares.update_one({"token": body.token, "org_id": admin["org_id"]},
+        {"$set": {"expires_at": expires}})
+    if not res.matched_count:
+        raise HTTPException(404, "Shared card not found.")
+    await _log_audit(admin["org_id"], admin["email"], "agent.card_share_renew",
+                     f"Shared card renewed ({body.token[:8]}\u2026 \u2192 {expires[:10]})")
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    return {"ok": True, "token": body.token, "url": f"{frontend}/card/{body.token}",
+            "expires_at": expires, "days": days}
+
+
+@agents_router.get("/runtime/card-share/{token}/access-log")
+async def card_share_access_log(token: str, admin: dict = Depends(require_roles("admin"))):
+    d = await db.card_shares.find_one({"token": token, "org_id": admin["org_id"]}, {"_id": 0})
+    if not d:
+        raise HTTPException(404, "Shared card not found.")
+    rows = await db.card_share_access.find(
+        {"token": token, "org_id": admin["org_id"]}, {"_id": 0}).sort("at", -1).to_list(500)
+    return {"opens": d.get("opens", 0), "downloads": d.get("downloads", 0),
+            "last_downloaded_by": d.get("last_downloaded_by"), "access": rows}
 
 
 # ── Auditor notes — external auditors leave read-only questions on the public room ──
