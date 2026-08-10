@@ -320,7 +320,7 @@ export default function AppShell() {
             </button>
             <img src="/brand-lockup.png" alt="Obserra" className="h-6 w-auto object-contain md:hidden" />
             <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest truncate hidden lg:block">
-              {sub?.org_name || "Obserra — Executive Protection & Intelligence LLC"}
+              {sub?.org_name || "Obserra — Agentic AI Security Control Plane"}
             </div>
           </div>
           <div className="flex-1 max-w-md hidden sm:block">

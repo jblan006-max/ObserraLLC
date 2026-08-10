@@ -58,14 +58,14 @@ export default function Auth() {
         </div>
         <div className="relative space-y-6">
           <h1 className="font-head font-black text-5xl leading-[1.05] tracking-tight">
-            Enterprise Intelligence,<br /><span className="text-ai">two altitudes.</span>
+            Agentic AI Security<br /><span className="text-ai">Control Plane.</span>
           </h1>
           <p className="text-muted-foreground max-w-md text-base leading-relaxed">
-            Cyber Risk Register, Executive Dashboard and AI Governance Suite on one evidence-grounded platform. Every metric carries its source, freshness and confidence.
+            Discover, understand, govern, constrain and respond to every enterprise AI agent — with modelled risk, heuristic red-team baselines and a defensibility ledger. Every metric carries its source, freshness and confidence.
           </p>
           <div className="flex gap-3 text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
-            <span className="px-2 py-1 rounded-sm border border-border">Executive Mode</span>
-            <span className="px-2 py-1 rounded-sm border border-border">Operational Mode</span>
+            <span className="px-2 py-1 rounded-sm border border-border">Machine Authority</span>
+            <span className="px-2 py-1 rounded-sm border border-border">Guardrail Coverage</span>
             <span className="px-2 py-1 rounded-sm ai-border text-ai">Evidence-backed AI</span>
           </div>
         </div>
