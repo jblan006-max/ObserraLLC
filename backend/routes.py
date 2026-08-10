@@ -153,56 +153,94 @@ async def govern_ai_system(ref: str, body: GovernBody, user: dict = Depends(get_
     return {"message": m["msg"], "system": updated}
 
 
-_SHADOW_AI_CATALOG = [
-    ("ChatGPT (consumer)", "OpenAI", "GPT-4o", "High", "Staff pasting internal docs into the public web app"),
-    ("Claude.ai (consumer)", "Anthropic", "Claude", "High", "Unmanaged document summarisation"),
-    ("Google Gemini (consumer)", "Google", "Gemini", "Medium", "Ad-hoc drafting on personal accounts"),
-    ("Perplexity AI", "Perplexity", "Sonar", "Medium", "Unsanctioned research assistant"),
-    ("DeepSeek", "DeepSeek", "DeepSeek-V3", "Critical", "Data residency and provenance unknown"),
-    ("Midjourney", "Midjourney", "v6", "Low", "Marketing image generation"),
-    ("Character.AI", "Character.AI", "proprietary", "Medium", "Personal chatbots on the corporate network"),
-    ("Notion AI", "Notion", "multi", "Medium", "AI writing over synced workspace data"),
-    ("GitHub Copilot (personal)", "GitHub", "Codex", "High", "Personal-token code assistant on org repos"),
-    ("Grammarly AI", "Grammarly", "proprietary", "Medium", "Generative rewriting over pasted content"),
-]
+_AI_PROVIDER_TELEMETRY = {"openai": "OpenAI", "anthropic": "Anthropic", "gemini": "Google Gemini", "google": "Google Gemini"}
 
 
 @api.post("/ai-systems/discover")
 async def discover_shadow_ai(admin: dict = Depends(require_roles("admin"))):
-    """Shadow AI discovery feed — auto-populates the AI system inventory with unsanctioned AI
-    detected across the estate (common public GenAI SaaS) plus any agents flagged shadow. Idempotent
-    upsert by ref; never overwrites a system an admin has already sanctioned."""
+    """Shadow AI discovery — LIVE signals only (no seed/mock catalog). Derives unsanctioned AI from
+    real platform data: (1) connected AI-provider connectors in the connector inventory, (2) LLM
+    providers/models actually observed in advisor telemetry, (3) agents flagged shadow in the agent
+    inventory. Idempotent; never overwrites a system an admin has already sanctioned."""
     org_id = admin["org_id"]
     now = datetime.now(timezone.utc).isoformat()
-    existing_names = {s.get("name") for s in await db.ai_systems.find({"org_id": org_id}, {"_id": 0, "name": 1}).to_list(500)}
-    added = 0
-    for i, (name, provider, model, risk, use_case) in enumerate(_SHADOW_AI_CATALOG, 1):
-        ref = f"SHAI-{i:03d}"
-        if name in existing_names or await db.ai_systems.find_one({"org_id": org_id, "ref": ref}):
-            continue
-        await db.ai_systems.insert_one({
-            "org_id": org_id, "ref": ref, "name": name, "provider": provider, "model": model,
-            "type": "Shadow AI", "status": "shadow", "risk_class": risk, "use_case": use_case,
-            "owner": "Unassigned", "nist_profile": "Unmapped", "discovered": True,
-            "source": "Shadow AI Discovery Feed", "detected_at": now, "data_type": "estimate",
-            "confidence": 0.5, "freshness": "live"})
-        added += 1
-    shadow_agents = await db.ai_agents.find({"org_id": org_id, "status": "shadow"}, {"_id": 0}).to_list(200)
-    for a in shadow_agents:
-        ref = f"SHAI-AGT-{a['ref']}"
+
+    # Remove any previously auto-populated shadow rows so the queue reflects only current live signals.
+    await db.ai_systems.delete_many({"org_id": org_id, "status": "shadow", "discovered": True})
+
+    sanctioned_names = {(s.get("name") or "").lower() for s in
+                        await db.ai_systems.find({"org_id": org_id, "status": "sanctioned"}, {"_id": 0, "name": 1}).to_list(500)}
+    added, sources = 0, {"connectors": 0, "telemetry": 0, "agents": 0}
+
+    async def _upsert(ref, doc):
+        nonlocal added
         if await db.ai_systems.find_one({"org_id": org_id, "ref": ref}):
-            continue
-        await db.ai_systems.insert_one({
-            "org_id": org_id, "ref": ref, "name": a.get("name"), "provider": a.get("model"),
-            "model": a.get("model"), "type": "Shadow Agent", "status": "shadow",
-            "risk_class": a.get("risk_class", "High"), "use_case": "Unsanctioned autonomous agent",
-            "owner": a.get("owner", "Unassigned"), "nist_profile": "Unmapped", "discovered": True,
-            "source": "Agent inventory", "detected_at": now, "data_type": "estimate",
-            "confidence": 0.6, "freshness": "live"})
+            return False
+        await db.ai_systems.insert_one({"org_id": org_id, "ref": ref, **doc})
         added += 1
-    await _audit(org_id, admin["email"], "ai_system.discover", f"Shadow AI discovery added {added} system(s)")
+        return True
+
+    # (1) Connected AI-provider connectors (live connector_state).
+    try:
+        from connectors_catalog import CATALOG, _state_index
+        idx = await _state_index(org_id)
+        for e in CATALOG:
+            if e.get("category") != "AI & Media":
+                continue
+            if (idx.get(e["id"]) or {}).get("state") != "connected":
+                continue
+            if e["name"].lower() in sanctioned_names:
+                continue
+            if await _upsert(f"SHAI-CONN-{e['id']}", {
+                "name": e["name"], "provider": e["name"],
+                "model": ", ".join(e.get("capabilities", []))[:60] or "connected AI provider",
+                "type": "Shadow AI", "status": "shadow", "risk_class": "High",
+                "use_case": "Connected AI provider not registered as a sanctioned AI system",
+                "owner": "Unassigned", "nist_profile": "Unmapped", "discovered": True,
+                "source": "Connector inventory (live)", "detected_at": now, "data_type": "fact",
+                "confidence": 0.9, "freshness": "live"}):
+                sources["connectors"] += 1
+    except Exception:
+        pass
+
+    # (2) LLM providers/models actually observed in advisor telemetry (live usage).
+    try:
+        models = await db.advisor_logs.distinct("model", {"org_id": org_id})
+        seen = set()
+        for mstr in models:
+            if not mstr or "/" not in str(mstr):
+                continue
+            prov = str(mstr).split("/", 1)[0].lower()
+            label = _AI_PROVIDER_TELEMETRY.get(prov)
+            if not label or label in seen or label.lower() in sanctioned_names:
+                continue
+            seen.add(label)
+            if await _upsert(f"SHAI-LLM-{prov}", {
+                "name": f"{label} (observed in advisor telemetry)", "provider": label, "model": str(mstr),
+                "type": "Shadow AI", "status": "shadow", "risk_class": "Medium",
+                "use_case": "LLM provider observed processing org data via advisor telemetry",
+                "owner": "Unassigned", "nist_profile": "Unmapped", "discovered": True,
+                "source": "Advisor telemetry (live)", "detected_at": now, "data_type": "fact",
+                "confidence": 0.8, "freshness": "live"}):
+                sources["telemetry"] += 1
+    except Exception:
+        pass
+
+    # (3) Agents flagged shadow in the live agent inventory.
+    for a in await db.ai_agents.find({"org_id": org_id, "status": "shadow"}, {"_id": 0}).to_list(200):
+        if await _upsert(f"SHAI-AGT-{a['ref']}", {
+            "name": a.get("name"), "provider": a.get("model"), "model": a.get("model"),
+            "type": "Shadow Agent", "status": "shadow", "risk_class": a.get("risk_class", "High"),
+            "use_case": "Unsanctioned autonomous agent in the agent inventory",
+            "owner": a.get("owner", "Unassigned"), "nist_profile": "Unmapped", "discovered": True,
+            "source": "Agent inventory (live)", "detected_at": now, "data_type": "fact",
+            "confidence": 0.9, "freshness": "live"}):
+            sources["agents"] += 1
+
+    await _audit(org_id, admin["email"], "ai_system.discover",
+                 f"Live shadow-AI discovery added {added} system(s): {sources}")
     total_shadow = await db.ai_systems.count_documents({"org_id": org_id, "status": "shadow"})
-    return {"ok": True, "added": added, "shadow_total": total_shadow}
+    return {"ok": True, "added": added, "shadow_total": total_shadow, "sources": sources}
 
 
 @api.get("/ai-incidents")
@@ -380,6 +418,21 @@ class ActionRun(BaseModel):
 @api.post("/actions/run")
 async def run_action(body: ActionRun, user: dict = Depends(require_active_subscription)):
     org_id = user["org_id"]
+    if body.action_id.startswith("agent_"):
+        if user.get("role") != "admin":
+            raise HTTPException(403, "Admin role required to enforce an AI agent.")
+        try:
+            verb, ref = body.action_id.split(":", 1)
+        except ValueError:
+            raise HTTPException(400, "Malformed agent action.")
+        action = {"agent_suspend": "suspend", "agent_kill": "kill", "agent_resume": "resume"}.get(verb)
+        if not action:
+            raise HTTPException(404, "Unknown agent action")
+        from agents import enforce_from_advisor
+        res = await enforce_from_advisor(org_id, user["email"], ref.strip(), action)
+        vw = {"suspend": "suspended", "kill": "killed", "resume": "resumed"}[action]
+        where = "dispatched to the agent runtime" if res["enforcement"]["runtime"] == "external-webhook" else "enforced in the control plane"
+        return {"message": f"{ref.strip()} {vw} — {where}.", "action_id": body.action_id, "agent": res["agent"]}
     if body.action_id == "entra_sync":
         return await sync_connector(user)
     eff = _ACTION_EFFECTS.get(body.action_id)

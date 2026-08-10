@@ -21,7 +21,7 @@ function parseMessage(text) {
   const actions = [];
   const body = [];
   for (const line of lines) {
-    const m = line.match(/^ACTION:\s*([a-z_]+)\s*—?\s*(.*)$/);
+    const m = line.match(/^ACTION:\s*([a-z_]+(?::[A-Za-z0-9\-]+)?)\s*—?\s*(.*)$/);
     if (m) actions.push({ id: m[1].trim(), label: m[2].trim() || m[1] });
     else body.push(line);
   }

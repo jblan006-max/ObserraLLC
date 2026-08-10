@@ -313,6 +313,8 @@ export default function AgenticAISecurity() {
         <AuthorityDashboard
           agents={data?.agents || []}
           onSelectAgent={setSelectedAgent}
+          isAdmin={isAdmin}
+          onReload={reload}
         />
       )}
 

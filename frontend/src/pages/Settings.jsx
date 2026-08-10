@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw, Image as ImageIcon, Server, Package, FileText, RefreshCw, Send, Bookmark, X, Lock, Sparkles } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SsoCard } from "@/components/SsoCard";
+import { RuntimeConnectorCard } from "@/components/RuntimeConnectorCard";
 
 const OPTIONS = [
   { value: "weekly", label: "Weekly", desc: "A digest every Monday morning" },
@@ -477,6 +478,8 @@ export default function Settings() {
           </div>
         </div>
       )}
+
+      {isAdmin && <RuntimeConnectorCard />}
 
       {isAdmin && (
         <div className="bg-card fact-border rounded-xl p-6 space-y-4" data-testid="deployment-docs-settings">
