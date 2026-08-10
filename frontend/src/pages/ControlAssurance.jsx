@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "@/lib/api";
 import { Panel } from "@/components/agentic-ai/shared";
 import { useDeepDive } from "@/context/DeepDiveContext";
@@ -27,17 +27,20 @@ function Tile({ label, value, sub, iconClass, Icon }) {
 }
 
 function AccessGlobe() {
+  const [sp] = useSearchParams();
+  const watch = sp.get("watch") === "1";
   const [g, setG] = useState(null);
   const [busy, setBusy] = useState(true);
   const [sel, setSel] = useState(null);
   const [expBusy, setExpBusy] = useState(false);
-  const [filter, setFilter] = useState("all");
-  const [days, setDays] = useState(null);
+  const [filter, setFilter] = useState(watch ? "suspicious" : "all");
+  const [days, setDays] = useState(watch ? 1 : null);
   const loadG = () => {
     setBusy(true);
     api.get("/agents/runtime/access-globe", { params: days ? { days } : {} }).then(({ data }) => setG(data)).catch(() => {}).finally(() => setBusy(false));
   };
   useEffect(() => { loadG(); }, [days]);
+  useEffect(() => { if (watch) { setDays(1); setFilter("suspicious"); } }, [watch]);
   const exportMap = async () => {
     setExpBusy(true);
     try {
@@ -58,7 +61,7 @@ function AccessGlobe() {
       actions={
         <div className="flex items-center gap-2">
           <div className="flex items-center rounded-md border border-border overflow-hidden" data-testid="ca-globe-range">
-            {[[null, "All"], [7, "7d"], [30, "30d"], [90, "90d"]].map(([v, lbl]) => (
+            {[[null, "All"], [1, "24h"], [7, "7d"], [30, "30d"], [90, "90d"]].map(([v, lbl]) => (
               <button key={lbl} data-testid={`ca-globe-range-${lbl.toLowerCase()}`} onClick={() => setDays(v)} className={`px-2.5 py-2 text-xs font-head font-bold transition-colors ${days === v ? "bg-ai/15 text-ai" : "text-muted-foreground hover:bg-secondary"}`}>{lbl}</button>
             ))}
           </div>

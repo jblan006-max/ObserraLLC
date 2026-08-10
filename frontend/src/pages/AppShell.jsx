@@ -153,6 +153,7 @@ function HealthPill() {
 }
 
 function SidebarInner({ user, sub, owns, doLogout, onNav, onClose }) {
+  const navigate = useNavigate();
   const [watchCount, setWatchCount] = useState(0);
   useEffect(() => {
     if (user?.role !== "admin") return;
@@ -227,7 +228,7 @@ function SidebarInner({ user, sub, owns, doLogout, onNav, onClose }) {
                           isActive && !locked ? "bg-primary/15 text-foreground border border-primary/30" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}`}>
                         <span className="flex items-center gap-3"><n.icon className="w-4 h-4" /> {n.label}
                           {n.to === "/app/control-assurance" && watchCount > 0 && (
-                            <span data-testid="nav-watchtower-badge" title={`${watchCount} unusual access(es) in the last 24h`} className="ml-0.5 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-crit text-white text-[10px] font-bold animate-pulse">{watchCount > 99 ? "99+" : watchCount}</span>
+                            <span data-testid="nav-watchtower-badge" role="button" tabIndex={0} title={`${watchCount} unusual access(es) in the last 24h — view now`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); navigate("/app/control-assurance?watch=1"); onNav?.(); }} className="ml-0.5 min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-crit text-white text-[10px] font-bold animate-pulse cursor-pointer">{watchCount > 99 ? "99+" : watchCount}</span>
                           )}
                         </span>
                         {locked && <Lock className="w-3 h-3 text-muted-foreground" />}

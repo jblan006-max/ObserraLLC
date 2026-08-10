@@ -1,6 +1,14 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Trusted-Rules Audit + Instant Alerts + Watchtower Drilldown (iteration_115, backend 21/21 + frontend 100%)
+User-approved 3-feature batch (all live/no-mock):
+- **Trusted Rules Audit**: `set_governance_settings` snapshots the org's trusted lists before update and writes a `db.audit_logs` entry `action="agent.trusted_rules_changed"` (actor = admin email, detail = per-resource +[added]/-[removed] diff for countries/networks/auditors). No entry when trusted rules are unchanged (e.g. only toggling instant alerts). Surfaces in the existing Audit Log.
+- **Instant Alerts**: `instant_suspicious_alerts` (bool) in Governance Settings + new `_instant_suspicious_check(org_id, token, ip, ua, kind, who, at)` fire-and-forget helper hooked into all 4 access paths (card open/download, room open/download via `asyncio.create_task`). When ON and an access is outside every trusted zone (and not a trusted auditor), it emails admins/execs + posts to Slack/Teams (`self_scan._post_chat_alert`) + in-app note, deduped per ip/token/kind/minute. Short-circuits cheaply (off / no-trust / trusted-auditor / trusted-IP) before the geo lookup; public open/download endpoints measured <2s (non-blocking). UI: `gov-instant-alerts` checkbox.
+- **Watchtower Drilldown**: `access_globe` days whitelist expanded to `(1,7,30,90)`; the sidebar `nav-watchtower-badge` is now a button that navigates to `/app/control-assurance?watch=1`; `AccessGlobe` reads `?watch=1` (`useSearchParams`) → initializes `days=1` + `filter="suspicious"` (+ effect for same-page nav). New `24h` chip in the range selector.
+- Regression pytest: `/app/backend/tests/test_iter115_instant_alerts_audit_days1.py` (21/21, `pytest -n 0`). ⚠️ FORK-HAZARD (recurring, hit twice this batch): `GovSettingsBody.instant_suspicious_alerts` field AND the `days in (1,7,30,90)` change both silently dropped mid-batch and were re-applied after a grep+compile check. `_log_audit` writes to collection **audit_logs** (not audit_log). Playwright notes (from tester): use `page.type` w/ delay on auth fields; for in-test API state changes use `page.evaluate` fetch with `credentials:'include'` (external urllib 403s on cookie/CSRF); sidebar watchtower poller reflects trust changes in ~3-5s.
+
+
 ## Status (Jun 2026) — Globe Time-Range + Auditor Allow-List + Watchlist Threshold + Watchtower Badge (iteration_114, backend 15/15 + frontend 100%)
 User-approved 4-feature batch (all live/no-mock):
 - **Globe Time Range**: `_gather_access_globe(org_id, days=None)` + `GET /api/agents/runtime/access-globe?days=7|30|90` (whitelisted; invalid→all-time, echoes `days`). UI: `ca-globe-range` segmented control (All/7d/30d/90d) on the Control Assurance globe; re-fetches on change.

@@ -338,6 +338,7 @@ function GovernanceSettingsCard() {
         trusted_ip_ranges: trustedIps.split(",").map((x) => x.trim()).filter(Boolean),
         trusted_auditors: tauds.split(",").map((x) => x.trim()).filter(Boolean),
         unusual_access_threshold: Number(s.unusual_access_threshold) || 1,
+        instant_suspicious_alerts: !!s.instant_suspicious_alerts,
       });
       setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); setTrusted((data.trusted_countries || []).join(", ")); setTrustedIps((data.trusted_ip_ranges || []).join(", ")); setTauds((data.trusted_auditors || []).join(", ")); toast.success("Governance settings saved");
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed."); }
@@ -377,6 +378,7 @@ function GovernanceSettingsCard() {
         <label className="block md:col-span-2"><span className={lbl}>Trusted networks — IP ranges (comma-separated IPs or CIDRs — accesses from these never raise an anomaly)</span><input data-testid="gov-trusted-networks" value={trustedIps} onChange={(e) => setTrustedIps(e.target.value)} placeholder="203.0.113.0/24, 198.51.100.7" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Add your office egress IPs / VPN ranges so trusted-network access is never flagged.</span></label>
         <label className="block md:col-span-2"><span className={lbl}>Trusted auditors (comma-separated emails — their opens never show as suspicious, even from abroad)</span><input data-testid="gov-trusted-auditors" value={tauds} onChange={(e) => setTauds(e.target.value)} placeholder="auditor@bigfour.com, examiner@regulator.gov" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Use the auditor's login / download email exactly as it appears in the access log.</span></label>
         <label className="block md:col-span-2"><span className={lbl}>Unusual-access alert threshold (min outside-trusted accesses to trigger the weekly note)</span><input data-testid="gov-unusual-threshold" type="number" min={1} max={1000} value={s.unusual_access_threshold ?? 1} onChange={(e) => setS({ ...s, unusual_access_threshold: e.target.value })} className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Quiet weeks below this count stay silent — no noise for the board.</span></label>
+        <label className="flex items-start gap-2 md:col-span-2 cursor-pointer"><input data-testid="gov-instant-alerts" type="checkbox" checked={!!s.instant_suspicious_alerts} onChange={(e) => setS({ ...s, instant_suspicious_alerts: e.target.checked })} className="accent-ai w-4 h-4 mt-0.5" /><span className="text-sm">Instant alerts — email + Slack/Teams the moment an access lands from outside every trusted zone (not just the weekly note)</span></label>
       </div>
       <SnapshotRetire />
     </Panel>

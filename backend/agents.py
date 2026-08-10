@@ -1000,6 +1000,8 @@ async def public_evidence_room(token: str, request: Request = None):
         {"$inc": {"opens": 1}, "$set": {"last_opened_at": now}})
     await db.evidence_room_access.insert_one({"token": token, "org_id": doc.get("org_id"),
         "kind": "open", "who": None, "ip": ip, "at": now})
+    import asyncio
+    asyncio.create_task(_instant_suspicious_check(doc.get("org_id"), token, ip, "", "open", None, now))
     return {"snapshot": doc["snapshot"], "created_at": doc.get("created_at"),
             "expires_at": doc.get("expires_at"), "snapshot_sha256": sha,
             "digest_subscribed": bool(doc.get("digest_subscribers"))}
@@ -1060,8 +1062,11 @@ async def public_evidence_room_pdf(token: str, who: str = "", request: Request =
             {"token": token},
             {"$inc": {"downloads": 1},
              "$set": {"last_downloaded_at": datetime.now(timezone.utc).isoformat(), "last_downloaded_by": auditor}})
+        _room_dl_now = datetime.now(timezone.utc).isoformat()
         await db.evidence_room_access.insert_one({"token": token, "org_id": doc.get("org_id"),
-            "kind": "download", "who": auditor, "ip": ip, "at": datetime.now(timezone.utc).isoformat()})
+            "kind": "download", "who": auditor, "ip": ip, "at": _room_dl_now})
+        import asyncio
+        asyncio.create_task(_instant_suspicious_check(doc.get("org_id"), token, ip, "", "download", auditor, _room_dl_now))
     except Exception:
         pass
     return StreamingResponse(io.BytesIO(raw), media_type="application/pdf",
@@ -1189,6 +1194,8 @@ async def public_card_share(token: str, request: Request = None):
         "kind": "open", "who": None, "ip": ip, "ua": ua, "at": now})
     await _card_engage_alert(token, doc, "open")
     await _card_anomaly_autocheck(token, doc.get("org_id"), ip, ua, "open")
+    import asyncio
+    asyncio.create_task(_instant_suspicious_check(doc.get("org_id"), token, ip, ua, "open", None, now))
     return {"snapshot": doc["snapshot"], "created_at": doc.get("created_at"),
             "created_by": doc.get("created_by"), "expires_at": doc.get("expires_at"), "snapshot_sha256": sha}
 
@@ -1241,6 +1248,8 @@ async def public_card_share_pdf(token: str, who: str = "", request: Request = No
             "kind": "download", "who": auditor, "ip": ip, "ua": ua, "at": _dl_now})
         await _card_engage_alert(token, doc, "download", who=auditor)
         await _card_anomaly_autocheck(token, doc.get("org_id"), ip, ua, "download", who=auditor)
+        import asyncio
+        asyncio.create_task(_instant_suspicious_check(doc.get("org_id"), token, ip, ua, "download", auditor, _dl_now))
     except Exception:
         pass
     return StreamingResponse(io.BytesIO(raw), media_type="application/pdf",
@@ -1780,6 +1789,57 @@ async def _notify_org_staff(org_id, subject, html, kind_title, kind_body, dedupe
                 await notifications.send_email(rr["email"], subject, html)
             except Exception:
                 pass
+    except Exception:
+        pass
+
+
+async def _instant_suspicious_check(org_id, token, ip, ua, kind, who=None, at=None):
+    """Fire-and-forget: if instant suspicious-access alerts are ON and this access is from OUTSIDE every
+    trusted zone (and not a trusted auditor), ping admins/execs by email + in-app + Slack/Teams immediately."""
+    try:
+        from bson import ObjectId
+        org = await db.organizations.find_one(
+            {"_id": ObjectId(org_id)},
+            {"instant_suspicious_alerts": 1, "trusted_countries": 1, "trusted_ip_ranges": 1,
+             "trusted_auditors": 1}) if org_id else None
+        if not org or not org.get("instant_suspicious_alerts"):
+            return
+        tc = {(c or "").strip().lower() for c in (org.get("trusted_countries") or [])}
+        tips = org.get("trusted_ip_ranges") or []
+        tauds = {(a or "").strip().lower() for a in (org.get("trusted_auditors") or [])}
+        if not (tc or tips):
+            return
+        if (who or "").strip().lower() in tauds or _ip_in_ranges(ip, tips):
+            return
+        geo = ""
+        if ip:
+            g = (await _geo_lookup_many([ip])).get(ip)
+            if g:
+                geo = g.get("loc") or ""
+        if not _access_suspicious({"ip": ip, "ua": ua, "who": who, "geo": geo}, tc, tips, tauds):
+            return
+        loc = geo or ip or "an unknown location"
+        device = _parse_ua(ua or "") or "unknown device"
+        actor = who or "an anonymous viewer"
+        html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:600px;margin:auto'>"
+                f"<h2 style='color:#0f1e3d'>\u26a0 Unusual evidence access</h2>"
+                f"<p>A <strong>{kind}</strong> of shared evidence just came from <strong>outside every trusted "
+                f"country / network</strong>:</p><ul style='padding-left:18px'>"
+                f"<li><strong>Location:</strong> {loc}</li><li><strong>Who:</strong> {actor}</li>"
+                f"<li><strong>Device:</strong> {device}</li><li><strong>IP:</strong> {ip or '—'}</li>"
+                f"<li><strong>When:</strong> {(at or '')[:19].replace('T', ' ')} UTC</li></ul>"
+                f"<p style='font-size:12px;color:#6b7280'>Open the Control Assurance access globe "
+                f"(filter \u2192 Suspicious) to investigate. If expected, add the location or auditor to your Trusted access rules.</p></div>")
+        dk = f"instant-suspicious:{org_id}:{ip}:{token}:{kind}:{(at or '')[:16]}"
+        await _notify_org_staff(org_id, "\u26a0 Unusual evidence access — outside your trusted zones", html,
+                                "Unusual evidence access",
+                                f"{kind} from {loc} ({actor}) — outside your trusted zones.", dedupe_key=dk)
+        try:
+            from self_scan import _post_chat_alert
+            await _post_chat_alert(org_id, "\u26a0 Unusual evidence access",
+                f"A *{kind}* of shared evidence came from *{loc}* ({actor}, {device}, {ip or 'no IP'}) — outside every trusted zone.")
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -2367,6 +2427,7 @@ class GovSettingsBody(BaseModel):
     trusted_ip_ranges: list[str] | None = None
     trusted_auditors: list[str] | None = None
     unusual_access_threshold: int | None = None
+    instant_suspicious_alerts: bool | None = None
 
 
 @agents_router.get("/runtime/governance-settings")
@@ -2392,7 +2453,8 @@ async def get_governance_settings(admin: dict = Depends(require_roles("admin")))
             "trusted_countries": org.get("trusted_countries") or [],
             "trusted_ip_ranges": org.get("trusted_ip_ranges") or [],
             "trusted_auditors": org.get("trusted_auditors") or [],
-            "unusual_access_threshold": int(org.get("unusual_access_threshold") or 1)}
+            "unusual_access_threshold": int(org.get("unusual_access_threshold") or 1),
+            "instant_suspicious_alerts": bool(org.get("instant_suspicious_alerts"))}
 
 
 @agents_router.put("/runtime/governance-settings")
@@ -2473,9 +2535,32 @@ async def set_governance_settings(body: GovSettingsBody, admin: dict = Depends(r
             upd["unusual_access_threshold"] = max(1, min(1000, int(body.unusual_access_threshold)))
         except Exception:
             pass
+    if body.instant_suspicious_alerts is not None:
+        upd["instant_suspicious_alerts"] = bool(body.instant_suspicious_alerts)
+    _prev = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])},
+                                            {"trusted_countries": 1, "trusted_ip_ranges": 1, "trusted_auditors": 1}) or {}
     if upd:
         await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": upd})
     await _log_audit(admin["org_id"], admin["email"], "agent.governance_settings", "Updated AI governance settings")
+    try:
+        changes = []
+        for _lbl, _key in (("countries", "trusted_countries"), ("networks", "trusted_ip_ranges"), ("auditors", "trusted_auditors")):
+            if _key not in upd:
+                continue
+            _old, _new = set(_prev.get(_key) or []), set(upd.get(_key) or [])
+            _added, _removed = sorted(_new - _old), sorted(_old - _new)
+            if _added or _removed:
+                _seg = _lbl
+                if _added:
+                    _seg += f" +[{', '.join(_added)}]"
+                if _removed:
+                    _seg += f" -[{', '.join(_removed)}]"
+                changes.append(_seg)
+        if changes:
+            await _log_audit(admin["org_id"], admin["email"], "agent.trusted_rules_changed",
+                             "Trusted access rules changed \u2014 " + "; ".join(changes))
+    except Exception:
+        pass
     return await get_governance_settings(admin)
 
 
@@ -2588,7 +2673,7 @@ async def _gather_access_globe(org_id, days=None):
 async def access_globe(days: int | None = None, admin: dict = Depends(require_roles("admin"))):
     """Org-wide evidence-access globe with per-point drilldown (who / device / source / card|room).
     Optional ?days=7|30|90 scopes the pins to a recent window (default: all-time)."""
-    d = days if days in (7, 30, 90) else None
+    d = days if days in (1, 7, 30, 90) else None
     points, summary, _ = await _gather_access_globe(admin["org_id"], days=d)
     return {"points": points, **summary, "days": d}
 
