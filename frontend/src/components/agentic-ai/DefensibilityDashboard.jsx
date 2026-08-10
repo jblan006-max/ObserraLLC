@@ -313,8 +313,22 @@ function GovernanceSettingsCard() {
   const [trusted, setTrusted] = useState("");
   const [trustedIps, setTrustedIps] = useState("");
   const [tauds, setTauds] = useState("");
+  const [alertEmails, setAlertEmails] = useState("");
+  const [alertWebhook, setAlertWebhook] = useState("");
+  const [snoozeHours, setSnoozeHours] = useState("24");
+  const [snoozing, setSnoozing] = useState(false);
   const [saving, setSaving] = useState(false);
-  useEffect(() => { api.get("/agents/runtime/governance-settings").then(({ data }) => { setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); setTrusted((data.trusted_countries || []).join(", ")); setTrustedIps((data.trusted_ip_ranges || []).join(", ")); setTauds((data.trusted_auditors || []).join(", ")); }).catch(() => {}); }, []);
+  const hydrate = (data) => { setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); setTrusted((data.trusted_countries || []).join(", ")); setTrustedIps((data.trusted_ip_ranges || []).join(", ")); setTauds((data.trusted_auditors || []).join(", ")); setAlertEmails((data.alert_channel_emails || []).join(", ")); setAlertWebhook(data.alert_channel_webhook || ""); };
+  useEffect(() => { api.get("/agents/runtime/governance-settings").then(({ data }) => hydrate(data)).catch(() => {}); }, []);
+  const doSnooze = async (hours) => {
+    setSnoozing(true);
+    try {
+      const { data } = await api.post("/agents/runtime/alerts/snooze", { hours: Number(hours) || 0 });
+      setS((prev) => ({ ...prev, snooze_alerts_until: data.snooze_alerts_until || "" }));
+      toast.success(Number(hours) > 0 ? `Instant alerts muted for ${hours}h` : "Instant alerts resumed");
+    } catch (e) { toast.error(e.response?.data?.detail || "Snooze failed."); }
+    finally { setSnoozing(false); }
+  };
   if (!s) return null;
   const sbp = s.auditor_question_sla_by_priority || {};
   const setSbp = (k, v) => setS({ ...s, auditor_question_sla_by_priority: { ...sbp, [k]: v } });
@@ -339,8 +353,10 @@ function GovernanceSettingsCard() {
         trusted_auditors: tauds.split(",").map((x) => x.trim()).filter(Boolean),
         unusual_access_threshold: Number(s.unusual_access_threshold) || 1,
         instant_suspicious_alerts: !!s.instant_suspicious_alerts,
+        alert_channel_emails: alertEmails.split(",").map((x) => x.trim()).filter(Boolean),
+        alert_channel_webhook: alertWebhook.trim(),
       });
-      setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); setTrusted((data.trusted_countries || []).join(", ")); setTrustedIps((data.trusted_ip_ranges || []).join(", ")); setTauds((data.trusted_auditors || []).join(", ")); toast.success("Governance settings saved");
+      hydrate(data); toast.success("Governance settings saved");
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed."); }
     finally { setSaving(false); }
   };
@@ -379,6 +395,26 @@ function GovernanceSettingsCard() {
         <label className="block md:col-span-2"><span className={lbl}>Trusted auditors (comma-separated emails — their opens never show as suspicious, even from abroad)</span><input data-testid="gov-trusted-auditors" value={tauds} onChange={(e) => setTauds(e.target.value)} placeholder="auditor@bigfour.com, examiner@regulator.gov" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Use the auditor's login / download email exactly as it appears in the access log.</span></label>
         <label className="block md:col-span-2"><span className={lbl}>Unusual-access alert threshold (min outside-trusted accesses to trigger the weekly note)</span><input data-testid="gov-unusual-threshold" type="number" min={1} max={1000} value={s.unusual_access_threshold ?? 1} onChange={(e) => setS({ ...s, unusual_access_threshold: e.target.value })} className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Quiet weeks below this count stay silent — no noise for the board.</span></label>
         <label className="flex items-start gap-2 md:col-span-2 cursor-pointer"><input data-testid="gov-instant-alerts" type="checkbox" checked={!!s.instant_suspicious_alerts} onChange={(e) => setS({ ...s, instant_suspicious_alerts: e.target.checked })} className="accent-ai w-4 h-4 mt-0.5" /><span className="text-sm">Instant alerts — email + Slack/Teams the moment an access lands from outside every trusted zone (not just the weekly note)</span></label>
+        <label className="block md:col-span-2"><span className={lbl}>Alert channel — emails (comma-separated — instant alerts go only to these; blank = all admins &amp; execs)</span><input data-testid="gov-alert-emails" value={alertEmails} onChange={(e) => setAlertEmails(e.target.value)} placeholder="soc@company.com, ciso@company.com" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Route instant suspicious-access alerts to your security team instead of every admin.</span></label>
+        <label className="block md:col-span-2"><span className={lbl}>Alert channel — Slack/Teams webhook URL (blank = your org's configured chat webhook)</span><input data-testid="gov-alert-webhook" value={alertWebhook} onChange={(e) => setAlertWebhook(e.target.value)} placeholder="https://hooks.slack.com/services/… or https://outlook.office.com/webhook/…" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Slack vs Teams is auto-detected from the URL. Applies to instant alerts only.</span></label>
+        <div className="md:col-span-2 rounded-md border border-border/60 bg-secondary/30 p-3" data-testid="gov-snooze">
+          {s.snooze_alerts_until && new Date(s.snooze_alerts_until) > new Date() ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="text-sm text-high" data-testid="gov-snooze-status">Instant alerts muted until {new Date(s.snooze_alerts_until).toLocaleString()} · logged to the audit trail</span>
+              <button data-testid="gov-snooze-resume" onClick={() => doSnooze(0)} disabled={snoozing} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">{snoozing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Resume alerts now</button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm">Snooze instant alerts during a known audit push (logged to the audit trail):</span>
+              <select data-testid="gov-snooze-hours" value={snoozeHours} onChange={(e) => setSnoozeHours(e.target.value)} className="bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary">
+                <option value="1">1 hour</option>
+                <option value="8">8 hours</option>
+                <option value="24">24 hours</option>
+              </select>
+              <button data-testid="gov-snooze-btn" onClick={() => doSnooze(snoozeHours)} disabled={snoozing} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-foreground text-xs font-head font-bold border border-border disabled:opacity-50">{snoozing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Snooze alerts</button>
+            </div>
+          )}
+        </div>
       </div>
       <SnapshotRetire />
     </Panel>

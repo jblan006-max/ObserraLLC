@@ -1,0 +1,51 @@
+{
+  "summary": "Iteration 116 — Alert Channels + Snooze + Audit Export. Backend 8/8 pytest PASS (governance-settings new keys, email/webhook validation, snooze set+clear w/ audit entries, CSV, CSV?trusted=true, PDF, PDF?trusted=true). Frontend UI: new inputs render, snooze picker renders, audit trusted-filter chip narrows list (200→41) and only trusted actions visible, CSV/PDF export buttons present & enabled, clear button works. HOWEVER round-trip Save is BROKEN for the two new channel fields.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "DefensibilityDashboard → GovernanceSettingsCard.saveAll()",
+        "issue": "gov-save PUT payload is missing alert_channel_emails and alert_channel_webhook. User-entered values in gov-alert-emails and gov-alert-webhook are silently discarded on Save (backend never receives them). Reproduced: typed soc@example.com,ciso@example.com + a valid https Slack webhook, clicked gov-save, reloaded — inputs re-hydrated to previous values (proving the PUT didn't include them).",
+        "selector": "[data-testid=\"gov-save\"]",
+        "priority": "HIGH"
+      },
+      {
+        "component": "DefensibilityDashboard → GovernanceSettingsCard snooze block",
+        "issue": "After clicking gov-snooze-btn (24h), the block did not flip to show gov-snooze-status + gov-snooze-resume within 1.5s wait (both stayed invisible; picker stayed visible). Backend POST /runtime/alerts/snooze works (pytest passes, audit entry created), so this appears to be a client-side render/state issue in doSnooze — possibly setS is called on the prev state but a subsequent hydrate/other effect overwrites, or new Date(ISO with +00:00) is failing the future-comparison. Needs a retest after a small pause / verify state flow.",
+        "selector": "[data-testid=\"gov-snooze-btn\"]",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Save governance channel settings from UI",
+        "issue": "PUT /api/agents/runtime/governance-settings body sent by the UI omits alert_channel_emails and alert_channel_webhook fields entirely, so the new inputs are non-functional despite the backend fully supporting them (see backend pytest — direct PUT works).",
+        "affected_selectors": ["[data-testid=\"gov-alert-emails\"]","[data-testid=\"gov-alert-webhook\"]","[data-testid=\"gov-save\"]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter116_alert_channels_snooze_export.py",
+    "/app/test_reports/pytest/iter116.xml"
+  ],
+  "action_items": [
+    "Add alert_channel_emails and alert_channel_webhook to the saveAll() PUT payload in frontend/src/components/agentic-ai/DefensibilityDashboard.jsx (~L339-356). Parse alertEmails via split(',').map(x=>x.trim()).filter(Boolean); pass alertWebhook as-is.",
+    "Debug snooze UI: after doSnooze success, gov-snooze-status/gov-snooze-resume did not become visible. Verify (a) setS is receiving the new snooze_alerts_until (log data.snooze_alerts_until), (b) new Date(iso) > new Date() evaluates true, (c) no useEffect rehydrate is racing. Consider also awaiting a small state settle before re-checking."
+  ],
+  "critical_code_review_comments": [
+    "DefensibilityDashboard.jsx saveAll(): payload spec drift — every other input in the card is included in the PUT except the two new channel fields. Easy to miss on future edits; consider building the payload from a single object mapped to state so new fields can't be forgotten.",
+    "AuditLog.jsx exportFile uses api.get with responseType:'blob'; verify axios instance forwards credentials (cookie) for cross-origin — appears fine but not exercised for blob downloads in this test batch beyond click-visibility.",
+    "agents.py audit_log_csv/pdf endpoints do not include _id in output (find({},{_id:0}) — good). CSV/PDF admin-guarded via Depends(require_roles('admin')) — good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter116_alert_channels_snooze_export.py"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "70%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Backend test added 'ZZ' (or removed if present) to trusted_countries once to generate an agent.trusted_rules_changed entry for the CSV?trusted=true assertion. Also persisted alert_channel_emails=[alice@example.com,bob@example.com] and a test slack webhook on the owner org.",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "The two frontend bugs above (saveAll omits new fields; snooze UI does not flip after click) are the only blockers for feature acceptance. Backend is fully working (8/8 pytest). When retesting, note that the owner org already has TEST alert_channel_emails persisted from this run — a fresh Save from the UI should overwrite them if the bug is fixed. Reuse /app/backend/tests/test_iter116_alert_channels_snooze_export.py for regression.",
+  "rca of the issue": "GovernanceSettingsCard.saveAll() builds the PUT payload as an explicit object literal that lists every field except alert_channel_emails and alert_channel_webhook — a copy-paste omission when the two new state vars (alertEmails, alertWebhook) were added. Fix: add `alert_channel_emails: alertEmails.split(',').map(x=>x.trim()).filter(Boolean), alert_channel_webhook: alertWebhook` to the api.put body. For snooze UI: doSnooze does setS(prev => ({...prev, snooze_alerts_until: data.snooze_alerts_until||''})); the branch renders based on `s.snooze_alerts_until && new Date(s.snooze_alerts_until) > new Date()`. Confirm data.snooze_alerts_until returned by POST /runtime/alerts/snooze is a fully-qualified ISO with tz (it is — .isoformat() on tz-aware datetime), and rule out that the earlier hydrate() from a concurrent GET is not overwriting after the POST resolves."
+}
