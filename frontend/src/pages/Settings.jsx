@@ -551,7 +551,7 @@ export default function Settings() {
               {allBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send to whole IT list ({book.length})
             </button>
           )}
-          <p className="text-xs text-muted-foreground">Emails the Install &amp; User Guide (PDF) + on-premise package (zip) to a colleague or your IT team. Prefer a guided walkthrough? Use the built-in tour via <span className="text-foreground">Guided Tour → Replay tour</span> above — it now shows each SAP UAC dashboard with a screenshot before you land on it.</p>
+          <p className="text-xs text-muted-foreground">Emails the Install &amp; User Guide (PDF) + on-premise package (zip) to a colleague or your IT team. Prefer a guided walkthrough? Use the built-in tour via <span className="text-foreground">Guided Tour → Replay tour</span> above — it now shows each dashboard with a screenshot before you land on it.</p>
         </div>
       )}
     </div>

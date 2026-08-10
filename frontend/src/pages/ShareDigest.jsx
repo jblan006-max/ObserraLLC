@@ -39,7 +39,7 @@ export default function ShareDigest() {
         <div className="flex items-center gap-3 mb-8">
           <img src={logo} alt="brand" className="h-9 w-auto max-w-[180px] object-contain"
                onError={(e) => { e.currentTarget.style.display = "none"; }} data-testid="share-brand" />
-          <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-white/40">SAP UAC</span>
+          <span className="text-[10px] font-mono uppercase tracking-[0.2em] text-white/40">OBSERRA</span>
         </div>
 
         {loading && (
