@@ -1,0 +1,33 @@
+{
+  "summary": "Iter108 Share Center follow-ups (Custody Export CSV/PDF, Geo+Device on access log, Weekly Engagement Digest) validated end-to-end. Backend pytest 11/11 passing at /app/backend/tests/test_iter108_custody_export_geo_digest.py (~17s). Verified: (1) GET /api/agents/runtime/card-share/{token}/access-log.csv returns 200 text/csv with header rows (Obserra title, Card+Ref, Opens/Downloads counters, blank spacer, column header Event/Who/IP/Location/Device/Timestamp) followed by one row per access event including 'open'/'download' kinds — 404 for unknown token, 401/403 unauthenticated. (2) GET /api/agents/runtime/card-share/{token}/access-log.pdf returns 200 application/pdf, magic %PDF, >2KB (branded, watermarked, integrity-sealed) — 404 for unknown token, 401/403 unauthenticated. (3) Access-log JSON now enriches each row with `device` (parsed from stored User-Agent — verified 'Chrome on macOS' + 'Firefox on Windows') and best-effort `geo` (verified via ip-api.com batch — 8.8.8.8→'Ashburn, United States', 1.1.1.1→'South Brisbane, Australia'; private/blank IPs correctly omitted). (4) Weekly Engagement Digest: `_run_card_engagement_weekly_digest()` run in a clean subprocess completes without exception, produces exactly one 'Weekly shared-card engagement' notification per org via /api/notifications, and is idempotent within the same ISO week (dedupe_key=`card-weekly:{org}:{YYYY-WW}` suppresses duplicates on repeated invocation). (5) Regression: base per-card access-log JSON endpoint still returns opens/downloads/access[] with 2 opens + 1 download from the seed events. Frontend UI e2e: logged in as admin, dismissed tour, navigated /app/agentic-ai-security → Defensibility tab, found 9 share-card-log-<token> buttons, clicked one, panel access-log-<token> expanded showing CSV + PDF buttons with correct hrefs (`/api/agents/runtime/card-share/<token>/access-log.csv` and `.pdf`) and per-row Location + Device labels (Ashburn/Chrome on macOS, South Brisbane/Firefox on Windows) next to IP + timestamp. Screenshot at /app/test_reports/iter108_ui.png.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter108_custody_export_geo_digest.py",
+    "/app/test_reports/pytest/iter108.xml",
+    "/app/test_reports/iter108_ui.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "_geo_lookup_many correctly filters private/link-local ranges before hitting ip-api.com and caches results back onto the access row (best-effort with silent except) — good defensive design; consider adding 172.20.–172.29. explicitly since current prefix check only covers 172.16.–172.19., 172.2*, 172.30., 172.31. (the '172.2' catches 172.20-29 but by loose prefix match — works but a proper CIDR check via ipaddress.ip_address would be cleaner).",
+    "PDF export re-computes _canonical_snapshot_hash({token, rows}) which is fine but rows include mongo-serialized timestamps as strings — hash is stable across runs only if `at` is stored as ISO string (which it is here). Good.",
+    "Weekly digest task swallows all exceptions per-org with bare except — silent failure risk; suggest structured logging (logger.warning) inside the except so ops sees failed orgs.",
+    "CSV export streams a StringIO→bytes buffer in-memory; fine for <500 rows (the query cap) but note the enrichment loop happens for EVERY export call (each triggers a fresh ip-api.com batch when new IPs appear). Consider caching parsed device on write for consistency with geo cache.",
+    "AccessLog frontend component correctly uses process.env.REACT_APP_BACKEND_URL for the download hrefs — no hardcoded URLs. Both a.geo and a.device are conditionally rendered (won't clutter rows with private IPs).",
+    "The `_run_card_engagement_weekly_digest` skips orgs with zero engagement (correct per spec), but the outer distinct query filters by `at >= since` so only orgs with events in the last 7 days are iterated — efficient.",
+    "Hydration warning surfaced in browser console (unrelated to this iteration): <span> child of <option> in fire-drill-<...> select on DefensibilityDashboard line 564 causes 'In HTML, %s cannot be a child of %s'. Pre-existing dev-instrumentation artifact, not blocking; can be swept in a future polish."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter108_custody_export_geo_digest.py"
+  ],
+  "success_rate": { "backend": "100% (11/11)", "frontend": "100% (CSV/PDF buttons, geo, device, expand/collapse all verified)" },
+  "test_credentials": "Admin: jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md).",
+  "seed_data_creation": "Pytest mints TEST_-prefixed card-shares with 2 opens (X-Forwarded-For 8.8.8.8 Chrome/macOS + 1.1.1.1 Firefox/Windows) and 1 PDF download (who=Jane Auditor) via the public endpoints, and revokes them on teardown. Prior seed cards from iter107 remain and are used by the UI screenshot.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter108 (Custody Export CSV/PDF, Geo+Device on access log, Weekly Engagement Digest) is live and verified. Regression pytest at /app/backend/tests/test_iter108_custody_export_geo_digest.py (11 tests, ~17s). Key endpoints: GET /api/agents/runtime/card-share/{token}/access-log.csv (admin, text/csv), /access-log.pdf (admin, application/pdf branded+watermarked+sealed). Key task: agents._run_card_engagement_weekly_digest() — hooked into scheduled.py weekly-drift-digest Monday 08:00 UTC cron; dedupe_key=card-weekly:{org}:{YYYY-WW}. AccessLog JSON now returns access[] rows with .device (parsed offline from ua) and .geo (ip-api.com batch, best-effort — private/blank IPs omitted). Frontend testids: access-log-csv-<token>, access-log-pdf-<token>. All prior Share Center features (Renew, Log, live counters, Board digest attach, Copy/Open/Revoke, Engagement Alerts) still functional. Weekly digest test uses subprocess to avoid motor event-loop-closed reuse issue — if reusing motor `db` across asyncio.run() invocations in-process, expect RuntimeError('Event loop is closed')."
+}

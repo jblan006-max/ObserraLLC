@@ -1171,15 +1171,17 @@ async def public_card_share(token: str, request: Request = None):
     now = datetime.now(timezone.utc).isoformat()
     sha = doc.get("snapshot_sha256") or _canonical_snapshot_hash(doc.get("snapshot") or {})
     ip = ""
+    ua = ""
     try:
         ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
               or (request.client.host if request and request.client else ""))
+        ua = (request.headers.get("user-agent", "") if request else "")[:400]
     except Exception:
-        ip = ""
+        ip = ip or ""
     await db.card_shares.update_one({"token": token},
         {"$inc": {"opens": 1}, "$set": {"last_opened_at": now}})
     await db.card_share_access.insert_one({"token": token, "org_id": doc.get("org_id"),
-        "kind": "open", "who": None, "ip": ip, "at": now})
+        "kind": "open", "who": None, "ip": ip, "ua": ua, "at": now})
     await _card_engage_alert(token, doc, "open")
     return {"snapshot": doc["snapshot"], "created_at": doc.get("created_at"),
             "created_by": doc.get("created_by"), "expires_at": doc.get("expires_at"), "snapshot_sha256": sha}
@@ -1218,17 +1220,19 @@ async def public_card_share_pdf(token: str, who: str = "", request: Request = No
             subtext=f"Downloaded by {auditor} \u00b7 {access} \u00b7 link expires {(doc.get('expires_at') or '')[:10]}")
         raw = _stamp_verified_seal(raw, seal)
         ip = ""
+        ua = ""
         try:
             ip = (request.headers.get("x-forwarded-for", "").split(",")[0].strip()
                   or (request.client.host if request and request.client else ""))
+            ua = (request.headers.get("user-agent", "") if request else "")[:400]
         except Exception:
-            ip = ""
+            ip = ip or ""
         _dl_now = datetime.now(timezone.utc).isoformat()
         await db.card_shares.update_one({"token": token},
             {"$inc": {"downloads": 1},
              "$set": {"last_downloaded_at": _dl_now, "last_downloaded_by": auditor}})
         await db.card_share_access.insert_one({"token": token, "org_id": doc.get("org_id"),
-            "kind": "download", "who": auditor, "ip": ip, "at": _dl_now})
+            "kind": "download", "who": auditor, "ip": ip, "ua": ua, "at": _dl_now})
         await _card_engage_alert(token, doc, "download", who=auditor)
     except Exception:
         pass
@@ -1346,15 +1350,152 @@ async def renew_card_share(body: CardRenewBody, admin: dict = Depends(require_ro
             "expires_at": expires, "days": days}
 
 
+def _parse_ua(ua: str) -> str:
+    """Best-effort browser + OS label from a User-Agent string (offline, no external calls)."""
+    if not ua:
+        return ""
+    u = ua.lower()
+    if any(b in u for b in ("bot", "crawl", "spider", "curl", "wget", "python-", "httpx", "http-client")):
+        browser = "Bot/Script"
+    elif "edg/" in u:
+        browser = "Edge"
+    elif "chrome" in u and "chromium" not in u:
+        browser = "Chrome"
+    elif "firefox" in u:
+        browser = "Firefox"
+    elif "safari" in u:
+        browser = "Safari"
+    else:
+        browser = "Browser"
+    if "iphone" in u or "ipad" in u or "ios" in u:
+        os_name = "iOS"
+    elif "android" in u:
+        os_name = "Android"
+    elif "mac os" in u or "macintosh" in u:
+        os_name = "macOS"
+    elif "windows" in u:
+        os_name = "Windows"
+    elif "linux" in u:
+        os_name = "Linux"
+    else:
+        os_name = ""
+    return f"{browser} on {os_name}" if os_name else browser
+
+
+async def _geo_lookup_many(ips):
+    """Best-effort city/country per public IP via keyless ip-api.com batch (silent on failure)."""
+    import httpx
+    out = {}
+    valid = [ip for ip in ips if ip and ":" not in ip
+             and not ip.startswith(("10.", "127.", "192.168.", "172.16.", "172.17.", "172.18.",
+                                     "172.19.", "172.2", "172.30.", "172.31.", "169.254."))]
+    if not valid:
+        return out
+    try:
+        payload = [{"query": ip, "fields": "status,country,city,query"} for ip in valid[:100]]
+        async with httpx.AsyncClient(timeout=4.0) as client:
+            r = await client.post("http://ip-api.com/batch", json=payload)
+        if r.status_code == 200:
+            for item in r.json():
+                if item.get("status") == "success":
+                    loc = ", ".join([x for x in [item.get("city"), item.get("country")] if x])
+                    if loc:
+                        out[item.get("query")] = loc
+    except Exception:
+        pass
+    return out
+
+
+async def _card_access_enriched(token, org_id):
+    """Fetch a card's access rows enriched with parsed device + best-effort geo (cached back to db)."""
+    d = await db.card_shares.find_one({"token": token, "org_id": org_id}, {"_id": 0})
+    if not d:
+        return None, []
+    rows = await db.card_share_access.find(
+        {"token": token, "org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(500)
+    need = sorted({r.get("ip") for r in rows if r.get("ip") and not r.get("geo")})
+    geo_map = await _geo_lookup_many(need) if need else {}
+    for r in rows:
+        if not r.get("geo") and r.get("ip") in geo_map:
+            r["geo"] = geo_map[r["ip"]]
+            try:
+                await db.card_share_access.update_one(
+                    {"token": token, "org_id": org_id, "ip": r["ip"], "at": r["at"]},
+                    {"$set": {"geo": r["geo"]}})
+            except Exception:
+                pass
+        r["device"] = _parse_ua(r.get("ua") or "")
+    return d, rows
+
+
 @agents_router.get("/runtime/card-share/{token}/access-log")
 async def card_share_access_log(token: str, admin: dict = Depends(require_roles("admin"))):
-    d = await db.card_shares.find_one({"token": token, "org_id": admin["org_id"]}, {"_id": 0})
+    d, rows = await _card_access_enriched(token, admin["org_id"])
     if not d:
         raise HTTPException(404, "Shared card not found.")
-    rows = await db.card_share_access.find(
-        {"token": token, "org_id": admin["org_id"]}, {"_id": 0}).sort("at", -1).to_list(500)
     return {"opens": d.get("opens", 0), "downloads": d.get("downloads", 0),
             "last_downloaded_by": d.get("last_downloaded_by"), "access": rows}
+
+
+@agents_router.get("/runtime/card-share/{token}/access-log.csv")
+async def card_share_access_log_csv(token: str, admin: dict = Depends(require_roles("admin"))):
+    import io, csv
+    from fastapi.responses import StreamingResponse
+    d, rows = await _card_access_enriched(token, admin["org_id"])
+    if not d:
+        raise HTTPException(404, "Shared card not found.")
+    snap = d.get("snapshot") or {}
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Obserra — shared card chain of custody"])
+    w.writerow(["Card", snap.get("title") or "Detail card", "Ref", snap.get("ref") or ""])
+    w.writerow(["Opens", d.get("opens", 0), "Downloads", d.get("downloads", 0)])
+    w.writerow([])
+    w.writerow(["Event", "Who", "IP", "Location", "Device", "Timestamp (UTC)"])
+    for r in rows:
+        w.writerow([r.get("kind"), r.get("who") or "", r.get("ip") or "", r.get("geo") or "",
+                    r.get("device") or "", r.get("at") or ""])
+    return StreamingResponse(io.BytesIO(buf.getvalue().encode("utf-8")), media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="obserra-card-access-log.csv"'})
+
+
+@agents_router.get("/runtime/card-share/{token}/access-log.pdf")
+async def card_share_access_log_pdf(token: str, admin: dict = Depends(require_roles("admin"))):
+    import io
+    from fastapi.responses import StreamingResponse
+    from reports import _build_pdf, _resolve_brand
+    from bson import ObjectId as _OID
+    d, rows = await _card_access_enriched(token, admin["org_id"])
+    if not d:
+        raise HTTPException(404, "Shared card not found.")
+    snap = d.get("snapshot") or {}
+    brand = None
+    try:
+        _org = await db.organizations.find_one({"_id": _OID(admin["org_id"])})
+        brand = _resolve_brand(_org)
+    except Exception:
+        brand = None
+    lines = [f"**Card:** {snap.get('title') or 'Detail card'}" + (f" ({snap.get('ref')})" if snap.get("ref") else ""),
+             f"**Engagement:** {d.get('opens', 0)} open(s) \u00b7 {d.get('downloads', 0)} download(s)",
+             "## Chain of custody"]
+    if not rows:
+        lines.append("No access recorded yet.")
+    for r in rows:
+        who = r.get("who") or ("opened" if r.get("kind") == "open" else "download")
+        bits = " \u00b7 ".join([str(x) for x in [r.get("ip"), r.get("geo"), r.get("device")] if x])
+        lines.append(f"- **{r.get('kind')}** — {who}" + (f" \u00b7 {bits}" if bits else "") + f" \u00b7 {r.get('at')}")
+    buf = _build_pdf("\n".join(lines), "Shared card — chain of custody", cover=True,
+                     org_name=snap.get("org_name"), brand=brand)
+    raw = buf.getvalue()
+    try:
+        seal = _canonical_snapshot_hash({"token": token, "rows": rows})
+        raw = await _brand_watermark_pdf(raw, org_id=admin["org_id"], room_url="",
+            subtext=f"Chain of custody \u00b7 {d.get('opens', 0)} opens \u00b7 {d.get('downloads', 0)} downloads")
+        raw = _stamp_verified_seal(raw, seal)
+    except Exception:
+        pass
+    return StreamingResponse(io.BytesIO(raw), media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="obserra-card-access-log.pdf"'})
 
 
 # ── Auditor notes — external auditors leave read-only questions on the public room ──
@@ -1382,6 +1523,52 @@ async def _notify_org_staff(org_id, subject, html, kind_title, kind_body, dedupe
                 pass
     except Exception:
         pass
+
+
+async def _run_card_engagement_weekly_digest():
+    """Monday: email admins/execs a summary of which shared detail cards auditors opened/downloaded
+    in the last 7 days. Skips orgs with zero engagement. Hooked into the weekly-drift-digest cron."""
+    import os
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=7)).isoformat()
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    org_ids = await db.card_share_access.distinct("org_id", {"at": {"$gte": since}})
+    for oid in org_ids:
+        try:
+            events = await db.card_share_access.find(
+                {"org_id": oid, "at": {"$gte": since}}, {"_id": 0}).to_list(5000)
+            if not events:
+                continue
+            by_token = {}
+            for e in events:
+                agg = by_token.setdefault(e.get("token"), {"opens": 0, "downloads": 0})
+                agg["opens" if e.get("kind") == "open" else "downloads"] += 1
+            cards = await db.card_shares.find({"token": {"$in": list(by_token.keys())}}, {"_id": 0}).to_list(500)
+            cmap = {c["token"]: c for c in cards}
+            total_o = sum(v["opens"] for v in by_token.values())
+            total_d = sum(v["downloads"] for v in by_token.values())
+            rows_html = []
+            for t, v in sorted(by_token.items(), key=lambda kv: kv[1]["opens"] + kv[1]["downloads"], reverse=True):
+                snap = (cmap.get(t) or {}).get("snapshot") or {}
+                url = f"{frontend}/card/{t}"
+                rows_html.append(
+                    f"<li style='margin-bottom:6px'><strong>{snap.get('title', 'Detail card')}</strong> "
+                    f"<span style='color:#6b7280'>({snap.get('ref', '')})</span> — "
+                    f"<span style='color:#12b4d6'>{v['opens']} view(s) \u00b7 {v['downloads']} download(s)</span><br>"
+                    f"<a href='{url}' style='color:#12b4d6;font-size:12px'>{url}</a></li>")
+            html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:600px;margin:auto'>"
+                    f"<h2 style='color:#0f1e3d'>Weekly shared-card engagement</h2>"
+                    f"<p>In the last 7 days your shared detail cards were opened <strong>{total_o}</strong> time(s) "
+                    f"and downloaded <strong>{total_d}</strong> time(s) across {len(by_token)} card(s):</p>"
+                    f"<ul style='padding-left:18px'>{''.join(rows_html)}</ul>"
+                    f"<p style='font-size:11px;color:#9ca3af'>Obserra — Agentic AI Security Control & Governance · Share Center · Weekly engagement digest</p></div>")
+            await _notify_org_staff(oid, "Weekly shared-card engagement — Obserra", html,
+                "Weekly shared-card engagement",
+                f"{total_o} view(s) \u00b7 {total_d} download(s) across {len(by_token)} card(s) last week.",
+                dedupe_key=f"card-weekly:{oid}:{now.strftime('%Y-%W')}")
+        except Exception:
+            pass
 
 
 @agents_router.post("/public/evidence-room/{token}/comment")

@@ -91,13 +91,22 @@ function DigestPreviewModal({ onClose }) {
   );
 }
 
-function AccessLog({ token, endpoint }) {
+function AccessLog({ token, endpoint, exportBase }) {
   const [log, setLog] = useState(null);
   useEffect(() => { api.get(endpoint || `/agents/runtime/evidence-room/${token}/access-log`).then(({ data }) => setLog(data)).catch(() => setLog({ access: [] })); }, [token, endpoint]);
   if (!log) return <div className="p-3 flex justify-center"><Loader2 className="w-4 h-4 animate-spin text-ai" /></div>;
+  const base = process.env.REACT_APP_BACKEND_URL;
   return (
     <div className="mt-2 rounded-lg border border-border bg-background/40 p-2.5" data-testid={`access-log-${token}`}>
-      <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5">Chain of custody — {log.opens} open(s) · {log.downloads} download(s)</div>
+      <div className="flex items-center gap-2 mb-1.5">
+        <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Chain of custody — {log.opens} open(s) · {log.downloads} download(s)</div>
+        {exportBase && (
+          <div className="ml-auto flex items-center gap-1.5">
+            <a data-testid={`access-log-csv-${token}`} href={`${base}/api${exportBase}.csv`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-border text-[10px] hover:bg-secondary transition-colors"><Download className="w-3 h-3" /> CSV</a>
+            <a data-testid={`access-log-pdf-${token}`} href={`${base}/api${exportBase}.pdf`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-border text-[10px] hover:bg-secondary transition-colors"><FileText className="w-3 h-3" /> PDF</a>
+          </div>
+        )}
+      </div>
       {(!log.access || log.access.length === 0) ? (
         <div className="text-xs text-muted-foreground">No access recorded yet.</div>
       ) : (
@@ -106,7 +115,9 @@ function AccessLog({ token, endpoint }) {
             <div key={i} className="flex items-center gap-2 text-xs">
               {a.kind === "download" ? <Download className="w-3 h-3 text-ai shrink-0" /> : <Eye className="w-3 h-3 text-muted-foreground shrink-0" />}
               <span className="font-medium">{a.kind === "download" ? (a.who || "download") : "opened"}</span>
-              <span className="text-muted-foreground">{a.ip || ""}</span>
+              {a.geo && <span className="text-muted-foreground">{a.geo}</span>}
+              {a.device && <span className="text-muted-foreground">· {a.device}</span>}
+              {a.ip && <span className="text-muted-foreground/60 font-mono text-[10px]">{a.ip}</span>}
               <span className="ml-auto font-mono text-[10px] text-muted-foreground">{fmtDTT(a.at)}</span>
             </div>
           ))}
@@ -282,7 +293,7 @@ function ShareCenterCard() {
                   <button data-testid={`share-card-revoke-${card.token}`} onClick={() => revoke(card.token)} className="inline-flex items-center gap-1 px-2 py-1 rounded border border-crit/30 text-crit text-xs hover:bg-crit/10 transition-colors"><Trash2 className="w-3 h-3" /> Revoke</button>
                 </div>
               </div>
-              {logOpen === card.token && <AccessLog token={card.token} endpoint={`/agents/runtime/card-share/${card.token}/access-log`} />}
+              {logOpen === card.token && <AccessLog token={card.token} endpoint={`/agents/runtime/card-share/${card.token}/access-log`} exportBase={`/agents/runtime/card-share/${card.token}/access-log`} />}
             </div>
           ))}
         </div>

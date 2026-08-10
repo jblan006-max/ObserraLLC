@@ -1,6 +1,14 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Custody Export + Weekly Engagement Digest + Geo/Device (iteration_108, backend 11/11 + frontend 100%)
+Share Center follow-ups, all live/no-mock:
+- **Custody Export**: `GET /api/agents/runtime/card-share/{token}/access-log.csv` and `.../access-log.pdf` (admin). CSV = full chain of custody (Event/Who/IP/Location/Device/Timestamp); PDF = branded, watermarked, integrity-sealed "Shared card — chain of custody". CSV/PDF buttons render in the expanded access-log panel (`access-log-csv-<token>`, `access-log-pdf-<token>`).
+- **Geo + Device**: public open/download now store the User-Agent on each `card_share_access` row. `_parse_ua` (offline browser+OS) + `_geo_lookup_many` (keyless ip-api.com batch, best-effort, cached back) enrich the access log; UI shows "City, Country · Browser on OS" next to IP. Private/blank IPs omit geo gracefully.
+- **Weekly Engagement Digest**: `_run_card_engagement_weekly_digest()` (agents.py) hooked into the existing Monday 08:00 UTC `weekly-drift-digest` cron — per-org summary of shared-card opens/downloads in the last 7 days → email admins/execs + in-app "Weekly shared-card engagement" notification. Idempotent per ISO week (`card-weekly:{org}:{YYYY-WW}`); skips zero-engagement orgs.
+- Regression pytest: `/app/backend/tests/test_iter108_custody_export_geo_digest.py` (11/11). Backlog polish (pre-existing, non-blocking): dev-only React DOM-nesting warning from a `<span>` inside `<option>` in the fire-drill select (DefensibilityDashboard ~L564).
+
+
 ## Status (Jun 2026) — Renew + Engagement Alerts + Access Log (iteration_107, backend 7/7 + frontend 100%)
 Share Center follow-ups, all live/no-mock:
 - **Card Expiry Renew**: `POST /api/agents/runtime/card-share/renew` ({token, days=14, clamped 1–90}); Share Center `share-card-renew-<token>` button extends a card's expiry (reactivates expired links), mirroring the Auditor Room.
