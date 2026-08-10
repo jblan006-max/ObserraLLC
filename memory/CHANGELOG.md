@@ -1,5 +1,13 @@
 # Obserra EIOS — CHANGELOG
 
+## 2026-06 — Kill-switch assurance suite: drill trend sparkline, Proof-Link QR, Slack/Teams proof post, Control Assurance page (iteration_102 — backend 100%, frontend 100% after 1 fix)
+User picked all four; all live/no-mock and testing_agent-verified:
+- **Drill Trend Chart** — `KillReplayDrillCard` now shows a trend block (control-confirmed rate pill + avg suspend/resume, and a recharts response-time sparkline over recent drills) with a link to the new Control Assurance page.
+- **Proof Link QR** — the Board Proof-of-Control result banner renders a scannable `QRCodeSVG` (qrcode.react) of the auditor link so it drops straight into a board deck.
+- **Slack/Teams Proof Post** — `_run_fire_drill` now best-effort posts the proof-of-control receipt (verdict + timings + signed) to the org's chat channel via `self_scan._post_chat_alert` (safe no-op if no webhook configured).
+- **Control Assurance page** — new route `/app/control-assurance` + sidebar link (AI Security → Gauge). Backend `GET /api/agents/runtime/control-assurance` returns monthly pass-rate + response-time buckets from `db.fire_drills` (total/controlled/pass_rate/streak/avg times/recent). Page: KPI tiles + monthly pass-rate BarChart + response-time LineChart + recent-drills list (recharts).
+- Verified: main-agent curl (control-assurance total 2 pass_rate 100 streak 2; fire-drill 200 with no chat webhook) + testing_agent iteration_102 (4/4). Fix applied during test: an accidental duplicate trend block + missing avgSus/avgRes was corrected (IIFE computes them from drills); self-verified via screenshot.
+
 ## 2026-06 — Proof-of-Control suite: prefilled runtime adapters, Kill Replay Drill, digest trend charts, one-click Board Proof-of-Control (iteration_101 — frontend 4/4 100%, backend curl-verified)
 User picked all four follow-ups; all live/no-mock and testing_agent-verified:
 - **Runtime Adapter Snippets (prefilled)** — `GET /api/agents/runtime/webhook/playbooks` now returns the org's own `webhook_url` + `signing_secret` + `managed`. `RuntimePlaybooksCard` shows a "Your prefilled receiver" block (POST URL + Copy verify()) and, per provider, a **Copy prefilled receiver** button whose snippet embeds the org's real signing secret + webhook URL + HMAC verify() + the provider's action mapping — wiring a real runtime is one paste.

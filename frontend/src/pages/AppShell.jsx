@@ -13,7 +13,7 @@ import { DeepDiveProvider } from "@/context/DeepDiveContext";
 import { InstallButton } from "@/components/InstallButton";
 import {
   LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
-  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp, ToggleRight, Activity, AlertTriangle, CheckCircle2,
+  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Gauge, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp, ToggleRight, Activity, AlertTriangle, CheckCircle2,
 } from "lucide-react";
 import { api } from "@/lib/api";
 
@@ -31,6 +31,7 @@ const ROUTE_ACCENT = [
   ["/app/certifications", "38 92% 55%"],
   ["/app/roles", "280 80% 66%"],
   ["/app/agentic-ai-security", "330 81% 60%"],
+  ["/app/control-assurance", "160 84% 45%"],
   ["/app/systems", "210 92% 62%"],
   ["/app/audit", "35 90% 55%"],
   ["/app/team", "200 85% 56%"],
@@ -67,6 +68,7 @@ const NAV_SECTIONS = [
   ]},
   { section: "AI Security", cat: true, color: "ai", items: [
     { to: "/app/agentic-ai-security", label: "Agentic AI Security", icon: Bot },
+    { to: "/app/control-assurance", label: "Control Assurance", icon: Gauge },
   ]},
   { section: "Sources", cat: true, color: "primary", items: [
     { to: "/app/systems", label: "Connector Health", icon: Plug },

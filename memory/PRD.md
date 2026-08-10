@@ -1,6 +1,14 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Kill-switch assurance suite (iteration_102, 4/4): drill trend sparkline, Proof-Link QR, Slack/Teams proof post, Control Assurance page
+Third 4-item batch ("all"), all live/no-mock:
+- **Drill Trend Chart**: `KillReplayDrillCard` trend block — control-confirmed rate + avg suspend/resume + recharts sparkline + link to Control Assurance.
+- **Proof Link QR**: `QRCodeSVG` of the Board Proof-of-Control link in the result banner (qrcode.react).
+- **Slack/Teams Proof Post**: `_run_fire_drill` posts the receipt to the org chat via `_post_chat_alert` (no-op if unconfigured).
+- **Control Assurance page**: `/app/control-assurance` (sidebar, Gauge) + `GET /api/agents/runtime/control-assurance` — monthly proof-of-control pass rate + response-time trend from `db.fire_drills` (KPI tiles + BarChart + LineChart + recent list).
+
+
 ## Status (Jun 2026) — Proof-of-Control suite (iteration_101, frontend 4/4 100%): prefilled runtime adapters, Kill Replay Drill, digest trend charts, one-click Board Proof-of-Control
 Second 4-item batch ("all"), all live/no-mock:
 - **Runtime Adapter Snippets**: playbooks endpoint returns the org's own webhook URL + signing secret; per-provider "Copy prefilled receiver" emits a one-paste HMAC-verifying adapter (`RuntimePlaybooksCard`).

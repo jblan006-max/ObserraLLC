@@ -522,6 +522,16 @@ async def _run_fire_drill(org_id, actor, agent_ref, notify=True, scheduled=False
     await db.fire_drills.insert_one(dict(drill))
     await _log_audit(org_id, actor, "agent.fire_drill",
                      f"Kill-replay drill on {agent_ref} ({'control confirmed' if controlled else 'runtime unreachable'})")
+    # Auto-post the proof-of-control receipt to the org's Slack / Teams governance channel (best-effort)
+    try:
+        from self_scan import _post_chat_alert
+        verdict = "\u2705 CONTROL CONFIRMED" if controlled else "\u26a0\ufe0f CONTROL NOT CONFIRMED"
+        await _post_chat_alert(
+            org_id, f"AI Kill-Switch Fire-Drill \u2014 {verdict}",
+            f"Agent *{a.get('name')}* ({agent_ref}) \u00b7 suspend {drill['suspend_ms']}ms \u00b7 resume {drill['resume_ms']}ms \u00b7 "
+            f"{'signed HMAC receipt' if drill['signed'] else 'unsigned'} \u00b7 {'scheduled drill' if scheduled else 'manual drill'}.")
+    except Exception:
+        pass
     if notify:
         await _email_fire_drill(org_id, drill)
     return {"ok": True, "drill": drill}
@@ -546,6 +556,56 @@ async def run_fire_drill(body: FireDrillBody, admin: dict = Depends(require_role
 async def list_fire_drills(admin: dict = Depends(require_roles("admin"))):
     rows = await db.fire_drills.find({"org_id": admin["org_id"]}, {"_id": 0}).sort("at", -1).to_list(50)
     return {"drills": rows}
+
+
+@agents_router.get("/runtime/control-assurance")
+async def control_assurance(admin: dict = Depends(require_roles("admin"))):
+    """Kill-switch reliability over time — monthly proof-of-control pass rate + response-time trend from fire-drills."""
+    from datetime import datetime, timezone
+    drills = await db.fire_drills.find({"org_id": admin["org_id"]}, {"_id": 0}).sort("at", -1).to_list(1000)
+    now = datetime.now(timezone.utc)
+    yy, mm, keys = now.year, now.month, []
+    for _ in range(6):
+        keys.append((yy, mm)); mm -= 1
+        if mm == 0:
+            mm = 12; yy -= 1
+    keys = keys[::-1]
+    b = {f"{a:04d}-{c:02d}": {"drills": 0, "controlled": 0, "sus": [], "res": []} for (a, c) in keys}
+    for d in drills:
+        k = (d.get("at") or "")[:7]
+        if k in b:
+            b[k]["drills"] += 1
+            if d.get("controlled"):
+                b[k]["controlled"] += 1
+            if d.get("suspend_ms") is not None:
+                b[k]["sus"].append(d["suspend_ms"])
+            if d.get("resume_ms") is not None:
+                b[k]["res"].append(d["resume_ms"])
+    monthly = []
+    for (a, c) in keys:
+        v = b[f"{a:04d}-{c:02d}"]
+        monthly.append({
+            "month": f"{c:02d}/{str(a)[2:]}", "drills": v["drills"], "controlled": v["controlled"],
+            "pass_rate": round(100 * v["controlled"] / v["drills"]) if v["drills"] else None,
+            "avg_suspend_ms": round(sum(v["sus"]) / len(v["sus"])) if v["sus"] else None,
+            "avg_resume_ms": round(sum(v["res"]) / len(v["res"])) if v["res"] else None})
+    total = len(drills)
+    controlled = sum(1 for d in drills if d.get("controlled"))
+    all_sus = [d["suspend_ms"] for d in drills if d.get("suspend_ms") is not None]
+    all_res = [d["resume_ms"] for d in drills if d.get("resume_ms") is not None]
+    streak = 0
+    for d in drills:
+        if d.get("controlled"):
+            streak += 1
+        else:
+            break
+    return {"monthly": monthly, "total": total, "controlled": controlled,
+            "pass_rate": round(100 * controlled / total) if total else None, "streak": streak,
+            "avg_suspend_ms": round(sum(all_sus) / len(all_sus)) if all_sus else None,
+            "avg_resume_ms": round(sum(all_res) / len(all_res)) if all_res else None,
+            "last_at": drills[0]["at"] if drills else None,
+            "scheduled_count": sum(1 for d in drills if d.get("scheduled")),
+            "recent": drills[:15]}
 
 
 async def _run_scheduled_fire_drills():

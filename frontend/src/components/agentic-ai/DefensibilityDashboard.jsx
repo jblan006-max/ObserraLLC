@@ -4,6 +4,9 @@ import { toast } from "sonner";
 import { DataClassBadge, Panel } from "@/components/agentic-ai/shared";
 import { useDeepDive } from "@/context/DeepDiveContext";
 import { api } from "@/lib/api";
+import { Link } from "react-router-dom";
+import { QRCodeSVG } from "qrcode.react";
+import { LineChart, Line, ResponsiveContainer, Tooltip as RTooltip } from "recharts";
 
 const SOURCE_LABEL = { agents: "AI Agent Governance", analytics: "AI Analytics", systems: "AI System Inventory", incidents: "AI Incidents", workflows: "Workflow Engine", connectorHealth: "Connector Health" };
 const fmtDT = (s) => (s ? new Date(s).toLocaleDateString(undefined, { dateStyle: "medium" }) : "—");
@@ -181,6 +184,10 @@ function AuditorRoomCard() {
             <div className="flex items-center gap-2">
               <input readOnly data-testid="proof-of-control-url" value={poc.url} onFocus={(e) => e.target.select()} className="flex-1 min-w-0 bg-secondary/50 rounded-md px-2.5 py-2 text-xs font-mono outline-none" />
               <button data-testid="proof-of-control-copy" onClick={() => copyText(poc.url)} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-ai/40 text-ai text-xs font-head font-bold hover:bg-ai/10 transition-colors shrink-0"><Copy className="w-3.5 h-3.5" /> Copy</button>
+            </div>
+            <div className="mt-3 flex items-center gap-3" data-testid="proof-of-control-qr">
+              <div className="bg-white p-2 rounded-lg shrink-0"><QRCodeSVG value={poc.url} size={92} level="M" /></div>
+              <div className="text-[11px] text-muted-foreground">Scan to open the auditor room — drop this QR straight into your board deck.</div>
             </div>
           </div>
         )}
@@ -508,6 +515,33 @@ function KillReplayDrillCard({ agents = [] }) {
           </div>
         </div>
       )}
+      {drills.length > 0 && (() => {
+        const susVals = drills.map((x) => x.suspend_ms).filter((v) => typeof v === "number");
+        const resVals = drills.map((x) => x.resume_ms).filter((v) => typeof v === "number");
+        const avgSus = susVals.length ? Math.round(susVals.reduce((a, b) => a + b, 0) / susVals.length) : null;
+        const avgRes = resVals.length ? Math.round(resVals.reduce((a, b) => a + b, 0) / resVals.length) : null;
+        return (
+        <div className="rounded-lg border border-border bg-secondary/10 p-3 mb-3" data-testid="fire-drill-trend">
+          <div className="flex flex-wrap items-center gap-2 mb-2">
+            <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Drill trend · last {drills.length}</span>
+            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-low/10 text-low" data-testid="fire-drill-rate">{Math.round((100 * drills.filter((x) => x.controlled).length) / drills.length)}% control-confirmed</span>
+            {avgSus != null && <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-secondary/60 text-muted-foreground">avg suspend {avgSus}ms</span>}
+            {avgRes != null && <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-secondary/60 text-muted-foreground">avg resume {avgRes}ms</span>}
+            <Link to="/app/control-assurance" data-testid="fire-drill-assurance-link" className="ml-auto text-[11px] font-mono text-ai underline">Control Assurance →</Link>
+          </div>
+          {drills.length >= 2 && (
+            <div style={{ height: 48 }} data-testid="fire-drill-sparkline">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={[...drills].reverse().map((x, i) => ({ i, ms: x.total_ms }))} margin={{ top: 4, right: 4, left: 4, bottom: 0 }}>
+                  <RTooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 11 }} labelFormatter={() => ""} formatter={(v) => [`${v}ms`, "round-trip"]} />
+                  <Line type="monotone" dataKey="ms" stroke="hsl(190 80% 50%)" strokeWidth={2} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+        );
+      })()}
       {drills.length === 0 ? (
         <div className="text-sm text-muted-foreground" data-testid="fire-drill-empty">No fire-drills yet. Run one to produce a timed, signed proof-of-control receipt.</div>
       ) : (
