@@ -103,7 +103,7 @@ export default function AIExecutiveOverview() {
       </div>
 
       <div className="grid xl:grid-cols-3 gap-4">
-        <Panel title="Delegated machine authority" subtitle="How much autonomy agents hold" testid="overview-authority">
+        <Panel title="Delegated machine authority" subtitle="How much autonomy agents hold" testid="overview-authority-chart">
           <ResponsiveContainer width="100%" height={220}>
             <BarChart data={auth} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" vertical={false} />
@@ -115,7 +115,7 @@ export default function AIExecutiveOverview() {
           </ResponsiveContainer>
         </Panel>
 
-        <Panel title="Guardrail coverage" subtitle="Enterprise defensive controls" testid="overview-guardrails" actions={<DataClassBadge kind="MODELLED" />}>
+        <Panel title="Guardrail coverage" subtitle="Enterprise defensive controls" testid="overview-guardrail-coverage" actions={<DataClassBadge kind="MODELLED" />}>
           <div className="space-y-4">
             {guards.map((g) => (
               <div key={g.key}>
@@ -153,7 +153,7 @@ export default function AIExecutiveOverview() {
       </div>
 
       <div className="grid xl:grid-cols-3 gap-4">
-        <Panel title="Toxic capability combinations" subtitle="Dangerous tool + permission + weak guardrail" testid="overview-toxic" actions={<DataClassBadge kind="MODELLED" />}>
+        <Panel title="Toxic capability combinations" subtitle="Dangerous tool + permission + weak guardrail" testid="overview-toxic-combos" actions={<DataClassBadge kind="MODELLED" />}>
           <div className="space-y-2">
             {toxicAgents.length === 0 && <EmptyState title="No toxic combinations" text="No agent currently combines dangerous capabilities without the matching guardrail." />}
             {toxicAgents.map((n) => (
@@ -175,7 +175,7 @@ export default function AIExecutiveOverview() {
           </div>
         </Panel>
 
-        <Panel title="Shadow AI queue" subtitle="Unsanctioned AI to review" testid="overview-shadow">
+        <Panel title="Shadow AI queue" subtitle="Unsanctioned AI to review" testid="overview-shadow-queue">
           <div className="space-y-2">
             {shadowSystems.length === 0 && <EmptyState title="Queue clear" text="Run discovery in the Shadow AI tab to populate this queue." />}
             {shadowSystems.map((s) => (

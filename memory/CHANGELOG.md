@@ -1,5 +1,19 @@
 # Obserra EIOS — CHANGELOG
 
+## 2026-06 — Agentic AI Security Control Plane v1 (product pivot)
+- **Visual pivot to "Obserra — Agentic AI Security Control Plane" (v1)**. Legacy SAP nav fully removed from the UI (backend SAP endpoints untouched — shared backend). Nav now: Executive Overview · AI Security → Agentic AI Security · Sources → Connector Health · Admin. Persistent **v1** badge in header + on Executive Overview.
+- **Executive Overview (`/app` index)** rebuilt into `AIExecutiveOverview.jsx` — a complete AI rollup: 8 KPI cards (navigate to Control Plane), delegated-authority chart, guardrail coverage, highest-risk agents, toxic combinations, shadow AI queue, open incidents. Every card opens the universal deep-dive; grounded AI Analyst headline. (`SapOverview` retired from the index route.)
+- **Tool Toxicity Map** (`ToxicityMap.jsx` + `lib/agenticToxicity.js`): visual Agent→Tool→Permission→Resource graph flagging toxic capability combinations (dangerous/action tools without matching guardrail). Embedded in the Authority & Tools tab; nodes open a deep-dive.
+- **Universal deep-dive across all agentic dashboards** (`lib/agenticDeepDive.js`): agent/system/incident cards in Authority, Shadow AI, Incidents and the Executive Overview are clickable into `RiskDetailModal` with rating, facets, compliance refs and recommended actions.
+- **Kill Switch runtime enforcement** — `POST /api/agents/{ref}/enforce` (admin, `agents.py`): suspend→restricted / kill→killed / resume→sanctioned; sets `enforcement` object + `enforced` flag, writes the Defensibility Ledger (`risk_engine._ledger`), posts Slack/Teams alert (`self_scan._post_chat_alert`), and dispatches to `org.agent_runtime_webhook` when configured. `AgentDetailModal` shows Suspend/Kill/Resume + live enforcement-status pill.
+- **Shadow AI Discovery feed** — `POST /api/ai-systems/discover` (admin, `routes.py`): idempotent hybrid seed of common public GenAI SaaS + shadow-flagged agents → populates the Shadow AI queue. "Run discovery" button in the Shadow AI tab.
+- **Advisor grounding** — `ai_advisor._build_context` now loads the live `ai_agents` collection (tools, permissions, guardrail %, dangerous tools, toxic combos, red-team score). Defensive `.get()` on `ai_systems` (fixed a `drift` KeyError after discovery).
+- **Board Brief Scheduler** — admin picks weekly/monthly cadence + "Email now" (`BoardBriefControl.jsx`); `GET/PUT /api/agents/board-brief/schedule`, `POST /api/agents/board-brief/send` (Resend HTML brief). Cron send folded into the existing weekly-drift-digest (weekly) and monthly-board-report (monthly) crons — no new cron slot.
+- **Corner Obserrian Advisor**: `AppShell` now mounts the eye-logo `AIAdvisor` (bottom-right, grounded on `/api/advisor/chat`) instead of `SapAdvisor`.
+- **Copy**: onboarding tour + `scripts/gen_docs.py` (PDF/DOCX guides) rewritten to Agentic AI Security (no SAP wording); guides regenerated.
+- Verified: backend 10/10 pytest (iteration_89) + curl; frontend e2e (nav, v1, toxicity map, KPI nav, shadow discovery, kill switch suspend/kill/resume with status pill, board brief).
+
+
 ## 2026-06
 - **Official branding everywhere** (only logo used): `/public/brand-mark.png`, `brand-wordmark.png` (cropped from official lockup), `brand-lockup.png`. Regen: `/app/scripts/gen_brand.py`.
 - **PWA**: install banner (animation + 7-day "Later" snooze), branded splash, maskable icons, adaptive favicons, iOS splash (portrait + landscape iPad).

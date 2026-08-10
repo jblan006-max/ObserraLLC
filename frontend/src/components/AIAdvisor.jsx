@@ -252,7 +252,7 @@ export function AIAdvisor() {
   return (
     <>
       {!open && (
-        <div className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-2.5">
+        <div data-testid="ai-advisor-launcher" className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-2.5">
           {bubbleOn && (
             <div data-testid="advisor-hint" onClick={openFromHint}
               className="relative w-[min(15rem,calc(100vw-2rem))] rounded-2xl bg-popover border border-ai/30 shadow-xl p-3.5 text-xs leading-relaxed text-foreground cursor-pointer rise">
