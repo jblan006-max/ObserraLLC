@@ -11,6 +11,7 @@ export default function ShadowAIDashboard({
   onSanction,
   onDiscover,
   discovering,
+  onReload,
 }) {
   const { openDeepDive, warm } = useDeepDive();
   const shadowSystems = (systems || []).filter((system) => system.status === "shadow");
@@ -66,7 +67,7 @@ export default function ShadowAIDashboard({
               <div
                 key={system.ref || system.id || system.name}
                 onMouseEnter={() => warm(systemDeepDive(system))}
-                onClick={() => openDeepDive(systemDeepDive(system))}
+                onClick={() => openDeepDive(systemDeepDive(system, { isAdmin, onReload }))}
                 data-testid={`shadow-system-${system.ref || system.name}`}
                 className="rounded-xl border border-crit/20 bg-crit/5 p-4 cursor-pointer hover:bg-crit/10 transition-colors"
               >

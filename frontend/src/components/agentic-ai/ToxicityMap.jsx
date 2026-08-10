@@ -158,7 +158,7 @@ export default function ToxicityMap({ agents, isAdmin, onReload }) {
                       return (
                         <td key={r} className="p-0">
                           <button
-                            onClick={() => openDeepDive(agentDeepDive(n))}
+                            onClick={() => openDeepDive(agentDeepDive(n, { isAdmin, onReload }))}
                             data-testid={`toxicity-cell-${n.ref}-${r.replace(/[^A-Za-z]+/g, "")}`}
                             title={`${n.name} · ${r}${tone ? "" : " · no access"}`}
                             className="w-full h-7 rounded transition-transform hover:scale-110"
@@ -191,7 +191,7 @@ export default function ToxicityMap({ agents, isAdmin, onReload }) {
                 <button
                   key={n.ref}
                   onMouseEnter={() => warm(agentDeepDive(n))}
-                  onClick={() => openDeepDive(agentDeepDive(n))}
+                  onClick={() => openDeepDive(agentDeepDive(n, { isAdmin, onReload }))}
                   data-testid={`toxicity-agent-${n.ref}`}
                   className="w-full text-left rounded-xl border p-3 hover:bg-secondary/30 transition-colors"
                   style={{

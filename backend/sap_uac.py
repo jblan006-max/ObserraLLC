@@ -159,21 +159,30 @@ async def _systems_payload(org_id, reprobe=False):
                         "dialog_users": len([a for a in accs if a["user_type"] == "dialog"]),
                         "technical_users": len([a for a in accs if a.get("technical")]),
                         "freshness": "fresh"})
-    sap_conns = [
-        {"id": "CON-SAP-S4", "name": "SAP S/4HANA", "category": "SAP", "mode": "Read-Only", "records": n_s4},
-        {"id": "CON-SAP-ECC", "name": "SAP ECC", "category": "SAP", "mode": "Read-Only", "records": n_ecc},
-        {"id": "CON-ADP", "name": "ADP Workforce Now", "category": "HR (Authoritative)", "mode": "Read-Only", "records": n_adp},
-        {"id": "CON-IZ8", "name": "IZ8 HR (International)", "category": "HR (Authoritative)", "mode": "Read-Only", "records": n_iz8},
-        {"id": "CON-AD", "name": "Microsoft Active Directory", "category": "Directory", "mode": "Read-Only", "records": npersons},
-        {"id": "CON-ENTRA", "name": "Microsoft Entra ID", "category": "Directory", "mode": "Read-Only", "records": npersons},
-        {"id": "CON-SNOW", "name": "ServiceNow ITSM", "category": "ITSM & Workflow", "mode": "Bidirectional", "records": tickets},
-    ]
-    connectors = [{**c, "status": "connected", "auth_ready": True, "scope": "SAP UAC"} for c in sap_conns]
+    # Standard Obserra connector package — SAP-build source systems are defined in the one catalog
+    # (scope="sap") and enriched here with this org's live record counts. AD / Entra / ServiceNow are
+    # shared platform connectors that also serve the SAP landscape.
     try:
         from connectors_catalog import CATALOG
     except Exception:
         CATALOG = []
+    cat_by_id = {e["id"]: e for e in CATALOG}
+    live_counts = {"sap-s4": n_s4, "sap-ecc": n_ecc, "adp": n_adp, "iz8": n_iz8,
+                   "active-directory": npersons, "entra": npersons, "servicenow": tickets}
+    sap_ids = [e["id"] for e in CATALOG if e.get("scope") == "sap"] + \
+              [i for i in ("active-directory", "entra", "servicenow") if i in cat_by_id]
+    connectors = []
+    for cid in sap_ids:
+        e = cat_by_id.get(cid)
+        if not e:
+            continue
+        mode = "Bidirectional" if cid in ("servicenow", "sap-scim") else "Read-Only"
+        connectors.append({"id": cid, "name": e["name"], "category": e["category"], "mode": mode,
+                           "status": "connected", "auth_ready": True,
+                           "records": live_counts.get(cid, npersons), "scope": "SAP UAC"})
     for e in CATALOG:
+        if e["id"] in sap_ids:
+            continue
         mode = "Outbound" if e.get("auth") == "webhook_post" else ("Bidirectional" if e.get("id") in ("servicenow", "sap-scim") else "Read-Only")
         connectors.append({"id": e["id"], "name": e["name"], "category": e["category"], "mode": mode,
                            "status": "connected", "auth_ready": True, "records": npersons, "scope": "Obserra Platform"})

@@ -189,6 +189,24 @@ CATALOG = [
      "required_credentials": ["File upload / SharePoint"], "connectable": False, "boundary": "Ingested via upload or SharePoint/Graph."},
     {"id": "qms", "name": "Generic QMS", "category": "Business Data & BI", "auth": "bearer", "capabilities": ["Quality records", "CAPA"],
      "required_credentials": ["QMS API base + token"], "connectable": False, "boundary": "Provider-specific QMS API."},
+
+    # ---- SAP Landscape (SAP build — access-governance source systems, part of the standard package) ----
+    {"id": "sap-s4", "name": "SAP S/4HANA", "category": "SAP Landscape", "auth": "bearer", "scope": "sap",
+     "capabilities": ["User master", "Roles & profiles", "Authorization objects", "Access-risk evidence"],
+     "required_credentials": ["SAP host + OData/RFC service user"], "connectable": False,
+     "boundary": "Live via an SAP OData/RFC service user; the current access model was ingested as a discovered snapshot with provenance."},
+    {"id": "sap-ecc", "name": "SAP ECC", "category": "SAP Landscape", "auth": "bearer", "scope": "sap",
+     "capabilities": ["User master", "Roles & profiles", "SU01/AGR data"],
+     "required_credentials": ["SAP host + OData/RFC service user"], "connectable": False,
+     "boundary": "Live via an SAP OData/RFC service user; ingested as a discovered snapshot by default."},
+    {"id": "adp", "name": "ADP Workforce Now", "category": "SAP Landscape", "auth": "oauth", "scope": "sap",
+     "capabilities": ["Worker records", "HR authority (US)", "Joiner/mover/leaver events"],
+     "required_credentials": ["ADP API client id/secret + mutual-TLS cert"], "connectable": False,
+     "boundary": "Authoritative HR source (US); connect via the ADP API client + certificate."},
+    {"id": "iz8", "name": "IZ8 HR (International)", "category": "SAP Landscape", "auth": "bearer", "scope": "sap",
+     "capabilities": ["Worker records", "HR authority (International)"],
+     "required_credentials": ["IZ8 HR export / API access"], "connectable": False,
+     "boundary": "Authoritative HR source (International); ingested via secure HR export/API."},
 ]
 
 

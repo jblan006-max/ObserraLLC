@@ -1,11 +1,39 @@
-import { Bot, Database, KeyRound, ShieldCheck, UserCheck, Wrench } from "lucide-react";
+import { Ban, Bot, CheckCircle2, Database, KeyRound, PauseCircle, PlayCircle, ShieldCheck, ShieldOff, UserCheck, Wrench } from "lucide-react";
 import { agentToxicity } from "@/lib/agenticToxicity";
 
 const RATING_FROM_SCORE = (score = 0) =>
   score >= 80 ? "Critical" : score >= 60 ? "High" : score >= 40 ? "Medium" : "Low";
 
+// Standard executable actions for an AI agent — Suspend / Kill / Resume. Admin-only; each dispatches
+// a REAL runtime enforcement via /actions/run and is auto-written to the audit trail + ledger.
+function agentActions(agent, opts) {
+  if (!opts.isAdmin) return [];
+  const ref = agent.ref;
+  const s = agent.status;
+  const out = [];
+  if (s !== "restricted" && s !== "killed")
+    out.push({ id: "suspend", label: "Suspend", action_id: `agent_suspend:${ref}`, variant: "neutral", icon: PauseCircle, onDone: opts.onReload });
+  if (s !== "killed")
+    out.push({ id: "kill", label: "Kill", action_id: `agent_kill:${ref}`, variant: "danger", confirm: true, icon: Ban, onDone: opts.onReload });
+  if (s === "restricted" || s === "killed")
+    out.push({ id: "resume", label: "Resume", action_id: `agent_resume:${ref}`, variant: "primary", icon: PlayCircle, onDone: opts.onReload });
+  return out;
+}
+
+function systemActions(system, opts) {
+  if (!opts.isAdmin) return [];
+  const ref = system.ref || system.id;
+  if (!ref) return [];
+  const out = [];
+  if (system.status !== "sanctioned")
+    out.push({ id: "sanction", label: "Sanction", action_id: `aisys_sanction:${ref}`, variant: "primary", icon: CheckCircle2, onDone: opts.onReload });
+  if (system.status !== "killed")
+    out.push({ id: "block", label: "Block", action_id: `aisys_block:${ref}`, variant: "danger", confirm: true, icon: ShieldOff, onDone: opts.onReload });
+  return out;
+}
+
 // Universal deep-dive item for an AI agent — matches the platform RiskDetailModal shape.
-export function agentDeepDive(agent = {}) {
+export function agentDeepDive(agent = {}, opts = {}) {
   const tox = agent.toxicity || agentToxicity(agent);
   const rating = agent.risk_class || RATING_FROM_SCORE(agent.modeledRisk || 0);
   return {
@@ -40,8 +68,9 @@ export function agentDeepDive(agent = {}) {
       agent.guardrails?.human_in_loop
         ? "Maintain human approval on all high-impact actions."
         : "Enable human-in-the-loop approval for action-capable tools.",
-      "Open the agent in the Control Plane to run the red-team baseline or apply a runtime enforcement action (Suspend / Kill).",
+      "Apply a runtime enforcement action below (Suspend / Kill / Resume) — it dispatches live and is written to the audit trail.",
     ],
+    executableActions: agentActions(agent, opts),
     explainTitle: `${agent.name} AI agent security`,
     explainKind: "agentic ai security delegated authority tools permissions guardrails toxicity",
     explainContext: {
@@ -56,7 +85,7 @@ export function agentDeepDive(agent = {}) {
   };
 }
 
-export function systemDeepDive(system = {}) {
+export function systemDeepDive(system = {}, opts = {}) {
   return {
     accent: "0 84% 60%",
     refLabel: system.ref || system.id || "AI-SYSTEM",
@@ -77,6 +106,7 @@ export function systemDeepDive(system = {}) {
         : "Maintain governance evidence and schedule a periodic review.",
       "Assign an accountable owner and document the use case and data flows.",
     ],
+    executableActions: systemActions(system, opts),
     explainTitle: `${system.name || "AI system"} governance`,
     explainKind: "ai system inventory shadow ai governance",
     explainContext: system,

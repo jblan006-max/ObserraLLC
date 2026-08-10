@@ -136,7 +136,7 @@ export default function AIExecutiveOverview() {
               <button
                 key={a.ref}
                 onMouseEnter={() => warm(agentDeepDive(a))}
-                onClick={() => openDeepDive(agentDeepDive(a))}
+                onClick={() => openDeepDive(agentDeepDive(a, { isAdmin, onReload: reload }))}
                 data-testid={`overview-agent-${a.ref}`}
                 className="w-full text-left flex items-center gap-3 rounded-lg border border-border bg-secondary/20 p-2.5 hover:bg-secondary/40 transition-colors"
               >
@@ -160,7 +160,7 @@ export default function AIExecutiveOverview() {
               <button
                 key={n.ref}
                 onMouseEnter={() => warm(agentDeepDive(n))}
-                onClick={() => openDeepDive(agentDeepDive(n))}
+                onClick={() => openDeepDive(agentDeepDive(n, { isAdmin, onReload: reload }))}
                 data-testid={`overview-toxic-${n.ref}`}
                 className="w-full text-left rounded-lg border border-crit/25 bg-crit/5 p-2.5 hover:bg-crit/10 transition-colors"
               >

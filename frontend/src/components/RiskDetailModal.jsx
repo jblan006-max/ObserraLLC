@@ -76,6 +76,68 @@ function AddToPlanButton({ item, accent }) {
   );
 }
 
+// Standard executable actions (e.g. agent Suspend/Kill/Resume, AI-system Sanction/Block). Each button
+// dispatches a REAL action via /actions/run and is auto-written to the audit trail + Defensibility Ledger.
+function StandardActions({ actions, accent }) {
+  const [busy, setBusy] = useState(null);
+  const [res, setRes] = useState(null);
+  const TONE = { primary: accent, danger: "0 84% 60%", neutral: "215 15% 60%" };
+  const run = async (a) => {
+    if (a.confirm && !window.confirm(`${a.label} — execute this live governance action?\nIt is written to the audit trail and cannot be silently undone.`)) return;
+    setBusy(a.id); setRes(null);
+    try {
+      const { data } = await api.post("/actions/run", { action_id: a.action_id });
+      setRes({ ok: true, message: data.message });
+      toast.success(data.message);
+      a.onDone && a.onDone(data);
+    } catch (e) {
+      const m = e?.response?.data?.detail || "Action failed.";
+      setRes({ ok: false, message: m });
+      toast.error(m);
+    } finally {
+      setBusy(null);
+    }
+  };
+  return (
+    <div data-testid="standard-actions">
+      <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5">Standard actions</div>
+      <div className="flex flex-wrap gap-2">
+        {actions.map((a) => {
+          const tone = TONE[a.variant] || accent;
+          const Icon = a.icon || ShieldCheck;
+          const primary = a.variant === "primary";
+          return (
+            <button
+              key={a.id}
+              data-testid={`std-action-${a.id}`}
+              disabled={!!busy}
+              onClick={() => run(a)}
+              className="flex items-center gap-1.5 text-xs font-head font-bold px-3 py-2 rounded-lg border disabled:opacity-50 transition-colors"
+              style={primary
+                ? { background: `hsl(${tone})`, color: "#050810", borderColor: `hsl(${tone})` }
+                : { borderColor: `hsl(${tone} / 0.5)`, color: `hsl(${tone})` }}
+            >
+              {busy === a.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Icon className="w-3.5 h-3.5" />} {a.label}
+            </button>
+          );
+        })}
+      </div>
+      {res && (
+        <div
+          data-testid="standard-action-result"
+          className="mt-2 rounded-lg border p-2.5 text-[12px]"
+          style={{ borderColor: `hsl(${res.ok ? "142 70% 45%" : "0 84% 60%"} / 0.45)`,
+                   background: `hsl(${res.ok ? "142 70% 45%" : "0 84% 60%"} / 0.08)`,
+                   color: `hsl(${res.ok ? "142 70% 45%" : "0 84% 60%"})` }}
+        >
+          {res.ok ? "✓ " : "✗ "}{res.message}
+          <span className="text-muted-foreground"> · written to the audit trail + Defensibility Ledger</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Standardized universal Deep-Dive panel — Risk Score & Rating (FAIR), AI Strategic Brief,
 // Recommended Actions, and an Integrated Action Hub whose buttons dispatch REAL remediations
 // and surface the honest outcome inline. Reused across every engine-backed surface.
@@ -155,6 +217,9 @@ export function RiskDetailModal({ item, accent = "255 85% 66%", busy, result, on
 
         {/* Add any card to the tracked remediation plan */}
         <div className="pt-1"><AddToPlanButton key={`${item.refLabel || ""}|${item.title || ""}`} item={item} accent={accent} /></div>
+
+        {/* Standard executable actions (agent Suspend/Kill/Resume, AI-system Sanction/Block) */}
+        {item.executableActions?.length > 0 && <StandardActions actions={item.executableActions} accent={accent} />}
 
         {/* Integrated Action Hub */}
         {hub ? (

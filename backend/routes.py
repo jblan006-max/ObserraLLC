@@ -451,6 +451,36 @@ async def run_action(body: ActionRun, user: dict = Depends(require_active_subscr
         vw = {"suspend": "suspended", "kill": "killed", "resume": "resumed"}[action]
         where = "dispatched to the agent runtime" if res["enforcement"]["runtime"] == "external-webhook" else "enforced in the control plane"
         return {"message": f"{ref.strip()} {vw} — {where}.", "action_id": body.action_id, "agent": res["agent"]}
+    if body.action_id.startswith("aisys_"):
+        if user.get("role") != "admin":
+            raise HTTPException(403, "Admin role required to govern an AI system.")
+        verb, _, ref = body.action_id.partition(":")
+        ref = ref.strip()
+        amap = {"aisys_sanction": ("sanctioned", "observe", "sanctioned and brought under governance"),
+                "aisys_block": ("killed", "block", "blocked — all traffic denied by the kill switch"),
+                "aisys_restrict": ("restricted", "restrict", "restricted — human approval required per request")}
+        m = amap.get(verb)
+        if not m or not ref:
+            raise HTTPException(404, "Unknown AI-system action")
+        sysd = await db.ai_systems.find_one({"org_id": org_id, "ref": ref})
+        if not sysd:
+            raise HTTPException(404, "AI system not found")
+        status, mode, phrase = m
+        await db.ai_systems.update_one({"org_id": org_id, "ref": ref},
+            {"$set": {"status": status, "governance_mode": mode}})
+        msg = f"{sysd.get('name', ref)} {phrase}."
+        await _audit(org_id, user["email"], "ai.govern", msg)
+        try:
+            from risk_engine import _ledger
+            now_iso = datetime.now(timezone.utc).isoformat()
+            await _ledger(org_id, {"action": "ai-system-govern", "task_id": ref, "by": user["email"],
+                                   "provider": "obserra-control-plane", "verified": True, "status": status,
+                                   "message": msg, "started_at": now_iso, "finished_at": now_iso})
+        except Exception:
+            pass
+        updated = await db.ai_systems.find_one({"org_id": org_id, "ref": ref}, {"_id": 0})
+        return {"message": msg, "action_id": body.action_id, "system": updated,
+                "verified": True, "status": status, "provider": "obserra-control-plane"}
     if body.action_id == "entra_sync":
         return await sync_connector(user)
     eff = _ACTION_EFFECTS.get(body.action_id)
