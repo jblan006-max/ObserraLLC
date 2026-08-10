@@ -123,7 +123,11 @@ export function RiskDetailModal({ item, accent = "255 85% 66%", busy, result, on
         {/* Who / What / When / Where / Why */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" data-testid="deep-dive-facets">
           {(item.facets || []).map((f, i) => (
-            <div key={`${f.label}-${i}`} className="rounded-lg bg-secondary/40 p-3">
+            <div
+              key={`${f.label}-${i}`}
+              data-testid={`deep-dive-facet-${(f.label || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}`}
+              className="rounded-lg bg-secondary/40 p-3"
+            >
               <div className="flex items-center gap-1.5 text-[9px] font-mono uppercase tracking-wider text-muted-foreground">{f.icon && <f.icon className="w-3 h-3" />}{f.label}</div>
               <div className="text-sm mt-0.5 break-words">{f.value ?? "—"}</div>
             </div>
