@@ -65,6 +65,27 @@ function GoLiveBadge() {
   );
 }
 
+function ControlAssuranceBadge() {
+  const [d, setD] = useState(null);
+  const navigate = useNavigate();
+  useEffect(() => {
+    let ok = true;
+    api.get("/agents/runtime/control-assurance").then(({ data }) => { if (ok) setD(data); }).catch(() => {});
+    return () => { ok = false; };
+  }, []);
+  if (!d || d.total === 0) return null;
+  const pr = d.pass_rate;
+  const tone = pr == null ? "215 20% 60%" : pr >= 90 ? "142 70% 45%" : pr >= 60 ? "35 90% 55%" : "0 84% 60%";
+  return (
+    <button data-testid="exec-assurance-badge" onClick={() => navigate("/app/control-assurance")}
+      title="Kill-switch reliability — click for Control Assurance"
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-mono font-bold transition-transform hover:scale-[1.03]"
+      style={{ borderColor: `hsl(${tone} / 0.45)`, background: `hsl(${tone} / 0.12)`, color: `hsl(${tone})` }}>
+      <Gauge className="w-3 h-3" />Kill-switch {pr == null ? "—" : `${pr}%`}{d.streak > 0 ? ` · ${d.streak}-drill streak` : ""}
+    </button>
+  );
+}
+
 export default function AIExecutiveOverview() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
@@ -112,6 +133,7 @@ export default function AIExecutiveOverview() {
             <span className="px-2 py-1 rounded-full border border-ai/25 bg-ai/10 text-ai text-[10px] font-mono">AI SECURITY ROLLUP</span>
             <span data-testid="overview-version-badge" className="px-2 py-1 rounded-full border border-border bg-secondary/60 text-muted-foreground text-[10px] font-mono font-bold">v1</span>
             <GoLiveBadge />
+            {isAdmin && <ControlAssuranceBadge />}
           </div>
           <p className="text-sm text-muted-foreground mt-2 max-w-3xl">
             A single board-ready rollup of the whole Agentic AI Security estate — modelled agent risk, delegated

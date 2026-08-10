@@ -36,12 +36,24 @@ function systemActions(system, opts) {
 export function agentDeepDive(agent = {}, opts = {}) {
   const tox = agent.toxicity || agentToxicity(agent);
   const rating = agent.risk_class || RATING_FROM_SCORE(agent.modeledRisk || 0);
+  const tools = agent.tools && agent.tools.length ? agent.tools : (agent.edges || []).map((e) => e.tool);
+  const actionSet = new Set(agent.actionTools || (agent.edges || []).filter((e) => e.action || e.danger).map((e) => e.tool));
+  const resources = agent.resources && agent.resources.length ? agent.resources : [...new Set((agent.edges || []).map((e) => e.resource).filter(Boolean))];
+  const connectors = [
+    ...(agent.enforcement?.receipt
+      ? [{ name: "Agent runtime", detail: agent.enforcement.receipt.status_code != null ? `HTTP ${agent.enforcement.receipt.status_code}` : "no response",
+          status: agent.enforcement.runtime === "external-webhook" ? (agent.enforcement.external_ok ? "ok" : "down") : "ok" }]
+      : []),
+    ...[...new Set(tools)].filter(Boolean).map((t) => ({ name: t, status: actionSet.has(t) ? "warn" : "ok", detail: actionSet.has(t) ? "action-capable" : "read" })),
+    ...resources.map((r) => ({ name: r, detail: "data store" })),
+  ];
   return {
     accent: "330 81% 60%",
     refLabel: agent.ref,
     title: agent.name,
     rating,
     score: agent.modeledRisk,
+    connectors,
     facets: [
       { label: "Owner", value: agent.owner, icon: UserCheck },
       { label: "Model", value: agent.model, icon: Bot },
@@ -91,6 +103,12 @@ export function systemDeepDive(system = {}, opts = {}) {
     refLabel: system.ref || system.id || "AI-SYSTEM",
     title: system.name || system.system || "AI system",
     rating: system.risk_class,
+    connectors: [
+      { name: system.provider || "Provider", detail: "provider",
+        status: system.status === "sanctioned" ? "ok" : system.status === "shadow" ? "warn" : system.status === "killed" ? "down" : undefined },
+      ...(system.source ? [{ name: system.source, detail: "source" }] : []),
+      ...((system.data_flows || system.dataStores || []).map((x) => ({ name: typeof x === "string" ? x : (x.name || String(x)), detail: "data flow" }))),
+    ],
     facets: [
       { label: "Provider", value: system.provider || "Unknown" },
       { label: "Model", value: system.model || "—" },
@@ -119,6 +137,10 @@ export function incidentDeepDive(incident = {}) {
     refLabel: incident.ref || incident.id || "AI-INCIDENT",
     title: incident.title || incident.name || "AI security incident",
     rating: incident.severity,
+    connectors: [
+      ...(incident.system ? [{ name: incident.system, detail: "affected system" }] : []),
+      ...(incident.agent_ref ? [{ name: incident.agent_ref, detail: "agent" }] : []),
+    ],
     facets: [
       { label: "Severity", value: incident.severity || "Unknown" },
       { label: "Containment mode", value: incident.mode || "Observe" },

@@ -558,11 +558,11 @@ async def list_fire_drills(admin: dict = Depends(require_roles("admin"))):
     return {"drills": rows}
 
 
-@agents_router.get("/runtime/control-assurance")
-async def control_assurance(admin: dict = Depends(require_roles("admin"))):
-    """Kill-switch reliability over time — monthly proof-of-control pass rate + response-time trend from fire-drills."""
+async def _compute_control_assurance(org_id):
+    """Kill-switch reliability rollup — monthly proof-of-control pass rate + response times from fire-drills, plus SLA state."""
     from datetime import datetime, timezone
-    drills = await db.fire_drills.find({"org_id": admin["org_id"]}, {"_id": 0}).sort("at", -1).to_list(1000)
+    from bson import ObjectId
+    drills = await db.fire_drills.find({"org_id": org_id}, {"_id": 0}).sort("at", -1).to_list(1000)
     now = datetime.now(timezone.utc)
     yy, mm, keys = now.year, now.month, []
     for _ in range(6):
@@ -583,9 +583,10 @@ async def control_assurance(admin: dict = Depends(require_roles("admin"))):
                 b[k]["res"].append(d["resume_ms"])
     monthly = []
     for (a, c) in keys:
-        v = b[f"{a:04d}-{c:02d}"]
+        key = f"{a:04d}-{c:02d}"
+        v = b[key]
         monthly.append({
-            "month": f"{c:02d}/{str(a)[2:]}", "drills": v["drills"], "controlled": v["controlled"],
+            "month": f"{c:02d}/{str(a)[2:]}", "key": key, "drills": v["drills"], "controlled": v["controlled"],
             "pass_rate": round(100 * v["controlled"] / v["drills"]) if v["drills"] else None,
             "avg_suspend_ms": round(sum(v["sus"]) / len(v["sus"])) if v["sus"] else None,
             "avg_resume_ms": round(sum(v["res"]) / len(v["res"])) if v["res"] else None})
@@ -599,13 +600,80 @@ async def control_assurance(admin: dict = Depends(require_roles("admin"))):
             streak += 1
         else:
             break
+    org = await db.organizations.find_one(
+        {"_id": ObjectId(org_id)}, {"control_assurance_sla_enabled": 1, "control_assurance_sla_min": 1}) or {}
+    cur_key = f"{now.year:04d}-{now.month:02d}"
+    cur = next((m for m in monthly if m["key"] == cur_key), None)
+    sla_min = int(org.get("control_assurance_sla_min") or 90)
+    sla_enabled = bool(org.get("control_assurance_sla_enabled", False))
+    cur_rate = cur["pass_rate"] if cur else None
+    breached = bool(sla_enabled and cur_rate is not None and cur_rate < sla_min)
     return {"monthly": monthly, "total": total, "controlled": controlled,
             "pass_rate": round(100 * controlled / total) if total else None, "streak": streak,
             "avg_suspend_ms": round(sum(all_sus) / len(all_sus)) if all_sus else None,
             "avg_resume_ms": round(sum(all_res) / len(all_res)) if all_res else None,
             "last_at": drills[0]["at"] if drills else None,
             "scheduled_count": sum(1 for d in drills if d.get("scheduled")),
+            "sla": {"enabled": sla_enabled, "min": sla_min, "current_rate": cur_rate, "breached": breached},
             "recent": drills[:15]}
+
+
+@agents_router.get("/runtime/control-assurance")
+async def control_assurance(admin: dict = Depends(require_roles("admin"))):
+    return await _compute_control_assurance(admin["org_id"])
+
+
+@agents_router.get("/runtime/control-assurance-report.pdf")
+async def control_assurance_report(admin: dict = Depends(require_roles("admin"))):
+    """Board-ready, sealed Control Assurance report — the monthly kill-switch pass-rate trend as a branded PDF."""
+    import json as _json, hashlib as _hl
+    from io import BytesIO
+    from datetime import datetime, timezone
+    from fastapi.responses import StreamingResponse
+    from reports import _build_pdf
+    from agent_reports import _control_assurance_chart_page, _stamp_verified_seal
+    from bson import ObjectId
+    d = await _compute_control_assurance(admin["org_id"])
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}, {"name": 1}) or {}
+    now = datetime.now(timezone.utc)
+    EMD = "\u2014"
+    prtxt = EMD if d["pass_rate"] is None else f"{d['pass_rate']}%"
+    lines = ["## Kill-Switch Control Assurance",
+             f"Generated {now.strftime('%B %d, %Y %H:%M UTC')} \u00b7 proof-of-control pass rate {prtxt} across {d['total']} fire-drill(s) "
+             f"\u00b7 current confirmed streak {d['streak']}.",
+             f"Average enforcement dispatch: suspend {d['avg_suspend_ms'] or EMD} ms, resume {d['avg_resume_ms'] or EMD} ms.", ""]
+    if d["sla"]["enabled"]:
+        cr = "\u2014" if d["sla"]["current_rate"] is None else f"{d['sla']['current_rate']}%"
+        lines += [f"SLA: minimum {d['sla']['min']}% \u2014 this month {cr} ({'BREACHED' if d['sla']['breached'] else 'within SLA'}).", ""]
+    lines.append("## Monthly pass rate")
+    for m in d["monthly"]:
+        row = "no drills" if m["pass_rate"] is None else f"{m['pass_rate']}% ({m['controlled']}/{m['drills']})"
+        if m["avg_suspend_ms"] is not None:
+            row += f" \u00b7 suspend {m['avg_suspend_ms']}ms \u00b7 resume {m['avg_resume_ms']}ms"
+        lines.append(f"{m['month']}: {row}")
+    lines += ["", "## Recent fire-drills"]
+    for r in d["recent"][:12]:
+        lines.append(f"{(r.get('at') or '')[:16].replace('T', ' ')} \u2014 {r.get('agent_name')} ({r.get('agent_ref')}): "
+                     f"{'CONTROL CONFIRMED' if r.get('controlled') else 'NOT CONFIRMED'} \u00b7 suspend {r.get('suspend_ms')}ms "
+                     f"\u00b7 resume {r.get('resume_ms')}ms \u00b7 {'signed' if r.get('signed') else 'unsigned'}")
+    seal = _hl.sha256(_json.dumps(d, sort_keys=True, default=str).encode()).hexdigest()
+    buf = _build_pdf("\n".join(lines), "Control Assurance Report", cover=True, org_name=org.get("name"),
+                     exec_summary=f"Kill-switch reliability {prtxt} over {d['total']} fire-drill(s) \u2014 "
+                                  f"{d['controlled']} control-confirmed, current streak {d['streak']}.")
+    pdf = buf.getvalue()
+    page = _control_assurance_chart_page(d["monthly"])
+    if page:
+        from pypdf import PdfReader, PdfWriter
+        w = PdfWriter()
+        for p in PdfReader(BytesIO(pdf)).pages:
+            w.add_page(p)
+        for p in PdfReader(BytesIO(page)).pages:
+            w.add_page(p)
+        o = BytesIO(); w.write(o); pdf = o.getvalue()
+    pdf = _stamp_verified_seal(pdf, seal)
+    stamp = now.strftime("%Y%m%d-%H%M")
+    return StreamingResponse(BytesIO(pdf), media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="obserra-control-assurance-{stamp}.pdf"'})
 
 
 async def _run_scheduled_fire_drills():
@@ -628,6 +696,44 @@ async def _run_scheduled_fire_drills():
                 continue
             await _run_fire_drill(oid, "cron:fire-drill", ref, notify=True, scheduled=True)
             await db.organizations.update_one({"_id": org["_id"]}, {"$set": {"fire_drill_last_run": ym}})
+        except Exception:
+            pass
+
+
+async def _run_control_assurance_sla_check():
+    """Daily cron: alert (chat + email) once per month if this month's kill-switch pass rate dips below the org's SLA."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    ym = now.strftime("%Y-%m")
+    orgs = await db.organizations.find({"control_assurance_sla_enabled": True}).to_list(1000)
+    for org in orgs:
+        try:
+            oid = str(org["_id"])
+            if org.get("control_assurance_sla_last_alert") == ym:
+                continue
+            d = await _compute_control_assurance(oid)
+            if not d["sla"]["breached"]:
+                continue
+            rate, mn = d["sla"]["current_rate"], d["sla"]["min"]
+            title = f"\u26a0\ufe0f Control Assurance SLA breach \u2014 {rate}% (min {mn}%)"
+            body = (f"This month's kill-switch proof-of-control pass rate is {rate}%, below the {mn}% SLA. "
+                    f"Run a fire-drill and check agent-runtime connectivity.")
+            try:
+                from self_scan import _post_chat_alert
+                await _post_chat_alert(oid, title, body)
+            except Exception:
+                pass
+            recips = org.get("board_digest_recipients") or [
+                u["email"] for u in await db.users.find(
+                    {"org_id": oid, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200) if u.get("email")]
+            html = (f"<div style='font-family:Arial;max-width:560px'><h2 style='color:#dc2626'>Control Assurance SLA breach</h2>"
+                    f"<p style='font:400 14px Arial;color:#374151'>{body}</p></div>")
+            for em in recips:
+                try:
+                    await notifications.send_email(em, title, html)
+                except Exception:
+                    pass
+            await db.organizations.update_one({"_id": org["_id"]}, {"$set": {"control_assurance_sla_last_alert": ym}})
         except Exception:
             pass
 
@@ -1426,6 +1532,8 @@ class GovSettingsBody(BaseModel):
     fire_drill_enabled: bool | None = None
     fire_drill_day: int | None = None
     fire_drill_agent_ref: str | None = None
+    control_assurance_sla_enabled: bool | None = None
+    control_assurance_sla_min: int | None = None
 
 
 @agents_router.get("/runtime/governance-settings")
@@ -1444,7 +1552,9 @@ async def get_governance_settings(admin: dict = Depends(require_roles("admin")))
             "auditor_oncall_rotation": org.get("auditor_oncall_rotation") or [],
             "fire_drill_enabled": bool(org.get("fire_drill_enabled", False)),
             "fire_drill_day": int(org.get("fire_drill_day") or 1),
-            "fire_drill_agent_ref": org.get("fire_drill_agent_ref") or ""}
+            "fire_drill_agent_ref": org.get("fire_drill_agent_ref") or "",
+            "control_assurance_sla_enabled": bool(org.get("control_assurance_sla_enabled", False)),
+            "control_assurance_sla_min": int(org.get("control_assurance_sla_min") or 90)}
 
 
 @agents_router.put("/runtime/governance-settings")
@@ -1484,6 +1594,10 @@ async def set_governance_settings(body: GovSettingsBody, admin: dict = Depends(r
         upd["fire_drill_day"] = max(1, min(28, int(body.fire_drill_day)))
     if body.fire_drill_agent_ref is not None:
         upd["fire_drill_agent_ref"] = (body.fire_drill_agent_ref or "").strip()
+    if body.control_assurance_sla_enabled is not None:
+        upd["control_assurance_sla_enabled"] = bool(body.control_assurance_sla_enabled)
+    if body.control_assurance_sla_min is not None:
+        upd["control_assurance_sla_min"] = max(1, min(100, int(body.control_assurance_sla_min)))
     if upd:
         await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": upd})
     await _log_audit(admin["org_id"], admin["email"], "agent.governance_settings", "Updated AI governance settings")

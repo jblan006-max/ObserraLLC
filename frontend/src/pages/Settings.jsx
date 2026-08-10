@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { api, API } from "@/lib/api";
 import { toast } from "sonner";
-import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw, Image as ImageIcon, Server, Package, FileText, RefreshCw, Send, Bookmark, X, Lock, Sparkles } from "lucide-react";
+import { Settings as SettingsIcon, Loader2, Mail, Compass, PlayCircle, Users, RotateCcw, Image as ImageIcon, Server, Package, FileText, RefreshCw, Send, Bookmark, X, Lock, Sparkles, MessageSquare } from "lucide-react";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { SsoCard } from "@/components/SsoCard";
 import { RuntimeConnectorCard } from "@/components/RuntimeConnectorCard";
@@ -12,6 +12,53 @@ const OPTIONS = [
   { value: "daily", label: "Daily", desc: "A digest every morning" },
   { value: "off", label: "Off", desc: "No digest emails" },
 ];
+
+function ChatAlertsCard() {
+  const [st, setSt] = useState(null);
+  const [teams, setTeams] = useState("");
+  const [slack, setSlack] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const load = () => api.get("/self-scan/alerts").then(({ data }) => setSt(data)).catch(() => {});
+  useEffect(() => { load(); }, []);
+  const saveAlerts = async () => {
+    if (!teams && !slack) { toast.error("Paste a Slack or Teams webhook URL first."); return; }
+    setBusy(true);
+    try { await api.put("/self-scan/alerts", { teams_url: teams || undefined, slack_url: slack || undefined }); setTeams(""); setSlack(""); load(); toast.success("Chat webhook saved — proof-of-control posts will start flowing."); }
+    catch (e) { toast.error(e.response?.data?.detail || "Could not save"); }
+    setBusy(false);
+  };
+  const test = async () => {
+    setTesting(true);
+    try { await api.post("/self-scan/alerts/test"); toast.success("Test alert sent to your channel."); }
+    catch (e) { toast.error(e.response?.data?.detail || "Could not send test"); }
+    setTesting(false);
+  };
+  return (
+    <div className="bg-card fact-border rounded-xl p-6 space-y-4" data-testid="chat-alerts-settings">
+      <div className="flex items-center gap-2"><MessageSquare className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Slack / Teams Alerts</h2></div>
+      <p className="text-sm text-muted-foreground">Paste an incoming-webhook URL and Obserra posts governance events — including every kill-switch fire-drill proof-of-control receipt and Control Assurance SLA breaches — straight to your channel.</p>
+      <div className="space-y-3">
+        <div>
+          <label className="text-xs text-muted-foreground">Slack incoming webhook{st?.slack_url_set && <span className="text-low"> · configured ({st.slack_masked})</span>}</label>
+          <input data-testid="alerts-slack-url" value={slack} onChange={(e) => setSlack(e.target.value)} placeholder="https://hooks.slack.com/services/…"
+            className="mt-1 w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary" />
+        </div>
+        <div>
+          <label className="text-xs text-muted-foreground">Microsoft Teams webhook{st?.teams_url_set && <span className="text-low"> · configured ({st.teams_masked})</span>}</label>
+          <input data-testid="alerts-teams-url" value={teams} onChange={(e) => setTeams(e.target.value)} placeholder="https://outlook.office.com/webhook/…"
+            className="mt-1 w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary" />
+        </div>
+      </div>
+      <div className="flex items-center gap-3 flex-wrap">
+        <button data-testid="alerts-save" disabled={busy} onClick={saveAlerts} className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">{busy && <Loader2 className="w-4 h-4 animate-spin" />} Save webhook</button>
+        {(st?.slack_url_set || st?.teams_url_set) && (
+          <button data-testid="alerts-test" disabled={testing} onClick={test} className="px-5 py-2.5 rounded-md border border-primary/40 text-foreground hover:bg-primary/10 font-head font-bold text-sm flex items-center gap-2 disabled:opacity-50">{testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4 text-primary" />} Send test alert</button>
+        )}
+      </div>
+    </div>
+  );
+}
 
 export default function Settings() {
   const { user, setUser } = useAuth();
@@ -480,6 +527,8 @@ export default function Settings() {
       )}
 
       {isAdmin && <RuntimeConnectorCard />}
+
+      {isAdmin && <ChatAlertsCard />}
 
       {isAdmin && (
         <div className="bg-card fact-border rounded-xl p-6 space-y-4" data-testid="deployment-docs-settings">

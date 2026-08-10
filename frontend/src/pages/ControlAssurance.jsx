@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import { Panel } from "@/components/agentic-ai/shared";
 import { toast } from "sonner";
-import { Gauge, ShieldCheck, XCircle, Timer, Flame, RefreshCw, Loader2, TrendingUp } from "lucide-react";
+import { Gauge, ShieldCheck, XCircle, Timer, Flame, RefreshCw, Loader2, TrendingUp, FileDown, AlertTriangle } from "lucide-react";
 import { BarChart, Bar, LineChart, Line, ResponsiveContainer, XAxis, YAxis, Tooltip, CartesianGrid, Cell } from "recharts";
 
 const fmtDTT = (s) => (s ? new Date(s).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—");
@@ -31,6 +31,27 @@ export default function ControlAssurance() {
   };
   useEffect(() => { load(); }, []);
 
+  const [exporting, setExporting] = useState(false);
+  const exportReport = async () => {
+    setExporting(true);
+    try {
+      const res = await api.get("/agents/runtime/control-assurance-report.pdf", { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a"); a.href = url; a.download = "obserra-control-assurance.pdf"; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not export report"); }
+    setExporting(false);
+  };
+  const [sla, setSla] = useState({ enabled: false, min: 90 });
+  const [slaBusy, setSlaBusy] = useState(false);
+  useEffect(() => { if (d?.sla) setSla({ enabled: d.sla.enabled, min: d.sla.min }); }, [d]);
+  const saveSla = async () => {
+    setSlaBusy(true);
+    try { await api.put("/agents/runtime/governance-settings", { control_assurance_sla_enabled: sla.enabled, control_assurance_sla_min: Number(sla.min) || 90 }); toast.success("SLA saved"); load(); }
+    catch (e) { toast.error(e.response?.data?.detail || "Save failed"); }
+    setSlaBusy(false);
+  };
+
   const monthly = d?.monthly || [];
   const passRate = d?.pass_rate;
 
@@ -44,9 +65,14 @@ export default function ControlAssurance() {
           </div>
           <p className="text-sm text-muted-foreground mt-1 max-w-2xl">Kill-switch reliability over time — your monthly proof-of-control pass rate and enforcement response times, computed live from every fire-drill. Prove to the board that your agent kill-switches actually fire.</p>
         </div>
-        <button data-testid="ca-refresh" onClick={load} disabled={loading} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border text-xs font-head font-bold hover:bg-secondary transition-colors disabled:opacity-50">
-          {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <button data-testid="ca-export" onClick={exportReport} disabled={exporting || !d || d.total === 0} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-ai/40 text-ai text-xs font-head font-bold hover:bg-ai/10 transition-colors disabled:opacity-50">
+            {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />} Export report
+          </button>
+          <button data-testid="ca-refresh" onClick={load} disabled={loading} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border text-xs font-head font-bold hover:bg-secondary transition-colors disabled:opacity-50">
+            {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Refresh
+          </button>
+        </div>
       </div>
 
       {loading && !d ? (
@@ -69,6 +95,19 @@ export default function ControlAssurance() {
             <Tile label="Avg suspend" value={d.avg_suspend_ms == null ? "—" : `${d.avg_suspend_ms}ms`} sub={d.avg_resume_ms == null ? "" : `resume ${d.avg_resume_ms}ms`} Icon={Timer} iconClass="text-high" />
             <Tile label="Total drills" value={d.total} sub={`${d.scheduled_count} scheduled · last ${fmtDTT(d.last_at)}`} Icon={Flame} iconClass="text-crit" />
           </div>
+
+          {d.sla?.breached && (
+            <div data-testid="ca-sla-breach" className="rounded-lg border border-crit/40 bg-crit/10 p-3 flex items-center gap-2 text-sm text-crit">
+              <AlertTriangle className="w-4 h-4 shrink-0" /> This month's pass rate ({d.sla.current_rate}%) is below your {d.sla.min}% SLA.
+            </div>
+          )}
+          <Panel title="Pass-rate SLA" subtitle="Get alerted (chat + email) the moment a month's kill-switch pass rate dips below your minimum." testid="ca-sla">
+            <div className="flex flex-wrap items-end gap-4">
+              <label className="flex items-center gap-2 cursor-pointer"><input data-testid="ca-sla-enabled" type="checkbox" checked={sla.enabled} onChange={(e) => setSla({ ...sla, enabled: e.target.checked })} className="w-4 h-4 accent-ai" /><span className="text-sm">Enable SLA alerts</span></label>
+              <label className="block"><span className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Minimum pass rate (%)</span><input data-testid="ca-sla-min" type="number" min={1} max={100} value={sla.min} onChange={(e) => setSla({ ...sla, min: e.target.value })} className="mt-1.5 w-28 bg-secondary/60 rounded-md px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" /></label>
+              <button data-testid="ca-sla-save" onClick={saveSla} disabled={slaBusy} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">{slaBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />} Save SLA</button>
+            </div>
+          </Panel>
 
           <Panel title="Monthly proof-of-control pass rate" subtitle="Percentage of kill-switch fire-drills that confirmed control, per month." testid="ca-passrate">
             <div style={{ height: 260 }} data-testid="ca-passrate-chart">

@@ -1,6 +1,10 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — P0 fix: Deep Dive detail card crash (iteration_104, frontend 100%)
+The app-wide "Action Detail Card" (`RiskDetailModal`, mounted once via `DeepDiveContext`) was crashing with a ReferenceError because the prior unification edit referenced `deriveConnectors()` and `CONN_TONE` without ever defining them. Defined both at the top of `RiskDetailModal.jsx`: `CONN_TONE` (status→HSL: ok/healthy=green, warn/action-capable/degraded=amber, down/unavailable=red, unknown=grey) and `deriveConnectors(item)` (prefers `item.connectors`, else derives from provider/sources/tools/resources so EVERY detail card shows a "Connectors & data sources" section). testing_agent iteration_104: modal opens with no ReferenceError across AI Executive Overview, Mission Control, and Agent Inventory; all 6 required sections render (Risk+Rating score, Connectors w/ live health colors, AI Strategic Brief, Recommendations & fixes, facets, compliance alignment); zero console errors. Open OPTIONAL polish only: `ca-recent-*` rows on Control Assurance are non-interactive; no `overview-incident-*` seed present to exercise the incident row path (modal is source-agnostic so path is covered).
+
+
 ## Status (Jun 2026) — Kill-switch assurance suite (iteration_102, 4/4): drill trend sparkline, Proof-Link QR, Slack/Teams proof post, Control Assurance page
 Third 4-item batch ("all"), all live/no-mock:
 - **Drill Trend Chart**: `KillReplayDrillCard` trend block — control-confirmed rate + avg suspend/resume + recharts sparkline + link to Control Assurance.

@@ -1,11 +1,45 @@
 import { useState } from "react";
-import { X, Loader2, Wrench, ShieldX, Users, CheckCircle2, XCircle, Clock, Terminal, ShieldCheck, ListPlus } from "lucide-react";
+import { X, Loader2, Wrench, ShieldX, Users, CheckCircle2, XCircle, Clock, Terminal, ShieldCheck, ListPlus, Plug } from "lucide-react";
 import { AIExplain } from "@/components/AIExplain";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 
 const RATE = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 90% 55%", Low: "142 70% 45%" };
 const money = (n) => n == null ? "—" : n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M` : n >= 1e3 ? `$${Math.round(n / 1e3)}k` : `$${Math.round(n || 0)}`;
+
+// Connector status → color. Live/healthy = green, action-capable/degraded = amber, down = red, unknown = grey.
+const CONN_TONE = {
+  ok: "142 70% 45%", healthy: "142 70% 45%", connected: "142 70% 45%", live: "142 70% 45%", verified: "142 70% 45%",
+  warn: "35 90% 55%", degraded: "35 90% 55%", "action-capable": "35 90% 55%", pending: "35 90% 55%",
+  down: "0 84% 60%", unavailable: "0 84% 60%", error: "0 84% 60%", killed: "0 84% 60%", unreachable: "0 84% 60%",
+};
+
+// The connectors / data sources an item is wired to. Prefers the item's own `connectors`
+// (set by agentic deep-dives with live health); otherwise derives them from whatever
+// source-shaped fields the dashboard's item carries, so EVERY detail card shows connectors.
+function deriveConnectors(item = {}) {
+  if (Array.isArray(item.connectors) && item.connectors.length) {
+    return item.connectors.filter(Boolean).map((c) =>
+      typeof c === "string" ? { name: c } : { name: c.name || c.label || String(c), status: c.status, detail: c.detail }
+    );
+  }
+  const out = [];
+  const seen = new Set();
+  const push = (name, detail, status) => {
+    if (!name) return;
+    const key = String(name).toLowerCase();
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ name: String(name), detail, status });
+  };
+  if (item.provider) push(item.provider, "provider");
+  (Array.isArray(item.sources) ? item.sources : item.source ? [item.source] : []).forEach((s) =>
+    push(typeof s === "string" ? s : s?.name, "source", typeof s === "object" ? s?.status : undefined));
+  (item.tools || []).forEach((t) => push(typeof t === "string" ? t : t?.name, "tool"));
+  (item.resources || item.dataStores || item.data_flows || []).forEach((r) =>
+    push(typeof r === "string" ? r : r?.name, "data store"));
+  return out;
+}
 
 // Honest outcome panel — reflects the REAL backend verification (never a fake success).
 // verified → green Remediated; In Progress → amber sandbox-verifying; else → red not-applied
@@ -170,6 +204,7 @@ export function RiskDetailModal({ item, accent = "255 85% 66%", busy, result, on
           {item.score != null && <span className="text-xs font-mono px-3 py-1 rounded-full bg-secondary/70">Score {item.score}/100</span>}
           {item.ale != null && <span className="text-xs font-mono font-bold px-3 py-1 rounded-full" style={{ background: "hsl(15 80% 55% / 0.15)", color: "hsl(15 80% 55%)" }}>ALE {money(item.ale)}</span>}
           {item.exceedsAppetite && <span className="text-xs font-mono px-3 py-1 rounded-full bg-crit/15 text-crit">⚠ Exceeds appetite</span>}
+          {item.rating == null && item.score == null && item.ale == null && <span data-testid="deep-dive-unscored" className="text-xs font-mono px-3 py-1 rounded-full bg-secondary/70 text-muted-foreground">Not yet scored</span>}
         </div>
 
         {/* Compliance alignment — always shown so every deep-dive maps risk → controls */}
@@ -200,18 +235,48 @@ export function RiskDetailModal({ item, accent = "255 85% 66%", busy, result, on
           ))}
         </div>
 
+        {/* Connectors & data sources this item is wired to — live health where available */}
+        {(() => {
+          const conns = deriveConnectors(item);
+          return (
+            <div data-testid="deep-dive-connectors">
+              <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1.5"><Plug className="w-3 h-3" /> Connectors &amp; data sources</div>
+              {conns.length === 0 ? (
+                <p className="text-[11px] text-muted-foreground">No connected sources recorded for this item.</p>
+              ) : (
+                <div className="flex flex-wrap gap-1.5">
+                  {conns.map((c, i) => {
+                    const tone = c.status ? (CONN_TONE[String(c.status).toLowerCase()] || "215 15% 60%") : "215 15% 60%";
+                    return (
+                      <span key={`${c.name}-${i}`} data-testid={`deep-dive-connector-${i}`}
+                        className="inline-flex items-center gap-1.5 text-[11px] font-mono px-2.5 py-1 rounded-full border"
+                        style={{ borderColor: `hsl(${tone} / 0.4)`, background: `hsl(${tone} / 0.1)` }} title={c.detail || ""}>
+                        {c.status && <span className="w-1.5 h-1.5 rounded-full" style={{ background: `hsl(${tone})` }} />}
+                        <span className="text-foreground/90">{c.name}</span>
+                        {c.detail && <span className="text-muted-foreground">· {c.detail}</span>}
+                      </span>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* AI Strategic Brief — grounded in the unified correlation model */}
         <AIExplain title={item.explainTitle || item.title} kind={item.explainKind || "deep-dive"} context={item.explainContext || {}} accent={accent} />
 
-        {/* Recommended Actions (deterministic fallback / fix path) */}
-        {item.recommendedActions?.length > 0 && (
-          <div>
-            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1">Recommended actions</div>
-            <ul className="space-y-1">
-              {item.recommendedActions.map((s, i) => <li key={i} className="text-[12px] flex items-start gap-2"><span style={{ color: `hsl(${accent})` }}>→</span> {s}</li>)}
-            </ul>
-          </div>
-        )}
+        {/* Recommendations & fixes — grounded guidance / fix path (always present) */}
+        <div data-testid="deep-dive-recommendations">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1">Recommendations &amp; fixes</div>
+          <ul className="space-y-1">
+            {(item.recommendedActions && item.recommendedActions.length
+              ? item.recommendedActions
+              : ["Review this item's risk drivers and connectors above.",
+                 "Apply a governance action below or add it to the remediation plan to track the fix."]
+            ).map((s, i) => <li key={i} className="text-[12px] flex items-start gap-2"><span style={{ color: `hsl(${accent})` }}>→</span> {s}</li>)}
+          </ul>
+        </div>
         {item.fixScript && (
           <div>
             <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1"><Terminal className="w-3 h-3" /> Automated fix script</div>

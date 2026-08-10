@@ -151,6 +151,50 @@ def _digest_trend_page(monthly):
         return b""
 
 
+def _control_assurance_chart_page(monthly):
+    """One-page LETTER PDF: monthly kill-switch proof-of-control pass-rate bar chart. Returns b'' if no data."""
+    try:
+        from io import BytesIO
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import LETTER
+        from reportlab.lib import colors
+        from reportlab.lib.units import inch
+        from reportlab.graphics.shapes import Drawing
+        from reportlab.graphics.charts.barcharts import VerticalBarChart
+        from reportlab.graphics import renderPDF
+        if not any(m.get("pass_rate") is not None for m in (monthly or [])):
+            return b""
+        labels = [m["month"] for m in monthly]
+        vals = [m.get("pass_rate") if m.get("pass_rate") is not None else 0 for m in monthly]
+        W, H = LETTER
+        buf = BytesIO()
+        c = canvas.Canvas(buf, pagesize=LETTER)
+        c.setFillColor(colors.HexColor("#0f1e3d")); c.setFont("Helvetica-Bold", 16)
+        c.drawString(0.9 * inch, H - 1.0 * inch, "Kill-Switch Control Assurance \u2014 Monthly Pass Rate")
+        c.setFillColor(colors.grey); c.setFont("Helvetica", 9)
+        c.drawString(0.9 * inch, H - 1.22 * inch, "Percentage of kill-switch fire-drills that confirmed control, per month.")
+        d = Drawing(470, 250)
+        bc = VerticalBarChart()
+        bc.x = 46; bc.y = 36; bc.width = 380; bc.height = 180
+        bc.data = [vals]
+        bc.categoryAxis.categoryNames = labels
+        bc.categoryAxis.labels.fontSize = 8
+        bc.valueAxis.valueMin = 0; bc.valueAxis.valueMax = 100; bc.valueAxis.valueStep = 25
+        bc.valueAxis.labels.fontSize = 8
+        for i, v in enumerate(vals):
+            col = "#16a34a" if v >= 90 else "#d97706" if v >= 60 else "#dc2626"
+            bc.bars[(0, i)].fillColor = colors.HexColor(col)
+        d.add(bc)
+        renderPDF.draw(d, c, 0.9 * inch, H - 5.0 * inch)
+        c.setFillColor(colors.grey); c.setFont("Helvetica", 7.5)
+        c.drawString(0.9 * inch, 0.7 * inch,
+                     "Obserra \u2014 Agentic AI Security Control & Governance \u00b7 computed from the live fire-drill ledger.")
+        c.showPage(); c.save()
+        return buf.getvalue()
+    except Exception:
+        return b""
+
+
 async def _build_board_digest(org):
     import base64
     from datetime import datetime, timezone, timedelta
