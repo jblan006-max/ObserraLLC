@@ -1,6 +1,17 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Session closed by user ("close this one out its good")
+App verified healthy: backend + frontend RUNNING, `/api/health` 200 (external + local). No new code changes made this session.
+**PENDING (user-approved msg 184, NOT yet implemented)** — 4-feature batch to resume next session:
+1. **Digest Schedule Choice** — admin-picked weekly digest day + UTC time (replace fixed Mon 08:00). Files: `agents.py` (`GovSettingsBody` add `audit_digest_day`/`audit_digest_time`, GET/PUT `/governance-settings`), `DefensibilityDashboard.jsx` (schedule pickers + payload), `scheduled.py` / `_run_audit_digest` (self-gate to configured day/hour instead of hardcoded).
+2. **Structured Audit Meta** — add `meta` dict param to `_log_audit` (auth.py L150) defaulting to `{}`; pass structured meta from snooze (`agents.py` ~L2734) and trust-link (`~L2929 agent.trust_link_used`) callers.
+3. **Auto-Resume Notice** — hourly cron (fold into `hourly-overdue-digest` in `scheduled.py` L444) to find orgs whose `snooze_alerts_until` just expired → email the admin who snoozed → clear state.
+4. **Exec Mute Badge Tooltip** — in `AIExecutiveOverview.jsx` MuteBadge, fetch latest `agent.alerts_snoozed` audit entry to show "who muted & when" in the tooltip.
+⚠️ FORK HAZARD (recurring 15+): `agents.py` >3500 lines — never trust batched `search_replace`; grep-verify every edit stuck.
+
+
+
 ## Status (Jun 2026) — Trust Link Audit + Snooze Reason Required + Digest PDF Preview + Exec Mute Badge (iteration_119, backend 7/7 pytest + frontend 100%)
 User-approved 4-feature batch, all live/no-mock:
 - **Trust Link Audit**: `apply_trust_suggestion` now also writes a distinct `agent.trust_link_used` audit entry (actor + value + "link minted <ts>"). Audit Log page gained a `audit-trustlinks-filter` chip (action contains "trust_link") alongside the existing "Trusted rule changes" chip.
