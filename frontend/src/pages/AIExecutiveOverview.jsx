@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
+import { APP_VERSION_LABEL } from "@/version";
 import {
   AlertOctagon, ArrowRight, Bot, EyeOff, Gauge, ShieldAlert, ShieldCheck, Wrench, Zap,
 } from "lucide-react";
@@ -170,7 +171,7 @@ export default function AIExecutiveOverview() {
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="font-head font-black text-3xl tracking-tight">Executive Overview</h1>
             <span className="px-2 py-1 rounded-full border border-ai/25 bg-ai/10 text-ai text-[10px] font-mono">CONTROL INTELLIGENCE ROLLUP</span>
-            <span data-testid="overview-version-badge" className="px-2 py-1 rounded-full border border-border bg-secondary/60 text-muted-foreground text-[10px] font-mono font-bold">v1</span>
+            <span data-testid="overview-version-badge" className="px-2 py-1 rounded-full border border-border bg-secondary/60 text-muted-foreground text-[10px] font-mono font-bold">{APP_VERSION_LABEL}</span>
             <GoLiveBadge />
             {isAdmin && <ControlAssuranceBadge />}
             <AssuranceActivityBadge />

@@ -6,6 +6,7 @@ import {
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { DataClassBadge, Panel } from "@/components/control-intelligence/shared";
+import { APP_VERSION_LABEL } from "@/version";
 
 const SOURCE_LABEL = {
   controls: "Control Monitoring",
@@ -107,6 +108,9 @@ function BriefSettingsCard() {
   const [digestCadence, setDigestCadence] = useState("monthly");
   const [digestBusy, setDigestBusy] = useState(false);
   const [digestHistory, setDigestHistory] = useState(null);
+  const [showDigestRecipients, setShowDigestRecipients] = useState(false);
+  const [showTeamPicker, setShowTeamPicker] = useState(false);
+  const [teamMembers, setTeamMembers] = useState([]);
   const [showRecapRecipients, setShowRecapRecipients] = useState(false);
 
   const refreshDemoStatus = () =>
@@ -222,6 +226,25 @@ function BriefSettingsCard() {
     } catch (e) {
       toast.error(e.response?.data?.detail || "Unable to load your team roster.");
     }
+  };
+
+  const openTeamPicker = async () => {
+    if (!showTeamPicker) {
+      try {
+        const { data } = await api.get("/auth/team/members");
+        setTeamMembers((data || []).filter((m) => m.email));
+      } catch (e) {
+        toast.error(e.response?.data?.detail || "Unable to load your team roster.");
+        return;
+      }
+    }
+    setShowTeamPicker((v) => !v);
+  };
+
+  const addTeamMember = (email, role) => {
+    const em = email.toLowerCase();
+    setRecipients((list) => (list.some((r) => r.email === em) ? list : [...list, { email: em, role }]));
+    toast.success(`Added ${em} as ${role === "auditor" ? "Auditor" : "Board"} — remember to Save.`);
   };
 
   const removeRecipient = (email) => setRecipients((list) => list.filter((item) => item.email !== email));
@@ -497,7 +520,48 @@ function BriefSettingsCard() {
               >
                 Add my execs
               </button>
+              <button
+                onClick={openTeamPicker}
+                data-testid="ci-team-picker-toggle"
+                title="Pick specific team members and add each as a Board or Auditor recipient"
+                className="px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold"
+              >
+                {showTeamPicker ? "Hide team" : "Pick from team"}
+              </button>
             </div>
+            {showTeamPicker && (
+              <div data-testid="ci-team-picker" className="mt-2 border border-border rounded-md p-2 space-y-1 bg-secondary/20">
+                <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1 flex items-center gap-1.5">
+                  Add specific people from your team — choose a role each
+                  <span data-testid="ci-team-picker-version" className="px-1.5 py-0.5 rounded-full border border-border bg-secondary/40 text-[8px] font-head font-bold text-muted-foreground normal-case tracking-normal">{APP_VERSION_LABEL}</span>
+                </div>
+                {teamMembers.length === 0 ? (
+                  <div className="text-[11px] text-muted-foreground">No team members found.</div>
+                ) : (
+                  teamMembers.map((m) => {
+                    const email = (m.email || "").toLowerCase();
+                    const added = recipients.some((r) => r.email === email);
+                    return (
+                      <div key={email} data-testid={`ci-team-member-${email}`} className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="truncate">
+                          {m.name ? `${m.name} · ` : ""}
+                          <span className="font-mono text-muted-foreground">{email}</span>
+                          <span className="ml-1 text-[9px] uppercase text-muted-foreground">{m.role}</span>
+                        </span>
+                        {added ? (
+                          <span className="text-[10px] text-low font-head font-bold shrink-0">Added</span>
+                        ) : (
+                          <span className="flex items-center gap-1 shrink-0">
+                            <button onClick={() => addTeamMember(email, "board")} data-testid={`ci-team-add-board-${email}`} className="px-2 py-0.5 rounded border border-border text-[10px] font-head font-bold hover:bg-secondary">+ Board</button>
+                            <button onClick={() => addTeamMember(email, "auditor")} data-testid={`ci-team-add-auditor-${email}`} className="px-2 py-0.5 rounded border border-ai/40 bg-ai/10 text-ai text-[10px] font-head font-bold">+ Auditor</button>
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            )}
           </div>
 
           <div className="grid sm:grid-cols-3 gap-4">
@@ -787,7 +851,10 @@ function BriefSettingsCard() {
 
             <div className="mt-4 border-t border-border pt-3" data-testid="ci-recap-panel">
               <div className="flex items-center justify-between mb-2">
-                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Weekly assurance recap</div>
+                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  Weekly assurance recap
+                  <span data-testid="ci-recap-version" className="px-1.5 py-0.5 rounded-full border border-border bg-secondary/40 text-[8px] font-head font-bold text-muted-foreground normal-case tracking-normal">{APP_VERSION_LABEL}</span>
+                </div>
                 <div className="flex items-center gap-2">
                   <button onClick={previewRecap} data-testid="ci-recap-preview" className="text-[10px] font-mono text-muted-foreground hover:text-foreground">Preview</button>
                   <button onClick={loadHistory} data-testid="ci-recap-history-btn" className="text-[10px] font-mono text-muted-foreground hover:text-foreground">History</button>
@@ -877,7 +944,10 @@ function BriefSettingsCard() {
 
             <div className="mt-4 border-t border-border pt-3" data-testid="ci-digest-panel">
               <div className="flex items-center justify-between mb-2">
-                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Monthly assurance digest</div>
+                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                  Monthly assurance digest
+                  <span data-testid="ci-digest-version" className="px-1.5 py-0.5 rounded-full border border-border bg-secondary/40 text-[8px] font-head font-bold text-muted-foreground normal-case tracking-normal">{APP_VERSION_LABEL}</span>
+                </div>
                 <div className="flex items-center gap-2">
                   <button onClick={loadDigestHistory} data-testid="ci-digest-history-btn" className="text-[10px] font-mono text-muted-foreground hover:text-foreground">History</button>
                   <button onClick={sendDigest} disabled={digestBusy} data-testid="ci-digest-send" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-ai/40 bg-ai/10 text-ai text-[10px] font-head font-bold disabled:opacity-50">
@@ -923,6 +993,33 @@ function BriefSettingsCard() {
                 <span className="text-[10px] text-muted-foreground">{digestCadence === "quarterly" ? "of Jan / Apr / Jul / Oct" : "of each month"} · to board &amp; auditor recipients + admins · save to apply</span>
               </div>
               <div className="text-[11px] text-muted-foreground">A board-ready monthly email — with a branded, sealed PDF attached — rolling up 30 days of control effectiveness, framework readiness and external auditor engagement.</div>
+              {counts && (
+                <div className="mt-2" data-testid="ci-digest-recipients">
+                  <button
+                    onClick={() => setShowDigestRecipients((v) => !v)}
+                    data-testid="ci-digest-recipients-toggle"
+                    className="text-[10px] font-mono text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+                  >
+                    <Users className="w-3 h-3" />
+                    {(counts.recap_recipients || []).length} recipient(s) will receive this digest
+                    <span className="underline">{showDigestRecipients ? "hide" : "show"}</span>
+                  </button>
+                  {showDigestRecipients && (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5" data-testid="ci-digest-recipient-list">
+                      {(counts.recap_recipients || []).length === 0 ? (
+                        <span className="text-[10px] text-muted-foreground">No recipients configured — add board / auditor recipients above.</span>
+                      ) : (
+                        (counts.recap_recipients || []).map((em) => (
+                          <span key={em} data-testid={`ci-digest-recipient-${em}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-border bg-secondary/40 text-[10px] font-mono">
+                            <Mail className="w-2.5 h-2.5 text-muted-foreground" />
+                            {em}
+                          </span>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               {digestHistory && digestHistory.length > 0 && (
                 <div data-testid="ci-digest-history" className="mt-2 space-y-1 border-t border-border/50 pt-2">
                   <div className="text-[9px] font-mono uppercase text-muted-foreground">Recent digests sent</div>

@@ -12,6 +12,7 @@ import { Footer } from "@/components/Footer";
 import { DeepDiveProvider } from "@/context/DeepDiveContext";
 import { InstallButton } from "@/components/InstallButton";
 import { DemoRibbon } from "@/components/DemoRibbon";
+import { APP_VERSION_LABEL } from "@/version";
 import {
   LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
   Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Gauge, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp, ToggleRight, Activity, AlertTriangle, CheckCircle2,
@@ -322,7 +323,7 @@ export default function AppShell() {
             <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest truncate hidden lg:block">
               {sub?.org_name || "Obserra — Control Intelligence"}
             </div>
-            <span data-testid="app-version-badge" className="hidden lg:inline-flex items-center px-1.5 py-0.5 rounded-full border border-ai/30 bg-ai/10 text-ai text-[9px] font-mono font-bold tracking-wider shrink-0">v1</span>
+            <span data-testid="app-version-badge" className="hidden lg:inline-flex items-center px-1.5 py-0.5 rounded-full border border-ai/30 bg-ai/10 text-ai text-[9px] font-mono font-bold tracking-wider shrink-0">{APP_VERSION_LABEL}</span>
           </div>
           <div className="flex-1 max-w-md hidden sm:block">
             <div className="flex items-center gap-2 rounded-full border border-ai/30 bg-ai/5 px-3 py-1.5 focus-within:ring-1 focus-within:ring-ai transition-shadow">
