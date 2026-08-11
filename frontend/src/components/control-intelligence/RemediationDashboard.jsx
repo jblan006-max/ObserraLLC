@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { AlertTriangle, Bell, BellOff, Eye, Loader2, TrendingDown, Users } from "lucide-react";
+import { AlertTriangle, Bell, BellOff, Clock, Eye, Loader2, TrendingDown, Users } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { EmptyState, Panel, StatusPill } from "@/components/control-intelligence/shared";
@@ -8,23 +8,22 @@ export default function RemediationDashboard({ controls, gaps, onSelectControl, 
   const [nudging, setNudging] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState(null);
-  const [muted, setMuted] = useState(false);
+  const [pref, setPref] = useState({ muted: false, muted_until: null, active: false });
   const [muteBusy, setMuteBusy] = useState(false);
 
   useEffect(() => {
     api
       .get("/control-intelligence/my-nudge-pref")
-      .then((r) => setMuted(Boolean(r.data.muted)))
+      .then((r) => setPref(r.data))
       .catch(() => {});
   }, []);
 
-  const toggleMute = async () => {
+  const applyPref = async (body, msg) => {
     setMuteBusy(true);
-    const nextValue = !muted;
     try {
-      const r = await api.put("/control-intelligence/my-nudge-pref", { muted: nextValue });
-      setMuted(Boolean(r.data.muted));
-      toast.success(nextValue ? "Your reminder emails are muted." : "Reminder emails re-enabled.");
+      const r = await api.put("/control-intelligence/my-nudge-pref", body);
+      setPref(r.data);
+      toast.success(msg);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Unable to update your reminder preference.");
     } finally {
@@ -61,6 +60,8 @@ export default function RemediationDashboard({ controls, gaps, onSelectControl, 
     (control) => control.status !== "Passing" || control.evidence_state !== "Fresh" || control.drift
   );
 
+  const resumeDate = pref.muted_until ? new Date(pref.muted_until).toLocaleDateString() : null;
+
   return (
     <div className="space-y-5">
       <Panel
@@ -69,24 +70,38 @@ export default function RemediationDashboard({ controls, gaps, onSelectControl, 
         testid="control-intel-remediation"
         actions={
           <div className="flex flex-wrap gap-2 items-center">
-            <button
-              data-testid="ci-nudge-mute-toggle"
-              onClick={toggleMute}
-              disabled={muteBusy}
-              title="Mute the personalized reminder emails sent to you as a control owner"
-              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-head font-bold disabled:opacity-50 transition-colors ${
-                muted ? "border-med/40 bg-med/10 text-med" : "border-border bg-secondary/40 text-muted-foreground"
-              }`}
-            >
-              {muteBusy ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : muted ? (
-                <BellOff className="w-3.5 h-3.5" />
-              ) : (
-                <Bell className="w-3.5 h-3.5" />
-              )}
-              {muted ? "Reminders muted" : "Mute my reminders"}
-            </button>
+            {pref.active ? (
+              <button
+                data-testid="ci-nudge-mute-toggle"
+                onClick={() => applyPref({ muted: false }, "Reminder emails re-enabled.")}
+                disabled={muteBusy}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-med/40 bg-med/10 text-med text-xs font-head font-bold disabled:opacity-50"
+              >
+                {muteBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <BellOff className="w-3.5 h-3.5" />}
+                {resumeDate ? `Muted · resumes ${resumeDate} — un-mute` : "Reminders muted — un-mute"}
+              </button>
+            ) : (
+              <>
+                <button
+                  data-testid="ci-nudge-mute-toggle"
+                  onClick={() => applyPref({ muted: true }, "Your reminder emails are muted.")}
+                  disabled={muteBusy}
+                  title="Mute the personalized reminder emails sent to you as a control owner"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-muted-foreground text-xs font-head font-bold disabled:opacity-50"
+                >
+                  {muteBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bell className="w-3.5 h-3.5" />} Mute my reminders
+                </button>
+                <button
+                  data-testid="ci-nudge-snooze"
+                  onClick={() => applyPref({ snooze_days: 30 }, "Reminders snoozed for 30 days.")}
+                  disabled={muteBusy}
+                  title="Pause your reminder emails for 30 days — they quietly resume after that"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-muted-foreground text-xs font-head font-bold disabled:opacity-50"
+                >
+                  <Clock className="w-3.5 h-3.5" /> Snooze 30d
+                </button>
+              </>
+            )}
             {isAdmin && (
               <>
                 <button

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  Calendar, CheckCircle2, Copy, Database, Eye, Gavel, Link2, Loader2, Mail, RefreshCw, Send, ShieldCheck, Trash2, Users, X, XCircle,
+  Calendar, CheckCircle2, Copy, Database, Download, Eye, Gavel, Link2, Loader2, Mail, RefreshCw, Send, ShieldCheck, Trash2, Users, X, XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -85,9 +85,12 @@ function BriefSettingsCard() {
   const [expiryDays, setExpiryDays] = useState(90);
   const [linkBusy, setLinkBusy] = useState(false);
   const [counts, setCounts] = useState(null);
+  const [accessLog, setAccessLog] = useState([]);
 
   const refreshCounts = () =>
     api.get("/control-intelligence/brief/recipients").then((r) => setCounts(r.data)).catch(() => {});
+  const refreshAccess = () =>
+    api.get("/control-intelligence/auditor-link/access?limit=12").then((r) => setAccessLog(r.data.events || [])).catch(() => {});
 
   useEffect(() => {
     (async () => {
@@ -109,6 +112,7 @@ function BriefSettingsCard() {
         /* none yet */
       }
       refreshCounts();
+      refreshAccess();
     })();
   }, []);
 
@@ -182,6 +186,7 @@ function BriefSettingsCard() {
     try {
       const r = await api.post("/control-intelligence/auditor-link", { days: expiryDays, reissue });
       setAuditorLink(r.data);
+      refreshAccess();
       toast.success(reissue ? "New auditor link issued (old one revoked)." : "Auditor verification link ready.");
     } catch (e) {
       toast.error(e.response?.data?.detail || "Unable to generate the auditor link.");
@@ -195,6 +200,7 @@ function BriefSettingsCard() {
     try {
       await api.post("/control-intelligence/auditor-link/revoke");
       setAuditorLink(null);
+      refreshAccess();
       toast.success("Auditor link revoked.");
     } catch (e) {
       toast.error(e.response?.data?.detail || "Unable to revoke the link.");
@@ -424,6 +430,26 @@ function BriefSettingsCard() {
                 {linkBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
                 Generate auditor link
               </button>
+            )}
+
+            {accessLog.length > 0 && (
+              <div className="mt-4 border-t border-border pt-3" data-testid="ci-auditor-access-log">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Auditor access log</div>
+                <div className="space-y-1.5 max-h-40 overflow-auto">
+                  {accessLog.map((ev, i) => (
+                    <div key={`${ev.at}-${i}`} data-testid={`ci-auditor-access-row-${i}`} className="flex items-center justify-between text-[11px]">
+                      <span className="flex items-center gap-1.5">
+                        {ev.kind === "download" ? <Download className="w-3 h-3 text-ai" /> : <Eye className="w-3 h-3 text-muted-foreground" />}
+                        <span className="font-head font-bold capitalize">{ev.kind}</span>
+                        <span className="text-muted-foreground">{ev.who || "anonymous"}</span>
+                      </span>
+                      <span className="font-mono text-muted-foreground">
+                        {new Date(ev.at).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
 

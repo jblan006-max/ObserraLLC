@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from db import db
 from auth import get_current_user, require_roles
 from kernel import notifications
-from reports import _build_pdf, _report_html
+from reports import _build_pdf, _report_html, _resolve_brand
 
 logger = logging.getLogger(__name__)
 ci_router = APIRouter(prefix="/api/control-intelligence")
@@ -248,7 +248,10 @@ def _norm_recipients(raw):
 
 
 async def _muted_emails(org_id):
-    rows = await db.users.find({"org_id": org_id, "ci_nudge_muted": True}, {"_id": 0, "email": 1}).to_list(500)
+    now = datetime.now(timezone.utc).isoformat()
+    rows = await db.users.find(
+        {"org_id": org_id, "$or": [{"ci_nudge_muted": True}, {"ci_nudge_muted_until": {"$gt": now}}]},
+        {"_id": 0, "email": 1}).to_list(500)
     return {r["email"] for r in rows if r.get("email")}
 
 
@@ -271,11 +274,11 @@ async def _brief_role_map(org_id, extra_recipients=None):
 
 async def _run_ci_brief_email(org_id, actor="scheduler@obserra", extra_recipients=None):
     a = await _ci_aggregate(org_id)
-    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1, "ci_brief_recipients": 1})
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1, "ci_brief_recipients": 1, "report_branding": 1})
     org_name = (org or {}).get("name") or "Organization"
     md = _ci_brief_markdown(a)
     title = "Control Intelligence Executive Assurance Brief"
-    pdf = _build_pdf(md, title, cover=True, org_name=org_name)
+    pdf = _build_pdf(md, title, cover=True, org_name=org_name, brand=_resolve_brand(org))
     attachments = [{"filename": "obserra-control-intelligence-assurance-brief.pdf",
                     "content": base64.b64encode(pdf.getvalue()).decode()}]
     role_map = await _brief_role_map(org_id, extra_recipients)
@@ -484,6 +487,11 @@ async def public_auditor_link(token: str):
     a = await _ci_aggregate(org_id)
     org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1})
     weak = sorted(a["statuses"], key=lambda c: c["effectiveness"])[:8]
+    try:
+        await db.ci_auditor_access.insert_one({"token": token, "org_id": org_id, "kind": "view",
+                                               "who": "", "at": now.isoformat()})
+    except Exception:
+        pass
     return {
         "org_name": (org or {}).get("name") or "Organization",
         "generated_at": now.isoformat(), "expires_at": doc["expires_at"],
@@ -509,20 +517,39 @@ async def brief_recipients(admin: dict = Depends(require_roles("admin"))):
 
 
 class NudgePref(BaseModel):
-    muted: bool
+    muted: Optional[bool] = None
+    snooze_days: Optional[int] = None
+
+
+def _nudge_pref_view(u):
+    u = u or {}
+    now = datetime.now(timezone.utc).isoformat()
+    muted = bool(u.get("ci_nudge_muted", False))
+    until = u.get("ci_nudge_muted_until")
+    snoozed = bool(until and until > now)
+    return {"muted": muted, "muted_until": until if snoozed else None, "active": muted or snoozed}
 
 
 @ci_router.get("/my-nudge-pref")
 async def get_my_nudge_pref(user: dict = Depends(get_current_user)):
-    u = await db.users.find_one({"org_id": user["org_id"], "email": user["email"]}, {"ci_nudge_muted": 1})
-    return {"muted": bool((u or {}).get("ci_nudge_muted", False))}
+    u = await db.users.find_one({"org_id": user["org_id"], "email": user["email"]},
+                                {"ci_nudge_muted": 1, "ci_nudge_muted_until": 1})
+    return _nudge_pref_view(u)
 
 
 @ci_router.put("/my-nudge-pref")
 async def set_my_nudge_pref(body: NudgePref, user: dict = Depends(get_current_user)):
-    await db.users.update_one({"org_id": user["org_id"], "email": user["email"]},
-                              {"$set": {"ci_nudge_muted": bool(body.muted)}})
-    return {"muted": bool(body.muted)}
+    from datetime import timedelta
+    q = {"org_id": user["org_id"], "email": user["email"]}
+    if body.snooze_days and body.snooze_days > 0:
+        until = (datetime.now(timezone.utc) + timedelta(days=min(365, int(body.snooze_days)))).isoformat()
+        await db.users.update_one(q, {"$set": {"ci_nudge_muted": False, "ci_nudge_muted_until": until}})
+    elif body.muted:
+        await db.users.update_one(q, {"$set": {"ci_nudge_muted": True, "ci_nudge_muted_until": None}})
+    else:
+        await db.users.update_one(q, {"$set": {"ci_nudge_muted": False, "ci_nudge_muted_until": None}})
+    u = await db.users.find_one(q, {"ci_nudge_muted": 1, "ci_nudge_muted_until": 1})
+    return _nudge_pref_view(u)
 
 
 @ci_router.get("/public/auditor-link/{token}/brief.pdf")
@@ -538,24 +565,36 @@ async def public_auditor_brief_pdf(token: str, who: str = ""):
         raise HTTPException(status_code=404, detail="This auditor link is invalid or has expired.")
     org_id = doc["org_id"]
     a = await _ci_aggregate(org_id)
-    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1})
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1, "report_branding": 1})
     org_name = (org or {}).get("name") or "Organization"
     md = _ci_brief_markdown(a)
     title = "Control Intelligence Assurance Brief"
-    raw = _build_pdf(md, title, cover=True, org_name=org_name).getvalue()
+    raw = _build_pdf(md, title, cover=True, org_name=org_name, brand=_resolve_brand(org)).getvalue()
     seal = hashlib.sha256(md.encode()).hexdigest()
+    auditor = (who or "").strip()[:120] or "External auditor"
     try:
-        auditor = (who or "").strip()[:120] or "External auditor"
         access = now.strftime("%Y-%m-%d %H:%M UTC")
         base = os.environ.get("FRONTEND_URL", "").rstrip("/")
         raw = await _brand_watermark_pdf(
             raw, org_id=org_id, room_url=f"{base}/ci-audit/{token}",
             subtext=f"Downloaded by {auditor} \u00b7 {access} \u00b7 link expires {(doc.get('expires_at') or '')[:10]}")
         raw = _stamp_verified_seal(raw, seal)
+    except Exception as e:
+        logger.warning(f"CI auditor PDF stamp failed: {e}")
+    try:
         await db.ci_auditor_links.update_one(
             {"token": token}, {"$inc": {"downloads": 1},
                                "$set": {"last_downloaded_at": now.isoformat(), "last_downloaded_by": auditor}})
-    except Exception as e:
-        logger.warning(f"CI auditor PDF stamp failed: {e}")
+        await db.ci_auditor_access.insert_one({"token": token, "org_id": org_id, "kind": "download",
+                                               "who": auditor, "at": now.isoformat()})
+    except Exception:
+        pass
     return StreamingResponse(io.BytesIO(raw), media_type="application/pdf",
                              headers={"Content-Disposition": 'attachment; filename="obserra-control-assurance-brief.pdf"'})
+
+
+@ci_router.get("/auditor-link/access")
+async def auditor_link_access(limit: int = 25, admin: dict = Depends(require_roles("admin"))):
+    limit = max(1, min(200, int(limit or 25)))
+    rows = await db.ci_auditor_access.find({"org_id": admin["org_id"]}, {"_id": 0}).sort("at", -1).to_list(limit)
+    return {"events": rows}

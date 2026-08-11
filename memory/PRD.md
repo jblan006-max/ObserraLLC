@@ -61,6 +61,13 @@ Route `/app/control-intelligence` (sidebar "Control Intelligence"). Continuous C
 - **Send-Now Recipient Count** — new admin GET `/api/control-intelligence/brief/recipients` (reuses shared `_brief_role_map`) → `{board,auditor,total}`; 'Send brief now' button label shows 'Send now → N Board · M Auditor', refreshes after save.
 - ⚠️ FORK-HAZARD RECURRED: batching 6 parallel `search_replace` on control_intelligence.py (452 lines) silently DROPPED the last edit (my-nudge-pref/brief-recipients/signed-PDF routes) despite "success" — curl 404s caught it; re-applied standalone + re-verified. LESSON: never batch >1 search_replace on the SAME file in one message, even medium files; pair one same-file edit with different-file edits only.
 
+
+**Round 7 (Jun 2026) — 3 approved owner/audit polish features shipped (iteration_125, backend 7/7 + frontend 100%, no bugs):**
+- **Owner Snooze (30-day)** — extended the mute pref: user fields `ci_nudge_muted` (indefinite) + `ci_nudge_muted_until` (ISO, snooze). `_muted_emails` now `$or` matches either. `NudgePref{muted?,snooze_days?}` + `_nudge_pref_view` → `{muted,muted_until,active}`; PUT `/my-nudge-pref` supports snooze_days (clamped 365) / mute / unmute. Remediation tab: 'Mute my reminders' + 'Snooze 30d' (`ci-nudge-snooze`) when not muted; collapses to 'Muted · resumes <date> — un-mute' (or 'Reminders muted — un-mute' for indefinite).
+- **PDF Cover Branding** — signed auditor PDF + emailed brief now call `_build_pdf(..., brand=_resolve_brand(org))` (org fetched with `report_branding`) so the cover carries the org logo/accent.
+- **Auditor Access Log** — new collection `ci_auditor_access`. `public_auditor_link` logs `kind:'view'` (who=''); `public_auditor_brief_pdf` logs `kind:'download'` (who=<name>). Admin GET `/api/control-intelligence/auditor-link/access?limit=` returns events newest-first. Defensibility settings card renders `ci-auditor-access-log` (rows `ci-auditor-access-row-<i>`) with kind/who/timestamp, refreshed on mount + generate/revoke.
+- Process win: applied the backend edits ONE search_replace-per-message (paired with different-file/bash ops) after the Round-6 drop-hazard — no drops this round. Test note: access-log `kind` label DOM text is lowercase (CSS `capitalize`); who='' renders 'anonymous' — assertions should be case-insensitive.
+
 ## Backlog / prior app (Obserra Agentic-AI) — PENDING (user-approved msg 184, not implemented)
 Digest Schedule Choice, Structured Audit Meta (note: `_log_audit` in auth.py already has an optional `meta={}` param added — additive/harmless), Auto-Resume Notice, Exec Mute Badge Tooltip.
 ⚠️ FORK HAZARD (recurring 15+): `agents.py` >3500 lines — never trust batched `search_replace`; grep-verify every edit stuck.

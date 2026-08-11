@@ -1,0 +1,24 @@
+{
+  "summary": "Iteration 125 validation of 4 CI enhancements + regression. Backend pytest 7/7 PASS: GET /my-nudge-pref default {muted:false,muted_until:null,active:false}; PUT {snooze_days:30} → {muted:false, muted_until ~30d ISO, active:true}; PUT {muted:true} → {muted:true, muted_until:null, active:true}; PUT {muted:false} → active:false; POST /auditor-link then public GET /public/auditor-link/<token> (view event) + GET /brief.pdf?who=TEST_Auditor returns 200 application/pdf starting %PDF (>3KB, ~branded); GET /auditor-link/access?limit=12 returns events newest-first with both view (who='') and download (who='TEST_Auditor'); invalid token PDF → 404. Frontend flows PASS: Remediation & Drift tab shows both 'Mute my reminders' + 'Snooze 30d' initially; clicking Snooze collapses to single muted toggle reading 'Muted · resumes 9/10/2026 — un-mute'; clicking un-mutes and both buttons return; clicking 'Mute my reminders' sets indefinite mute reading 'Reminders muted — un-mute' (no resume date). Defensibility tab access log (ci-auditor-access-log) shows both rows: row-0 download/TEST_Auditor with timestamp, row-1 view/anonymous with timestamp — newest-first. /ci-audit/<token> public portal loads (ci-auditor-portal) with ci-auditor-download button. Cleanup executed: nudge unmuted, auditor-link revoked, settings reset.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter125_ci_snooze_pdf_accesslog.py",
+    "/app/test_reports/pytest/iter125.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "control_intelligence.py _muted_emails correctly uses $or on ci_nudge_muted OR ci_nudge_muted_until>now, matching the frontend contract of snooze vs indefinite mute.",
+    "_nudge_pref_view derives 'active' from muted OR (muted_until>now); indefinite mute correctly returns muted_until:null.",
+    "public_auditor_link + public_auditor_brief_pdf both wrap access-log insert in try/except (fail-safe), and PDF branding uses _resolve_brand(org) via org fetch with report_branding projected — good.",
+    "auditor-link/access is sorted by 'at' desc and limit-bounded (1..200) — safe.",
+    "Suggestion: capitalize-CSS on kind label means DOM textContent stays lowercase — trivial UX/test note (not a bug)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter125_ci_snooze_pdf_accesslog.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin)",
+  "seed_data_creation": "Transient auditor link minted for access-log seeding; two access events inserted (view + download who=TEST_Auditor); link revoked at cleanup; nudge pref restored to muted:false; settings reset to {recipients:[],send_day:1,enabled:false,cadence:'monthly'}.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All iteration-125 features (owner snooze/mute UI + backend, branded PDF, auditor access log) verified end-to-end. Access-log DOM textContent is lowercase ('download','view') even though styled via CSS `capitalize`; who='' renders as 'anonymous' text — assertions should be case-insensitive. Public portal path /ci-audit/<token> is lazy-loaded (data-testid=ci-auditor-portal, wait 20s). Cleanup already performed."
+}
