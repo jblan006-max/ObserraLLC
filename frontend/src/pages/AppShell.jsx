@@ -68,8 +68,7 @@ const NAV_SECTIONS = [
     { to: "/app", label: "Executive Overview", icon: LayoutDashboard, end: true },
     { to: "/app/control-intelligence", label: "Control Intelligence", icon: Layers },
   ]},
-  { section: "Governance", cat: true, color: "ai", items: [
-    { to: "/app/agentic-ai-security", label: "Agent Governance", icon: Bot },
+  { section: "Assurance", cat: true, color: "ai", items: [
     { to: "/app/control-assurance", label: "Control Assurance", icon: Gauge },
   ]},
   { section: "Sources", cat: true, color: "primary", items: [

@@ -803,8 +803,164 @@ async def auditor_link_analytics(admin: dict = Depends(require_roles("admin"))):
     out_links = sorted(links.values(), key=lambda x: x["last_at"], reverse=True)
     for lk in out_links:
         lk["status"] = status_map.get(lk["token"], "unknown")
+        lk["awaiting_download"] = lk["views"] > 0 and lk["downloads"] == 0
     out_reviewers = sorted(reviewers.values(), key=lambda x: (-x["downloads"], x["who"]))
     totals = {"views": sum(lk["views"] for lk in out_links),
               "downloads": sum(lk["downloads"] for lk in out_links),
-              "reviewers": len(out_reviewers), "links": len(out_links)}
+              "reviewers": len(out_reviewers), "links": len(out_links),
+              "awaiting_download": sum(1 for lk in out_links if lk["awaiting_download"])}
     return {"links": out_links, "reviewers": out_reviewers, "totals": totals}
+
+
+# ---------------------------------------------------------------- engagement follow-ups
+
+def _ci_link_url(token):
+    base = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    return f"{base}/ci-audit/{token}"
+
+
+class FollowUpBody(BaseModel):
+    token: str
+
+
+@ci_router.post("/auditor-link/follow-up")
+async def auditor_link_follow_up(body: FollowUpBody, admin: dict = Depends(require_roles("admin"))):
+    from fastapi import HTTPException
+    org_id = admin["org_id"]
+    doc = await db.ci_auditor_links.find_one({"token": body.token, "org_id": org_id})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Auditor link not found.")
+    role_map = await _brief_role_map(org_id)
+    recipients = sorted(role_map["auditor"])
+    if not recipients:
+        return {"sent": 0, "to": [],
+                "note": "No auditor-role recipients configured. Add one in the brief settings to enable follow-ups."}
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1})
+    org_name = (org or {}).get("name") or "Organization"
+    url = _ci_link_url(body.token)
+    html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:620px;margin:auto'>"
+            f"<h2 style='color:#0f1e3d'>A quick follow-up on your {org_name} assurance review</h2>"
+            f"<p>Our records show the read-only assurance portal was opened but the signed evidence PDF "
+            f"hasn't been downloaded yet. When you have a moment, please pull the sealed brief for your file:</p>"
+            f"<p><a href='{url}' style='color:#12b4d6'>{url}</a></p>"
+            f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence \u2014 auditor follow-up.</p></div>")
+    sent = 0
+    for em in recipients:
+        try:
+            await notifications.send_email(em, f"Follow-up: download your {org_name} assurance evidence", html)
+            sent += 1
+        except Exception:
+            pass
+    return {"sent": sent, "to": recipients}
+
+
+def _two_day_drop(points):
+    if len(points) < 3:
+        return False
+    a, b, c = points[-3]["avg_eff"], points[-2]["avg_eff"], points[-1]["avg_eff"]
+    return a > b > c
+
+
+def _engagement_nudge_html(owner, points):
+    latest, prior = points[-1]["avg_eff"], points[0]["avg_eff"]
+    drop = prior - latest
+    return (f"<div style='font:400 14px Arial;color:#1f2937;max-width:620px;margin:auto'>"
+            f"<h2 style='color:#b91c1c'>Your control readiness is trending down</h2>"
+            f"<p>Hi {owner}, the average effectiveness of the controls you own has fallen for two days "
+            f"running \u2014 from {prior}% to {latest}% (down {drop} pts). Please review your controls "
+            f"before it slips further.</p>"
+            f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence \u2014 proactive readiness nudge.</p></div>")
+
+
+async def _run_ci_engagement_nudges(org_id):
+    today = datetime.now(timezone.utc).date().isoformat()
+    owners = await db.ci_owner_eff_history.distinct("owner", {"org_id": org_id})
+    muted = await _muted_emails(org_id)
+    nudged = 0
+    for owner in owners:
+        if not owner or owner == "Unassigned":
+            continue
+        pts = await db.ci_owner_eff_history.find(
+            {"org_id": org_id, "owner": owner}, {"_id": 0, "date": 1, "avg_eff": 1}).sort("date", 1).to_list(400)
+        if not _two_day_drop(pts):
+            continue
+        marker = f"ci-engage-drop:{org_id}:{owner}:{today}"
+        if await db.ci_sent_markers.find_one({"marker": marker}):
+            continue
+        em = (await _owner_email_map(org_id, {owner: []})).get((owner or "").strip().lower())
+        if not em or em in muted:
+            continue
+        try:
+            await notifications.send_email(
+                em, "Your control readiness is declining \u2014 Obserra Control Intelligence",
+                _engagement_nudge_html(owner, pts[-3:]))
+            await db.ci_sent_markers.insert_one({"marker": marker, "at": datetime.now(timezone.utc).isoformat()})
+            nudged += 1
+        except Exception:
+            pass
+    return {"nudged": nudged}
+
+
+async def _run_ci_engagement_nudges_all():
+    orgs = await db.organizations.find({}, {"_id": 1}).to_list(1000)
+    for org in orgs:
+        try:
+            await _run_ci_engagement_nudges(str(org["_id"]))
+        except Exception as e:
+            logger.warning(f"CI engagement nudges failed for org {org['_id']}: {e}")
+
+
+async def _auditor_recap_payload(org_id, days=7):
+    from datetime import timedelta
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = await db.ci_auditor_access.find(
+        {"org_id": org_id, "at": {"$gt": since}}, {"_id": 0, "kind": 1, "who": 1}).to_list(5000)
+    views = sum(1 for r in rows if r.get("kind") == "view")
+    downloads = sum(1 for r in rows if r.get("kind") == "download")
+    reviewers = sorted({(r.get("who") or "").strip() for r in rows
+                        if r.get("kind") == "download" and (r.get("who") or "").strip()})
+    return {"views": views, "downloads": downloads, "reviewers": reviewers, "days": days, "events": len(rows)}
+
+
+@ci_router.get("/auditor-link/recap/preview")
+async def auditor_recap_preview(days: int = 7, admin: dict = Depends(require_roles("admin"))):
+    days = max(1, min(90, int(days or 7)))
+    return await _auditor_recap_payload(admin["org_id"], days)
+
+
+def _recap_html(org_name, rec):
+    rv = rec["reviewers"]
+    return (f"<div style='font:400 14px Arial;color:#1f2937;max-width:620px;margin:auto'>"
+            f"<h2 style='color:#0f1e3d'>Weekly assurance recap \u2014 {org_name}</h2>"
+            f"<p>External auditor engagement over the last {rec['days']} days:</p>"
+            f"<ul><li><strong>{rec['views']}</strong> portal view(s)</li>"
+            f"<li><strong>{rec['downloads']}</strong> signed-PDF download(s)</li>"
+            f"<li><strong>{len(rv)}</strong> named reviewer(s){(': ' + ', '.join(rv)) if rv else ''}</li></ul>"
+            f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence \u2014 weekly assurance recap.</p></div>")
+
+
+async def _run_ci_weekly_assurance_recap_all():
+    now = datetime.now(timezone.utc)
+    week = now.strftime("%Y-%W")
+    orgs = await db.organizations.find({}, {"_id": 1, "name": 1}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        try:
+            rec = await _auditor_recap_payload(org_id, 7)
+            if not (rec["views"] or rec["downloads"]):
+                continue
+            marker = f"ci-recap:{org_id}:{week}"
+            if await db.ci_sent_markers.find_one({"marker": marker}):
+                continue
+            emails = sorted(await _admin_exec_emails(org_id))
+            if not emails:
+                continue
+            html = _recap_html(org.get("name") or "Organization", rec)
+            for em in emails:
+                try:
+                    await notifications.send_email(em, f"Weekly assurance recap \u2014 {org.get('name') or 'Organization'}", html)
+                except Exception:
+                    pass
+            await db.ci_sent_markers.insert_one({"marker": marker, "at": now.isoformat()})
+        except Exception as e:
+            logger.warning(f"CI weekly recap failed for org {org_id}: {e}")

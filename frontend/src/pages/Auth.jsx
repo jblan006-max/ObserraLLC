@@ -59,7 +59,7 @@ export default function Auth() {
         </div>
         <div className="relative space-y-6">
           <h1 data-testid="brand-app-name" className="font-head font-black text-5xl leading-[1.05] tracking-tight">
-            Control <span className="text-ai">Intelligence.</span>
+            Obserra <span className="text-ai">Control Intelligence.</span>
           </h1>
           <div>
             <span data-testid="brand-version-badge" className="inline-flex items-center px-2 py-1 rounded-sm ai-border text-ai text-[10px] font-mono font-bold uppercase tracking-[0.2em]">v1 · Continuous Control Effectiveness &amp; Assurance</span>

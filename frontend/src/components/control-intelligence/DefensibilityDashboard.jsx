@@ -230,6 +230,16 @@ function BriefSettingsCard() {
     }
   };
 
+  const followUp = async (token) => {
+    try {
+      const r = await api.post("/control-intelligence/auditor-link/follow-up", { token });
+      if (r.data.sent > 0) toast.success(`Follow-up sent to ${r.data.sent} auditor recipient(s).`);
+      else toast.message(r.data.note || "No auditor recipients configured.");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to send the follow-up.");
+    }
+  };
+
   const copyLink = async () => {
     if (!auditorLink?.url) return;
     try {
@@ -511,12 +521,31 @@ function BriefSettingsCard() {
                   </div>
                 )}
                 {analytics.links.length > 0 && (
-                  <div className="mt-3 space-y-1">
-                    <div className="text-[9px] font-mono uppercase text-muted-foreground mb-1">Per-link engagement</div>
+                  <div className="mt-3 space-y-1.5">
+                    <div className="text-[9px] font-mono uppercase text-muted-foreground mb-1">
+                      Per-link engagement
+                      {analytics.totals.awaiting_download > 0 && (
+                        <span data-testid="ci-analytics-awaiting" className="ml-2 text-med normal-case">· {analytics.totals.awaiting_download} awaiting download</span>
+                      )}
+                    </div>
                     {analytics.links.map((lk, i) => (
-                      <div key={lk.token} data-testid={`ci-analytics-link-${i}`} className="flex items-center justify-between text-[11px]">
-                        <span className="font-mono text-muted-foreground">…{lk.short} · <span className="capitalize">{lk.status}</span></span>
-                        <span className="font-mono text-muted-foreground">{lk.views} view(s) · {lk.downloads} download(s)</span>
+                      <div key={lk.token} data-testid={`ci-analytics-link-${i}`} className="flex items-center justify-between gap-2 text-[11px]">
+                        <span className="font-mono text-muted-foreground flex items-center gap-1.5 min-w-0">
+                          …{lk.short} · <span className="capitalize">{lk.status}</span>
+                          {lk.awaiting_download && (
+                            <span data-testid={`ci-analytics-awaiting-${i}`} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-med/40 bg-med/10 text-med text-[9px] font-head font-bold normal-case">
+                              <Eye className="w-2.5 h-2.5" /> viewed · not downloaded
+                            </span>
+                          )}
+                        </span>
+                        <span className="flex items-center gap-2 shrink-0">
+                          <span className="font-mono text-muted-foreground">{lk.views} view(s) · {lk.downloads} download(s)</span>
+                          {lk.awaiting_download && lk.status === "active" && (
+                            <button onClick={() => followUp(lk.token)} data-testid={`ci-analytics-nudge-${i}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-ai/40 bg-ai/10 text-ai text-[10px] font-head font-bold">
+                              <Send className="w-2.5 h-2.5" /> Nudge
+                            </button>
+                          )}
+                        </span>
                       </div>
                     ))}
                   </div>
