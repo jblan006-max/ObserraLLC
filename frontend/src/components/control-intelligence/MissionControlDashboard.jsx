@@ -1,10 +1,10 @@
 import { useMemo, useState } from "react";
 import {
-  AlertTriangle, CheckCircle2, FileDown, Layers, RefreshCw, ShieldCheck,
+  AlertTriangle, CheckCircle2, FileDown, Layers, Mail, RefreshCw, ShieldCheck,
   Sparkles, Target, TrendingDown, Wrench, Zap,
 } from "lucide-react";
 import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Pie, PieChart,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Line, LineChart, Pie, PieChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { AIInsight } from "@/components/AIInsight";
@@ -90,7 +90,7 @@ function Legend({ items }) {
   );
 }
 
-export default function MissionControlDashboard({ data, onOpenTab, onSelectControl, onExecutiveReport, reportBusy }) {
+export default function MissionControlDashboard({ data, onOpenTab, onSelectControl, onExecutiveReport, reportBusy, onEmailBrief, briefBusy }) {
   const [showAdvisor, setShowAdvisor] = useState(false);
   const controls = data?.controls || [];
   const summary = data?.summary || {};
@@ -98,6 +98,7 @@ export default function MissionControlDashboard({ data, onOpenTab, onSelectContr
   const compliance = data?.compliance || {};
   const gaps = data?.gaps || [];
   const connectorHealth = data?.connectorHealth || { connectors: [], summary: {} };
+  const effHistory = data?.effHistory || [];
 
   const total = summary.total || 0;
   const effective = summary.passing || 0;
@@ -174,21 +175,39 @@ export default function MissionControlDashboard({ data, onOpenTab, onSelectContr
 
       <div className="grid xl:grid-cols-3 gap-5">
         <div className="xl:col-span-2 grid md:grid-cols-2 gap-5">
-          <Panel title="Effectiveness by control domain" subtitle="Live average effectiveness per domain — current values, no fabricated time series." testid="ci-domain-effectiveness">
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={byDomain.map((d) => ({ name: shortName(d.domain), eff: d.avgEff }))} margin={{ left: -12, right: 8, top: 10 }}>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
-                  <XAxis dataKey="name" tick={{ fontSize: 9 }} interval={0} angle={-20} textAnchor="end" height={54} />
-                  <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} width={32} />
-                  <Tooltip contentStyle={TIP} cursor={{ fill: "rgba(255,255,255,.04)" }} />
-                  <Bar dataKey="eff" radius={[5, 5, 0, 0]}>
-                    {byDomain.map((d, i) => <Cell key={i} fill={`hsl(${pal(i)})`} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </Panel>
+          {effHistory.length >= 2 ? (
+            <Panel title="Control effectiveness trend" subtitle={`Live daily snapshots — ${effHistory.length} day(s) captured.`} testid="ci-effectiveness-trend">
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={effHistory.map((h) => ({ date: (h.date || "").slice(5), Effectiveness: h.avg_effectiveness, Coverage: h.coverage, Health: h.health_score }))} margin={{ left: -12, right: 8, top: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
+                    <XAxis dataKey="date" tick={{ fontSize: 9 }} />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} width={32} />
+                    <Tooltip contentStyle={TIP} />
+                    <Line type="monotone" dataKey="Effectiveness" stroke="hsl(168 76% 46%)" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="Coverage" stroke="hsl(262 83% 66%)" strokeWidth={2} dot={false} />
+                    <Line type="monotone" dataKey="Health" stroke="hsl(210 92% 62%)" strokeWidth={2} dot={false} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </Panel>
+          ) : (
+            <Panel title="Effectiveness by control domain" subtitle="Live average effectiveness per domain. A real 30-day trend line replaces this once daily snapshots accumulate." testid="ci-domain-effectiveness">
+              <div className="h-64">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={byDomain.map((d) => ({ name: shortName(d.domain), eff: d.avgEff }))} margin={{ left: -12, right: 8, top: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.1} />
+                    <XAxis dataKey="name" tick={{ fontSize: 9 }} interval={0} angle={-20} textAnchor="end" height={54} />
+                    <YAxis domain={[0, 100]} tick={{ fontSize: 10 }} width={32} />
+                    <Tooltip contentStyle={TIP} cursor={{ fill: "rgba(255,255,255,.04)" }} />
+                    <Bar dataKey="eff" radius={[5, 5, 0, 0]}>
+                      {byDomain.map((d, i) => <Cell key={i} fill={`hsl(${pal(i)})`} />)}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </Panel>
+          )}
 
           <Panel title="Effectiveness by domain" subtitle="Share of controls by domain, each domain a distinct color." testid="ci-domain-donut">
             <Donut data={byDomain.map((d, i) => ({ name: shortName(d.domain), value: d.total, color: pal(i) }))} centerValue={`${overallEff}%`} centerLabel="Overall" testid="ci-domain-donut-chart" />
@@ -373,10 +392,16 @@ export default function MissionControlDashboard({ data, onOpenTab, onSelectContr
           <div className="text-[10px] font-mono uppercase text-muted-foreground">Open gaps</div>
           <div className="text-sm font-head font-bold">{gaps.length}</div>
         </div>
-        <button data-testid="ci-footer-report" onClick={onExecutiveReport} disabled={reportBusy}
-          className="ml-auto inline-flex items-center gap-1.5 px-4 py-2.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">
-          {reportBusy ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />} Executive Assurance Report
-        </button>
+        <div className="ml-auto flex flex-wrap gap-2">
+          <button data-testid="ci-footer-email-brief" onClick={onEmailBrief} disabled={briefBusy}
+            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-md border border-border bg-secondary/50 text-xs font-head font-bold disabled:opacity-50">
+            {briefBusy ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />} Email to Board
+          </button>
+          <button data-testid="ci-footer-report" onClick={onExecutiveReport} disabled={reportBusy}
+            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">
+            {reportBusy ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />} Executive Assurance Report
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -19,7 +19,15 @@ Route `/app/control-intelligence` (sidebar "Control Intelligence"). Continuous C
 
 **Charts:** categorical `PALETTE` (shared.jsx) gives distinct colors per domain/framework/bar; semantic green/amber/red kept only for health + evidence donuts.
 
-**Testing:** iteration_120.json = 100% of CI critical flows pass (frontend-only; backend unchanged). Colors + both enriched modals + login rebrand visually verified post-build.
+**Testing:** iteration_120.json = 100% of CI critical flows pass. Colors + both enriched modals + login rebrand visually verified.
+
+**Round 2 (Jun 2026) — 4 approved features shipped (now includes a small backend module):**
+- **Live Trend History** — new `backend/control_intelligence.py` (`ci_router` @ `/api/control-intelligence`); daily effectiveness snapshot → `control_eff_history` collection; `GET /effectiveness-history?days=30` (seeds today's real point on demand). Mission Control shows a real multi-line trend once ≥2 days captured, else the domain bar. Curl-verified (avg 85, health 89, 24/24).
+- **Control Owner Nudges** — `POST /owner-nudges` (admin) emails at-risk controls grouped by owner (reuses managed-Resend `notifications.send_email`); "Send owner reminders" button in Remediation tab. e2e toast verified (`at_risk:0` → "nothing to remind").
+- **Framework Deep-Dive PDF** — "Export PDF" in FrameworkDetailModal composes blocks (coverage, gaps, mapped controls) → existing `POST /studio/report/pdf` (frontend-only).
+- **Email to Board (Resend)** — `POST /email-brief` (admin) builds the assurance brief PDF and emails it to admins/execs + `org.ci_brief_recipients`; verified `{"sent":1}`. Footer "Email to Board" button + scheduled monthly via `monthly-board-report` cron.
+- ⚠️ crons.yml already at the **5-cron platform max** — folded snapshot+nudges into `daily-drift-digest` and the board brief into `monthly-board-report` (no new cron files).
+- ⚠️ Fork-hazard recurred: an `app.include_router(ci_router)` line silently dropped in a batched `server.py` edit → 404s until re-added + grep-verified. Always grep-verify router registration.
 
 ## Backlog / prior app (Obserra Agentic-AI) — PENDING (user-approved msg 184, not implemented)
 Digest Schedule Choice, Structured Audit Meta (note: `_log_audit` in auth.py already has an optional `meta={}` param added — additive/harmless), Auto-Resume Notice, Exec Mute Badge Tooltip.

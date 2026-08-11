@@ -1,6 +1,8 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle, Link2, Target, TrendingDown, X } from "lucide-react";
+import { AlertTriangle, Download, Link2, Loader2, Target, TrendingDown, X } from "lucide-react";
+import { toast } from "sonner";
+import { api } from "@/lib/api";
 import { AIExplain } from "@/components/AIExplain";
 import { DataClassBadge, PALETTE, ProgressBar, StatusPill } from "@/components/control-intelligence/shared";
 
@@ -35,6 +37,44 @@ export default function FrameworkDetailModal({ framework, controls, onClose }) {
   const gap = Math.max(0, controlsTotal - passing);
   const mapped = mappedControls(controls, name);
 
+  const [busy, setBusy] = useState(false);
+  const exportPdf = async () => {
+    setBusy(true);
+    try {
+      const nonPassing = mapped.filter((m) => m.control.status !== "Passing");
+      const blocks = [
+        { heading: `${name} — Framework Assurance`, lines: [
+          `Coverage: ${coverage}%`,
+          `Passing controls: ${passing}/${controlsTotal}`,
+          `Open gaps: ${gap}`,
+          `Risk level (modelled): ${riskLevel}`,
+        ] },
+        { heading: "Mapped controls (live feed)", lines: mapped.length
+          ? mapped.map((m) => `[${m.control.control_id}] ${m.control.name} — ${m.control.status}, effectiveness ${m.control.effectiveness}%` + (m.refs.length ? ` (refs: ${m.refs.join(", ")})` : ""))
+          : ["No controls map to this framework in the current feed."] },
+        { heading: "Gaps / attention", lines: nonPassing.length
+          ? nonPassing.map((m) => `[${m.control.control_id}] ${m.control.name} — ${m.control.status}`)
+          : ["No open gaps — all mapped controls are passing."] },
+        { heading: "Defensibility", lines: ["Coverage, passing counts and control mappings are FACT values from the live Obserra control feed. Risk level is MODELLED. AI narrative is a recommendation."] },
+      ];
+      const res = await api.post("/studio/report/pdf", {
+        title: `${name} Framework Assurance`,
+        ai_narrative: `Single-framework assurance deep-dive for ${name}, generated from the live Obserra control feed.`,
+        blocks,
+      }, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `obserra-${name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}-assurance.pdf`;
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      toast.success(`${name} assurance PDF generated.`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to export framework PDF.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const riskLevel = coverage >= 80 ? "Low" : coverage >= 60 ? "Medium" : coverage >= 40 ? "High" : "Critical";
   const riskAccent = coverage >= 80 ? "142 70% 45%" : coverage >= 60 ? "35 90% 55%" : coverage >= 40 ? "24 90% 55%" : "0 84% 60%";
 
@@ -62,7 +102,13 @@ export default function FrameworkDetailModal({ framework, controls, onClose }) {
               <DataClassBadge kind="FACT" />
             </div>
           </div>
-          <button onClick={onClose} data-testid="ci-framework-detail-close" className="p-2 rounded-md hover:bg-secondary"><X className="w-5 h-5" /></button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button onClick={exportPdf} disabled={busy} data-testid="ci-framework-export"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">
+              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Export PDF
+            </button>
+            <button onClick={onClose} data-testid="ci-framework-detail-close" className="p-2 rounded-md hover:bg-secondary"><X className="w-5 h-5" /></button>
+          </div>
         </div>
 
         <div className="p-5 space-y-5">

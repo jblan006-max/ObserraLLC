@@ -1,7 +1,24 @@
-import { AlertTriangle, TrendingDown } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, Bell, Loader2, TrendingDown } from "lucide-react";
+import { toast } from "sonner";
+import { api } from "@/lib/api";
 import { EmptyState, Panel, StatusPill } from "@/components/control-intelligence/shared";
 
-export default function RemediationDashboard({ controls, gaps, onSelectControl }) {
+export default function RemediationDashboard({ controls, gaps, onSelectControl, isAdmin }) {
+  const [nudging, setNudging] = useState(false);
+  const sendNudges = async () => {
+    setNudging(true);
+    try {
+      const r = await api.post("/control-intelligence/owner-nudges");
+      if (r.data.at_risk === 0) toast.success("No at-risk controls — nothing to remind.");
+      else toast.success(`Reminder sent for ${r.data.at_risk} control(s) to ${r.data.emailed.length} recipient(s).`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to send owner reminders.");
+    } finally {
+      setNudging(false);
+    }
+  };
+
   const priority = (controls || []).filter(
     (control) =>
       control.status !== "Passing" ||
@@ -15,6 +32,12 @@ export default function RemediationDashboard({ controls, gaps, onSelectControl }
         title="Control remediation priority"
         subtitle="MODELLED priority is derived client-side from existing status, effectiveness, maturity, drift and evidence freshness."
         testid="control-intel-remediation"
+        actions={isAdmin ? (
+          <button data-testid="ci-send-owner-nudges" onClick={sendNudges} disabled={nudging}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">
+            {nudging ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bell className="w-3.5 h-3.5" />} Send owner reminders
+          </button>
+        ) : null}
       >
         {priority.length === 0 ? (
           <EmptyState

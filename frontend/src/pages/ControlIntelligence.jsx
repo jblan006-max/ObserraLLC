@@ -60,6 +60,7 @@ export default function ControlIntelligence() {
   const [selectedControl, setSelectedControl] = useState(null);
   const [busyId, setBusyId] = useState("");
   const [reportBusy, setReportBusy] = useState(false);
+  const [briefBusy, setBriefBusy] = useState(false);
 
   const openTab = (tab) => {
     setActiveTab(tab);
@@ -135,6 +136,18 @@ export default function ControlIntelligence() {
       toast.error(e.response?.data?.detail || "Unable to generate executive brief.");
     } finally {
       setReportBusy(false);
+    }
+  };
+
+  const emailBrief = async () => {
+    setBriefBusy(true);
+    try {
+      const r = await api.post("/control-intelligence/email-brief");
+      toast.success(`Assurance brief emailed to ${r.data.sent} recipient(s).`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to email the brief.");
+    } finally {
+      setBriefBusy(false);
     }
   };
 
@@ -236,6 +249,8 @@ export default function ControlIntelligence() {
           onSelectControl={setSelectedControl}
           onExecutiveReport={executiveReport}
           reportBusy={reportBusy}
+          onEmailBrief={emailBrief}
+          briefBusy={briefBusy}
         />
       )}
 
@@ -270,6 +285,7 @@ export default function ControlIntelligence() {
           controls={data?.controls || []}
           gaps={data?.gaps || []}
           onSelectControl={setSelectedControl}
+          isAdmin={isAdmin}
         />
       )}
 

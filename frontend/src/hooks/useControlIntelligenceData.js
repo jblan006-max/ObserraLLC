@@ -11,6 +11,7 @@ const SOURCES = [
   ["compliance", "/controls/compliance", { frameworks: [], gaps: [] }],
   ["crosswalk", "/controls/crosswalk", { frameworks: [], rows: [] }],
   ["connectorHealth", "/connectors/health", { connectors: [], summary: {} }],
+  ["effHistory", "/control-intelligence/effectiveness-history?days=30", { history: [] }],
 ];
 
 async function fetchSource(name, path, fallback) {
@@ -71,6 +72,7 @@ export function useControlIntelligenceData() {
       summary: controlSummary(controls),
       frameworks: frameworkSummary(raw.compliance || {}),
       gaps: Array.isArray(raw.compliance?.gaps) ? raw.compliance.gaps : [],
+      effHistory: Array.isArray(raw.effHistory?.history) ? raw.effHistory.history : [],
       generatedAt: new Date().toISOString(),
     };
 

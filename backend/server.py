@@ -32,6 +32,7 @@ from self_scan import self_scan_router
 from dashboards import dash_router
 from risk_engine import risk_engine_router
 from connectors_catalog import connectors_router
+from control_intelligence import ci_router
 from sap_uac import sap_router, seed_sap_uac
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -47,6 +48,7 @@ app.include_router(payments_router)
 app.include_router(reports_router)
 app.include_router(kernel_router)
 app.include_router(scheduled_router)
+app.include_router(ci_router)
 app.include_router(enterprise_router)
 app.include_router(agents_router)
 app.include_router(tpr_router)
