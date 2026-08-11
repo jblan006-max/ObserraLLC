@@ -68,6 +68,15 @@ async def _snapshot_org(org_id):
                   "avg_effectiveness": a["avg_eff"], "passing": a["passing"],
                   "total": a["total"], "coverage": a["coverage"], "health_score": a["health"],
                   "ts": datetime.now(timezone.utc).isoformat()}}, upsert=True)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    owners = {(c.get("owner") or "Unassigned") for c in a["statuses"]}
+    for owner in owners:
+        sc = _owner_scorecard(a["statuses"], owner)
+        await db.ci_owner_eff_history.update_one(
+            {"org_id": org_id, "owner": owner, "date": today},
+            {"$set": {"org_id": org_id, "owner": owner, "date": today, "avg_eff": sc["avg_eff"],
+                      "total": sc["total"], "passing": sc["passing"], "at_risk": sc["at_risk"],
+                      "ts": now_iso}}, upsert=True)
     return a
 
 
@@ -129,7 +138,7 @@ async def _owner_email_map(org_id, by_owner):
     return mp
 
 
-def _nudge_owner_html(owner, ctrls):
+def _nudge_owner_html(owner, ctrls, scorecard_html=""):
     items = "".join(
         f"<li><strong>{c['control_id']}</strong> {c['name']} — {c['status']}, "
         f"effectiveness {c['effectiveness']}%"
@@ -138,6 +147,7 @@ def _nudge_owner_html(owner, ctrls):
     return (f"<div style='font:400 14px Arial;color:#1f2937;max-width:640px;margin:auto'>"
             f"<h2 style='color:#0f1e3d'>Your controls need attention</h2>"
             f"<p>Hi {owner}, {len(ctrls)} control(s) you own need remediation. Here is exactly what to pick up:</p>"
+            f"{scorecard_html}"
             f"<ul>{items}</ul>"
             f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence — personalized remediation nudge.</p></div>")
 
@@ -168,9 +178,11 @@ async def _run_ci_owner_nudges(org_id, actor="scheduler@obserra"):
     for owner, ctrls in by_owner.items():
         em = owner_map.get((owner or "").strip().lower())
         if em and em not in muted:
+            sc = _owner_scorecard(a["statuses"], owner)
+            trend = await _owner_trend(org_id, owner)
             await notifications.send_email(
                 em, "Your controls need remediation — Obserra Control Intelligence",
-                _nudge_owner_html(owner, ctrls))
+                _nudge_owner_html(owner, ctrls, _scorecard_html(sc, trend)))
             personalized.add(em)
     rollup = (await _admin_exec_emails(org_id)) - personalized
     if rollup:
@@ -195,6 +207,83 @@ async def _run_ci_owner_nudges_all():
             await _run_ci_owner_nudges(str(org["_id"]))
         except Exception as e:
             logger.warning(f"CI owner nudges failed for org {org['_id']}: {e}")
+
+
+def _owner_scorecard(statuses, owner):
+    own = [c for c in statuses if (c.get("owner") or "Unassigned") == owner]
+    total = len(own)
+    passing = sum(1 for c in own if c["status"] == "Passing")
+    avg_eff = round(sum(c["effectiveness"] for c in own) / total) if total else 0
+    at_risk = len([c for c in own
+                   if c["status"] != "Passing" or c.get("days_to_expiry", 999) <= 14 or c.get("drift")])
+    return {"total": total, "passing": passing, "avg_eff": avg_eff, "at_risk": at_risk}
+
+
+def _sparkline(values):
+    if not values:
+        return ""
+    blocks = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
+    lo, hi = min(values), max(values)
+    rng = (hi - lo) or 1
+    return "".join(blocks[min(7, int((v - lo) / rng * 7))] for v in values)
+
+
+async def _owner_trend(org_id, owner, days=14):
+    rows = await db.ci_owner_eff_history.find(
+        {"org_id": org_id, "owner": owner}, {"_id": 0, "date": 1, "avg_eff": 1}).sort("date", 1).to_list(400)
+    return rows[-days:]
+
+
+def _scorecard_html(sc, trend):
+    if trend and len(trend) >= 2:
+        spark = _sparkline([r["avg_eff"] for r in trend])
+        d = int(trend[-1]["avg_eff"] - trend[0]["avg_eff"])
+        color = "#15803d" if d > 0 else ("#b91c1c" if d < 0 else "#6b7280")
+        arrow = "\u25b2" if d > 0 else ("\u25bc" if d < 0 else "\u25ac")
+        trend_cell = (f"<span style='font-size:15px;letter-spacing:1px'>{spark}</span> "
+                      f"<span style='color:{color}'>{arrow} {d:+d} pts over {len(trend)} days</span>")
+    else:
+        trend_cell = "<span style='color:#9ca3af'>builds daily \u2014 check back tomorrow</span>"
+
+    def row(k, v):
+        return (f"<tr><td style='padding:3px 12px 3px 0;color:#6b7280'>{k}</td>"
+                f"<td style='padding:3px 0'><strong>{v}</strong></td></tr>")
+
+    return ("<table style='border-collapse:collapse;margin:6px 0 14px;font:400 13px Arial'>"
+            + row("Your controls", sc["total"])
+            + row("Passing", f"{sc['passing']}/{sc['total']}")
+            + row("Avg effectiveness", f"{sc['avg_eff']}%")
+            + row("At-risk now", sc["at_risk"])
+            + "<tr><td style='padding:3px 12px 3px 0;color:#6b7280'>Effectiveness trend</td>"
+              f"<td style='padding:3px 0'>{trend_cell}</td></tr>"
+            + "</table>")
+
+
+async def _auditor_engagement(org_id, days=30):
+    from datetime import timedelta
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = await db.ci_auditor_access.find(
+        {"org_id": org_id, "at": {"$gt": since}}, {"_id": 0, "kind": 1, "who": 1}).to_list(5000)
+    views = sum(1 for r in rows if r.get("kind") == "view")
+    downloads = sum(1 for r in rows if r.get("kind") == "download")
+    reviewers = sorted({(r.get("who") or "").strip() for r in rows
+                        if r.get("kind") == "download" and (r.get("who") or "").strip()})
+    return {"views": views, "downloads": downloads, "reviewers": reviewers, "days": days}
+
+
+def _engagement_section(eng):
+    days = (eng or {}).get("days", 30)
+    if not eng or (not eng["views"] and not eng["downloads"]):
+        return f"\n\n## External Assurance Activity\n- No external auditor engagement recorded in the last {days} days."
+    rv = eng["reviewers"]
+    lines = ["", "", "## External Assurance Activity",
+             f"- Auditor portal views (last {days}d): {eng['views']}",
+             f"- Signed-PDF downloads (last {days}d): {eng['downloads']}"
+             + (f" by {len(rv)} named reviewer(s)" if rv else "")]
+    if rv:
+        lines.append(f"- Named reviewers: {', '.join(rv)}")
+    return "\n".join(lines)
+
 
 
 def _ci_brief_markdown(a):
@@ -277,6 +366,7 @@ async def _run_ci_brief_email(org_id, actor="scheduler@obserra", extra_recipient
     org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1, "ci_brief_recipients": 1, "report_branding": 1})
     org_name = (org or {}).get("name") or "Organization"
     md = _ci_brief_markdown(a)
+    md += _engagement_section(await _auditor_engagement(org_id))
     title = "Control Intelligence Executive Assurance Brief"
     pdf = _build_pdf(md, title, cover=True, org_name=org_name, brand=_resolve_brand(org))
     attachments = [{"filename": "obserra-control-intelligence-assurance-brief.pdf",
@@ -420,7 +510,7 @@ async def owner_nudges_preview(demo: bool = False, admin: dict = Depends(require
 @ci_router.get("/brief/preview")
 async def brief_preview(admin: dict = Depends(require_roles("admin"))):
     a = await _ci_aggregate(admin["org_id"])
-    md = _ci_brief_markdown(a)
+    md = _ci_brief_markdown(a) + _engagement_section(await _auditor_engagement(admin["org_id"]))
     title = "Control Intelligence Executive Assurance Brief"
     return {"title": title, "markdown": md, "html": _report_html(md, title)}
 
@@ -630,6 +720,20 @@ async def _maybe_alert_auditor_access(doc, kind, who):
             await notifications.send_email(em, f"Auditor engaged — {org_name} Control Intelligence", body)
         except Exception:
             pass
+    try:
+        org2 = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"alert_channel_webhook": 1})
+        wh = ((org2 or {}).get("alert_channel_webhook") or "").strip()
+        chat_title = f"Auditor engaged — {org_name} Control Intelligence"
+        chat_text = (f"An external auditor{(' (' + who + ')') if who else ''} {label}. "
+                     f"First engagement — full open/download history is in the Defensibility tab.")
+        if wh:
+            from agents import _post_to_webhook
+            await _post_to_webhook(wh, chat_title, chat_text)
+        else:
+            from self_scan import _post_chat_alert
+            await _post_chat_alert(org_id, chat_title, chat_text)
+    except Exception:
+        pass
 
 
 @ci_router.get("/brief.pdf")
@@ -640,6 +744,7 @@ async def brief_pdf(admin: dict = Depends(require_roles("admin"))):
     org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}, {"name": 1, "report_branding": 1})
     org_name = (org or {}).get("name") or "Organization"
     md = _ci_brief_markdown(a)
+    md += _engagement_section(await _auditor_engagement(admin["org_id"]))
     title = "Control Intelligence Executive Assurance Brief"
     pdf = _build_pdf(md, title, cover=True, org_name=org_name, brand=_resolve_brand(org))
     return StreamingResponse(io.BytesIO(pdf.getvalue()), media_type="application/pdf",
@@ -658,3 +763,48 @@ async def muted_owners(admin: dict = Depends(require_roles("admin"))):
         out.append({"name": u.get("name") or u.get("email"), "email": u.get("email"),
                     "indefinite": indefinite, "until": None if indefinite else u.get("ci_nudge_muted_until")})
     return {"owners": out}
+
+
+@ci_router.get("/auditor-link/analytics")
+async def auditor_link_analytics(admin: dict = Depends(require_roles("admin"))):
+    org_id = admin["org_id"]
+    rows = await db.ci_auditor_access.find({"org_id": org_id}, {"_id": 0}).to_list(5000)
+    links, reviewers = {}, {}
+    for r in rows:
+        t = r.get("token")
+        if not t:
+            continue
+        k = r.get("kind")
+        who = (r.get("who") or "").strip()
+        at = r.get("at") or ""
+        lk = links.setdefault(t, {"token": t, "short": t[:8], "views": 0, "downloads": 0, "last_at": ""})
+        if k == "view":
+            lk["views"] += 1
+        elif k == "download":
+            lk["downloads"] += 1
+        if at > lk["last_at"]:
+            lk["last_at"] = at
+        if k == "download" and who:
+            rv = reviewers.setdefault(who, {"who": who, "downloads": 0, "last_at": ""})
+            rv["downloads"] += 1
+            if at > rv["last_at"]:
+                rv["last_at"] = at
+    now = datetime.now(timezone.utc).isoformat()
+    link_docs = await db.ci_auditor_links.find(
+        {"org_id": org_id}, {"_id": 0, "token": 1, "revoked": 1, "expires_at": 1}).to_list(500)
+    status_map = {}
+    for d in link_docs:
+        if d.get("revoked"):
+            status_map[d["token"]] = "revoked"
+        elif (d.get("expires_at") or "") <= now:
+            status_map[d["token"]] = "expired"
+        else:
+            status_map[d["token"]] = "active"
+    out_links = sorted(links.values(), key=lambda x: x["last_at"], reverse=True)
+    for lk in out_links:
+        lk["status"] = status_map.get(lk["token"], "unknown")
+    out_reviewers = sorted(reviewers.values(), key=lambda x: (-x["downloads"], x["who"]))
+    totals = {"views": sum(lk["views"] for lk in out_links),
+              "downloads": sum(lk["downloads"] for lk in out_links),
+              "reviewers": len(out_reviewers), "links": len(out_links)}
+    return {"links": out_links, "reviewers": out_reviewers, "totals": totals}

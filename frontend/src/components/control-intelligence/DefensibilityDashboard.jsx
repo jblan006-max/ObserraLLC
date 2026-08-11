@@ -90,11 +90,14 @@ function BriefSettingsCard() {
   const [linkBusy, setLinkBusy] = useState(false);
   const [counts, setCounts] = useState(null);
   const [accessLog, setAccessLog] = useState([]);
+  const [analytics, setAnalytics] = useState(null);
 
   const refreshCounts = () =>
     api.get("/control-intelligence/brief/recipients").then((r) => setCounts(r.data)).catch(() => {});
   const refreshAccess = () =>
     api.get("/control-intelligence/auditor-link/access?limit=12").then((r) => setAccessLog(r.data.events || [])).catch(() => {});
+  const refreshAnalytics = () =>
+    api.get("/control-intelligence/auditor-link/analytics").then((r) => setAnalytics(r.data)).catch(() => {});
 
   useEffect(() => {
     (async () => {
@@ -117,6 +120,7 @@ function BriefSettingsCard() {
       }
       refreshCounts();
       refreshAccess();
+      refreshAnalytics();
     })();
   }, []);
 
@@ -466,6 +470,57 @@ function BriefSettingsCard() {
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {analytics && analytics.totals.views + analytics.totals.downloads > 0 && (
+              <div className="mt-4 border-t border-border pt-3" data-testid="ci-auditor-analytics">
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Reviewer engagement</div>
+                  <button onClick={refreshAnalytics} data-testid="ci-auditor-analytics-refresh" className="text-[10px] font-mono text-muted-foreground hover:text-foreground">
+                    Refresh
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-2 mb-3">
+                  <div className="rounded-lg border border-border bg-secondary/30 p-2 text-center">
+                    <div className="font-head font-black text-lg" data-testid="ci-analytics-views">{analytics.totals.views}</div>
+                    <div className="text-[9px] font-mono uppercase text-muted-foreground">Views</div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 p-2 text-center">
+                    <div className="font-head font-black text-lg" data-testid="ci-analytics-downloads">{analytics.totals.downloads}</div>
+                    <div className="text-[9px] font-mono uppercase text-muted-foreground">Downloads</div>
+                  </div>
+                  <div className="rounded-lg border border-border bg-secondary/30 p-2 text-center">
+                    <div className="font-head font-black text-lg" data-testid="ci-analytics-reviewers">{analytics.totals.reviewers}</div>
+                    <div className="text-[9px] font-mono uppercase text-muted-foreground">Reviewers</div>
+                  </div>
+                </div>
+                {analytics.reviewers.length > 0 && (
+                  <div className="space-y-1">
+                    {analytics.reviewers.map((rv, i) => (
+                      <div key={rv.who} data-testid={`ci-analytics-reviewer-${i}`} className="flex items-center justify-between text-[11px]">
+                        <span className="flex items-center gap-1.5">
+                          <Download className="w-3 h-3 text-ai" />
+                          <span className="font-head font-bold">{rv.who}</span>
+                        </span>
+                        <span className="font-mono text-muted-foreground">
+                          {rv.downloads} download(s) · {new Date(rv.last_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {analytics.links.length > 0 && (
+                  <div className="mt-3 space-y-1">
+                    <div className="text-[9px] font-mono uppercase text-muted-foreground mb-1">Per-link engagement</div>
+                    {analytics.links.map((lk, i) => (
+                      <div key={lk.token} data-testid={`ci-analytics-link-${i}`} className="flex items-center justify-between text-[11px]">
+                        <span className="font-mono text-muted-foreground">…{lk.short} · <span className="capitalize">{lk.status}</span></span>
+                        <span className="font-mono text-muted-foreground">{lk.views} view(s) · {lk.downloads} download(s)</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>
