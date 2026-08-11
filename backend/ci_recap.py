@@ -6,6 +6,7 @@ module so its routes register on ci_router; scheduled.py imports the _run_* cron
 """
 import logging
 import os
+import base64
 from datetime import datetime, timezone
 
 from bson import ObjectId
@@ -272,6 +273,26 @@ async def auditor_recap_send(days: int = 7, admin: dict = Depends(require_roles(
     return {"sent": sent, "to": emails, "recap": rec}
 
 
+@ci_router.post("/auditor-link/recap/test")
+async def auditor_recap_test(days: int = 7, admin: dict = Depends(require_roles("admin"))):
+    """Send the exact recap only to the requesting admin's own inbox (test copy, not logged)."""
+    days = max(1, min(90, int(days or 7)))
+    org_id = admin["org_id"]
+    rec = await _auditor_recap_payload(org_id, days)
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1})
+    org_name = (org or {}).get("name") or "Organization"
+    role_map = await _brief_role_map(org_id)
+    to = admin["email"]
+    html = _recap_html(org_name, rec, sorted(role_map["auditor"]))
+    sent = 0
+    try:
+        await notifications.send_email(to, f"[Test copy] Assurance recap ({days}d) \u2014 {org_name}", html)
+        sent = 1
+    except Exception:
+        pass
+    return {"sent": sent, "to": [to], "recap": rec}
+
+
 @ci_router.get("/auditor-link/activity")
 async def auditor_activity(days: int = 30, user: dict = Depends(require_roles("admin", "executive"))):
     days = max(1, min(90, int(days or 30)))
@@ -458,19 +479,80 @@ def _assurance_digest_html(org_name, p):
             f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence \u2014 monthly assurance digest.</p></div>")
 
 
+def _assurance_digest_markdown(org_name, p):
+    eng = p["engagement"]
+    rv = eng["reviewers"]
+    trend = p["trend"]
+    lines = [f"## Monthly Assurance Digest \u2014 {org_name}",
+             f"A board-ready rollup of the last {p['days']} days of control effectiveness and external assurance activity.",
+             "", "## Control Posture",
+             f"- Control health score: {p['health']}/100",
+             f"- Controls passing: {p['passing']}/{p['total']}",
+             f"- Average effectiveness: {p['avg_eff']}%",
+             f"- Average maturity: {p['avg_maturity']}/5",
+             f"- Coverage: {p['coverage']}%",
+             f"- At-risk now: {p['at_risk']}"]
+    if trend.get("points"):
+        lines.append(f"- {p['days']}-day trend: effectiveness {trend['eff_delta']:+d} pts, "
+                     f"health {trend['health_delta']:+d} pts")
+    lines += ["", "## Framework Readiness"]
+    if p["frameworks"]:
+        for f in p["frameworks"]:
+            lines.append(f"- {f['framework']}: {f['coverage']}% coverage, {f['passing']}/{f['controls']} passing")
+    else:
+        lines.append("- No framework coverage returned.")
+    lines += ["", "## Highest-Priority Control Gaps"]
+    if p["weak"]:
+        for c in p["weak"]:
+            lines.append(f"- [{c['control_id']}] {c['name']}: {c['status']}, effectiveness {c['effectiveness']}%")
+    else:
+        lines.append("- All controls passing.")
+    lines += ["", f"## External Assurance Activity ({p['days']}d)",
+              f"- Portal views: {eng['views']}",
+              f"- Signed-PDF downloads: {eng['downloads']}"
+              + (f" by {len(rv)} named reviewer(s)" if rv else "")]
+    if rv:
+        lines.append(f"- Named reviewers: {', '.join(rv)}")
+    lines += ["", "## Defensibility",
+              "- Control status, effectiveness, maturity and framework coverage are FACT values from the live control feed.",
+              "- Health, coverage and trend roll-ups are MODELLED calculations."]
+    return "\n".join(lines)
+
+
+def _assurance_digest_pdf(org_name, p, brand):
+    import hashlib
+    md = _assurance_digest_markdown(org_name, p)
+    raw = _build_pdf(md, "Monthly Assurance Digest", cover=True, org_name=org_name, brand=brand).getvalue()
+    try:
+        from agent_reports import _stamp_verified_seal
+        raw = _stamp_verified_seal(raw, hashlib.sha256(md.encode()).hexdigest())
+    except Exception as e:
+        logger.warning(f"CI digest seal failed: {e}")
+    return raw
+
+
 async def _run_ci_assurance_digest(org_id, trigger="scheduled"):
     p = await _assurance_digest_payload(org_id, 30)
-    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1})
+    org = await db.organizations.find_one(
+        {"_id": ObjectId(org_id)}, {"name": 1, "report_branding": 1})
     org_name = (org or {}).get("name") or "Organization"
     role_map = await _brief_role_map(org_id)
     emails = sorted(role_map["board"] | role_map["auditor"])
     if not emails:
         return {"sent": 0, "to": [], "digest": p}
     html = _assurance_digest_html(org_name, p)
+    attachments = []
+    try:
+        pdf_raw = _assurance_digest_pdf(org_name, p, _resolve_brand(org))
+        attachments = [{"filename": "obserra-monthly-assurance-digest.pdf",
+                        "content": base64.b64encode(pdf_raw).decode()}]
+    except Exception as e:
+        logger.warning(f"CI digest PDF build failed: {e}")
     sent = 0
     for em in emails:
         try:
-            await notifications.send_email(em, f"Monthly Assurance Digest \u2014 {org_name}", html)
+            await notifications.send_email(em, f"Monthly Assurance Digest \u2014 {org_name}", html,
+                                           attachments=attachments)
             sent += 1
         except Exception:
             pass

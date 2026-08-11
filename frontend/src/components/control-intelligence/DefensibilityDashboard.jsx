@@ -95,6 +95,7 @@ function BriefSettingsCard() {
   const [askName, setAskName] = useState(false);
   const [recap, setRecap] = useState(null);
   const [recapBusy, setRecapBusy] = useState(false);
+  const [recapTestBusy, setRecapTestBusy] = useState(false);
   const [recapEnabled, setRecapEnabled] = useState(false);
   const [recapWeekday, setRecapWeekday] = useState(0);
   const [timeline, setTimeline] = useState(null);
@@ -324,6 +325,19 @@ function BriefSettingsCard() {
       toast.error(e.response?.data?.detail || "Unable to send the recap.");
     } finally {
       setRecapBusy(false);
+    }
+  };
+
+  const sendRecapTest = async () => {
+    setRecapTestBusy(true);
+    try {
+      const r = await api.post("/control-intelligence/auditor-link/recap/test?days=7");
+      setRecap(r.data.recap);
+      toast.success(`Test copy sent to your inbox (${r.data.to[0]}).`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to send the test recap.");
+    } finally {
+      setRecapTestBusy(false);
     }
   };
 
@@ -742,6 +756,9 @@ function BriefSettingsCard() {
                 <div className="flex items-center gap-2">
                   <button onClick={previewRecap} data-testid="ci-recap-preview" className="text-[10px] font-mono text-muted-foreground hover:text-foreground">Preview</button>
                   <button onClick={loadHistory} data-testid="ci-recap-history-btn" className="text-[10px] font-mono text-muted-foreground hover:text-foreground">History</button>
+                  <button onClick={sendRecapTest} disabled={recapTestBusy} data-testid="ci-recap-test" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-border text-[10px] font-head font-bold text-muted-foreground hover:text-foreground disabled:opacity-50">
+                    {recapTestBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Mail className="w-2.5 h-2.5" />} Test to me
+                  </button>
                   <button onClick={sendRecap} disabled={recapBusy} data-testid="ci-recap-send" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-ai/40 bg-ai/10 text-ai text-[10px] font-head font-bold disabled:opacity-50">
                     {recapBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Send className="w-2.5 h-2.5" />} Send now
                   </button>
