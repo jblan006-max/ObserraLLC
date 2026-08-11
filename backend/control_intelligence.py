@@ -439,6 +439,7 @@ class CIBriefSettings(BaseModel):
     recap_weekday: Optional[int] = None
     digest_enabled: Optional[bool] = None
     digest_day: Optional[int] = None
+    digest_cadence: Optional[str] = None
 
 
 _BRIEF_CADENCES = {"monthly", "quarterly"}
@@ -449,8 +450,9 @@ async def _ci_settings(org_id):
         {"_id": ObjectId(org_id)},
         {"ci_brief_recipients": 1, "ci_brief_send_day": 1, "ci_brief_enabled": 1, "ci_brief_cadence": 1,
          "ci_nudge_drop_days": 1, "ci_auditor_ask_name": 1, "ci_recap_enabled": 1, "ci_recap_weekday": 1,
-         "ci_digest_enabled": 1, "ci_digest_day": 1}) or {}
+         "ci_digest_enabled": 1, "ci_digest_day": 1, "ci_digest_cadence": 1}) or {}
     cadence = org.get("ci_brief_cadence")
+    digest_cadence = org.get("ci_digest_cadence")
     return {"recipients": _norm_recipients(org.get("ci_brief_recipients")),
             "send_day": max(1, min(28, int(org.get("ci_brief_send_day") or 1))),
             "enabled": bool(org.get("ci_brief_enabled", False)),
@@ -460,7 +462,8 @@ async def _ci_settings(org_id):
             "recap_enabled": bool(org.get("ci_recap_enabled", False)),
             "recap_weekday": max(0, min(6, int(org.get("ci_recap_weekday") or 0))),
             "digest_enabled": bool(org.get("ci_digest_enabled", False)),
-            "digest_day": max(1, min(28, int(org.get("ci_digest_day") or 1)))}
+            "digest_day": max(1, min(28, int(org.get("ci_digest_day") or 1))),
+            "digest_cadence": digest_cadence if digest_cadence in _BRIEF_CADENCES else "monthly"}
 
 
 @ci_router.get("/settings")
@@ -491,6 +494,8 @@ async def set_ci_settings(body: CIBriefSettings, admin: dict = Depends(require_r
         update["ci_digest_enabled"] = bool(body.digest_enabled)
     if body.digest_day is not None:
         update["ci_digest_day"] = max(1, min(28, int(body.digest_day)))
+    if body.digest_cadence is not None:
+        update["ci_digest_cadence"] = body.digest_cadence if body.digest_cadence in _BRIEF_CADENCES else "monthly"
     if update:
         await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": update})
     return await _ci_settings(admin["org_id"])

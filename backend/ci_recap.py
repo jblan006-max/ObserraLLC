@@ -621,11 +621,14 @@ async def _run_ci_assurance_digest_all():
     now = datetime.now(timezone.utc)
     month = now.strftime("%Y-%m")
     orgs = await db.organizations.find(
-        {}, {"_id": 1, "ci_digest_enabled": 1, "ci_digest_day": 1}).to_list(1000)
+        {}, {"_id": 1, "ci_digest_enabled": 1, "ci_digest_day": 1, "ci_digest_cadence": 1}).to_list(1000)
     for org in orgs:
         org_id = str(org["_id"])
         try:
             if not org.get("ci_digest_enabled"):
+                continue
+            cadence = org.get("ci_digest_cadence") or "monthly"
+            if cadence == "quarterly" and now.month not in (1, 4, 7, 10):
                 continue
             if now.day != max(1, min(28, int(org.get("ci_digest_day") or 1))):
                 continue

@@ -104,6 +104,7 @@ function BriefSettingsCard() {
   const [demoBusy, setDemoBusy] = useState(false);
   const [digestEnabled, setDigestEnabled] = useState(false);
   const [digestDay, setDigestDay] = useState(1);
+  const [digestCadence, setDigestCadence] = useState("monthly");
   const [digestBusy, setDigestBusy] = useState(false);
   const [digestHistory, setDigestHistory] = useState(null);
   const [showRecapRecipients, setShowRecapRecipients] = useState(false);
@@ -170,6 +171,7 @@ function BriefSettingsCard() {
         setRecapWeekday(Math.max(0, Math.min(6, Number(r.data.recap_weekday) || 0)));
         setDigestEnabled(Boolean(r.data.digest_enabled));
         setDigestDay(Math.max(1, Math.min(28, Number(r.data.digest_day) || 1)));
+        setDigestCadence(r.data.digest_cadence === "quarterly" ? "quarterly" : "monthly");
       } catch {
         /* keep defaults */
       } finally {
@@ -203,6 +205,25 @@ function BriefSettingsCard() {
     setEntry("");
   };
 
+  const importExecs = async () => {
+    try {
+      const { data } = await api.get("/auth/team/members");
+      const execs = (data || []).filter((m) => ["executive", "admin"].includes(m.role) && m.email);
+      setRecipients((list) => {
+        const have = new Set(list.map((r) => r.email));
+        const added = execs
+          .map((m) => m.email.toLowerCase())
+          .filter((e) => !have.has(e))
+          .map((email) => ({ email, role: "board" }));
+        if (added.length === 0) toast.message("All your admins & executives are already recipients.");
+        else toast.success(`Added ${added.length} board recipient(s) from your team — remember to Save.`);
+        return [...list, ...added];
+      });
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to load your team roster.");
+    }
+  };
+
   const removeRecipient = (email) => setRecipients((list) => list.filter((item) => item.email !== email));
 
   const toggleRole = (email) =>
@@ -213,7 +234,7 @@ function BriefSettingsCard() {
   const save = async () => {
     setSaving(true);
     try {
-      const r = await api.put("/control-intelligence/settings", { recipients, send_day: sendDay, enabled, cadence, drop_days: dropDays, ask_name: askName, recap_enabled: recapEnabled, recap_weekday: recapWeekday, digest_enabled: digestEnabled, digest_day: digestDay });
+      const r = await api.put("/control-intelligence/settings", { recipients, send_day: sendDay, enabled, cadence, drop_days: dropDays, ask_name: askName, recap_enabled: recapEnabled, recap_weekday: recapWeekday, digest_enabled: digestEnabled, digest_day: digestDay, digest_cadence: digestCadence });
       setRecipients(r.data.recipients || []);
       setSendDay(r.data.send_day || 1);
       setEnabled(Boolean(r.data.enabled));
@@ -224,6 +245,7 @@ function BriefSettingsCard() {
       setRecapWeekday(Math.max(0, Math.min(6, Number(r.data.recap_weekday) || 0)));
       setDigestEnabled(Boolean(r.data.digest_enabled));
       setDigestDay(Math.max(1, Math.min(28, Number(r.data.digest_day) || 1)));
+      setDigestCadence(r.data.digest_cadence === "quarterly" ? "quarterly" : "monthly");
       refreshCounts();
       toast.success("Board brief settings saved.");
     } catch (e) {
@@ -466,6 +488,14 @@ function BriefSettingsCard() {
                 className="px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold"
               >
                 Add
+              </button>
+              <button
+                onClick={importExecs}
+                data-testid="ci-import-execs"
+                title="Add your organization's admins & executives as Board recipients"
+                className="px-3 py-2 rounded-md border border-ai/40 bg-ai/10 text-ai text-xs font-head font-bold"
+              >
+                Add my execs
               </button>
             </div>
           </div>
@@ -838,7 +868,7 @@ function BriefSettingsCard() {
                   {recapHistory.map((h, i) => (
                     <div key={i} data-testid={`ci-recap-history-${i}`} className="flex items-center justify-between text-[10px] font-mono text-muted-foreground">
                       <span>{new Date(h.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} · {h.trigger}</span>
-                      <span>{h.views}v · {h.downloads}d · {(h.to || []).length} recipient(s)</span>
+                      <span>{h.views}v · {h.downloads}d · {(h.reviewers || []).length} reviewer(s) · {(h.to || []).length} recipient(s)</span>
                     </div>
                   ))}
                 </div>
@@ -865,6 +895,20 @@ function BriefSettingsCard() {
                 >
                   Auto-send {digestEnabled ? "On" : "Off"}
                 </button>
+                <div className="inline-flex rounded-md border border-border overflow-hidden" data-testid="ci-digest-cadence">
+                  {["monthly", "quarterly"].map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => setDigestCadence(c)}
+                      data-testid={`ci-digest-cadence-${c}`}
+                      className={`px-2 py-1 text-[10px] font-head font-bold capitalize transition-colors ${
+                        digestCadence === c ? "bg-primary text-primary-foreground" : "bg-secondary/40 text-muted-foreground"
+                      }`}
+                    >
+                      {c}
+                    </button>
+                  ))}
+                </div>
                 <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">on day</span>
                 <input
                   type="number"
@@ -876,7 +920,7 @@ function BriefSettingsCard() {
                   data-testid="ci-digest-day"
                   className="w-16 rounded-md border border-border bg-background px-2 py-1 text-[11px] disabled:opacity-50"
                 />
-                <span className="text-[10px] text-muted-foreground">of each month · sent to board &amp; auditor recipients + admins · save to apply</span>
+                <span className="text-[10px] text-muted-foreground">{digestCadence === "quarterly" ? "of Jan / Apr / Jul / Oct" : "of each month"} · to board &amp; auditor recipients + admins · save to apply</span>
               </div>
               <div className="text-[11px] text-muted-foreground">A board-ready monthly email — with a branded, sealed PDF attached — rolling up 30 days of control effectiveness, framework readiness and external auditor engagement.</div>
               {digestHistory && digestHistory.length > 0 && (
