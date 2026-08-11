@@ -325,7 +325,7 @@ def _build_pdf(report: str, title: str, cover: bool = False, org_name: str = Non
         canvas.saveState()
         canvas.setFont("Helvetica", 7)
         canvas.setFillColor(colors.grey)
-        canvas.drawCentredString(pw / 2, 0.5 * inch, f"{brand['footer']}  ·  Confidential")
+        canvas.drawCentredString(pw / 2, 0.5 * inch, f"{brand['footer']}  ·  Confidential" + (f"  ·  {version}" if version else ""))
         canvas.restoreState()
 
     def _cover_page(canvas, _doc):

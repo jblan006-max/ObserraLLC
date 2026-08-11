@@ -12,7 +12,8 @@ import { Footer } from "@/components/Footer";
 import { DeepDiveProvider } from "@/context/DeepDiveContext";
 import { InstallButton } from "@/components/InstallButton";
 import { DemoRibbon } from "@/components/DemoRibbon";
-import { APP_VERSION_LABEL } from "@/version";
+import { APP_VERSION_LABEL, APP_CHANGELOG } from "@/version";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import {
   LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
   Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Gauge, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp, ToggleRight, Activity, AlertTriangle, CheckCircle2,
@@ -322,7 +323,24 @@ export default function AppShell() {
             <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest truncate hidden lg:block">
               {sub?.org_name || "Obserra — Control Intelligence"}
             </div>
-            <span data-testid="app-version-badge" className="hidden lg:inline-flex items-center px-1.5 py-0.5 rounded-full border border-ai/30 bg-ai/10 text-ai text-[9px] font-mono font-bold tracking-wider shrink-0">{APP_VERSION_LABEL}</span>
+            <Popover>
+              <PopoverTrigger asChild>
+                <button data-testid="app-version-badge" title="What's new" className="hidden lg:inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-ai/30 bg-ai/10 text-ai text-[9px] font-mono font-bold tracking-wider shrink-0 hover:bg-ai/20 transition-colors cursor-pointer">
+                  {APP_VERSION_LABEL}
+                </button>
+              </PopoverTrigger>
+              <PopoverContent align="start" className="w-80" data-testid="whats-new-popover">
+                <div className="flex items-center gap-2 mb-2">
+                  <Sparkles className="w-4 h-4 text-ai" />
+                  <h4 className="font-head font-bold text-sm">What's new in {APP_VERSION_LABEL}</h4>
+                </div>
+                <ul className="text-xs text-muted-foreground space-y-1.5 list-disc pl-4">
+                  {APP_CHANGELOG.map((c, i) => (
+                    <li key={i} data-testid={`whats-new-item-${i}`}>{c}</li>
+                  ))}
+                </ul>
+              </PopoverContent>
+            </Popover>
           </div>
           <div className="flex-1 max-w-md hidden sm:block">
             <div className="flex items-center gap-2 rounded-full border border-ai/30 bg-ai/5 px-3 py-1.5 focus-within:ring-1 focus-within:ring-ai transition-shadow">

@@ -226,10 +226,20 @@ def _recap_markdown(org_name, rec):
     return "\n".join(lines)
 
 
+def _app_version_label():
+    try:
+        import onprem_pack
+        v = str(onprem_pack.read_version() or "").lstrip("v")
+        return f"v{v}" if v else "v1.0.0"
+    except Exception:
+        return "v1.0.0"
+
+
 def _recap_pdf(org_name, rec, brand):
     import hashlib
     md = _recap_markdown(org_name, rec)
-    raw = _build_pdf(md, "Weekly Assurance Recap", cover=True, org_name=org_name, brand=brand).getvalue()
+    raw = _build_pdf(md, "Weekly Assurance Recap", cover=True, org_name=org_name, brand=brand,
+                     version=_app_version_label()).getvalue()
     try:
         from agent_reports import _stamp_verified_seal
         raw = _stamp_verified_seal(raw, hashlib.sha256(md.encode()).hexdigest())
@@ -574,7 +584,8 @@ def _assurance_digest_markdown(org_name, p):
 def _assurance_digest_pdf(org_name, p, brand):
     import hashlib
     md = _assurance_digest_markdown(org_name, p)
-    raw = _build_pdf(md, "Monthly Assurance Digest", cover=True, org_name=org_name, brand=brand).getvalue()
+    raw = _build_pdf(md, "Monthly Assurance Digest", cover=True, org_name=org_name, brand=brand,
+                     version=_app_version_label()).getvalue()
     try:
         from agent_reports import _stamp_verified_seal
         raw = _stamp_verified_seal(raw, hashlib.sha256(md.encode()).hexdigest())
