@@ -1746,12 +1746,36 @@ async def _ensure_controls(org_id):
             {"$set": {**c, "org_id": org_id}}, upsert=True)
 
 
+def _apply_demo_at_risk(statuses):
+    """Demo-only, non-persistent: temporarily flip up to two Passing controls into an
+    at-risk state so nudges/drift can be showcased. Nothing is written to the database."""
+    out = [dict(c) for c in statuses]
+    flipped = 0
+    for c in out:
+        if flipped >= 2:
+            break
+        if c.get("status") == "Passing":
+            base = c.get("effectiveness", 90)
+            c["effectiveness"] = 47 if flipped == 0 else 61
+            c["baseline"] = base
+            c["status"] = "Failing" if flipped == 0 else "Drifting"
+            c["drift"] = True
+            c["drift_delta"] = c["effectiveness"] - base
+            c["days_to_expiry"] = 5 if flipped == 0 else 12
+            c["demo_at_risk"] = True
+            flipped += 1
+    return out
+
+
 @api.get("/controls")
-async def controls(user: dict = Depends(get_current_user)):
+async def controls(demo: bool = False, user: dict = Depends(get_current_user)):
     org_id = user["org_id"]
     await _ensure_controls(org_id)
     existing = await db.controls.find({"org_id": org_id}, {"_id": 0}).to_list(500)
     statuses = [_control_status(c) for c in existing]
+    if demo:
+        # Non-persistent demo overlay — do NOT emit drift alerts off spoofed data.
+        return _apply_demo_at_risk(statuses)
     await _emit_drift_alerts(org_id, statuses)
     return statuses
 

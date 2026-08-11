@@ -1,4 +1,7 @@
-import { CheckCircle2, Database, ShieldCheck, XCircle } from "lucide-react";
+import { useEffect, useState } from "react";
+import { CheckCircle2, Database, Loader2, Mail, Send, ShieldCheck, X, XCircle } from "lucide-react";
+import { toast } from "sonner";
+import { api } from "@/lib/api";
 import { DataClassBadge, Panel } from "@/components/control-intelligence/shared";
 
 const SOURCE_LABEL = {
@@ -8,12 +11,208 @@ const SOURCE_LABEL = {
   connectorHealth: "Connector Health",
 };
 
-export default function DefensibilityDashboard({ data, sourceStatus }) {
+function BriefSettingsCard() {
+  const [recipients, setRecipients] = useState([]);
+  const [sendDay, setSendDay] = useState(1);
+  const [enabled, setEnabled] = useState(false);
+  const [entry, setEntry] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await api.get("/control-intelligence/settings");
+        setRecipients(r.data.recipients || []);
+        setSendDay(r.data.send_day || 1);
+        setEnabled(Boolean(r.data.enabled));
+      } catch {
+        /* keep defaults */
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  const addRecipient = () => {
+    const value = entry.trim().toLowerCase();
+    if (!value.includes("@")) {
+      toast.error("Enter a valid email address.");
+      return;
+    }
+    if (recipients.includes(value)) {
+      setEntry("");
+      return;
+    }
+    setRecipients((list) => [...list, value]);
+    setEntry("");
+  };
+
+  const removeRecipient = (email) =>
+    setRecipients((list) => list.filter((item) => item !== email));
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      const r = await api.put("/control-intelligence/settings", {
+        recipients,
+        send_day: sendDay,
+        enabled,
+      });
+      setRecipients(r.data.recipients || []);
+      setSendDay(r.data.send_day || 1);
+      setEnabled(Boolean(r.data.enabled));
+      toast.success("Board brief settings saved.");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to save settings.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const sendNow = async () => {
+    setSending(true);
+    try {
+      const r = await api.post("/control-intelligence/email-brief");
+      toast.success(`Assurance brief emailed to ${r.data.sent} recipient(s).`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to email the brief.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <Panel
+      title="Executive Assurance Brief — recipients & schedule"
+      subtitle="Choose exactly who receives the board brief and on which day of the month it is emailed. Admins and executives always receive it in addition to these recipients."
+      testid="control-intel-brief-settings"
+    >
+      {loading ? (
+        <div className="py-6 flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="w-4 h-4 animate-spin" /> Loading settings…
+        </div>
+      ) : (
+        <div className="space-y-5">
+          <div>
+            <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+              Board recipients
+            </label>
+            <div className="flex flex-wrap gap-2 mt-2">
+              {recipients.length === 0 && (
+                <span className="text-xs text-muted-foreground">
+                  No extra recipients — admins &amp; executives only.
+                </span>
+              )}
+              {recipients.map((email) => (
+                <span
+                  key={email}
+                  data-testid={`ci-brief-recipient-${email}`}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border bg-secondary/40 text-xs"
+                >
+                  <Mail className="w-3 h-3 text-muted-foreground" />
+                  {email}
+                  <button
+                    onClick={() => removeRecipient(email)}
+                    data-testid={`ci-brief-recipient-remove-${email}`}
+                    className="text-muted-foreground hover:text-crit"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+            <div className="flex gap-2 mt-3">
+              <input
+                value={entry}
+                onChange={(e) => setEntry(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addRecipient())}
+                placeholder="board.member@company.com"
+                data-testid="ci-brief-recipient-input"
+                className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm"
+              />
+              <button
+                onClick={addRecipient}
+                data-testid="ci-brief-recipient-add"
+                className="px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold"
+              >
+                Add
+              </button>
+            </div>
+          </div>
+
+          <div className="grid sm:grid-cols-2 gap-4">
+            <div>
+              <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+                Send day of month (1–28)
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={28}
+                value={sendDay}
+                onChange={(e) => setSendDay(Math.max(1, Math.min(28, Number(e.target.value) || 1)))}
+                data-testid="ci-brief-send-day"
+                className="mt-2 w-full rounded-md border border-border bg-background px-3 py-2 text-sm"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
+                Scheduled monthly send
+              </label>
+              <button
+                onClick={() => setEnabled((v) => !v)}
+                data-testid="ci-brief-enabled-toggle"
+                className={`mt-2 w-full inline-flex items-center justify-between px-3 py-2 rounded-md border text-sm font-head font-bold transition-colors ${
+                  enabled ? "border-low/40 bg-low/10 text-low" : "border-border bg-secondary/40 text-muted-foreground"
+                }`}
+              >
+                {enabled ? "Enabled" : "Disabled"}
+                <span
+                  className={`h-4 w-8 rounded-full relative transition-colors ${enabled ? "bg-low" : "bg-secondary"}`}
+                >
+                  <span
+                    className={`absolute top-0.5 h-3 w-3 rounded-full bg-background transition-all ${enabled ? "left-4" : "left-0.5"}`}
+                  />
+                </span>
+              </button>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-2 pt-1">
+            <button
+              onClick={save}
+              disabled={saving}
+              data-testid="ci-brief-save"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50"
+            >
+              {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+              Save settings
+            </button>
+            <button
+              onClick={sendNow}
+              disabled={sending}
+              data-testid="ci-brief-send-now"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50"
+            >
+              {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+              Send brief now
+            </button>
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+export default function DefensibilityDashboard({ data, sourceStatus, isAdmin }) {
   const connectors = data?.connectorHealth?.connectors || [];
   const summary = data?.connectorHealth?.summary || {};
 
   return (
     <div className="space-y-5">
+      {isAdmin && <BriefSettingsCard />}
       <div className="grid xl:grid-cols-3 gap-5">
         <Panel
           title="Data source status"

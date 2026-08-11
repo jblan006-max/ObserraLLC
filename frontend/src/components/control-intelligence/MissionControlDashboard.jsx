@@ -16,6 +16,21 @@ const shortName = (s = "") => (s.length > 14 ? s.slice(0, 13) + "…" : s);
 const effAccent = (v) => (v >= 75 ? "142 70% 45%" : v >= 55 ? "35 90% 55%" : "0 84% 60%");
 const pal = (i) => PALETTE[i % PALETTE.length];
 
+function BackfillBadge({ n }) {
+  const captured = Math.max(0, Number(n) || 0);
+  const pct = Math.min(100, Math.round((captured / 30) * 100));
+  return (
+    <div className="text-right" data-testid="ci-trend-backfill">
+      <div className="text-[10px] font-mono text-muted-foreground">
+        {captured}/30 days captured
+      </div>
+      <div className="mt-1 h-1.5 w-24 rounded-full bg-secondary/70 overflow-hidden">
+        <div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} />
+      </div>
+    </div>
+  );
+}
+
 function Spark({ series, color, id }) {
   const d = (series || []).map((v, i) => ({ i, v: toNumber(v) }));
   if (d.length < 2) return <div className="h-8 mt-2" />;
@@ -176,7 +191,7 @@ export default function MissionControlDashboard({ data, onOpenTab, onSelectContr
       <div className="grid xl:grid-cols-3 gap-5">
         <div className="xl:col-span-2 grid md:grid-cols-2 gap-5">
           {effHistory.length >= 2 ? (
-            <Panel title="Control effectiveness trend" subtitle={`Live daily snapshots — ${effHistory.length} day(s) captured.`} testid="ci-effectiveness-trend">
+            <Panel title="Control effectiveness trend" subtitle={`Live daily snapshots — ${effHistory.length} day(s) captured.`} testid="ci-effectiveness-trend" actions={<BackfillBadge n={effHistory.length} />}>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={effHistory.map((h) => ({ date: (h.date || "").slice(5), Effectiveness: h.avg_effectiveness, Coverage: h.coverage, Health: h.health_score }))} margin={{ left: -12, right: 8, top: 10 }}>
@@ -192,7 +207,7 @@ export default function MissionControlDashboard({ data, onOpenTab, onSelectContr
               </div>
             </Panel>
           ) : (
-            <Panel title="Effectiveness by control domain" subtitle="Live average effectiveness per domain. A real 30-day trend line replaces this once daily snapshots accumulate." testid="ci-domain-effectiveness">
+            <Panel title="Effectiveness by control domain" subtitle="Live average effectiveness per domain. A real 30-day trend line replaces this once daily snapshots accumulate." testid="ci-domain-effectiveness" actions={<BackfillBadge n={effHistory.length} />}>
               <div className="h-64">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={byDomain.map((d) => ({ name: shortName(d.domain), eff: d.avgEff }))} margin={{ left: -12, right: 8, top: 10 }}>

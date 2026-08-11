@@ -13,8 +13,11 @@ import base64
 import logging
 from datetime import datetime, timezone
 
+from typing import List, Optional
+
 from bson import ObjectId
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 
 from db import db
 from auth import get_current_user, require_roles
@@ -186,16 +189,68 @@ async def _run_ci_brief_email(org_id, actor="scheduler@obserra", extra_recipient
     return {"sent": len(emails), "to": sorted(emails)}
 
 
-async def _run_ci_brief_email_all():
-    orgs = await db.organizations.find({}, {"_id": 1}).to_list(1000)
+async def _run_ci_brief_email_all(scheduled=False):
+    now = datetime.now(timezone.utc)
+    orgs = await db.organizations.find({}).to_list(1000)
     for org in orgs:
+        org_id = str(org["_id"])
         try:
-            await _run_ci_brief_email(str(org["_id"]))
+            if scheduled:
+                if not org.get("ci_brief_enabled"):
+                    continue
+                send_day = max(1, min(28, int(org.get("ci_brief_send_day") or 1)))
+                if now.day != send_day:
+                    continue
+                marker = f"ci-brief:{org_id}:{now.strftime('%Y-%m')}"
+                if await db.ci_brief_sent.find_one({"marker": marker}):
+                    continue
+                await db.ci_brief_sent.insert_one({"marker": marker, "at": now.isoformat()})
+            await _run_ci_brief_email(org_id)
         except Exception as e:
-            logger.warning(f"CI brief email failed for org {org['_id']}: {e}")
+            logger.warning(f"CI brief email failed for org {org_id}: {e}")
 
 
 # ---------------------------------------------------------------- endpoints
+
+class CIBriefSettings(BaseModel):
+    recipients: Optional[List[str]] = None
+    send_day: Optional[int] = None
+    enabled: Optional[bool] = None
+
+
+async def _ci_settings(org_id):
+    org = await db.organizations.find_one(
+        {"_id": ObjectId(org_id)},
+        {"ci_brief_recipients": 1, "ci_brief_send_day": 1, "ci_brief_enabled": 1}) or {}
+    return {"recipients": org.get("ci_brief_recipients") or [],
+            "send_day": max(1, min(28, int(org.get("ci_brief_send_day") or 1))),
+            "enabled": bool(org.get("ci_brief_enabled", False))}
+
+
+@ci_router.get("/settings")
+async def get_ci_settings(admin: dict = Depends(require_roles("admin"))):
+    return await _ci_settings(admin["org_id"])
+
+
+@ci_router.put("/settings")
+async def set_ci_settings(body: CIBriefSettings, admin: dict = Depends(require_roles("admin"))):
+    update = {}
+    if body.recipients is not None:
+        clean, seen = [], set()
+        for e in body.recipients:
+            e = (e or "").strip().lower()
+            if "@" in e and e not in seen:
+                seen.add(e)
+                clean.append(e)
+        update["ci_brief_recipients"] = clean[:50]
+    if body.send_day is not None:
+        update["ci_brief_send_day"] = max(1, min(28, int(body.send_day)))
+    if body.enabled is not None:
+        update["ci_brief_enabled"] = bool(body.enabled)
+    if update:
+        await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": update})
+    return await _ci_settings(admin["org_id"])
+
 
 @ci_router.get("/effectiveness-history")
 async def effectiveness_history(days: int = 30, user: dict = Depends(get_current_user)):

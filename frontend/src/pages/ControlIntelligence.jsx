@@ -2,6 +2,7 @@ import { useState } from "react";
 import {
   Download,
   FileCheck2,
+  FlaskConical,
   Gauge,
   Layers,
   Loader2,
@@ -51,8 +52,9 @@ function downloadBlob(blob, filename) {
 export default function ControlIntelligence() {
   const { user, mode } = useAuth();
   const isAdmin = user?.role === "admin";
+  const [demo, setDemo] = useState(false);
   const { data, loading, refreshing, error, sourceStatus, reload } =
-    useControlIntelligenceData();
+    useControlIntelligenceData(demo);
 
   const [activeTab, setActiveTab] = useState(
     () => localStorage.getItem("control-intelligence-tab") || "mission"
@@ -180,6 +182,20 @@ export default function ControlIntelligence() {
         </div>
 
         <div className="flex flex-wrap gap-2">
+          {isAdmin && (
+            <button
+              onClick={() => setDemo((v) => !v)}
+              data-testid="control-intel-demo-toggle"
+              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-head font-bold transition-colors ${
+                demo
+                  ? "border-med/40 bg-med/15 text-med"
+                  : "border-border bg-secondary/40 text-muted-foreground"
+              }`}
+            >
+              <FlaskConical className="w-3.5 h-3.5" />
+              {demo ? "Demo: At-risk ON" : "Demo mode"}
+            </button>
+          )}
           <button
             onClick={reload}
             disabled={refreshing}
@@ -290,7 +306,7 @@ export default function ControlIntelligence() {
       )}
 
       {activeTab === "defensibility" && (
-        <DefensibilityDashboard data={data} sourceStatus={sourceStatus} />
+        <DefensibilityDashboard data={data} sourceStatus={sourceStatus} isAdmin={isAdmin} />
       )}
 
       {selectedControl && (

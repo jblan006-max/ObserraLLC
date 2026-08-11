@@ -28,7 +28,7 @@ async function fetchSource(name, path, fallback) {
   }
 }
 
-export function useControlIntelligenceData() {
+export function useControlIntelligenceData(demo = false) {
   const [state, setState] = useState({
     loading: true,
     refreshing: false,
@@ -45,8 +45,14 @@ export function useControlIntelligenceData() {
       error: "",
     }));
 
+    const sources = SOURCES.map(([name, path, fallback]) =>
+      name === "controls" && demo
+        ? [name, "/controls?demo=true", fallback]
+        : [name, path, fallback]
+    );
+
     const results = await Promise.all(
-      SOURCES.map(([name, path, fallback]) => fetchSource(name, path, fallback))
+      sources.map(([name, path, fallback]) => fetchSource(name, path, fallback))
     );
 
     const raw = {};
@@ -86,7 +92,7 @@ export function useControlIntelligenceData() {
       data,
       sourceStatus,
     });
-  }, []);
+  }, [demo]);
 
   useEffect(() => {
     load(false);

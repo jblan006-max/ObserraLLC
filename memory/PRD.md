@@ -29,6 +29,14 @@ Route `/app/control-intelligence` (sidebar "Control Intelligence"). Continuous C
 - ⚠️ crons.yml already at the **5-cron platform max** — folded snapshot+nudges into `daily-drift-digest` and the board brief into `monthly-board-report` (no new cron files).
 - ⚠️ Fork-hazard recurred: an `app.include_router(ci_router)` line silently dropped in a batched `server.py` edit → 404s until re-added + grep-verified. Always grep-verify router registration.
 
+
+**Round 3 (Jun 2026) — 3 approved P0 features shipped (iteration_121, backend 7/7 + frontend verified):**
+- **At-Risk Simulation (backend-safe `?demo=true`)** — `GET /api/controls?demo=true` runs `_apply_demo_at_risk()` (routes.py ~L1749) which clones the live statuses and temporarily flips up to 2 Passing controls (1 Failing eff=47, 1 Drifting eff=61 drift=true, each `demo_at_risk:true`). NOTHING is persisted; drift-alert emission is skipped in demo. Hook `useControlIntelligenceData(demo)` swaps the controls source to `?demo=true`; admin-only header toggle `control-intel-demo-toggle` in ControlIntelligence.jsx flips it. Verified: at-risk KPI 0→1 + ineffective 0→1 on toggle; a follow-up non-demo GET is still all-Passing.
+- **Board Recipient List + Schedule** — new `GET/PUT /api/control-intelligence/settings` (admin; `CIBriefSettings`: recipients[] lowercased/deduped/cap50, send_day 1-28 clamped, enabled bool → org fields `ci_brief_recipients/ci_brief_send_day/ci_brief_enabled`). Admin-only `BriefSettingsCard` in the Defensibility tab (`control-intel-brief-settings`): recipient chips (`ci-brief-recipient-*`), `ci-brief-send-day`, `ci-brief-enabled-toggle`, `ci-brief-save`, `ci-brief-send-now`. `_run_ci_brief_email_all(scheduled=True)` now self-gates per org to its day-of-month (deduped per month via `ci_brief_sent`) and was MOVED from the monthly cron into the daily-drift-digest cron; `_run_ci_brief_email` already unions `ci_brief_recipients` with admins/execs.
+- **Trend Backfill Window** — `BackfillBadge` (`ci-trend-backfill`) on both the Mission Control trend + domain panels shows "N/30 days captured" with a progress bar so users know the 30-day trend is filling in.
+- ⚠️ FORK-HAZARD RECURRED: while cleaning up an out-of-order duplicated tail in ControlIntelligence.jsx, the demo-toggle `<button>` JSX (and its setDemo call) was dropped (import+state survived) — caught by testing_agent iter121, re-added lone, grep+babel+screenshot re-verified. Lesson reinforced: grep-verify each JSX edit stuck.
+
+
 ## Backlog / prior app (Obserra Agentic-AI) — PENDING (user-approved msg 184, not implemented)
 Digest Schedule Choice, Structured Audit Meta (note: `_log_audit` in auth.py already has an optional `meta={}` param added — additive/harmless), Auto-Resume Notice, Exec Mute Badge Tooltip.
 ⚠️ FORK HAZARD (recurring 15+): `agents.py` >3500 lines — never trust batched `search_replace`; grep-verify every edit stuck.

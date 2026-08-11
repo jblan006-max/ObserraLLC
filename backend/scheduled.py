@@ -126,8 +126,6 @@ async def monthly_board_report(request: Request, background_tasks: BackgroundTas
     if datetime.now(timezone.utc).month in (1, 4, 7, 10):
         _cad.add("quarterly")
     background_tasks.add_task(_run_studio_reports, _cad)
-    from control_intelligence import _run_ci_brief_email_all
-    background_tasks.add_task(_run_ci_brief_email_all)
     return {"status": "accepted"}
 
 
@@ -440,9 +438,10 @@ async def daily_drift_digest(request: Request, background_tasks: BackgroundTasks
     background_tasks.add_task(_run_board_evidence_digest, None, False, True)
     background_tasks.add_task(_run_scheduled_fire_drills)
     background_tasks.add_task(_run_control_assurance_sla_check)
-    from control_intelligence import _run_ci_effectiveness_snapshot, _run_ci_owner_nudges_all
+    from control_intelligence import _run_ci_effectiveness_snapshot, _run_ci_owner_nudges_all, _run_ci_brief_email_all
     background_tasks.add_task(_run_ci_effectiveness_snapshot)
     background_tasks.add_task(_run_ci_owner_nudges_all)
+    background_tasks.add_task(_run_ci_brief_email_all, True)
     return {"status": "accepted"}
 
 

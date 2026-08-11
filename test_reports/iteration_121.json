@@ -1,0 +1,35 @@
+{
+  "summary": "Iter 121 — verified 3-feature P0 batch (At-Risk demo simulation, Trend backfill window, Board recipient/schedule brief). Backend: 7/7 pytest tests passing (baseline 24 Passing, ?demo=true flips exactly 2 controls with IAM-3 Failing eff=47 and VM-2 Drifting eff=61, non-persisted; PUT settings dedupes+lowercases (['a@b.com','BADEMAIL','A@B.COM'] -> ['a@b.com']) and clamps send_day 40 -> 28; POST email-brief returns {sent:N}; cleanup restores empty state). Frontend: brief settings panel (control-intel-brief-settings) works end-to-end: add recipient chip, set day 15, enable toggle, save (PUT), send-now (POST), reload persistence, admin-only gating. Backfill badge 'N/30 days captured' renders on trend panel. Cleanup: settings reset to {recipients:[], send_day:1, enabled:false} on demo org.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ControlIntelligence.jsx (MissionControl header)", "issue": "Demo mode toggle button is NOT rendered. `const [demo, setDemo] = useState(false)` state exists on line 55 and is wired into useControlIntelligenceData(demo), but no <button data-testid=\"control-intel-demo-toggle\"> is emitted anywhere. Users cannot enter demo mode from the UI at all; only via direct API (?demo=true). Confirmed on live preview: `page.locator('[data-testid=\"control-intel-demo-toggle\"]').count() === 0`.", "selector": "[data-testid='control-intel-demo-toggle']", "priority": "CRITICAL"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Mission Control KPI cards", "issues": ["Testid naming inconsistency: KPI card is `ci-kpi-atrisk` (no hyphen between 'at' and 'risk') while the review request and other prefixes use `ci-kpi-at-risk`. Either the code or the spec should be normalized so automated brand assertions can match consistently."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter121_ci_demo_and_brief.py",
+    "/app/test_reports/pytest/iter121.xml"
+  ],
+  "action_items": [
+    "CRITICAL: Add the missing Demo mode toggle button in ControlIntelligence.jsx (admin-only), wire onClick to setDemo(v => !v) with data-testid='control-intel-demo-toggle'. Without it the entire At-Risk Simulation UX (feature #3 of this batch) is inaccessible from the browser — only reachable via direct GET /api/controls?demo=true.",
+    "OPTIONAL: Normalize KPI testid to `ci-kpi-at-risk` (add missing hyphen) to match spec, or update spec to `ci-kpi-atrisk`."
+  ],
+  "critical_code_review_comments": [
+    "ControlIntelligence.jsx line 55: `const [demo, setDemo] = useState(false)` is declared and passed to useControlIntelligenceData(demo), but setDemo is never called anywhere in the file — dead state. Missing UI toggle is a functional regression.",
+    "control_intelligence.py PUT /settings correctly dedupes/lowercases/clamps and returns via `_ci_settings` after write — clean round-trip.",
+    "routes.py `_apply_demo_at_risk` correctly clones and never persists — verified by follow-up GET /api/controls returning all Passing after a demo call.",
+    "DefensibilityDashboard.jsx `page.fill` on the recipient-input does NOT trigger React onChange consistently — press_sequentially works. Not a production bug, but a testing gotcha to note for next agent."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "80% — Defensibility brief flow 100% verified end-to-end; At-Risk Simulation UI 0% (toggle button missing); Trend backfill badge 100% verified"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin)",
+  "seed_data_creation": "Temporarily added recipient 'board@test.example' with send_day=15/enabled=true via UI save. Cleaned up post-test to {recipients:[], send_day:1, enabled:false}. No demo data persisted (demo overlay is stateless by design).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Testids present on CI page: control-intelligence-page, control-intel-tab-{mission|effectiveness|frameworks|evidence|remediation|defensibility}, ci-kpi-{effectiveness|total|effective|atrisk|ineffective|coverage} (note: ci-kpi-atrisk NOT ci-kpi-at-risk), ci-trend-backfill (x2, one on each trend/domain panel — text 'N/30 days captured'), control-intel-brief-settings, ci-brief-recipient-input, ci-brief-recipient-add, ci-brief-recipient-<email>, ci-brief-recipient-remove-<email>, ci-brief-send-day, ci-brief-enabled-toggle, ci-brief-save, ci-brief-send-now. MISSING: control-intel-demo-toggle button is NOT rendered even though state exists. When main agent adds the toggle, re-run the UI flow: click toggle → expect ci-kpi-atrisk value change from 0 to 2 (and ci-kpi-ineffective 0 → 1 for Failing eff=47), and Remediation & Drift tab should list IAM-3 (Failing 47) + VM-2 (Drifting 61). Use press_sequentially instead of fill for text inputs to properly trigger React onChange.",
+  "rca of the issue": "Missing demo toggle button — root cause: main agent's ControlIntelligence.jsx declares `demo` state and passes it to the data hook (which does swap /controls?demo=true correctly, verified), but the corresponding <button data-testid='control-intel-demo-toggle'> was never added to the header JSX. Mitigation: insert an admin-only button next to Refresh/Executive Brief that flips setDemo. Reproduction: log in as admin, visit /app/control-intelligence, `document.querySelector('[data-testid=\"control-intel-demo-toggle\"]')` returns null on Mission Control."
+}
