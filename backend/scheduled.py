@@ -325,9 +325,10 @@ async def weekly_drift_digest(request: Request, background_tasks: BackgroundTask
     background_tasks.add_task(_run_ai_board_brief, "weekly")
     from agents import _run_auditor_room_weekly_digest
     background_tasks.add_task(_run_auditor_room_weekly_digest)
-    from agents import _run_card_engagement_weekly_digest, _run_unusual_access_watchlist
+    from agents import _run_card_engagement_weekly_digest, _run_unusual_access_watchlist, _run_audit_digest
     background_tasks.add_task(_run_card_engagement_weekly_digest)
     background_tasks.add_task(_run_unusual_access_watchlist)
+    background_tasks.add_task(_run_audit_digest)
     return {"status": "accepted"}
 
 

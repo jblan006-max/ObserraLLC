@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   AlertOctagon,
   Bot,
@@ -69,6 +70,12 @@ export default function AgenticAISecurity() {
     setActiveTab(tab);
     localStorage.setItem("agentic-ai-security-tab", tab);
   };
+
+  const [searchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get("trust")) openTab("defensibility");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const refreshAndReselect = async (ref = "") => {
     await reload();

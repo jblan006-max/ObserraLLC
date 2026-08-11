@@ -1811,10 +1811,102 @@ async def _post_to_webhook(url, title, text):
         pass
 
 
+async def _make_trust_token(org_id, kind, value):
+    """Mint a single-use, org-scoped token that lets a signed-in admin add a country/auditor to the
+    org's trusted lists straight from an alert email."""
+    import secrets
+    from datetime import datetime, timezone
+    tok = secrets.token_urlsafe(24)
+    await db.trust_add_tokens.insert_one({
+        "token": tok, "org_id": org_id, "kind": kind, "value": value,
+        "used": False, "created_at": datetime.now(timezone.utc).isoformat()})
+    return tok
+
+
+async def _trust_link_html(org_id, country=None, auditor=None):
+    """One-click 'add to Trusted rules' buttons for an alert email (recipient confirms after signing in)."""
+    import os
+    frontend = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    links = []
+    if country:
+        tok = await _make_trust_token(org_id, "country", country)
+        links.append((f"Add \u201c{country}\u201d to trusted countries", f"{frontend}/app/agentic-ai-security?trust={tok}"))
+    if auditor:
+        tok = await _make_trust_token(org_id, "auditor", auditor)
+        links.append((f"Trust auditor {auditor}", f"{frontend}/app/agentic-ai-security?trust={tok}"))
+    if not links:
+        return ""
+    btns = "".join(
+        f"<p style='margin:8px 0'><a href='{u}' style='background:#12b4d6;color:#04121a;text-decoration:none;"
+        f"padding:9px 16px;border-radius:8px;font-weight:700' target='_blank'>{t}</a></p>" for t, u in links)
+    return (f"<div style='margin-top:14px;padding-top:12px;border-top:1px solid #e5e7eb'>"
+            f"<p style='font-size:12px;color:#6b7280'>Expected access? Clear this false positive in one click "
+            f"(you'll confirm after signing in):</p>{btns}</div>")
+
+
+def _is_alerts_snoozed(org, now):
+    """True if instant alerts are currently muted — either an immediate snooze or a scheduled mute window."""
+    from datetime import datetime, timezone
+
+    def _p(s):
+        try:
+            d = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+            return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+    until = _p(org.get("snooze_alerts_until")) if org.get("snooze_alerts_until") else None
+    if until and until > now:
+        return True
+    st = _p(org.get("snooze_window_start")) if org.get("snooze_window_start") else None
+    en = _p(org.get("snooze_window_end")) if org.get("snooze_window_end") else None
+    if st and en and st <= now <= en:
+        return True
+    return False
+
+
+async def _dispatch_suspicious_alert(org, org_id, subject, html, chat_text, dedupe_key=None):
+    """Send an alert to the org's configured channels (specific emails + webhook) or fall back to all
+    admins/execs + the org's configured chat webhook. Returns a summary of where it went."""
+    result = {"emails": [], "webhook": False, "chat_fallback": False}
+    try:
+        await notifications.create(org_id, "system", "Unusual evidence access",
+                                   (chat_text or subject)[:240], ref="agentic-ai-security", dedupe_key=dedupe_key)
+    except Exception:
+        pass
+    channel_emails = [e for e in (org.get("alert_channel_emails") or []) if e]
+    if channel_emails:
+        recips = channel_emails
+    else:
+        try:
+            urows = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
+                                        {"_id": 0, "email": 1}).to_list(200)
+            recips = [r["email"] for r in urows if r.get("email")]
+        except Exception:
+            recips = []
+    for em in recips:
+        try:
+            await notifications.send_email(em, subject, html)
+            result["emails"].append(em)
+        except Exception:
+            pass
+    webhook = (org.get("alert_channel_webhook") or "").strip()
+    if webhook:
+        await _post_to_webhook(webhook, subject, chat_text)
+        result["webhook"] = True
+    else:
+        try:
+            from self_scan import _post_chat_alert
+            await _post_chat_alert(org_id, "\u26a0 Unusual evidence access", chat_text)
+            result["chat_fallback"] = True
+        except Exception:
+            pass
+    return result
+
+
 async def _instant_suspicious_check(org_id, token, ip, ua, kind, who=None, at=None):
     """Fire-and-forget: if instant suspicious-access alerts are ON (and not snoozed) and this access is from
     OUTSIDE every trusted zone (and not a trusted auditor), ping the configured alert channels (or all
-    admins/execs) by email + in-app + Slack/Teams immediately."""
+    admins/execs) by email + in-app + Slack/Teams immediately — with one-click 'add to Trusted rules' links."""
     try:
         from bson import ObjectId
         from datetime import datetime, timezone
@@ -1822,19 +1914,11 @@ async def _instant_suspicious_check(org_id, token, ip, ua, kind, who=None, at=No
             {"_id": ObjectId(org_id)},
             {"instant_suspicious_alerts": 1, "trusted_countries": 1, "trusted_ip_ranges": 1,
              "trusted_auditors": 1, "alert_channel_emails": 1, "alert_channel_webhook": 1,
-             "snooze_alerts_until": 1}) if org_id else None
+             "snooze_alerts_until": 1, "snooze_window_start": 1, "snooze_window_end": 1}) if org_id else None
         if not org or not org.get("instant_suspicious_alerts"):
             return
-        snooze = org.get("snooze_alerts_until")
-        if snooze:
-            try:
-                su = datetime.fromisoformat(str(snooze).replace("Z", "+00:00"))
-                if su.tzinfo is None:
-                    su = su.replace(tzinfo=timezone.utc)
-                if su > datetime.now(timezone.utc):
-                    return
-            except Exception:
-                pass
+        if _is_alerts_snoozed(org, datetime.now(timezone.utc)):
+            return
         tc = {(c or "").strip().lower() for c in (org.get("trusted_countries") or [])}
         tips = org.get("trusted_ip_ranges") or []
         tauds = {(a or "").strip().lower() for a in (org.get("trusted_auditors") or [])}
@@ -1852,6 +1936,9 @@ async def _instant_suspicious_check(org_id, token, ip, ua, kind, who=None, at=No
         loc = geo or ip or "an unknown location"
         device = _parse_ua(ua or "") or "unknown device"
         actor = who or "an anonymous viewer"
+        country = geo.split(",")[-1].strip() if (geo and "," in geo) else ""
+        trust_html = await _trust_link_html(org_id, country=country or None,
+                                            auditor=(who if (who and "@" in who) else None))
         html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:600px;margin:auto'>"
                 f"<h2 style='color:#0f1e3d'>\u26a0 Unusual evidence access</h2>"
                 f"<p>A <strong>{kind}</strong> of shared evidence just came from <strong>outside every trusted "
@@ -1860,43 +1947,11 @@ async def _instant_suspicious_check(org_id, token, ip, ua, kind, who=None, at=No
                 f"<li><strong>Device:</strong> {device}</li><li><strong>IP:</strong> {ip or '—'}</li>"
                 f"<li><strong>When:</strong> {(at or '')[:19].replace('T', ' ')} UTC</li></ul>"
                 f"<p style='font-size:12px;color:#6b7280'>Open the Control Assurance access globe "
-                f"(filter \u2192 Suspicious) to investigate. If expected, add the location or auditor to your Trusted access rules.</p></div>")
+                f"(filter \u2192 Suspicious) to investigate.</p>{trust_html}</div>")
         dk = f"instant-suspicious:{org_id}:{ip}:{token}:{kind}:{(at or '')[:16]}"
         chat_text = f"A *{kind}* of shared evidence came from *{loc}* ({actor}, {device}, {ip or 'no IP'}) — outside every trusted zone."
         subject = "\u26a0 Unusual evidence access — outside your trusted zones"
-        try:
-            await notifications.create(org_id, "system", "Unusual evidence access",
-                                       f"{kind} from {loc} ({actor}) — outside your trusted zones.",
-                                       ref="agentic-ai-security", dedupe_key=dk)
-        except Exception:
-            pass
-        channel_emails = [e for e in (org.get("alert_channel_emails") or []) if e]
-        if channel_emails:
-            for em in channel_emails:
-                try:
-                    await notifications.send_email(em, subject, html)
-                except Exception:
-                    pass
-        else:
-            try:
-                recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
-                                             {"_id": 0, "email": 1}).to_list(200)
-                for rr in recips:
-                    try:
-                        await notifications.send_email(rr["email"], subject, html)
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-        webhook = (org.get("alert_channel_webhook") or "").strip()
-        if webhook:
-            await _post_to_webhook(webhook, "\u26a0 Unusual evidence access", chat_text)
-        else:
-            try:
-                from self_scan import _post_chat_alert
-                await _post_chat_alert(org_id, "\u26a0 Unusual evidence access", chat_text)
-            except Exception:
-                pass
+        await _dispatch_suspicious_alert(org, org_id, subject, html, chat_text, dedupe_key=dk)
     except Exception:
         pass
 
@@ -2487,6 +2542,8 @@ class GovSettingsBody(BaseModel):
     instant_suspicious_alerts: bool | None = None
     alert_channel_emails: list[str] | None = None
     alert_channel_webhook: str | None = None
+    audit_digest_enabled: bool | None = None
+    audit_digest_recipients: list[str] | None = None
 
 
 @agents_router.get("/runtime/governance-settings")
@@ -2516,7 +2573,11 @@ async def get_governance_settings(admin: dict = Depends(require_roles("admin")))
             "instant_suspicious_alerts": bool(org.get("instant_suspicious_alerts")),
             "alert_channel_emails": org.get("alert_channel_emails") or [],
             "alert_channel_webhook": org.get("alert_channel_webhook") or "",
-            "snooze_alerts_until": org.get("snooze_alerts_until") or ""}
+            "snooze_alerts_until": org.get("snooze_alerts_until") or "",
+            "snooze_window_start": org.get("snooze_window_start") or "",
+            "snooze_window_end": org.get("snooze_window_end") or "",
+            "audit_digest_enabled": bool(org.get("audit_digest_enabled", False)),
+            "audit_digest_recipients": org.get("audit_digest_recipients") or []}
 
 
 @agents_router.put("/runtime/governance-settings")
@@ -2609,6 +2670,10 @@ async def set_governance_settings(body: GovSettingsBody, admin: dict = Depends(r
     if body.alert_channel_webhook is not None:
         wh = (body.alert_channel_webhook or "").strip()
         upd["alert_channel_webhook"] = wh if wh.startswith("http") else ""
+    if body.audit_digest_enabled is not None:
+        upd["audit_digest_enabled"] = bool(body.audit_digest_enabled)
+    if body.audit_digest_recipients is not None:
+        upd["audit_digest_recipients"] = [e.strip() for e in body.audit_digest_recipients if e and "@" in e][:50]
     _prev = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])},
                                             {"trusted_countries": 1, "trusted_ip_ranges": 1, "trusted_auditors": 1}) or {}
     if upd:
@@ -2723,6 +2788,203 @@ async def audit_log_pdf(trusted: bool = False, admin: dict = Depends(require_rol
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
     return StreamingResponse(io.BytesIO(raw), media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="obserra-audit-log-{stamp}.pdf"'})
+
+
+class SnoozeScheduleBody(BaseModel):
+    start: str | None = None
+    end: str | None = None
+
+
+@agents_router.post("/runtime/alerts/test")
+async def test_instant_alert(admin: dict = Depends(require_roles("admin"))):
+    """Send a real test suspicious-access alert through the org's configured channels (emails + webhook,
+    or the admin/exec + org-chat fallback) so admins can confirm delivery. Returns where it was sent."""
+    from bson import ObjectId
+    from datetime import datetime, timezone
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])},
+                                          {"alert_channel_emails": 1, "alert_channel_webhook": 1}) or {}
+    now = datetime.now(timezone.utc).isoformat()
+    subject = "\u2705 Test alert \u2014 Obserra suspicious-access channels"
+    html = ("<div style='font:400 14px Arial;color:#1f2937;max-width:600px;margin:auto'>"
+            "<h2 style='color:#0f1e3d'>\u2705 Obserra alert channel test</h2>"
+            "<p>This is a <strong>test</strong> of your instant suspicious-access alert channels. "
+            "If you received this, your configured email + Slack/Teams webhook are wired correctly.</p>"
+            f"<p style='font-size:12px;color:#6b7280'>Sent {now[:19].replace('T', ' ')} UTC by "
+            f"{admin['email']}. No real anomaly occurred.</p></div>")
+    chat_text = f"\u2705 Test alert from Obserra \u2014 your suspicious-access channels are wired correctly (triggered by {admin['email']})."
+    result = await _dispatch_suspicious_alert(org, admin["org_id"], subject, html, chat_text, dedupe_key=None)
+    await _log_audit(admin["org_id"], admin["email"], "agent.alerts_test",
+                     f"Sent a test suspicious-access alert ({len(result['emails'])} email(s), "
+                     f"webhook={'yes' if result['webhook'] else ('chat' if result['chat_fallback'] else 'none')})")
+    return {"ok": True, **result}
+
+
+@agents_router.post("/runtime/alerts/snooze-schedule")
+async def schedule_snooze_window(body: SnoozeScheduleBody, admin: dict = Depends(require_roles("admin"))):
+    """Pre-schedule a mute window (e.g. for a known audit date). Instant alerts are muted while now is
+    inside [start, end]. Empty start+end clears the window. Logged to the audit trail."""
+    from bson import ObjectId
+    from datetime import datetime, timezone, timedelta
+    start = (body.start or "").strip()
+    end = (body.end or "").strip()
+    if not start and not end:
+        await db.organizations.update_one({"_id": ObjectId(admin["org_id"])},
+                                          {"$unset": {"snooze_window_start": "", "snooze_window_end": ""}})
+        await _log_audit(admin["org_id"], admin["email"], "agent.alerts_snooze_schedule_cleared",
+                         "Cleared the scheduled alert-mute window")
+        return {"ok": True, "snooze_window_start": "", "snooze_window_end": ""}
+
+    def _p(s):
+        try:
+            d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+            return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+    ds, de = _p(start), _p(end)
+    if not ds or not de or de <= ds:
+        raise HTTPException(400, "Provide a valid start and end time (end must be after start).")
+    if de > datetime.now(timezone.utc) + timedelta(days=400):
+        raise HTTPException(400, "The mute window can't be more than ~1 year out.")
+    si, ei = ds.isoformat(), de.isoformat()
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])},
+                                      {"$set": {"snooze_window_start": si, "snooze_window_end": ei}})
+    await _log_audit(admin["org_id"], admin["email"], "agent.alerts_snooze_scheduled",
+                     f"Scheduled an alert-mute window {si[:16].replace('T', ' ')} \u2192 {ei[:16].replace('T', ' ')} UTC")
+    return {"ok": True, "snooze_window_start": si, "snooze_window_end": ei}
+
+
+@agents_router.get("/runtime/trust-suggestion/{token}")
+async def get_trust_suggestion(token: str, admin: dict = Depends(require_roles("admin"))):
+    doc = await db.trust_add_tokens.find_one({"token": token, "org_id": admin["org_id"]}, {"_id": 0})
+    if not doc:
+        raise HTTPException(404, "This trust link is invalid or belongs to another organization.")
+    return {"kind": doc.get("kind"), "value": doc.get("value"), "used": bool(doc.get("used"))}
+
+
+@agents_router.post("/runtime/trust-suggestion/{token}/apply")
+async def apply_trust_suggestion(token: str, admin: dict = Depends(require_roles("admin"))):
+    from bson import ObjectId
+    doc = await db.trust_add_tokens.find_one({"token": token, "org_id": admin["org_id"]})
+    if not doc:
+        raise HTTPException(404, "This trust link is invalid or belongs to another organization.")
+    kind, value = doc.get("kind"), (doc.get("value") or "").strip()
+    if doc.get("used"):
+        return {"ok": True, "already": True, "kind": kind, "value": value}
+    field = {"country": "trusted_countries", "auditor": "trusted_auditors"}.get(kind)
+    if not field or not value:
+        raise HTTPException(400, "Unsupported trust suggestion.")
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}, {field: 1}) or {}
+    cur = list(org.get(field) or [])
+    stored = value.lower() if kind == "auditor" else value
+    exists = any((c.lower() if kind == "auditor" else c) == stored for c in cur)
+    if not exists:
+        cur.append(stored)
+        cur = cur[:100] if kind == "auditor" else cur[:60]
+        await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {field: cur}})
+    await db.trust_add_tokens.update_one({"token": token}, {"$set": {"used": True}})
+    await _log_audit(admin["org_id"], admin["email"], "agent.trusted_rules_changed",
+                     f"Trusted access rules changed \u2014 {'countries' if kind == 'country' else 'auditors'} +[{value}] (via alert one-click)")
+    return {"ok": True, "kind": kind, "value": value, "field": field}
+
+
+async def _run_audit_digest(org_id=None, on_demand=False):
+    """Weekly (Monday) board email: a rollup of control-relaxing / governance audit events (who relaxed
+    controls) in the last 7 days, with the branded, sealed audit PDF attached. Only for opted-in orgs
+    (unless on_demand). Idempotent per ISO week. Hooked into the weekly-drift-digest cron."""
+    import os, base64 as _b64
+    from datetime import datetime, timezone, timedelta
+    from bson import ObjectId
+    from reports import _build_pdf, _resolve_brand
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=7)).isoformat()
+    week = now.strftime("%Y-%W")
+    RELAX = ("trusted_rules_changed", "alerts_snoozed", "alerts_snooze_cleared",
+             "alerts_snooze_scheduled", "alerts_snooze_schedule_cleared", "governance_settings", "alerts_test")
+    if org_id:
+        o = await db.organizations.find_one({"_id": ObjectId(org_id)},
+                                            {"name": 1, "audit_digest_enabled": 1, "audit_digest_recipients": 1,
+                                             "board_digest_recipients": 1})
+        orgs = [o] if o else []
+    else:
+        orgs = await db.organizations.find({"audit_digest_enabled": True},
+                                           {"name": 1, "audit_digest_recipients": 1, "board_digest_recipients": 1}).to_list(1000)
+    sent = 0
+    changes = 0
+    for org in orgs:
+        try:
+            oid = str(org["_id"])
+            if not on_demand and not org.get("audit_digest_enabled"):
+                continue
+            rows = await db.audit_logs.find(
+                {"org_id": oid, "ts": {"$gte": since}, "action": {"$regex": "|".join(RELAX)}},
+                {"_id": 0}).sort("ts", -1).to_list(2000)
+            changes = len(rows)
+            if not rows:
+                continue
+            recips = [e for e in (org.get("audit_digest_recipients") or []) if e] or \
+                     [e for e in (org.get("board_digest_recipients") or []) if e]
+            if not recips:
+                urows = await db.users.find({"org_id": oid, "role": {"$in": ["admin", "executive"]}},
+                                            {"_id": 0, "email": 1}).to_list(200)
+                recips = [r["email"] for r in urows if r.get("email")]
+            if not recips:
+                continue
+            items = "".join(
+                f"<li style='margin-bottom:6px'><strong>{(r.get('ts') or '')[:16].replace('T', ' ')} UTC</strong> \u2014 "
+                f"<span style='color:#12b4d6'>{r.get('action', '')}</span> by {r.get('actor', 'system')}<br>"
+                f"<span style='color:#6b7280;font-size:12px'>{r.get('detail', '')}</span></li>" for r in rows[:60])
+            oname = org.get("name") or "your organization"
+            html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:640px;margin:auto'>"
+                    f"<h2 style='color:#0f1e3d'>Weekly control-change digest</h2>"
+                    f"<p>In the last 7 days, <strong>{len(rows)}</strong> control-relaxing / governance change(s) "
+                    f"were recorded in the audit trail for <strong>{oname}</strong>:</p>"
+                    f"<ul style='padding-left:18px'>{items}</ul>"
+                    f"<p style='font-size:12px;color:#6b7280'>Full tamper-evident detail is attached as a sealed PDF.</p>"
+                    f"<p style='font-size:11px;color:#9ca3af'>Obserra \u2014 Agentic AI Security Control &amp; Governance</p></div>")
+            try:
+                brand = _resolve_brand(await db.organizations.find_one({"_id": ObjectId(oid)}))
+            except Exception:
+                brand = None
+            plines = [f"Weekly control-change digest \u2014 {now.strftime('%B %d, %Y')} \u2014 last 7 days.",
+                      f"**Changes:** {len(rows)}", "", "## Control-relaxing / governance changes (last 7 days)"]
+            for r in rows:
+                ts = (r.get("ts") or "")[:19].replace("T", " ")
+                plines.append(f"- **{ts} UTC** \u00b7 `{r.get('action', '')}` by {r.get('actor', 'system')} \u2014 {r.get('detail', '')}")
+            buf = _build_pdf("\n".join(plines), "Weekly control-change digest", cover=True,
+                             org_name=org.get("name"), brand=brand)
+            raw = buf.getvalue()
+            try:
+                raw = await _brand_watermark_pdf(raw, org_id=oid, room_url="",
+                                                 subtext=f"Control-change digest \u00b7 {len(rows)} changes")
+                raw = _stamp_verified_seal(raw, _canonical_snapshot_hash({"rows": rows}))
+            except Exception:
+                pass
+            att = [{"filename": "obserra-control-change-digest.pdf", "content": _b64.b64encode(raw).decode()}]
+            for em in recips:
+                try:
+                    await notifications.send_email(em, "Weekly control-change digest \u2014 Obserra", html, attachments=att)
+                    sent += 1
+                except Exception:
+                    pass
+            try:
+                await notifications.create(oid, "system", "Weekly control-change digest",
+                                           f"{len(rows)} control-relaxing change(s) in the last 7 days emailed to the board.",
+                                           ref="agentic-ai-security",
+                                           dedupe_key=(None if on_demand else f"audit-digest:{oid}:{week}"))
+            except Exception:
+                pass
+        except Exception:
+            pass
+    return {"sent": sent, "changes": changes}
+
+
+@agents_router.post("/runtime/audit-digest/send")
+async def send_audit_digest(admin: dict = Depends(require_roles("admin"))):
+    """On-demand: email the control-change digest now (regardless of the weekly toggle)."""
+    res = await _run_audit_digest(org_id=admin["org_id"], on_demand=True)
+    await _log_audit(admin["org_id"], admin["email"], "agent.audit_digest",
+                     f"Control-change digest emailed ({res.get('sent', 0)} recipient(s), {res.get('changes', 0)} change(s))")
+    return res
 
 
 @agents_router.get("/runtime/board-evidence-digest/preview")

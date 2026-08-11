@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { DataClassBadge, Panel } from "@/components/agentic-ai/shared";
 import { useDeepDive } from "@/context/DeepDiveContext";
 import { api } from "@/lib/api";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { QRCodeSVG } from "qrcode.react";
 import { LineChart, Line, ResponsiveContainer, Tooltip as RTooltip } from "recharts";
 
@@ -318,7 +318,12 @@ function GovernanceSettingsCard() {
   const [snoozeHours, setSnoozeHours] = useState("24");
   const [snoozing, setSnoozing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const hydrate = (data) => { setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); setTrusted((data.trusted_countries || []).join(", ")); setTrustedIps((data.trusted_ip_ranges || []).join(", ")); setTauds((data.trusted_auditors || []).join(", ")); setAlertEmails((data.alert_channel_emails || []).join(", ")); setAlertWebhook(data.alert_channel_webhook || ""); };
+  const [auditRecips, setAuditRecips] = useState("");
+  const [snoozeStart, setSnoozeStart] = useState("");
+  const [snoozeEnd, setSnoozeEnd] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [scheduling, setScheduling] = useState(false);
+  const hydrate = (data) => { setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); setTrusted((data.trusted_countries || []).join(", ")); setTrustedIps((data.trusted_ip_ranges || []).join(", ")); setTauds((data.trusted_auditors || []).join(", ")); setAlertEmails((data.alert_channel_emails || []).join(", ")); setAlertWebhook(data.alert_channel_webhook || ""); setAuditRecips((data.audit_digest_recipients || []).join(", ")); };
   useEffect(() => { api.get("/agents/runtime/governance-settings").then(({ data }) => hydrate(data)).catch(() => {}); }, []);
   const doSnooze = async (hours) => {
     setSnoozing(true);
@@ -328,6 +333,34 @@ function GovernanceSettingsCard() {
       toast.success(Number(hours) > 0 ? `Instant alerts muted for ${hours}h` : "Instant alerts resumed");
     } catch (e) { toast.error(e.response?.data?.detail || "Snooze failed."); }
     finally { setSnoozing(false); }
+  };
+  const doTest = async () => {
+    setTesting(true);
+    try {
+      const { data } = await api.post("/agents/runtime/alerts/test", {});
+      const parts = [];
+      if (data.emails?.length) parts.push(`${data.emails.length} email(s)`);
+      if (data.webhook) parts.push("webhook"); else if (data.chat_fallback) parts.push("org chat");
+      toast.success(parts.length ? `Test alert sent to ${parts.join(" + ")}` : "Test alert dispatched (no channels configured)");
+    } catch (e) { toast.error(e.response?.data?.detail || "Test failed."); }
+    finally { setTesting(false); }
+  };
+  const doSchedule = async (clear) => {
+    setScheduling(true);
+    try {
+      const body = clear ? { start: "", end: "" } : { start: snoozeStart ? new Date(snoozeStart).toISOString() : "", end: snoozeEnd ? new Date(snoozeEnd).toISOString() : "" };
+      const { data } = await api.post("/agents/runtime/alerts/snooze-schedule", body);
+      setS((prev) => ({ ...prev, snooze_window_start: data.snooze_window_start || "", snooze_window_end: data.snooze_window_end || "" }));
+      if (clear) { setSnoozeStart(""); setSnoozeEnd(""); }
+      toast.success(clear ? "Scheduled mute window cleared" : "Mute window scheduled");
+    } catch (e) { toast.error(e.response?.data?.detail || "Schedule failed."); }
+    finally { setScheduling(false); }
+  };
+  const sendAuditDigest = async () => {
+    try {
+      const { data } = await api.post("/agents/runtime/audit-digest/send", {});
+      toast.success(data.changes ? `Digest sent (${data.changes} change(s), ${data.sent} recipient(s))` : "No control changes in the last 7 days");
+    } catch (e) { toast.error(e.response?.data?.detail || "Send failed."); }
   };
   if (!s) return null;
   const sbp = s.auditor_question_sla_by_priority || {};
@@ -355,6 +388,8 @@ function GovernanceSettingsCard() {
         instant_suspicious_alerts: !!s.instant_suspicious_alerts,
         alert_channel_emails: alertEmails.split(",").map((x) => x.trim()).filter(Boolean),
         alert_channel_webhook: alertWebhook.trim(),
+        audit_digest_enabled: !!s.audit_digest_enabled,
+        audit_digest_recipients: auditRecips.split(",").map((x) => x.trim()).filter(Boolean),
       });
       hydrate(data); toast.success("Governance settings saved");
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed."); }
@@ -397,6 +432,10 @@ function GovernanceSettingsCard() {
         <label className="flex items-start gap-2 md:col-span-2 cursor-pointer"><input data-testid="gov-instant-alerts" type="checkbox" checked={!!s.instant_suspicious_alerts} onChange={(e) => setS({ ...s, instant_suspicious_alerts: e.target.checked })} className="accent-ai w-4 h-4 mt-0.5" /><span className="text-sm">Instant alerts — email + Slack/Teams the moment an access lands from outside every trusted zone (not just the weekly note)</span></label>
         <label className="block md:col-span-2"><span className={lbl}>Alert channel — emails (comma-separated — instant alerts go only to these; blank = all admins &amp; execs)</span><input data-testid="gov-alert-emails" value={alertEmails} onChange={(e) => setAlertEmails(e.target.value)} placeholder="soc@company.com, ciso@company.com" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Route instant suspicious-access alerts to your security team instead of every admin.</span></label>
         <label className="block md:col-span-2"><span className={lbl}>Alert channel — Slack/Teams webhook URL (blank = your org's configured chat webhook)</span><input data-testid="gov-alert-webhook" value={alertWebhook} onChange={(e) => setAlertWebhook(e.target.value)} placeholder="https://hooks.slack.com/services/… or https://outlook.office.com/webhook/…" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1">Slack vs Teams is auto-detected from the URL. Applies to instant alerts only.</span></label>
+        <div className="md:col-span-2" data-testid="gov-alert-test-row">
+          <button data-testid="gov-alert-test" onClick={doTest} disabled={testing} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-secondary text-foreground text-xs font-head font-bold border border-border disabled:opacity-50">{testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Send test alert</button>
+          <span className="ml-2 text-[11px] text-muted-foreground">Fires a sample alert through the channels above so you can confirm delivery.</span>
+        </div>
         <div className="md:col-span-2 rounded-md border border-border/60 bg-secondary/30 p-3" data-testid="gov-snooze">
           {s.snooze_alerts_until && new Date(s.snooze_alerts_until) > new Date() ? (
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -414,7 +453,23 @@ function GovernanceSettingsCard() {
               <button data-testid="gov-snooze-btn" onClick={() => doSnooze(snoozeHours)} disabled={snoozing} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-foreground text-xs font-head font-bold border border-border disabled:opacity-50">{snoozing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Snooze alerts</button>
             </div>
           )}
+          <div className="border-t border-border/60 pt-3" data-testid="gov-snooze-schedule">
+            {s.snooze_window_start && s.snooze_window_end && new Date(s.snooze_window_end) > new Date() ? (
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-sm text-med" data-testid="gov-snooze-window-status">Scheduled mute window: {new Date(s.snooze_window_start).toLocaleString()} → {new Date(s.snooze_window_end).toLocaleString()}</span>
+                <button data-testid="gov-snooze-window-clear" onClick={() => doSchedule(true)} disabled={scheduling} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-foreground text-xs font-head font-bold border border-border disabled:opacity-50">Clear scheduled window</button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-end gap-2">
+                <label className="block"><span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Mute from</span><input data-testid="gov-snooze-window-start" type="datetime-local" value={snoozeStart} onChange={(e) => setSnoozeStart(e.target.value)} className="mt-1 block bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary" /></label>
+                <label className="block"><span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Until</span><input data-testid="gov-snooze-window-end" type="datetime-local" value={snoozeEnd} onChange={(e) => setSnoozeEnd(e.target.value)} className="mt-1 block bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary" /></label>
+                <button data-testid="gov-snooze-schedule-btn" onClick={() => doSchedule(false)} disabled={scheduling || !snoozeStart || !snoozeEnd} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-foreground text-xs font-head font-bold border border-border disabled:opacity-50">{scheduling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Calendar className="w-3.5 h-3.5" />} Schedule mute window</button>
+              </div>
+            )}
+          </div>
         </div>
+        <label className="flex items-start gap-2 md:col-span-2 cursor-pointer"><input data-testid="gov-audit-digest-enabled" type="checkbox" checked={!!s.audit_digest_enabled} onChange={(e) => setS({ ...s, audit_digest_enabled: e.target.checked })} className="accent-ai w-4 h-4 mt-0.5" /><span className="text-sm">Weekly control-change digest — email the board a Monday rollup of who relaxed controls (trusted-rule edits, snoozes, governance changes) with the sealed audit PDF attached</span></label>
+        <label className="block md:col-span-2"><span className={lbl}>Control-change digest recipients (comma-separated — blank = board digest recipients or admins &amp; execs)</span><input data-testid="gov-audit-digest-recipients" value={auditRecips} onChange={(e) => setAuditRecips(e.target.value)} placeholder="board@company.com, audit-committee@company.com" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1"><button type="button" data-testid="gov-audit-digest-send" onClick={sendAuditDigest} className="text-ai hover:underline">Send now</button> to email this week's digest immediately.</span></label>
       </div>
       <SnapshotRetire />
     </Panel>
@@ -731,11 +786,53 @@ function KillReplayDrillCard({ agents = [] }) {
   );
 }
 
+function TrustSuggestionBanner() {
+  const [params, setParams] = useSearchParams();
+  const token = params.get("trust");
+  const [sug, setSug] = useState(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!token) { setSug(null); return; }
+    api.get(`/agents/runtime/trust-suggestion/${token}`).then(({ data }) => setSug(data)).catch(() => setSug({ error: true }));
+  }, [token]);
+  if (!token || !sug) return null;
+  const dismiss = () => { const p = new URLSearchParams(params); p.delete("trust"); setParams(p, { replace: true }); setSug(null); };
+  if (sug.error) return (
+    <div className="rounded-lg border border-crit/40 bg-crit/10 p-4 flex items-center justify-between gap-3" data-testid="trust-suggestion-banner">
+      <span className="text-sm text-crit">This trust link is invalid or has expired.</span>
+      <button data-testid="trust-suggestion-dismiss" onClick={dismiss} className="text-xs text-muted-foreground hover:text-foreground">Dismiss</button>
+    </div>
+  );
+  const label = sug.kind === "country" ? `Add “${sug.value}” to trusted countries` : `Trust auditor ${sug.value}`;
+  const apply = async () => {
+    setBusy(true);
+    try {
+      await api.post(`/agents/runtime/trust-suggestion/${token}/apply`, {});
+      toast.success(sug.already ? "Already trusted" : `${label} — done`);
+      dismiss();
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not apply."); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="rounded-lg border border-ai/40 bg-ai/10 p-4 flex flex-wrap items-center justify-between gap-3" data-testid="trust-suggestion-banner">
+      <div className="flex items-center gap-2 min-w-0">
+        <ShieldCheck className="w-4 h-4 text-ai shrink-0" />
+        <span className="text-sm">One-click from an alert: <strong>{label}</strong>{sug.used ? " (already applied)" : ""}?</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <button data-testid="trust-suggestion-apply" onClick={apply} disabled={busy || sug.used} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />} {sug.used ? "Applied" : "Confirm & add"}</button>
+        <button data-testid="trust-suggestion-dismiss" onClick={dismiss} className="text-xs text-muted-foreground hover:text-foreground">Dismiss</button>
+      </div>
+    </div>
+  );
+}
+
 export default function DefensibilityDashboard({ data, sourceStatus, isAdmin }) {
   const connectors = data?.connectorHealth?.connectors || [];
   const summary = data?.connectorHealth?.summary || {};
   return (
     <div className="space-y-5">
+      {isAdmin && <TrustSuggestionBanner />}
       {isAdmin && <AuditorRoomCard />}
       {isAdmin && <ShareCenterCard />}
       {isAdmin && <GovernanceSettingsCard />}

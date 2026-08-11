@@ -1,0 +1,34 @@
+{
+  "summary": "Iteration 117 — Full E2E for Alert Test Ping, Scheduled Snooze, Audit Digest, and One-click Trust suggestion. Backend: 5/5 pytest tests pass (alerts/test returns ok+emails+chat_fallback with audit log; snooze-schedule set/400/clear with audit logs; governance-settings audit_digest_* round-trip; audit-digest/send returns sent+changes with audit log; trust-suggestion GET/apply 200 valid + 404 bogus with trusted_countries mutation + audit log). Frontend: all Governance card testids render; alert-test click shows 'Test alert sent to 1 email(s) + org chat' toast; snooze schedule/clear flips status+clear controls; audit-digest Save round-trip persists enabled=True + recipients across reload (dropped-field bug NOT reproduced); Send now shows 'Digest sent (248 change(s), 1 recipient(s))' toast. Trust link E2E: valid token auto-opens Defensibility tab, banner reads 'Add \u201cTestland\u201d to trusted countries', gov-trusted-countries contains 'Testland' (note: token was consumed by backend pytest before UI apply, so UI showed 'already applied' but banner+apply testids present and countries verified). Bogus token shows 'This trust link is invalid or has expired.' variant with working dismiss.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Defensibility \u2192 KillReplayDrillCard (unrelated to iter117)", "issues": ["Pre-existing React hydration warning: <span> child inside <option> in fire-drill-agent-select (DefensibilityDashboard.jsx L718). Not a blocker but should be cleaned up."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter117_alert_ping_snooze_digest_trust.py",
+    "/app/test_reports/pytest/iter117.xml"
+  ],
+  "action_items": [
+    "Main agent to clean up seeded trust token consumption: remove 'Testland' from trusted_countries and reset/reseed trust token Z8mUUfQKCp6TO73ylE8h5iajulib6LHw (used=false) if needed for future retests.",
+    "Optional: fix pre-existing hydration warning by removing dynamic <span> wrappers inside <option> elements in DefensibilityDashboard.jsx (fire-drill-agent-select)."
+  ],
+  "critical_code_review_comments": [
+    "DefensibilityDashboard.jsx: raw <span> inside <option> causes React hydration errors (already existed pre-117).",
+    "Backend snooze-schedule correctly rejects windows >1 year out (unclamped year 2099 test hit this). Good defensive validation.",
+    "audit_digest_recipients PUT correctly lowercases/dedups/drops invalid entries (verified)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter117_alert_ping_snooze_digest_trust.py"
+  ],
+  "success_rate": { "backend": "100%", "frontend": "100%" },
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Testland added to trusted_countries via seeded trust token Z8mUUfQKCp6TO73ylE8h5iajulib6LHw (kind=country). Token now marked used. Main agent will clean up.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iter117 shipped 4 defensibility features. Regression pytest is at /app/backend/tests/test_iter117_alert_ping_snooze_digest_trust.py. Note: audit-log JSON list endpoint doesn't exist; use runtime/audit-log.csv text search for action strings. Snooze windows must be <=1 year out. If retesting trust apply on UI, need main agent to reseed a fresh unused token (previous one consumed).",
+  "rca of the issue": "N/A \u2014 no defects. Initial pytest failures were test-authoring mistakes (wrong audit-log URL and snooze window > 1 year); corrected and all pass."
+}
