@@ -147,10 +147,11 @@ class LoginBody(BaseModel):
     password: str
 
 
-async def _log_audit(org_id, actor, action, detail="", target=None):
+async def _log_audit(org_id, actor, action, detail="", target=None, meta=None):
     await db.audit_logs.insert_one({
         "org_id": org_id, "actor": actor, "action": action, "detail": detail,
         "target": target,
+        "meta": meta or {},
         "ts": datetime.now(timezone.utc).isoformat(),
     })
 
