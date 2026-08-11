@@ -91,6 +91,10 @@ function BriefSettingsCard() {
   const [counts, setCounts] = useState(null);
   const [accessLog, setAccessLog] = useState([]);
   const [analytics, setAnalytics] = useState(null);
+  const [dropDays, setDropDays] = useState(2);
+  const [askName, setAskName] = useState(false);
+  const [recap, setRecap] = useState(null);
+  const [recapBusy, setRecapBusy] = useState(false);
 
   const refreshCounts = () =>
     api.get("/control-intelligence/brief/recipients").then((r) => setCounts(r.data)).catch(() => {});
@@ -107,6 +111,8 @@ function BriefSettingsCard() {
         setSendDay(r.data.send_day || 1);
         setEnabled(Boolean(r.data.enabled));
         setCadence(r.data.cadence || "monthly");
+        setDropDays(r.data.drop_days === 3 ? 3 : 2);
+        setAskName(Boolean(r.data.ask_name));
       } catch {
         /* keep defaults */
       } finally {
@@ -148,11 +154,13 @@ function BriefSettingsCard() {
   const save = async () => {
     setSaving(true);
     try {
-      const r = await api.put("/control-intelligence/settings", { recipients, send_day: sendDay, enabled, cadence });
+      const r = await api.put("/control-intelligence/settings", { recipients, send_day: sendDay, enabled, cadence, drop_days: dropDays, ask_name: askName });
       setRecipients(r.data.recipients || []);
       setSendDay(r.data.send_day || 1);
       setEnabled(Boolean(r.data.enabled));
       setCadence(r.data.cadence || "monthly");
+      setDropDays(r.data.drop_days === 3 ? 3 : 2);
+      setAskName(Boolean(r.data.ask_name));
       refreshCounts();
       toast.success("Board brief settings saved.");
     } catch (e) {
@@ -237,6 +245,23 @@ function BriefSettingsCard() {
       else toast.message(r.data.note || "No auditor recipients configured.");
     } catch (e) {
       toast.error(e.response?.data?.detail || "Unable to send the follow-up.");
+    }
+  };
+
+  const previewRecap = () =>
+    api.get("/control-intelligence/auditor-link/recap/preview?days=7").then((r) => setRecap(r.data))
+      .catch(() => toast.error("Unable to load the recap preview."));
+
+  const sendRecap = async () => {
+    setRecapBusy(true);
+    try {
+      const r = await api.post("/control-intelligence/auditor-link/recap/send?days=7");
+      setRecap(r.data.recap);
+      toast.success(`Weekly recap sent to ${r.data.sent} recipient(s).`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to send the recap.");
+    } finally {
+      setRecapBusy(false);
     }
   };
 
@@ -393,6 +418,43 @@ function BriefSettingsCard() {
             </div>
           </div>
 
+          <div className="grid sm:grid-cols-2 gap-4" data-testid="ci-engagement-settings">
+            <div>
+              <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Owner nudge after</label>
+              <div className="mt-2 inline-flex w-full rounded-md border border-border overflow-hidden" data-testid="ci-drop-days">
+                {[2, 3].map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => setDropDays(d)}
+                    data-testid={`ci-drop-days-${d}`}
+                    className={`flex-1 px-2 py-2 text-xs font-head font-bold transition-colors ${
+                      dropDays === d ? "bg-primary text-primary-foreground" : "bg-secondary/40 text-muted-foreground"
+                    }`}
+                  >
+                    {d} declining days
+                  </button>
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground mt-1.5">Email an owner when their effectiveness falls this many days in a row.</p>
+            </div>
+            <div>
+              <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Ask auditor name</label>
+              <button
+                onClick={() => setAskName((v) => !v)}
+                data-testid="ci-ask-name-toggle"
+                className={`mt-2 w-full inline-flex items-center justify-between px-3 py-2 rounded-md border text-sm font-head font-bold transition-colors ${
+                  askName ? "border-ai/40 bg-ai/10 text-ai" : "border-border bg-secondary/40 text-muted-foreground"
+                }`}
+              >
+                {askName ? "On" : "Off"}
+                <span className={`h-4 w-8 rounded-full relative transition-colors ${askName ? "bg-ai" : "bg-secondary"}`}>
+                  <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-background transition-all ${askName ? "left-4" : "left-0.5"}`} />
+                </span>
+              </button>
+              <p className="text-[10px] text-muted-foreground mt-1.5">Prompt auditors for their name when they open the portal, so views are attributed.</p>
+            </div>
+          </div>
+
           <div
             data-testid="ci-brief-next-send"
             className="flex items-center gap-2 text-xs text-muted-foreground rounded-md border border-border bg-secondary/20 px-3 py-2"
@@ -534,7 +596,7 @@ function BriefSettingsCard() {
                           …{lk.short} · <span className="capitalize">{lk.status}</span>
                           {lk.awaiting_download && (
                             <span data-testid={`ci-analytics-awaiting-${i}`} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-med/40 bg-med/10 text-med text-[9px] font-head font-bold normal-case">
-                              <Eye className="w-2.5 h-2.5" /> viewed · not downloaded
+                              <Eye className="w-2.5 h-2.5" /> viewed{lk.viewers && lk.viewers.length > 0 ? ` by ${lk.viewers.join(", ")}` : ""} · not downloaded
                             </span>
                           )}
                         </span>
@@ -552,6 +614,26 @@ function BriefSettingsCard() {
                 )}
               </div>
             )}
+
+            <div className="mt-4 border-t border-border pt-3" data-testid="ci-recap-panel">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Weekly assurance recap</div>
+                <div className="flex items-center gap-2">
+                  <button onClick={previewRecap} data-testid="ci-recap-preview" className="text-[10px] font-mono text-muted-foreground hover:text-foreground">Preview</button>
+                  <button onClick={sendRecap} disabled={recapBusy} data-testid="ci-recap-send" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-ai/40 bg-ai/10 text-ai text-[10px] font-head font-bold disabled:opacity-50">
+                    {recapBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Send className="w-2.5 h-2.5" />} Send now
+                  </button>
+                </div>
+              </div>
+              {recap ? (
+                <div data-testid="ci-recap-body" className="text-[11px] text-muted-foreground font-mono">
+                  Last {recap.days}d · {recap.views} view(s) · {recap.downloads} download(s) · {recap.reviewers.length} reviewer(s)
+                  {recap.reviewers.length > 0 && <span> · {recap.reviewers.join(", ")}</span>}
+                </div>
+              ) : (
+                <div className="text-[11px] text-muted-foreground">Preview the 7-day auditor engagement recap, or send it to admins &amp; execs now.</div>
+              )}
+            </div>
           </div>
 
           <div className="flex flex-wrap gap-2 pt-1">

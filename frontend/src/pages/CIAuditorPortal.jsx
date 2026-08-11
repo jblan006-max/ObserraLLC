@@ -18,17 +18,40 @@ function Tile({ label, value }) {
 
 export default function CIAuditorPortal() {
   const { token } = useParams();
+  const [meta, setMeta] = useState(null);
   const [data, setData] = useState(null);
   const [dlName, setDlName] = useState("");
+  const [viewerName, setViewerName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
+  const enterPortal = (who) => {
+    setLoading(true);
     api
-      .get(`/control-intelligence/public/auditor-link/${token}`)
+      .get(`/control-intelligence/public/auditor-link/${token}${who ? `?who=${encodeURIComponent(who)}` : ""}`)
       .then(({ data }) => setData(data))
       .catch((e) => setError(e?.response?.data?.detail || "This auditor link is invalid or has expired."))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    api
+      .get(`/control-intelligence/public/auditor-link/${token}/meta`)
+      .then(({ data }) => {
+        if (!data.valid) {
+          setError("This auditor link is invalid or has expired.");
+          setLoading(false);
+          return;
+        }
+        setMeta(data);
+        if (data.ask_name) setLoading(false);
+        else enterPortal("");
+      })
+      .catch(() => {
+        setError("This auditor link is invalid or has expired.");
+        setLoading(false);
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token]);
 
   if (loading)
@@ -45,6 +68,35 @@ export default function CIAuditorPortal() {
           <AlertTriangle className="w-10 h-10 mx-auto text-red-500" />
           <h1 className="font-head font-black text-2xl">Auditor link unavailable</h1>
           <p className="text-sm text-white/60">{error}</p>
+        </div>
+      </div>
+    );
+
+  if (meta?.ask_name && !data)
+    return (
+      <div className="min-h-screen bg-[#050810] text-white flex items-center justify-center p-6" data-testid="ci-auditor-namegate">
+        <div className="max-w-sm w-full space-y-4 text-center">
+          <Gavel className="w-9 h-9 mx-auto text-emerald-400" />
+          <h1 className="font-head font-black text-2xl">{meta.org_name} — Control Assurance</h1>
+          <p className="text-sm text-white/60">For the access record, please enter your name before viewing this read-only evidence.</p>
+          <input
+            data-testid="ci-auditor-viewer-name"
+            value={viewerName}
+            onChange={(e) => setViewerName(e.target.value)}
+            placeholder="Your name"
+            className="w-full bg-white/[0.06] border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-emerald-400/60 text-center"
+          />
+          <button
+            data-testid="ci-auditor-enter"
+            disabled={!viewerName.trim()}
+            onClick={() => enterPortal(viewerName.trim())}
+            className="w-full px-4 py-2.5 rounded-lg bg-emerald-400 text-[#050810] font-head font-bold text-sm disabled:opacity-40"
+          >
+            View assurance evidence
+          </button>
+          <button data-testid="ci-auditor-skip" onClick={() => enterPortal("")} className="block w-full text-[11px] text-white/40 hover:text-white/70">
+            Continue anonymously
+          </button>
         </div>
       </div>
     );

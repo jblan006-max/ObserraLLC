@@ -433,6 +433,8 @@ class CIBriefSettings(BaseModel):
     send_day: Optional[int] = None
     enabled: Optional[bool] = None
     cadence: Optional[str] = None
+    drop_days: Optional[int] = None
+    ask_name: Optional[bool] = None
 
 
 _BRIEF_CADENCES = {"monthly", "quarterly"}
@@ -441,12 +443,15 @@ _BRIEF_CADENCES = {"monthly", "quarterly"}
 async def _ci_settings(org_id):
     org = await db.organizations.find_one(
         {"_id": ObjectId(org_id)},
-        {"ci_brief_recipients": 1, "ci_brief_send_day": 1, "ci_brief_enabled": 1, "ci_brief_cadence": 1}) or {}
+        {"ci_brief_recipients": 1, "ci_brief_send_day": 1, "ci_brief_enabled": 1, "ci_brief_cadence": 1,
+         "ci_nudge_drop_days": 1, "ci_auditor_ask_name": 1}) or {}
     cadence = org.get("ci_brief_cadence")
     return {"recipients": _norm_recipients(org.get("ci_brief_recipients")),
             "send_day": max(1, min(28, int(org.get("ci_brief_send_day") or 1))),
             "enabled": bool(org.get("ci_brief_enabled", False)),
-            "cadence": cadence if cadence in _BRIEF_CADENCES else "monthly"}
+            "cadence": cadence if cadence in _BRIEF_CADENCES else "monthly",
+            "drop_days": 3 if int(org.get("ci_nudge_drop_days") or 2) == 3 else 2,
+            "ask_name": bool(org.get("ci_auditor_ask_name", False))}
 
 
 @ci_router.get("/settings")
@@ -465,6 +470,10 @@ async def set_ci_settings(body: CIBriefSettings, admin: dict = Depends(require_r
         update["ci_brief_enabled"] = bool(body.enabled)
     if body.cadence is not None:
         update["ci_brief_cadence"] = body.cadence if body.cadence in _BRIEF_CADENCES else "monthly"
+    if body.drop_days is not None:
+        update["ci_nudge_drop_days"] = 3 if int(body.drop_days) == 3 else 2
+    if body.ask_name is not None:
+        update["ci_auditor_ask_name"] = bool(body.ask_name)
     if update:
         await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": update})
     return await _ci_settings(admin["org_id"])
@@ -567,7 +576,7 @@ async def revoke_auditor_link(admin: dict = Depends(require_roles("admin"))):
 
 
 @ci_router.get("/public/auditor-link/{token}")
-async def public_auditor_link(token: str):
+async def public_auditor_link(token: str, who: str = ""):
     from fastapi import HTTPException
     now = datetime.now(timezone.utc)
     doc = await db.ci_auditor_links.find_one({"token": token})
@@ -577,10 +586,11 @@ async def public_auditor_link(token: str):
     a = await _ci_aggregate(org_id)
     org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1})
     weak = sorted(a["statuses"], key=lambda c: c["effectiveness"])[:8]
+    viewer = (who or "").strip()[:120]
     try:
         await db.ci_auditor_access.insert_one({"token": token, "org_id": org_id, "kind": "view",
-                                               "who": "", "at": now.isoformat()})
-        await _maybe_alert_auditor_access(doc, "view", "")
+                                               "who": viewer, "at": now.isoformat()})
+        await _maybe_alert_auditor_access(doc, "view", viewer)
     except Exception:
         pass
     return {
@@ -777,9 +787,11 @@ async def auditor_link_analytics(admin: dict = Depends(require_roles("admin"))):
         k = r.get("kind")
         who = (r.get("who") or "").strip()
         at = r.get("at") or ""
-        lk = links.setdefault(t, {"token": t, "short": t[:8], "views": 0, "downloads": 0, "last_at": ""})
+        lk = links.setdefault(t, {"token": t, "short": t[:8], "views": 0, "downloads": 0, "last_at": "", "viewers": set()})
         if k == "view":
             lk["views"] += 1
+            if who:
+                lk["viewers"].add(who)
         elif k == "download":
             lk["downloads"] += 1
         if at > lk["last_at"]:
@@ -804,6 +816,7 @@ async def auditor_link_analytics(admin: dict = Depends(require_roles("admin"))):
     for lk in out_links:
         lk["status"] = status_map.get(lk["token"], "unknown")
         lk["awaiting_download"] = lk["views"] > 0 and lk["downloads"] == 0
+        lk["viewers"] = sorted(lk.pop("viewers", set()))
     out_reviewers = sorted(reviewers.values(), key=lambda x: (-x["downloads"], x["who"]))
     totals = {"views": sum(lk["views"] for lk in out_links),
               "downloads": sum(lk["downloads"] for lk in out_links),
@@ -854,19 +867,19 @@ async def auditor_link_follow_up(body: FollowUpBody, admin: dict = Depends(requi
     return {"sent": sent, "to": recipients}
 
 
-def _two_day_drop(points):
-    if len(points) < 3:
+def _declining_run(points, days=2):
+    if len(points) < days + 1:
         return False
-    a, b, c = points[-3]["avg_eff"], points[-2]["avg_eff"], points[-1]["avg_eff"]
-    return a > b > c
+    window = [p["avg_eff"] for p in points[-(days + 1):]]
+    return all(window[i] > window[i + 1] for i in range(len(window) - 1))
 
 
-def _engagement_nudge_html(owner, points):
+def _engagement_nudge_html(owner, points, days=2):
     latest, prior = points[-1]["avg_eff"], points[0]["avg_eff"]
     drop = prior - latest
     return (f"<div style='font:400 14px Arial;color:#1f2937;max-width:620px;margin:auto'>"
             f"<h2 style='color:#b91c1c'>Your control readiness is trending down</h2>"
-            f"<p>Hi {owner}, the average effectiveness of the controls you own has fallen for two days "
+            f"<p>Hi {owner}, the average effectiveness of the controls you own has fallen for {days} days "
             f"running \u2014 from {prior}% to {latest}% (down {drop} pts). Please review your controls "
             f"before it slips further.</p>"
             f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence \u2014 proactive readiness nudge.</p></div>")
@@ -874,6 +887,8 @@ def _engagement_nudge_html(owner, points):
 
 async def _run_ci_engagement_nudges(org_id):
     today = datetime.now(timezone.utc).date().isoformat()
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"ci_nudge_drop_days": 1})
+    drop_days = 3 if int((org or {}).get("ci_nudge_drop_days") or 2) == 3 else 2
     owners = await db.ci_owner_eff_history.distinct("owner", {"org_id": org_id})
     muted = await _muted_emails(org_id)
     nudged = 0
@@ -882,7 +897,7 @@ async def _run_ci_engagement_nudges(org_id):
             continue
         pts = await db.ci_owner_eff_history.find(
             {"org_id": org_id, "owner": owner}, {"_id": 0, "date": 1, "avg_eff": 1}).sort("date", 1).to_list(400)
-        if not _two_day_drop(pts):
+        if not _declining_run(pts, drop_days):
             continue
         marker = f"ci-engage-drop:{org_id}:{owner}:{today}"
         if await db.ci_sent_markers.find_one({"marker": marker}):
@@ -893,7 +908,7 @@ async def _run_ci_engagement_nudges(org_id):
         try:
             await notifications.send_email(
                 em, "Your control readiness is declining \u2014 Obserra Control Intelligence",
-                _engagement_nudge_html(owner, pts[-3:]))
+                _engagement_nudge_html(owner, pts[-(drop_days + 1):], drop_days))
             await db.ci_sent_markers.insert_one({"marker": marker, "at": datetime.now(timezone.utc).isoformat()})
             nudged += 1
         except Exception:
@@ -964,3 +979,45 @@ async def _run_ci_weekly_assurance_recap_all():
             await db.ci_sent_markers.insert_one({"marker": marker, "at": now.isoformat()})
         except Exception as e:
             logger.warning(f"CI weekly recap failed for org {org_id}: {e}")
+
+
+@ci_router.get("/public/auditor-link/{token}/meta")
+async def public_auditor_link_meta(token: str):
+    now = datetime.now(timezone.utc)
+    doc = await db.ci_auditor_links.find_one(
+        {"token": token}, {"_id": 0, "org_id": 1, "revoked": 1, "expires_at": 1})
+    if not doc or doc.get("revoked") or doc.get("expires_at", "") <= now.isoformat():
+        return {"valid": False}
+    org = await db.organizations.find_one({"_id": ObjectId(doc["org_id"])}, {"name": 1, "ci_auditor_ask_name": 1})
+    return {"valid": True, "org_name": (org or {}).get("name") or "Organization",
+            "ask_name": bool((org or {}).get("ci_auditor_ask_name", False))}
+
+
+@ci_router.post("/auditor-link/recap/send")
+async def auditor_recap_send(days: int = 7, admin: dict = Depends(require_roles("admin"))):
+    from fastapi import HTTPException
+    days = max(1, min(90, int(days or 7)))
+    org_id = admin["org_id"]
+    rec = await _auditor_recap_payload(org_id, days)
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1})
+    org_name = (org or {}).get("name") or "Organization"
+    emails = sorted(await _admin_exec_emails(org_id))
+    if not emails:
+        raise HTTPException(status_code=400, detail="No admin/executive recipients to send to.")
+    html = _recap_html(org_name, rec)
+    sent = 0
+    for em in emails:
+        try:
+            await notifications.send_email(em, f"Assurance recap ({days}d) \u2014 {org_name}", html)
+            sent += 1
+        except Exception:
+            pass
+    return {"sent": sent, "to": emails, "recap": rec}
+
+
+@ci_router.get("/auditor-link/activity")
+async def auditor_activity(days: int = 30, user: dict = Depends(require_roles("admin", "executive"))):
+    days = max(1, min(90, int(days or 30)))
+    rec = await _auditor_engagement(user["org_id"], days)
+    return {"views": rec["views"], "downloads": rec["downloads"],
+            "reviewers": len(rec["reviewers"]), "days": days}

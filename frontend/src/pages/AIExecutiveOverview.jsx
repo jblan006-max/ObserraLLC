@@ -17,6 +17,22 @@ import { agentDeepDive, incidentDeepDive, systemDeepDive } from "@/lib/agenticDe
 import BoardBriefControl from "@/components/agentic-ai/BoardBriefControl";
 import { AIInsight } from "@/components/AIInsight";
 
+function AssuranceActivityBadge() {
+  const [a, setA] = useState(null);
+  useEffect(() => {
+    api.get("/control-intelligence/auditor-link/activity?days=30").then(({ data }) => setA(data)).catch(() => {});
+  }, []);
+  if (!a || (!a.views && !a.downloads)) return null;
+  const tone = "190 80% 50%";
+  return (
+    <span data-testid="exec-assurance-activity" title="External auditor engagement over the last 30 days"
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-mono font-bold"
+      style={{ borderColor: `hsl(${tone} / 0.4)`, background: `hsl(${tone} / 0.1)`, color: `hsl(${tone})` }}>
+      <ShieldCheck className="w-3 h-3" />ASSURANCE 30d · {a.views} views · {a.downloads} downloads · {a.reviewers} reviewer{a.reviewers === 1 ? "" : "s"}
+    </span>
+  );
+}
+
 const ACCENT = "330 81% 60%";
 
 function MuteBadge() {
@@ -157,6 +173,7 @@ export default function AIExecutiveOverview() {
             <span data-testid="overview-version-badge" className="px-2 py-1 rounded-full border border-border bg-secondary/60 text-muted-foreground text-[10px] font-mono font-bold">v1</span>
             <GoLiveBadge />
             {isAdmin && <ControlAssuranceBadge />}
+            <AssuranceActivityBadge />
             <MuteBadge />
           </div>
           <p className="text-sm text-muted-foreground mt-2 max-w-3xl">
