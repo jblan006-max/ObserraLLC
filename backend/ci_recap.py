@@ -662,3 +662,29 @@ async def assurance_digest_history(limit: int = 10, admin: dict = Depends(requir
     rows = await db.ci_digest_log.find(
         {"org_id": admin["org_id"]}, {"_id": 0, "org_id": 0}).sort("at", -1).to_list(limit)
     return {"history": rows}
+
+
+@ci_router.post("/assurance-digest/test")
+async def assurance_digest_test(admin: dict = Depends(require_roles("admin"))):
+    """Send the exact monthly digest (with sealed PDF) only to the requesting admin's inbox (test copy, not logged)."""
+    org_id = admin["org_id"]
+    p = await _assurance_digest_payload(org_id, 30)
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1, "report_branding": 1})
+    org_name = (org or {}).get("name") or "Organization"
+    to = admin["email"]
+    html = _assurance_digest_html(org_name, p)
+    attachments = []
+    try:
+        pdf_raw = _assurance_digest_pdf(org_name, p, _resolve_brand(org))
+        attachments = [{"filename": "obserra-monthly-assurance-digest.pdf",
+                        "content": base64.b64encode(pdf_raw).decode()}]
+    except Exception as e:
+        logger.warning(f"CI digest test PDF build failed: {e}")
+    sent = 0
+    try:
+        await notifications.send_email(to, f"[Test copy] Monthly Assurance Digest \u2014 {org_name}", html,
+                                       attachments=attachments)
+        sent = 1
+    except Exception:
+        pass
+    return {"sent": sent, "to": [to], "digest": p}

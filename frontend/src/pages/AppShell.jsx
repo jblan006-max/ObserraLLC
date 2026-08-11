@@ -115,12 +115,11 @@ const CAT_STYLE = {
 function VersionBadge({ user, onNav }) {
   const [v, setV] = useState(null);
   useEffect(() => { api.get("/deploy/version").then(({ data }) => setV(data)).catch(() => {}); }, []);
-  if (!v) return null;
   const inner = (
     <div className="flex items-center gap-1.5 px-2 py-1.5 rounded-md bg-secondary/40 text-[10px] font-mono" data-testid="version-badge">
-      <span className={`w-1.5 h-1.5 rounded-full ${v.update_available ? "bg-ai animate-pulse" : "bg-low"}`} />
-      <span className="uppercase text-muted-foreground">v{v.current}</span>
-      {v.update_available && <span className="ml-auto text-ai">update →</span>}
+      <span className={`w-1.5 h-1.5 rounded-full ${v?.update_available ? "bg-ai animate-pulse" : "bg-low"}`} />
+      <span className="uppercase text-muted-foreground">{APP_VERSION_LABEL}</span>
+      {v?.update_available && <span className="ml-auto text-ai">update →</span>}
     </div>
   );
   if (user?.role === "admin") {

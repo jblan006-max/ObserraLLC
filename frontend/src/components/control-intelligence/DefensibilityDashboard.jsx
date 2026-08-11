@@ -107,6 +107,7 @@ function BriefSettingsCard() {
   const [digestDay, setDigestDay] = useState(1);
   const [digestCadence, setDigestCadence] = useState("monthly");
   const [digestBusy, setDigestBusy] = useState(false);
+  const [digestTestBusy, setDigestTestBusy] = useState(false);
   const [digestHistory, setDigestHistory] = useState(null);
   const [showDigestRecipients, setShowDigestRecipients] = useState(false);
   const [showTeamPicker, setShowTeamPicker] = useState(false);
@@ -403,6 +404,18 @@ function BriefSettingsCard() {
       toast.error(e.response?.data?.detail || "Unable to send the assurance digest.");
     } finally {
       setDigestBusy(false);
+    }
+  };
+
+  const sendDigestTest = async () => {
+    setDigestTestBusy(true);
+    try {
+      const r = await api.post("/control-intelligence/assurance-digest/test");
+      toast.success(`Test copy sent to your inbox (${r.data.to[0]}).`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to send the test digest.");
+    } finally {
+      setDigestTestBusy(false);
     }
   };
 
@@ -950,6 +963,9 @@ function BriefSettingsCard() {
                 </div>
                 <div className="flex items-center gap-2">
                   <button onClick={loadDigestHistory} data-testid="ci-digest-history-btn" className="text-[10px] font-mono text-muted-foreground hover:text-foreground">History</button>
+                  <button onClick={sendDigestTest} disabled={digestTestBusy} data-testid="ci-digest-test" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-border text-[10px] font-head font-bold text-muted-foreground hover:text-foreground disabled:opacity-50">
+                    {digestTestBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Mail className="w-2.5 h-2.5" />} Test to me
+                  </button>
                   <button onClick={sendDigest} disabled={digestBusy} data-testid="ci-digest-send" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-ai/40 bg-ai/10 text-ai text-[10px] font-head font-bold disabled:opacity-50">
                     {digestBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Send className="w-2.5 h-2.5" />} Send now
                   </button>

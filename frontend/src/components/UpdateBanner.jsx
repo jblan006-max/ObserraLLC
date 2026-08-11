@@ -3,6 +3,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 import { ArrowUpCircle, X, Sparkles, DownloadCloud, Loader2 } from "lucide-react";
+import { APP_VERSION_LABEL } from "@/version";
 
 export const UpdateBanner = () => {
   const { user } = useAuth();
@@ -53,7 +54,7 @@ export const UpdateBanner = () => {
       >
         <ArrowUpCircle className="w-4 h-4 shrink-0" />
         <span data-testid="update-banner-text">
-          Obserra <b>v{info.latest}</b> is available — you're on v{info.current}.
+          Obserra <b>v{info.latest}</b> is available — you're on {APP_VERSION_LABEL}.
         </span>
         <button
           data-testid="update-banner-view"
@@ -86,7 +87,7 @@ export const UpdateBanner = () => {
               <Sparkles className="w-5 h-5 text-ai" />
               <h3 className="font-head font-bold text-lg">What's new in v{info.latest}</h3>
             </div>
-            <p className="text-xs font-mono text-muted-foreground mb-4">You're currently running v{info.current}</p>
+            <p className="text-xs font-mono text-muted-foreground mb-4">You're currently running {APP_VERSION_LABEL}</p>
             {info.notes && (
               <p data-testid="update-modal-notes" className="text-sm text-foreground mb-3">{info.notes}</p>
             )}
