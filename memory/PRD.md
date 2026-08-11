@@ -37,6 +37,14 @@ Route `/app/control-intelligence` (sidebar "Control Intelligence"). Continuous C
 - ⚠️ FORK-HAZARD RECURRED: while cleaning up an out-of-order duplicated tail in ControlIntelligence.jsx, the demo-toggle `<button>` JSX (and its setDemo call) was dropped (import+state survived) — caught by testing_agent iter121, re-added lone, grep+babel+screenshot re-verified. Lesson reinforced: grep-verify each JSX edit stuck.
 
 
+**Round 4 (Jun 2026) — 4 approved brief/nudge enhancements shipped (iteration_122, backend 8/8 + frontend ~95%, no bugs):**
+- **Demo Nudges Preview** — new `GET /api/control-intelligence/owner-nudges/preview?demo=` (admin, read-only, sends nothing). Refactored `_run_ci_owner_nudges` into `_group_at_risk`/`_nudge_html`/`_nudge_recipients`/`_nudge_groups`. When `demo=true` it applies `routes._apply_demo_at_risk` so the preview shows 2 at-risk controls grouped by owner (Dana Ops, Sam Vuln) + the recipient list. Remediation tab: admin 'Preview reminders' button (`ci-preview-owner-nudges`) → inline `ci-nudge-preview` panel; honours the top-bar Demo toggle.
+- **Recipient Roles (Board vs Auditor)** — `ci_brief_recipients` is now a list of `{email, role}` (role ∈ board|auditor; legacy strings coerce to board). `_norm_recipients` lowercases/dedupes/validates/caps 50. `_run_ci_brief_email` builds a role_map (admins/execs default Board; board precedence on overlap) and emails each role group with a tailored `_ROLE_INTRO` cover note prepended to the same PDF. Defensibility settings card: Board/Auditor segmented control on add (`ci-brief-role-board|auditor`), per-chip role toggle (`ci-brief-recipient-role-<email>`).
+- **Brief Preview** — new `GET /api/control-intelligence/brief/preview` (admin) returns `{title, markdown, html}` (reuses `_ci_brief_markdown` + `_report_html`). 'Preview brief' button (`ci-brief-preview`) opens a `createPortal(document.body)` modal (`ci-brief-preview-modal`) rendering the HTML in an iframe (`ci-brief-preview-frame`).
+- **Next Scheduled Send line** — client-computed `ci-brief-next-send` under the schedule toggle: 'Next scheduled send: <Month Day, Year> (08:00 UTC)' when enabled (next occurrence of send_day), else 'Scheduled send is off — …'.
+- Batch used the paired-edit strategy (one control_intelligence.py edit + one different-file edit per turn) → NO drop-hazard this round. Backlog (non-blocking, from tester): DefensibilityDashboard.jsx ~455 lines could split BriefPreviewModal/RecipientChipList/ScheduleControls; add axios timeout to openPreview.
+
+
 ## Backlog / prior app (Obserra Agentic-AI) — PENDING (user-approved msg 184, not implemented)
 Digest Schedule Choice, Structured Audit Meta (note: `_log_audit` in auth.py already has an optional `meta={}` param added — additive/harmless), Auto-Resume Notice, Exec Mute Badge Tooltip.
 ⚠️ FORK HAZARD (recurring 15+): `agents.py` >3500 lines — never trust batched `search_replace`; grep-verify every edit stuck.

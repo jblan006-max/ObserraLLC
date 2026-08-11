@@ -302,6 +302,7 @@ export default function ControlIntelligence() {
           gaps={data?.gaps || []}
           onSelectControl={setSelectedControl}
           isAdmin={isAdmin}
+          demo={demo}
         />
       )}
 

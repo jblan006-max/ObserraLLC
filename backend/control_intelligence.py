@@ -88,14 +88,14 @@ def _at_risk(statuses):
             if c["status"] != "Passing" or c.get("days_to_expiry", 999) <= 14 or c.get("drift")]
 
 
-async def _run_ci_owner_nudges(org_id, actor="scheduler@obserra"):
-    a = await _ci_aggregate(org_id)
-    at_risk = _at_risk(a["statuses"])
-    if not at_risk:
-        return {"at_risk": 0, "emailed": [], "owners": 0}
+def _group_at_risk(at_risk):
     by_owner = {}
     for c in at_risk:
         by_owner.setdefault(c.get("owner") or "Unassigned", []).append(c)
+    return by_owner
+
+
+def _nudge_html(at_risk, by_owner):
     rows = ""
     for owner, ctrls in sorted(by_owner.items()):
         items = "".join(
@@ -104,11 +104,14 @@ async def _run_ci_owner_nudges(org_id, actor="scheduler@obserra"):
             + (f", evidence expires in {c['days_to_expiry']}d" if c.get('days_to_expiry') is not None else "")
             + "</li>" for c in ctrls)
         rows += f"<h3 style='margin:14px 0 4px'>{owner} — {len(ctrls)} control(s)</h3><ul>{items}</ul>"
-    html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:640px;margin:auto'>"
+    return (f"<div style='font:400 14px Arial;color:#1f2937;max-width:640px;margin:auto'>"
             f"<h2 style='color:#0f1e3d'>Control remediation reminder</h2>"
             f"<p>{len(at_risk)} control(s) need attention. Please pick up remediation for the controls you own.</p>"
             f"{rows}"
             f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence — automated remediation nudge.</p></div>")
+
+
+async def _nudge_recipients(org_id, by_owner):
     recipients = await db.users.find(
         {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
     emails = {r["email"] for r in recipients if r.get("email")}
@@ -118,7 +121,26 @@ async def _run_ci_owner_nudges(org_id, actor="scheduler@obserra"):
         for u in allusers:
             if (u.get("name") or "").strip().lower() in owner_names and u.get("email"):
                 emails.add(u["email"])
-    for em in sorted(emails):
+    return sorted(emails)
+
+
+def _nudge_groups(by_owner):
+    return [{"owner": o, "count": len(ctrls),
+             "controls": [{"control_id": c["control_id"], "name": c["name"], "status": c["status"],
+                           "effectiveness": c["effectiveness"], "days_to_expiry": c.get("days_to_expiry")}
+                          for c in ctrls]}
+            for o, ctrls in sorted(by_owner.items())]
+
+
+async def _run_ci_owner_nudges(org_id, actor="scheduler@obserra"):
+    a = await _ci_aggregate(org_id)
+    at_risk = _at_risk(a["statuses"])
+    if not at_risk:
+        return {"at_risk": 0, "emailed": [], "owners": 0}
+    by_owner = _group_at_risk(at_risk)
+    html = _nudge_html(at_risk, by_owner)
+    emails = await _nudge_recipients(org_id, by_owner)
+    for em in emails:
         await notifications.send_email(em, "Controls need remediation — Obserra Control Intelligence", html)
     try:
         await notifications.create(org_id, "control", "Control remediation reminder sent",
@@ -126,7 +148,7 @@ async def _run_ci_owner_nudges(org_id, actor="scheduler@obserra"):
                                    ref="control-intelligence")
     except Exception:
         pass
-    return {"at_risk": len(at_risk), "emailed": sorted(emails), "owners": len(by_owner)}
+    return {"at_risk": len(at_risk), "emailed": emails, "owners": len(by_owner)}
 
 
 async def _run_ci_owner_nudges_all():
@@ -163,6 +185,31 @@ def _ci_brief_markdown(a):
     return "\n".join(lines)
 
 
+_BRIEF_ROLES = {"board", "auditor"}
+_ROLE_INTRO = {
+    "board": "Prepared for the Board — a concise executive view of control assurance, effectiveness and defensibility for this period.",
+    "auditor": "Prepared for Audit — control effectiveness, evidence freshness and framework coverage, with FACT and MODELLED source classifications for independent review.",
+}
+_ROLE_LABEL = {"board": "Board", "auditor": "Auditor"}
+
+
+def _norm_recipients(raw):
+    out, seen = [], set()
+    for item in raw or []:
+        if isinstance(item, str):
+            email, role = item, "board"
+        elif isinstance(item, dict):
+            email, role = item.get("email", ""), item.get("role", "board")
+        else:
+            continue
+        email = (email or "").strip().lower()
+        role = role if role in _BRIEF_ROLES else "board"
+        if "@" in email and email not in seen:
+            seen.add(email)
+            out.append({"email": email, "role": role})
+    return out[:50]
+
+
 async def _run_ci_brief_email(org_id, actor="scheduler@obserra", extra_recipients=None):
     a = await _ci_aggregate(org_id)
     org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1, "ci_brief_recipients": 1})
@@ -172,21 +219,37 @@ async def _run_ci_brief_email(org_id, actor="scheduler@obserra", extra_recipient
     pdf = _build_pdf(md, title, cover=True, org_name=org_name)
     attachments = [{"filename": "obserra-control-intelligence-assurance-brief.pdf",
                     "content": base64.b64encode(pdf.getvalue()).decode()}]
-    recipients = await db.users.find(
+    admins = await db.users.find(
         {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
-    emails = {r["email"] for r in recipients if r.get("email")}
-    emails |= {e for e in ((org or {}).get("ci_brief_recipients") or []) if e and "@" in e}
-    emails |= {e for e in (extra_recipients or []) if e and "@" in e}
-    html = _report_html(md, title)
-    for em in sorted(emails):
-        await notifications.send_email(em, f"{title} — Obserra", html, attachments=attachments)
+    role_map = {"board": set(), "auditor": set()}
+    for r in admins:
+        if r.get("email"):
+            role_map["board"].add(r["email"])
+    for rec in _norm_recipients((org or {}).get("ci_brief_recipients")):
+        role_map[rec["role"]].add(rec["email"])
+    for e in (extra_recipients or []):
+        if e and "@" in e:
+            role_map["board"].add(e.strip().lower())
+    role_map["auditor"] -= role_map["board"]  # board takes precedence on overlap
+    sent, to = 0, []
+    for role in ("board", "auditor"):
+        emails = role_map[role]
+        if not emails:
+            continue
+        role_md = _ROLE_INTRO[role] + "\n\n" + md
+        html = _report_html(role_md, title)
+        subject = f"{title} — Obserra ({_ROLE_LABEL[role]})"
+        for em in sorted(emails):
+            await notifications.send_email(em, subject, html, attachments=attachments)
+            sent += 1
+            to.append(em)
     try:
         await notifications.create(org_id, "report", "Executive Assurance Brief emailed",
-                                   f"Control Intelligence brief (PDF) emailed to {len(emails)} recipient(s).",
+                                   f"Control Intelligence brief (PDF) emailed to {sent} recipient(s).",
                                    ref="control-intelligence")
     except Exception:
         pass
-    return {"sent": len(emails), "to": sorted(emails)}
+    return {"sent": sent, "to": sorted(to)}
 
 
 async def _run_ci_brief_email_all(scheduled=False):
@@ -213,7 +276,7 @@ async def _run_ci_brief_email_all(scheduled=False):
 # ---------------------------------------------------------------- endpoints
 
 class CIBriefSettings(BaseModel):
-    recipients: Optional[List[str]] = None
+    recipients: Optional[list] = None
     send_day: Optional[int] = None
     enabled: Optional[bool] = None
 
@@ -222,7 +285,7 @@ async def _ci_settings(org_id):
     org = await db.organizations.find_one(
         {"_id": ObjectId(org_id)},
         {"ci_brief_recipients": 1, "ci_brief_send_day": 1, "ci_brief_enabled": 1}) or {}
-    return {"recipients": org.get("ci_brief_recipients") or [],
+    return {"recipients": _norm_recipients(org.get("ci_brief_recipients")),
             "send_day": max(1, min(28, int(org.get("ci_brief_send_day") or 1))),
             "enabled": bool(org.get("ci_brief_enabled", False))}
 
@@ -236,13 +299,7 @@ async def get_ci_settings(admin: dict = Depends(require_roles("admin"))):
 async def set_ci_settings(body: CIBriefSettings, admin: dict = Depends(require_roles("admin"))):
     update = {}
     if body.recipients is not None:
-        clean, seen = [], set()
-        for e in body.recipients:
-            e = (e or "").strip().lower()
-            if "@" in e and e not in seen:
-                seen.add(e)
-                clean.append(e)
-        update["ci_brief_recipients"] = clean[:50]
+        update["ci_brief_recipients"] = _norm_recipients(body.recipients)
     if body.send_day is not None:
         update["ci_brief_send_day"] = max(1, min(28, int(body.send_day)))
     if body.enabled is not None:
@@ -267,6 +324,29 @@ async def effectiveness_history(days: int = 30, user: dict = Depends(get_current
 @ci_router.post("/owner-nudges")
 async def owner_nudges(admin: dict = Depends(require_roles("admin"))):
     return await _run_ci_owner_nudges(admin["org_id"], actor=admin["email"])
+
+
+@ci_router.get("/owner-nudges/preview")
+async def owner_nudges_preview(demo: bool = False, admin: dict = Depends(require_roles("admin"))):
+    org_id = admin["org_id"]
+    a = await _ci_aggregate(org_id)
+    statuses = a["statuses"]
+    if demo:
+        from routes import _apply_demo_at_risk
+        statuses = _apply_demo_at_risk(statuses)
+    at_risk = _at_risk(statuses)
+    by_owner = _group_at_risk(at_risk)
+    emails = await _nudge_recipients(org_id, by_owner) if at_risk else []
+    return {"at_risk": len(at_risk), "owners": len(by_owner),
+            "recipients": emails, "groups": _nudge_groups(by_owner), "demo": bool(demo)}
+
+
+@ci_router.get("/brief/preview")
+async def brief_preview(admin: dict = Depends(require_roles("admin"))):
+    a = await _ci_aggregate(admin["org_id"])
+    md = _ci_brief_markdown(a)
+    title = "Control Intelligence Executive Assurance Brief"
+    return {"title": title, "markdown": md, "html": _report_html(md, title)}
 
 
 @ci_router.post("/email-brief")

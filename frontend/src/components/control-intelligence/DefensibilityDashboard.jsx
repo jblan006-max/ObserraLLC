@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, Database, Loader2, Mail, Send, ShieldCheck, X, XCircle } from "lucide-react";
+import { createPortal } from "react-dom";
+import {
+  Calendar, CheckCircle2, Database, Eye, Gavel, Loader2, Mail, Send, ShieldCheck, Users, X, XCircle,
+} from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { DataClassBadge, Panel } from "@/components/control-intelligence/shared";
@@ -11,14 +14,71 @@ const SOURCE_LABEL = {
   connectorHealth: "Connector Health",
 };
 
+const ROLE_META = {
+  board: { label: "Board", icon: Users, tone: "border-ai/40 bg-ai/10 text-ai" },
+  auditor: { label: "Auditor", icon: Gavel, tone: "border-med/40 bg-med/10 text-med" },
+};
+
+function nextSendDate(sendDay, enabled) {
+  if (!enabled) return null;
+  const now = new Date();
+  const day = Math.max(1, Math.min(28, sendDay || 1));
+  let target = new Date(now.getFullYear(), now.getMonth(), day);
+  if (now.getDate() > day) target = new Date(now.getFullYear(), now.getMonth() + 1, day);
+  return target;
+}
+
+function BriefPreviewModal({ html, loading, onClose }) {
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+      data-testid="ci-brief-preview-modal"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-3xl max-h-[85vh] bg-card rounded-2xl border border-border overflow-hidden flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+          <div className="font-head font-black text-lg flex items-center gap-2">
+            <Eye className="w-4 h-4 text-ai" /> Assurance brief preview
+          </div>
+          <button onClick={onClose} data-testid="ci-brief-preview-close" className="text-muted-foreground hover:text-foreground">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="flex-1 overflow-auto bg-white">
+          {loading ? (
+            <div className="py-20 flex items-center justify-center gap-2 text-sm text-gray-500">
+              <Loader2 className="w-4 h-4 animate-spin" /> Building preview…
+            </div>
+          ) : (
+            <iframe
+              title="brief-preview"
+              srcDoc={html}
+              className="w-full h-[70vh] border-0"
+              data-testid="ci-brief-preview-frame"
+            />
+          )}
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
 function BriefSettingsCard() {
   const [recipients, setRecipients] = useState([]);
   const [sendDay, setSendDay] = useState(1);
   const [enabled, setEnabled] = useState(false);
   const [entry, setEntry] = useState("");
+  const [entryRole, setEntryRole] = useState("board");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState("");
+  const [previewLoading, setPreviewLoading] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -41,25 +101,28 @@ function BriefSettingsCard() {
       toast.error("Enter a valid email address.");
       return;
     }
-    if (recipients.includes(value)) {
+    if (recipients.some((r) => r.email === value)) {
       setEntry("");
       return;
     }
-    setRecipients((list) => [...list, value]);
+    setRecipients((list) => [...list, { email: value, role: entryRole }]);
     setEntry("");
   };
 
   const removeRecipient = (email) =>
-    setRecipients((list) => list.filter((item) => item !== email));
+    setRecipients((list) => list.filter((item) => item.email !== email));
+
+  const toggleRole = (email) =>
+    setRecipients((list) =>
+      list.map((item) =>
+        item.email === email ? { ...item, role: item.role === "board" ? "auditor" : "board" } : item
+      )
+    );
 
   const save = async () => {
     setSaving(true);
     try {
-      const r = await api.put("/control-intelligence/settings", {
-        recipients,
-        send_day: sendDay,
-        enabled,
-      });
+      const r = await api.put("/control-intelligence/settings", { recipients, send_day: sendDay, enabled });
       setRecipients(r.data.recipients || []);
       setSendDay(r.data.send_day || 1);
       setEnabled(Boolean(r.data.enabled));
@@ -83,10 +146,27 @@ function BriefSettingsCard() {
     }
   };
 
+  const openPreview = async () => {
+    setPreviewOpen(true);
+    setPreviewLoading(true);
+    try {
+      const r = await api.get("/control-intelligence/brief/preview");
+      setPreviewHtml(r.data.html || "<p style='font:400 14px Arial;padding:24px'>No preview content.</p>");
+    } catch (e) {
+      setPreviewHtml("");
+      toast.error(e.response?.data?.detail || "Unable to build the preview.");
+      setPreviewOpen(false);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const next = nextSendDate(sendDay, enabled);
+
   return (
     <Panel
       title="Executive Assurance Brief — recipients & schedule"
-      subtitle="Choose exactly who receives the board brief and on which day of the month it is emailed. Admins and executives always receive it in addition to these recipients."
+      subtitle="Choose who receives the board brief, assign each a Board or Auditor cover note, and pick which day of the month it is emailed. Admins and executives always receive the Board version."
       testid="control-intel-brief-settings"
     >
       {loading ? (
@@ -97,41 +177,74 @@ function BriefSettingsCard() {
         <div className="space-y-5">
           <div>
             <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-              Board recipients
+              Brief recipients &amp; roles
             </label>
             <div className="flex flex-wrap gap-2 mt-2">
               {recipients.length === 0 && (
                 <span className="text-xs text-muted-foreground">
-                  No extra recipients — admins &amp; executives only.
+                  No extra recipients — admins &amp; executives only (Board version).
                 </span>
               )}
-              {recipients.map((email) => (
-                <span
-                  key={email}
-                  data-testid={`ci-brief-recipient-${email}`}
-                  className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border bg-secondary/40 text-xs"
-                >
-                  <Mail className="w-3 h-3 text-muted-foreground" />
-                  {email}
-                  <button
-                    onClick={() => removeRecipient(email)}
-                    data-testid={`ci-brief-recipient-remove-${email}`}
-                    className="text-muted-foreground hover:text-crit"
+              {recipients.map(({ email, role }) => {
+                const meta = ROLE_META[role] || ROLE_META.board;
+                const RoleIcon = meta.icon;
+                return (
+                  <span
+                    key={email}
+                    data-testid={`ci-brief-recipient-${email}`}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border bg-secondary/40 text-xs"
                   >
-                    <X className="w-3 h-3" />
-                  </button>
-                </span>
-              ))}
+                    <Mail className="w-3 h-3 text-muted-foreground" />
+                    {email}
+                    <button
+                      onClick={() => toggleRole(email)}
+                      data-testid={`ci-brief-recipient-role-${email}`}
+                      title="Toggle Board / Auditor"
+                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border text-[9px] font-mono font-bold ${meta.tone}`}
+                    >
+                      <RoleIcon className="w-2.5 h-2.5" />
+                      {meta.label}
+                    </button>
+                    <button
+                      onClick={() => removeRecipient(email)}
+                      data-testid={`ci-brief-recipient-remove-${email}`}
+                      className="text-muted-foreground hover:text-crit"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                );
+              })}
             </div>
-            <div className="flex gap-2 mt-3">
+            <div className="flex flex-wrap gap-2 mt-3">
               <input
                 value={entry}
                 onChange={(e) => setEntry(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addRecipient())}
-                placeholder="board.member@company.com"
+                placeholder="recipient@company.com"
                 data-testid="ci-brief-recipient-input"
-                className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm"
+                className="flex-1 min-w-[180px] rounded-md border border-border bg-background px-3 py-2 text-sm"
               />
+              <div className="inline-flex rounded-md border border-border overflow-hidden" data-testid="ci-brief-role-select">
+                {["board", "auditor"].map((r) => {
+                  const meta = ROLE_META[r];
+                  const RoleIcon = meta.icon;
+                  const active = entryRole === r;
+                  return (
+                    <button
+                      key={r}
+                      onClick={() => setEntryRole(r)}
+                      data-testid={`ci-brief-role-${r}`}
+                      className={`inline-flex items-center gap-1 px-2.5 py-2 text-xs font-head font-bold transition-colors ${
+                        active ? "bg-primary text-primary-foreground" : "bg-secondary/40 text-muted-foreground"
+                      }`}
+                    >
+                      <RoleIcon className="w-3 h-3" />
+                      {meta.label}
+                    </button>
+                  );
+                })}
+              </div>
               <button
                 onClick={addRecipient}
                 data-testid="ci-brief-recipient-add"
@@ -169,15 +282,21 @@ function BriefSettingsCard() {
                 }`}
               >
                 {enabled ? "Enabled" : "Disabled"}
-                <span
-                  className={`h-4 w-8 rounded-full relative transition-colors ${enabled ? "bg-low" : "bg-secondary"}`}
-                >
-                  <span
-                    className={`absolute top-0.5 h-3 w-3 rounded-full bg-background transition-all ${enabled ? "left-4" : "left-0.5"}`}
-                  />
+                <span className={`h-4 w-8 rounded-full relative transition-colors ${enabled ? "bg-low" : "bg-secondary"}`}>
+                  <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-background transition-all ${enabled ? "left-4" : "left-0.5"}`} />
                 </span>
               </button>
             </div>
+          </div>
+
+          <div
+            data-testid="ci-brief-next-send"
+            className="flex items-center gap-2 text-xs text-muted-foreground rounded-md border border-border bg-secondary/20 px-3 py-2"
+          >
+            <Calendar className="w-3.5 h-3.5 text-primary" />
+            {next
+              ? `Next scheduled send: ${next.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })} (08:00 UTC)`
+              : "Scheduled send is off — enable it above to auto-email the brief each month."}
           </div>
 
           <div className="flex flex-wrap gap-2 pt-1">
@@ -191,6 +310,14 @@ function BriefSettingsCard() {
               Save settings
             </button>
             <button
+              onClick={openPreview}
+              data-testid="ci-brief-preview"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              Preview brief
+            </button>
+            <button
               onClick={sendNow}
               disabled={sending}
               data-testid="ci-brief-send-now"
@@ -201,6 +328,10 @@ function BriefSettingsCard() {
             </button>
           </div>
         </div>
+      )}
+
+      {previewOpen && (
+        <BriefPreviewModal html={previewHtml} loading={previewLoading} onClose={() => setPreviewOpen(false)} />
       )}
     </Panel>
   );
