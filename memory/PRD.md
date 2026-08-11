@@ -1,13 +1,28 @@
 # Obserra EIOS — PRD
 
 
-## Status (Jun 2026) — Session closed by user ("close this one out its good")
-App verified healthy: backend + frontend RUNNING, `/api/health` 200 (external + local). No new code changes made this session.
-**PENDING (user-approved msg 184, NOT yet implemented)** — 4-feature batch to resume next session:
-1. **Digest Schedule Choice** — admin-picked weekly digest day + UTC time (replace fixed Mon 08:00). Files: `agents.py` (`GovSettingsBody` add `audit_digest_day`/`audit_digest_time`, GET/PUT `/governance-settings`), `DefensibilityDashboard.jsx` (schedule pickers + payload), `scheduled.py` / `_run_audit_digest` (self-gate to configured day/hour instead of hardcoded).
-2. **Structured Audit Meta** — add `meta` dict param to `_log_audit` (auth.py L150) defaulting to `{}`; pass structured meta from snooze (`agents.py` ~L2734) and trust-link (`~L2929 agent.trust_link_used`) callers.
-3. **Auto-Resume Notice** — hourly cron (fold into `hourly-overdue-digest` in `scheduled.py` L444) to find orgs whose `snooze_alerts_until` just expired → email the admin who snoozed → clear state.
-4. **Exec Mute Badge Tooltip** — in `AIExecutiveOverview.jsx` MuteBadge, fetch latest `agent.alerts_snoozed` audit entry to show "who muted & when" in the tooltip.
+## NEW APP (Jun 2026) — Obserra Control Intelligence (FRONTEND-ONLY, all live)
+Route `/app/control-intelligence` (sidebar "Control Intelligence"). Continuous Control Effectiveness & Assurance. REUSES existing backend only — NO backend changes. Strict directive: no mockups/placeholders; every panel derives from a live feed or shows a proper empty/UNAVAILABLE state.
+
+**Live feeds:** `GET /controls`, `/controls/compliance`, `/controls/crosswalk`, `/connectors/health`, `/controls/{id}/history`, `POST /controls/{id}/notes`, `POST /reports/evidence-pack`, `GET /reports/control-log/{id}.pdf`, `POST /studio/report/pdf`, AI via `/sap/insight` + `/advisor/explain`. (24 live controls currently, all Passing.)
+
+**Dashboards (6 tabs):** Mission Control, Control Effectiveness, Framework Intelligence, Evidence Assurance, Remediation & Drift, Defensibility. Data tagged FACT / MODELLED / AI RECOMMENDATION.
+
+**Files added:**
+- `frontend/src/pages/ControlIntelligence.jsx` (page + tabs + PDF exports)
+- `frontend/src/hooks/useControlIntelligenceData.js`, `frontend/src/lib/controlIntelligenceModels.js`
+- `frontend/src/components/control-intelligence/`: shared.jsx (incl. PALETTE), MissionControlDashboard.jsx, EffectivenessDashboard.jsx, FrameworksDashboard.jsx, EvidenceDashboard.jsx, RemediationDashboard.jsx, DefensibilityDashboard.jsx, ControlDetailModal.jsx, FrameworkDetailModal.jsx
+- Docs: `/app/docs/control-intelligence/{README,GETTING_STARTED,REPORTS}.md`
+- Wired: `App.js` route, `AppShell.jsx` nav+accent, `Auth.jsx` login rebranded to app name "Control Intelligence".
+
+**Detail cards (Control + Framework modals):** always show Details, Risk & criticality, Scoring, Control Alignment (frameworks↔controls via live feed), and AI Recommendations & fixes. Both modals render via `createPortal(document.body)` — REQUIRED because a transformed ancestor (`.rise`) captures `position:fixed`; without the portal the overlay renders inside page flow behind content.
+
+**Charts:** categorical `PALETTE` (shared.jsx) gives distinct colors per domain/framework/bar; semantic green/amber/red kept only for health + evidence donuts.
+
+**Testing:** iteration_120.json = 100% of CI critical flows pass (frontend-only; backend unchanged). Colors + both enriched modals + login rebrand visually verified post-build.
+
+## Backlog / prior app (Obserra Agentic-AI) — PENDING (user-approved msg 184, not implemented)
+Digest Schedule Choice, Structured Audit Meta (note: `_log_audit` in auth.py already has an optional `meta={}` param added — additive/harmless), Auto-Resume Notice, Exec Mute Badge Tooltip.
 ⚠️ FORK HAZARD (recurring 15+): `agents.py` >3500 lines — never trust batched `search_replace`; grep-verify every edit stuck.
 
 

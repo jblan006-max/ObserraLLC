@@ -32,6 +32,7 @@ const ROUTE_ACCENT = [
   ["/app/roles", "280 80% 66%"],
   ["/app/agentic-ai-security", "330 81% 60%"],
   ["/app/control-assurance", "160 84% 45%"],
+  ["/app/control-intelligence", "158 82% 45%"],
   ["/app/systems", "210 92% 62%"],
   ["/app/audit", "35 90% 55%"],
   ["/app/team", "200 85% 56%"],
@@ -65,6 +66,7 @@ function DualModeToggle() {
 const NAV_SECTIONS = [
   { section: null, items: [
     { to: "/app", label: "Executive Overview", icon: LayoutDashboard, end: true },
+    { to: "/app/control-intelligence", label: "Control Intelligence", icon: Layers },
   ]},
   { section: "AI Security", cat: true, color: "ai", items: [
     { to: "/app/agentic-ai-security", label: "Agentic AI Security", icon: Bot },

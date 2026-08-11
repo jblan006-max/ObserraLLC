@@ -1,0 +1,29 @@
+{
+  "summary": "Frontend-only smoke of Control Intelligence Mission Control (route /app/control-intelligence) and login rebrand. Logged in as jblan2026 admin, dismissed onboarding tour, exercised all 6 tabs, KPIs, panels, AI advisor, effectiveness search/filter, control detail modal, note posting, framework/evidence/remediation/defensibility panels, evidence-pack + control-log PDFs, executive brief + footer report PDFs, and refresh. All core flows work end-to-end against live backend endpoints (/controls, /controls/compliance, /controls/crosswalk, /connectors/health, /controls/{id}/history, /controls/{id}/notes, /reports/evidence-pack, /reports/control-log/{id}.pdf, /studio/report/pdf). 24 controls returned; all currently Passing => At Risk/Ineffective are legitimately 0 (as noted by main agent).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Auth (login rebrand)", "issues": ["Headline 'Continuous Control Effectiveness & Assurance' is split across an HTML <br/> ('Continuous Control' + 'Effectiveness & Assurance.'); visually correct but not a single contiguous string. Tagline is 'Discover · Assess · Assure · Remediate · Attest' in title-case (uppercased via CSS tracking) rather than the ALL-CAPS 'DISCOVER · ASSESS · ASSURE · REMEDIATE · ATTEST' in the spec — visually appears uppercase due to text-transform, functionally equivalent."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "OPTIONAL/COSMETIC: Tab data-testids use prefix `control-intel-tab-*` (e.g., control-intel-tab-mission) while KPI/panel testids use prefix `ci-*` (e.g., ci-kpi-total, ci-domain-effectiveness). Spec listed tabs as `ci-tab-*`. Recommend normalizing to a single prefix (either ci-tab-* or control-intel-tab-*) for consistency.",
+    "OPTIONAL: Ensure Auth headline is a single string (or set data-testid) so automated brand copy assertions can match 'Continuous Control Effectiveness & Assurance' contiguously."
+  ],
+  "critical_code_review_comments": [
+    "ControlIntelligence.jsx (~290 lines): OK, well split into sub-dashboards.",
+    "useControlIntelligenceData.js correctly reports partial-source failures via sourceStatus without fabricating data — matches STRICT 'no mockups' directive.",
+    "MissionControlDashboard testids (`ci-*`) diverge from sub-dashboards testids (`control-intel-*`) — consider unifying naming convention.",
+    "Modal ControlDetailModal has close button but no Escape-key handler wired (Escape closes because backdrop click / DOM focus, but explicit onKeyDown for Escape would improve accessibility)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (frontend-only)", "frontend": "100% of Control Intelligence critical flows verified"},
+  "seed_data_creation": "Posted one TEST_ci_note note on control VM-2 via POST /controls/VM-2/notes (200 OK). Non-destructive.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Login: jblan2026@gmail.com / Obserra2026!. Onboarding tour modal appears on first login into /app — dismiss via 'Skip' (get_by_role('button', name='Skip')). CI route: /app/control-intelligence. KPI/panel testids use prefix ci-* (ci-kpi-total, ci-domain-effectiveness, etc.). Tab testids use prefix control-intel-tab-* (e.g., control-intel-tab-effectiveness). Sub-dashboard testids: control-intel-effectiveness-search, control-intel-effectiveness-status, control-intel-effectiveness-row-<id>, control-intel-framework-cards, control-intel-convergence, control-intel-crosswalk, control-intel-evidence-pack-<id>, control-intel-evidence-log-<id>, control-intel-remediation, control-intel-framework-gaps, control-intel-source-status, control-intel-connectors, control-intel-detail-modal, control-intel-note-kind/text/add. Executive brief button testid: control-intel-exec-brief. Footer report button testid: ci-footer-report. Refresh testid: control-intel-refresh. All 24 controls are Passing so At Risk/Ineffective/Drift KPIs are legitimately 0. Backend returns 200 for reports/studio endpoints. Playwright expect_download can intermittently miss anchor-triggered blob downloads even when the file is delivered — verify via network 200 response as a fallback (as done here for evidence-pack).",
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin)"
+}

@@ -55,22 +55,22 @@ export default function Auth() {
         <div className="relative flex flex-col items-center text-center gap-6">
           <img src="/brand-mark.png" alt="Obserra mark" className="h-40 xl:h-52 w-auto object-contain logo-pulse drop-shadow-[0_8px_30px_rgba(86,184,233,0.25)]" />
           <img src="/brand-wordmark.png" alt="OBSERRA — Executive Protection & Intelligence LLC" className="h-16 xl:h-20 w-auto object-contain" />
-          <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-ai/80" data-testid="wordmark-tagline">Discover · Understand · Govern · Constrain · Respond</p>
+          <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-ai/80" data-testid="wordmark-tagline">Discover · Assess · Assure · Remediate · Attest</p>
         </div>
         <div className="relative space-y-6">
-          <h1 className="font-head font-black text-5xl leading-[1.05] tracking-tight">
-            Agentic AI Security<br /><span className="text-ai">Control &amp; Governance.</span>
+          <h1 data-testid="brand-app-name" className="font-head font-black text-5xl leading-[1.05] tracking-tight">
+            Control <span className="text-ai">Intelligence.</span>
           </h1>
           <div>
-            <span data-testid="brand-version-badge" className="inline-flex items-center px-2 py-1 rounded-sm ai-border text-ai text-[10px] font-mono font-bold uppercase tracking-[0.2em]">v1</span>
+            <span data-testid="brand-version-badge" className="inline-flex items-center px-2 py-1 rounded-sm ai-border text-ai text-[10px] font-mono font-bold uppercase tracking-[0.2em]">v1 · Continuous Control Effectiveness &amp; Assurance</span>
           </div>
           <p className="text-muted-foreground max-w-md text-base leading-relaxed">
-            Discover, understand, govern, constrain, and respond to enterprise AI agents before delegated machine authority becomes enterprise risk. Every metric carries its source, freshness and confidence.
+            <span className="text-foreground font-semibold">Continuous control effectiveness &amp; assurance.</span> Continuously measure control effectiveness, evidence freshness, framework coverage and drift — turning live control telemetry into board-ready assurance. Every metric carries its source, freshness and confidence.
           </p>
           <div className="flex gap-3 text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
-            <span className="px-2 py-1 rounded-sm border border-border">Machine Authority</span>
-            <span className="px-2 py-1 rounded-sm border border-border">Guardrail Coverage</span>
-            <span className="px-2 py-1 rounded-sm ai-border text-ai">Evidence-backed AI</span>
+            <span className="px-2 py-1 rounded-sm border border-border">Control Effectiveness</span>
+            <span className="px-2 py-1 rounded-sm border border-border">Framework Coverage</span>
+            <span className="px-2 py-1 rounded-sm ai-border text-ai">Evidence-backed Assurance</span>
           </div>
         </div>
         <div className="relative flex items-center gap-3 text-xs font-mono text-muted-foreground">
@@ -96,7 +96,7 @@ export default function Auth() {
             <img src="/brand-wordmark.png" alt="OBSERRA — Executive Protection & Intelligence LLC" className="h-14 w-auto object-contain" />
           </div>
           <p className="text-center text-xs text-muted-foreground mb-5 leading-relaxed" data-testid="auth-positioning">
-            Govern enterprise AI agents before delegated machine authority becomes enterprise risk.
+            Continuous control effectiveness, evidence assurance and framework coverage — every metric carries its source and freshness.
           </p>
           <div className="flex gap-1 p-1 bg-secondary/50 rounded-lg mb-6 text-sm">
             {["login", "register"].map((t) => (
