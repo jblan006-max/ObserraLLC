@@ -22,6 +22,7 @@ from control_intelligence import (
     _brief_role_map,
     _muted_emails,
     _owner_email_map,
+    _ci_aggregate,
 )
 
 logger = logging.getLogger(__name__)
@@ -373,3 +374,146 @@ async def auditor_timeline_pdf(admin: dict = Depends(require_roles("admin"))):
     pdf = _build_pdf(md, "Reviewer Access Timeline", cover=True, org_name=org_name, brand=_resolve_brand(org))
     return StreamingResponse(io.BytesIO(pdf.getvalue()), media_type="application/pdf",
                              headers={"Content-Disposition": 'attachment; filename="obserra-reviewer-timeline.pdf"'})
+
+
+
+# ---------------------------------------------------------------- manual readiness nudge fire
+
+@ci_router.post("/engagement-nudges")
+async def engagement_nudges(admin: dict = Depends(require_roles("admin"))):
+    """Admin: fire the declining-readiness owner nudges on demand (normally cron-driven)."""
+    return await _run_ci_engagement_nudges(admin["org_id"])
+
+
+# ---------------------------------------------------------------- monthly assurance digest
+
+async def _ci_eff_delta(org_id, days=30):
+    from datetime import timedelta
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+    rows = await db.control_eff_history.find(
+        {"org_id": org_id, "date": {"$gte": since}},
+        {"_id": 0, "date": 1, "avg_effectiveness": 1, "health_score": 1}).sort("date", 1).to_list(400)
+    if not rows:
+        return {"points": 0, "eff_delta": None, "health_delta": None}
+    first, last = rows[0], rows[-1]
+    return {"points": len(rows),
+            "eff_delta": int(last.get("avg_effectiveness", 0) - first.get("avg_effectiveness", 0)),
+            "health_delta": int(last.get("health_score", 0) - first.get("health_score", 0))}
+
+
+async def _assurance_digest_payload(org_id, days=30):
+    a = await _ci_aggregate(org_id)
+    eng = await _auditor_engagement(org_id, days)
+    delta = await _ci_eff_delta(org_id, days)
+    frameworks = sorted(a["frameworks"], key=lambda x: -x["coverage"])[:8]
+    at_risk = [c for c in a["statuses"]
+               if c["status"] != "Passing" or c.get("days_to_expiry", 999) <= 14 or c.get("drift")]
+    weak = sorted(a["statuses"], key=lambda c: c["effectiveness"])[:5]
+    return {"days": days, "health": a["health"], "total": a["total"], "passing": a["passing"],
+            "avg_eff": a["avg_eff"], "avg_maturity": a["avg_maturity"], "coverage": a["coverage"],
+            "at_risk": len(at_risk), "frameworks": frameworks,
+            "weak": [{"control_id": c["control_id"], "name": c["name"], "status": c["status"],
+                      "effectiveness": c["effectiveness"]} for c in weak],
+            "engagement": eng, "trend": delta}
+
+
+def _assurance_digest_html(org_name, p):
+    def delta_str(d):
+        if d is None:
+            return ""
+        color = "#15803d" if d > 0 else ("#b91c1c" if d < 0 else "#6b7280")
+        arrow = "\u25b2" if d > 0 else ("\u25bc" if d < 0 else "\u25ac")
+        return f" <span style='color:{color};font-size:13px'>{arrow} {d:+d} pts / {p['days']}d</span>"
+    fw = "".join(f"<li>{f['framework']}: {f['coverage']}% coverage, {f['passing']}/{f['controls']} passing</li>"
+                 for f in p["frameworks"]) or "<li>No framework coverage returned.</li>"
+    weak = "".join(f"<li><strong>{c['control_id']}</strong> {c['name']} \u2014 {c['status']}, {c['effectiveness']}%</li>"
+                   for c in p["weak"]) or "<li>All controls passing.</li>"
+    eng = p["engagement"]
+    rv = eng["reviewers"]
+    eng_line = (f"{eng['views']} portal view(s) \u00b7 {eng['downloads']} signed-PDF download(s)"
+                + (f" by {len(rv)} named reviewer(s): {', '.join(rv)}" if rv else " \u00b7 no named downloads yet"))
+    trend = p["trend"]
+    trend_note = (f"Effectiveness{delta_str(trend['eff_delta'])} \u00b7 Health{delta_str(trend['health_delta'])}"
+                  if trend.get("points") else "Trend builds daily \u2014 more history accrues over time.")
+
+    def kv(k, v):
+        return (f"<tr><td style='padding:3px 14px 3px 0;color:#6b7280'>{k}</td>"
+                f"<td style='padding:3px 0'><strong>{v}</strong></td></tr>")
+
+    return (f"<div style='font:400 14px Arial;color:#1f2937;max-width:640px;margin:auto'>"
+            f"<h2 style='color:#0f1e3d'>Monthly Assurance Digest \u2014 {org_name}</h2>"
+            f"<p style='color:#6b7280'>A board-ready rollup of the last {p['days']} days of control "
+            f"effectiveness and external assurance activity.</p>"
+            f"<table style='border-collapse:collapse;margin:8px 0 14px'>"
+            + kv("Control health", f"{p['health']}/100")
+            + kv("Controls passing", f"{p['passing']}/{p['total']}")
+            + kv("Avg effectiveness", f"{p['avg_eff']}%")
+            + kv("Coverage", f"{p['coverage']}%")
+            + kv("At-risk now", p['at_risk'])
+            + "</table>"
+            f"<p style='margin:0 0 4px'><strong>{p['days']}-day trend:</strong> {trend_note}</p>"
+            f"<h3 style='color:#0f1e3d;margin:14px 0 4px'>Framework readiness</h3><ul>{fw}</ul>"
+            f"<h3 style='color:#0f1e3d;margin:14px 0 4px'>Highest-priority control gaps</h3><ul>{weak}</ul>"
+            f"<h3 style='color:#0f1e3d;margin:14px 0 4px'>External assurance activity ({p['days']}d)</h3><p>{eng_line}</p>"
+            f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence \u2014 monthly assurance digest.</p></div>")
+
+
+async def _run_ci_assurance_digest(org_id, trigger="scheduled"):
+    p = await _assurance_digest_payload(org_id, 30)
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1})
+    org_name = (org or {}).get("name") or "Organization"
+    role_map = await _brief_role_map(org_id)
+    emails = sorted(role_map["board"] | role_map["auditor"])
+    if not emails:
+        return {"sent": 0, "to": [], "digest": p}
+    html = _assurance_digest_html(org_name, p)
+    sent = 0
+    for em in emails:
+        try:
+            await notifications.send_email(em, f"Monthly Assurance Digest \u2014 {org_name}", html)
+            sent += 1
+        except Exception:
+            pass
+    try:
+        await db.ci_digest_log.insert_one({
+            "org_id": org_id, "at": datetime.now(timezone.utc).isoformat(), "trigger": trigger,
+            "to": emails, "health": p["health"], "avg_eff": p["avg_eff"], "at_risk": p["at_risk"]})
+    except Exception:
+        pass
+    return {"sent": sent, "to": emails, "digest": p}
+
+
+async def _run_ci_assurance_digest_all():
+    now = datetime.now(timezone.utc)
+    month = now.strftime("%Y-%m")
+    orgs = await db.organizations.find(
+        {}, {"_id": 1, "ci_digest_enabled": 1, "ci_digest_day": 1}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        try:
+            if not org.get("ci_digest_enabled"):
+                continue
+            if now.day != max(1, min(28, int(org.get("ci_digest_day") or 1))):
+                continue
+            marker = f"ci-digest:{org_id}:{month}"
+            if await db.ci_sent_markers.find_one({"marker": marker}):
+                continue
+            res = await _run_ci_assurance_digest(org_id, trigger="scheduled")
+            if res.get("sent"):
+                await db.ci_sent_markers.insert_one({"marker": marker, "at": now.isoformat()})
+        except Exception as e:
+            logger.warning(f"CI assurance digest failed for org {org_id}: {e}")
+
+
+@ci_router.get("/assurance-digest/preview")
+async def assurance_digest_preview(admin: dict = Depends(require_roles("admin"))):
+    return await _assurance_digest_payload(admin["org_id"], 30)
+
+
+@ci_router.post("/assurance-digest/send")
+async def assurance_digest_send(admin: dict = Depends(require_roles("admin"))):
+    from fastapi import HTTPException
+    res = await _run_ci_assurance_digest(admin["org_id"], trigger="manual")
+    if not res["to"]:
+        raise HTTPException(status_code=400, detail="No recipients configured to send to.")
+    return res

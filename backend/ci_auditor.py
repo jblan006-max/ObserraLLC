@@ -98,8 +98,11 @@ async def email_brief(admin: dict = Depends(require_roles("admin"))):
 @ci_router.get("/brief/recipients")
 async def brief_recipients(admin: dict = Depends(require_roles("admin"))):
     role_map = await _brief_role_map(admin["org_id"])
-    return {"board": len(role_map["board"]), "auditor": len(role_map["auditor"]),
-            "total": len(role_map["board"]) + len(role_map["auditor"])}
+    board = sorted(role_map["board"])
+    auditor = sorted(role_map["auditor"])
+    return {"board": len(board), "auditor": len(auditor), "total": len(board) + len(auditor),
+            "board_emails": board, "auditor_emails": auditor,
+            "recap_recipients": sorted(set(board) | set(auditor))}
 
 
 class NudgePref(BaseModel):

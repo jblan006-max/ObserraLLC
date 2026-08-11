@@ -6,6 +6,7 @@ import { EmptyState, Panel, StatusPill } from "@/components/control-intelligence
 
 export default function RemediationDashboard({ controls, gaps, onSelectControl, isAdmin, demo }) {
   const [nudging, setNudging] = useState(false);
+  const [firing, setFiring] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState(null);
   const [pref, setPref] = useState({ muted: false, muted_until: null, active: false });
@@ -60,6 +61,19 @@ export default function RemediationDashboard({ controls, gaps, onSelectControl, 
       toast.error(e.response?.data?.detail || "Unable to send owner reminders.");
     } finally {
       setNudging(false);
+    }
+  };
+
+  const fireReadiness = async () => {
+    setFiring(true);
+    try {
+      const r = await api.post("/control-intelligence/engagement-nudges");
+      if (r.data.nudged > 0) toast.success(`Readiness nudge emailed to ${r.data.nudged} declining owner(s).`);
+      else toast.success("No owners are on a declining-readiness streak right now.");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to fire readiness nudges.");
+    } finally {
+      setFiring(false);
     }
   };
 
@@ -160,6 +174,15 @@ export default function RemediationDashboard({ controls, gaps, onSelectControl, 
                   className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50"
                 >
                   {nudging ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bell className="w-3.5 h-3.5" />} Send owner reminders
+                </button>
+                <button
+                  data-testid="ci-fire-engagement-nudges"
+                  onClick={fireReadiness}
+                  disabled={firing}
+                  title="Email owners whose control readiness has been declining for several days running"
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-med/40 bg-med/10 text-med text-xs font-head font-bold disabled:opacity-50"
+                >
+                  {firing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TrendingDown className="w-3.5 h-3.5" />} Fire readiness nudges
                 </button>
               </>
             )}

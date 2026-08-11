@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 129 — Tested 4-feature batch (Manual Nudge Fire, Recap Recipient Preview, Monthly Assurance Digest, Tour Polish/Spotlight) plus Control Intelligence regression. All backend endpoints (POST /engagement-nudges, GET /brief/recipients, GET/POST /assurance-digest/preview|send, PUT/GET /settings) verified via curl with admin session cookie. Frontend Playwright walk-through against public URL confirmed all data-testid hooks present and interactive: 6 CI tabs render, ci-fire-engagement-nudges toast fires ('no declining-readiness streak'), ci-recap-recipients-toggle reveals ci-recap-recipient-list with admin chip ci-recap-recipient-jblan2026@gmail.com, ci-digest-panel present with enabled-toggle/day/send controls, Send now shows 'assurance digest emailed' toast (sent:1), save + reload persisted digest_enabled=true/digest_day=15, ProspectTour spotlight rendered on steps 1-3, prospect-tour-clear cleared demo-mode-ribbon. Recap regression buttons (preview/history/send/save) all present. Environment cleaned: digest_enabled reset to false, digest_day=1; demo cleared.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Defensibility digest panel", "issues": ["ci-digest-day number input is disabled when auto-send toggle is Off. This is reasonable UX, but means the UI cannot 'set a day while Off'. Not a bug — noted only because it required routing the digest_day reset through the API when the toggle was already Off during cleanup."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter128_ci_refactor_regression.py"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "DefensibilityDashboard.jsx is large; digest+recap+auditor+timeline concerns could be split into subcomponents for maintainability.",
+    "ci-digest-day disable-when-Off is fine but ensure Save persists digest_day even when toggle is off (backend already does; UI OK)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Admin jblan2026@gmail.com / Obserra2026! (cookie/session).",
+  "seed_data_creation": "ProspectTour seeded a demo journey; cleared via prospect-tour-clear. Digest send delivered 1 real email to admin (expected).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 4 features from Msg 168 batch are working end-to-end (backend + UI). Backend endpoints: /api/control-intelligence/engagement-nudges (POST -> {nudged:N}), /brief/recipients (recap_recipients union), /assurance-digest/preview & /send, and /settings now include digest_enabled + digest_day alongside existing recap/cadence keys. Frontend data-testids: ci-fire-engagement-nudges, ci-recap-recipients-toggle, ci-recap-recipient-list, ci-recap-recipient-<email>, ci-digest-panel, ci-digest-enabled-toggle, ci-digest-day, ci-digest-send, control-intel-start-walkthrough, prospect-tour, prospect-tour-spotlight, prospect-tour-next/back/clear/keep. Environment left clean (digest off, day=1, demo cleared).",
+  "rca of the issue": "N/A — no bugs."
+}

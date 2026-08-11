@@ -437,6 +437,8 @@ class CIBriefSettings(BaseModel):
     ask_name: Optional[bool] = None
     recap_enabled: Optional[bool] = None
     recap_weekday: Optional[int] = None
+    digest_enabled: Optional[bool] = None
+    digest_day: Optional[int] = None
 
 
 _BRIEF_CADENCES = {"monthly", "quarterly"}
@@ -446,7 +448,8 @@ async def _ci_settings(org_id):
     org = await db.organizations.find_one(
         {"_id": ObjectId(org_id)},
         {"ci_brief_recipients": 1, "ci_brief_send_day": 1, "ci_brief_enabled": 1, "ci_brief_cadence": 1,
-         "ci_nudge_drop_days": 1, "ci_auditor_ask_name": 1, "ci_recap_enabled": 1, "ci_recap_weekday": 1}) or {}
+         "ci_nudge_drop_days": 1, "ci_auditor_ask_name": 1, "ci_recap_enabled": 1, "ci_recap_weekday": 1,
+         "ci_digest_enabled": 1, "ci_digest_day": 1}) or {}
     cadence = org.get("ci_brief_cadence")
     return {"recipients": _norm_recipients(org.get("ci_brief_recipients")),
             "send_day": max(1, min(28, int(org.get("ci_brief_send_day") or 1))),
@@ -455,7 +458,9 @@ async def _ci_settings(org_id):
             "drop_days": 3 if int(org.get("ci_nudge_drop_days") or 2) == 3 else 2,
             "ask_name": bool(org.get("ci_auditor_ask_name", False)),
             "recap_enabled": bool(org.get("ci_recap_enabled", False)),
-            "recap_weekday": max(0, min(6, int(org.get("ci_recap_weekday") or 0)))}
+            "recap_weekday": max(0, min(6, int(org.get("ci_recap_weekday") or 0))),
+            "digest_enabled": bool(org.get("ci_digest_enabled", False)),
+            "digest_day": max(1, min(28, int(org.get("ci_digest_day") or 1)))}
 
 
 @ci_router.get("/settings")
@@ -482,6 +487,10 @@ async def set_ci_settings(body: CIBriefSettings, admin: dict = Depends(require_r
         update["ci_recap_enabled"] = bool(body.recap_enabled)
     if body.recap_weekday is not None:
         update["ci_recap_weekday"] = max(0, min(6, int(body.recap_weekday)))
+    if body.digest_enabled is not None:
+        update["ci_digest_enabled"] = bool(body.digest_enabled)
+    if body.digest_day is not None:
+        update["ci_digest_day"] = max(1, min(28, int(body.digest_day)))
     if update:
         await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": update})
     return await _ci_settings(admin["org_id"])

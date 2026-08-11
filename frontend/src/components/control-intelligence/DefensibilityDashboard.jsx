@@ -101,6 +101,10 @@ function BriefSettingsCard() {
   const [recapHistory, setRecapHistory] = useState(null);
   const [demoActive, setDemoActive] = useState(false);
   const [demoBusy, setDemoBusy] = useState(false);
+  const [digestEnabled, setDigestEnabled] = useState(false);
+  const [digestDay, setDigestDay] = useState(1);
+  const [digestBusy, setDigestBusy] = useState(false);
+  const [showRecapRecipients, setShowRecapRecipients] = useState(false);
 
   const refreshDemoStatus = () =>
     api.get("/control-intelligence/auditor-link/demo/status").then((r) => setDemoActive(Boolean(r.data.active))).catch(() => {});
@@ -162,6 +166,8 @@ function BriefSettingsCard() {
         setAskName(Boolean(r.data.ask_name));
         setRecapEnabled(Boolean(r.data.recap_enabled));
         setRecapWeekday(Math.max(0, Math.min(6, Number(r.data.recap_weekday) || 0)));
+        setDigestEnabled(Boolean(r.data.digest_enabled));
+        setDigestDay(Math.max(1, Math.min(28, Number(r.data.digest_day) || 1)));
       } catch {
         /* keep defaults */
       } finally {
@@ -205,7 +211,7 @@ function BriefSettingsCard() {
   const save = async () => {
     setSaving(true);
     try {
-      const r = await api.put("/control-intelligence/settings", { recipients, send_day: sendDay, enabled, cadence, drop_days: dropDays, ask_name: askName, recap_enabled: recapEnabled, recap_weekday: recapWeekday });
+      const r = await api.put("/control-intelligence/settings", { recipients, send_day: sendDay, enabled, cadence, drop_days: dropDays, ask_name: askName, recap_enabled: recapEnabled, recap_weekday: recapWeekday, digest_enabled: digestEnabled, digest_day: digestDay });
       setRecipients(r.data.recipients || []);
       setSendDay(r.data.send_day || 1);
       setEnabled(Boolean(r.data.enabled));
@@ -214,6 +220,8 @@ function BriefSettingsCard() {
       setAskName(Boolean(r.data.ask_name));
       setRecapEnabled(Boolean(r.data.recap_enabled));
       setRecapWeekday(Math.max(0, Math.min(6, Number(r.data.recap_weekday) || 0)));
+      setDigestEnabled(Boolean(r.data.digest_enabled));
+      setDigestDay(Math.max(1, Math.min(28, Number(r.data.digest_day) || 1)));
       refreshCounts();
       toast.success("Board brief settings saved.");
     } catch (e) {
@@ -321,6 +329,18 @@ function BriefSettingsCard() {
 
   const loadHistory = () =>
     api.get("/control-intelligence/auditor-link/recap/history?limit=10").then((r) => setRecapHistory(r.data.history || [])).catch(() => {});
+
+  const sendDigest = async () => {
+    setDigestBusy(true);
+    try {
+      const r = await api.post("/control-intelligence/assurance-digest/send");
+      toast.success(`Monthly assurance digest emailed to ${r.data.sent} recipient(s).`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to send the assurance digest.");
+    } finally {
+      setDigestBusy(false);
+    }
+  };
 
   const exportTimeline = () =>
     window.open(`${process.env.REACT_APP_BACKEND_URL}/api/control-intelligence/auditor-link/timeline.pdf`, "_blank");
@@ -750,6 +770,33 @@ function BriefSettingsCard() {
                 </select>
                 <span className="text-[10px] text-muted-foreground">Sent to your board &amp; auditor recipients (above) + admins · save to apply</span>
               </div>
+              {counts && (
+                <div className="mb-2" data-testid="ci-recap-recipients">
+                  <button
+                    onClick={() => setShowRecapRecipients((v) => !v)}
+                    data-testid="ci-recap-recipients-toggle"
+                    className="text-[10px] font-mono text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+                  >
+                    <Users className="w-3 h-3" />
+                    {(counts.recap_recipients || []).length} recipient(s) will receive this recap
+                    <span className="underline">{showRecapRecipients ? "hide" : "show"}</span>
+                  </button>
+                  {showRecapRecipients && (
+                    <div className="mt-1.5 flex flex-wrap gap-1.5" data-testid="ci-recap-recipient-list">
+                      {(counts.recap_recipients || []).length === 0 ? (
+                        <span className="text-[10px] text-muted-foreground">No recipients configured — add board / auditor recipients above.</span>
+                      ) : (
+                        (counts.recap_recipients || []).map((em) => (
+                          <span key={em} data-testid={`ci-recap-recipient-${em}`} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border border-border bg-secondary/40 text-[10px] font-mono">
+                            <Mail className="w-2.5 h-2.5 text-muted-foreground" />
+                            {em}
+                          </span>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
               {recap ? (
                 <div data-testid="ci-recap-body" className="text-[11px] text-muted-foreground font-mono space-y-0.5">
                   <div>Last {recap.days}d · {recap.views} view(s) · {recap.downloads} download(s) · {recap.reviewers.length} reviewer(s){recap.reviewers.length > 0 ? ` · ${recap.reviewers.join(", ")}` : ""}</div>
@@ -774,6 +821,39 @@ function BriefSettingsCard() {
                   ))}
                 </div>
               )}
+            </div>
+
+            <div className="mt-4 border-t border-border pt-3" data-testid="ci-digest-panel">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Monthly assurance digest</div>
+                <button onClick={sendDigest} disabled={digestBusy} data-testid="ci-digest-send" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-ai/40 bg-ai/10 text-ai text-[10px] font-head font-bold disabled:opacity-50">
+                  {digestBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Send className="w-2.5 h-2.5" />} Send now
+                </button>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <button
+                  onClick={() => setDigestEnabled((v) => !v)}
+                  data-testid="ci-digest-enabled-toggle"
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[10px] font-head font-bold transition-colors ${
+                    digestEnabled ? "border-low/40 bg-low/10 text-low" : "border-border bg-secondary/40 text-muted-foreground"
+                  }`}
+                >
+                  Auto-send {digestEnabled ? "On" : "Off"}
+                </button>
+                <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">on day</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={28}
+                  value={digestDay}
+                  onChange={(e) => setDigestDay(Math.max(1, Math.min(28, Number(e.target.value) || 1)))}
+                  disabled={!digestEnabled}
+                  data-testid="ci-digest-day"
+                  className="w-16 rounded-md border border-border bg-background px-2 py-1 text-[11px] disabled:opacity-50"
+                />
+                <span className="text-[10px] text-muted-foreground">of each month · sent to board &amp; auditor recipients + admins · save to apply</span>
+              </div>
+              <div className="text-[11px] text-muted-foreground">A board-ready monthly email rolling up 30 days of control effectiveness, framework readiness and external auditor engagement.</div>
             </div>
 
             {timeline && timeline.length > 0 && (
