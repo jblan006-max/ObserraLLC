@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { AlertTriangle, Bell, Eye, Loader2, TrendingDown, Users } from "lucide-react";
+import { useEffect, useState } from "react";
+import { AlertTriangle, Bell, BellOff, Eye, Loader2, TrendingDown, Users } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { EmptyState, Panel, StatusPill } from "@/components/control-intelligence/shared";
@@ -8,6 +8,29 @@ export default function RemediationDashboard({ controls, gaps, onSelectControl, 
   const [nudging, setNudging] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState(null);
+  const [muted, setMuted] = useState(false);
+  const [muteBusy, setMuteBusy] = useState(false);
+
+  useEffect(() => {
+    api
+      .get("/control-intelligence/my-nudge-pref")
+      .then((r) => setMuted(Boolean(r.data.muted)))
+      .catch(() => {});
+  }, []);
+
+  const toggleMute = async () => {
+    setMuteBusy(true);
+    const nextValue = !muted;
+    try {
+      const r = await api.put("/control-intelligence/my-nudge-pref", { muted: nextValue });
+      setMuted(Boolean(r.data.muted));
+      toast.success(nextValue ? "Your reminder emails are muted." : "Reminder emails re-enabled.");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to update your reminder preference.");
+    } finally {
+      setMuteBusy(false);
+    }
+  };
 
   const sendNudges = async () => {
     setNudging(true);
@@ -35,10 +58,7 @@ export default function RemediationDashboard({ controls, gaps, onSelectControl, 
   };
 
   const priority = (controls || []).filter(
-    (control) =>
-      control.status !== "Passing" ||
-      control.evidence_state !== "Fresh" ||
-      control.drift
+    (control) => control.status !== "Passing" || control.evidence_state !== "Fresh" || control.drift
   );
 
   return (
@@ -47,18 +67,48 @@ export default function RemediationDashboard({ controls, gaps, onSelectControl, 
         title="Control remediation priority"
         subtitle="MODELLED priority is derived client-side from existing status, effectiveness, maturity, drift and evidence freshness."
         testid="control-intel-remediation"
-        actions={isAdmin ? (
-          <div className="flex flex-wrap gap-2">
-            <button data-testid="ci-preview-owner-nudges" onClick={loadPreview} disabled={previewing}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">
-              {previewing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />} Preview reminders
+        actions={
+          <div className="flex flex-wrap gap-2 items-center">
+            <button
+              data-testid="ci-nudge-mute-toggle"
+              onClick={toggleMute}
+              disabled={muteBusy}
+              title="Mute the personalized reminder emails sent to you as a control owner"
+              className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-head font-bold disabled:opacity-50 transition-colors ${
+                muted ? "border-med/40 bg-med/10 text-med" : "border-border bg-secondary/40 text-muted-foreground"
+              }`}
+            >
+              {muteBusy ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : muted ? (
+                <BellOff className="w-3.5 h-3.5" />
+              ) : (
+                <Bell className="w-3.5 h-3.5" />
+              )}
+              {muted ? "Reminders muted" : "Mute my reminders"}
             </button>
-            <button data-testid="ci-send-owner-nudges" onClick={sendNudges} disabled={nudging}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">
-              {nudging ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bell className="w-3.5 h-3.5" />} Send owner reminders
-            </button>
+            {isAdmin && (
+              <>
+                <button
+                  data-testid="ci-preview-owner-nudges"
+                  onClick={loadPreview}
+                  disabled={previewing}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50"
+                >
+                  {previewing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />} Preview reminders
+                </button>
+                <button
+                  data-testid="ci-send-owner-nudges"
+                  onClick={sendNudges}
+                  disabled={nudging}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50"
+                >
+                  {nudging ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bell className="w-3.5 h-3.5" />} Send owner reminders
+                </button>
+              </>
+            )}
           </div>
-        ) : null}
+        }
       >
         {isAdmin && preview && (
           <div data-testid="ci-nudge-preview" className="mb-5 rounded-xl border border-ai/25 bg-ai/5 p-4">
@@ -71,8 +121,9 @@ export default function RemediationDashboard({ controls, gaps, onSelectControl, 
                   {preview.at_risk} at-risk control(s) across {preview.owners} owner(s). Nothing is emailed from this preview.
                 </div>
               </div>
-              <button onClick={() => setPreview(null)} data-testid="ci-nudge-preview-close"
-                className="text-[10px] font-mono text-muted-foreground hover:text-foreground">Close</button>
+              <button onClick={() => setPreview(null)} data-testid="ci-nudge-preview-close" className="text-[10px] font-mono text-muted-foreground hover:text-foreground">
+                Close
+              </button>
             </div>
             {preview.at_risk === 0 ? (
               <div className="text-xs text-muted-foreground mt-3">
@@ -87,14 +138,19 @@ export default function RemediationDashboard({ controls, gaps, onSelectControl, 
                 </div>
                 <div className="grid md:grid-cols-2 gap-3 mt-3">
                   {(preview.groups || []).map((group) => (
-                    <div key={group.owner} data-testid={`ci-nudge-owner-${group.owner}`}
-                      className="rounded-lg border border-border bg-card p-3">
+                    <div key={group.owner} data-testid={`ci-nudge-owner-${group.owner}`} className="rounded-lg border border-border bg-card p-3">
                       <div className="font-head font-bold text-sm">{group.owner}</div>
                       <div className="text-[10px] font-mono text-muted-foreground">{group.count} control(s)</div>
                       <div className="text-[10px] font-mono mt-0.5" data-testid={`ci-nudge-owner-target-${group.owner}`}>
-                        {group.email
-                          ? <span className="text-low">→ emails {group.email}</span>
-                          : <span className="text-muted-foreground">rollup to admins/execs</span>}
+                        {group.email ? (
+                          group.muted ? (
+                            <span className="text-med">✕ {group.email} muted reminders</span>
+                          ) : (
+                            <span className="text-low">→ emails {group.email}</span>
+                          )
+                        ) : (
+                          <span className="text-muted-foreground">rollup to admins/execs</span>
+                        )}
                       </div>
                       <ul className="mt-2 space-y-1.5">
                         {group.controls.map((c) => (
@@ -115,10 +171,7 @@ export default function RemediationDashboard({ controls, gaps, onSelectControl, 
         )}
 
         {priority.length === 0 ? (
-          <EmptyState
-            title="No control remediation queue"
-            text="All current controls are passing with sufficiently fresh evidence."
-          />
+          <EmptyState title="No control remediation queue" text="All current controls are passing with sufficiently fresh evidence." />
         ) : (
           <div className="space-y-3">
             {priority.map((control) => (
@@ -175,12 +228,8 @@ export default function RemediationDashboard({ controls, gaps, onSelectControl, 
                   <AlertTriangle className="w-4 h-4 text-high" />
                   <StatusPill value={gap.status || "Gap"} />
                 </div>
-                <div className="font-mono text-[10px] text-ai mt-2">
-                  {gap.control_id || gap.id || "CONTROL"}
-                </div>
-                <div className="font-head font-bold text-sm mt-1">
-                  {gap.name || gap.control_name || "Control gap"}
-                </div>
+                <div className="font-mono text-[10px] text-ai mt-2">{gap.control_id || gap.id || "CONTROL"}</div>
+                <div className="font-head font-bold text-sm mt-1">{gap.name || gap.control_name || "Control gap"}</div>
                 <div className="flex items-center gap-1 text-[10px] text-muted-foreground mt-2">
                   <TrendingDown className="w-3 h-3" />
                   Effectiveness {gap.effectiveness ?? "—"}%

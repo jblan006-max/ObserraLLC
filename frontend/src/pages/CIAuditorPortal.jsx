@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api } from "@/lib/api";
-import { AlertTriangle, Gavel, Layers, Loader2, ShieldCheck, Target } from "lucide-react";
+import { AlertTriangle, FileText, Gavel, Layers, Loader2, ShieldCheck, Target } from "lucide-react";
 
 const fmtDT = (s) => (s ? new Date(s).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" }) : "—");
 const CRIT = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 90% 55%", Low: "142 70% 45%" };
@@ -19,6 +19,7 @@ function Tile({ label, value }) {
 export default function CIAuditorPortal() {
   const { token } = useParams();
   const [data, setData] = useState(null);
+  const [dlName, setDlName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
 
@@ -48,6 +49,10 @@ export default function CIAuditorPortal() {
       </div>
     );
 
+  const pdfUrl = `${process.env.REACT_APP_BACKEND_URL}/api/control-intelligence/public/auditor-link/${token}/brief.pdf${
+    dlName ? `?who=${encodeURIComponent(dlName)}` : ""
+  }`;
+
   return (
     <div className="min-h-screen bg-[#050810] text-white" data-testid="ci-auditor-portal">
       <div className="max-w-4xl mx-auto px-5 py-10 space-y-8">
@@ -60,6 +65,25 @@ export default function CIAuditorPortal() {
           </h1>
           <p className="text-sm text-white/60">
             Generated {fmtDT(data.generated_at)} · link expires {fmtDT(data.expires_at)}
+          </p>
+          <div className="flex flex-wrap items-center gap-2 pt-2">
+            <input
+              data-testid="ci-auditor-dl-name"
+              value={dlName}
+              onChange={(e) => setDlName(e.target.value)}
+              placeholder="Your name (stamped on the PDF)"
+              className="bg-white/[0.06] border border-white/10 rounded-lg px-3 py-2.5 text-sm outline-none focus:border-emerald-400/60 w-60"
+            />
+            <a
+              href={pdfUrl}
+              data-testid="ci-auditor-download"
+              className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-400 text-[#050810] font-head font-bold text-sm hover:opacity-90 transition-opacity"
+            >
+              <FileText className="w-4 h-4" /> Download signed PDF
+            </a>
+          </div>
+          <p className="text-[11px] text-white/30">
+            The PDF is watermarked with your name + timestamp, a QR back to this live link, and a "Verified by Obserra" SHA-256 integrity seal.
           </p>
         </header>
 
