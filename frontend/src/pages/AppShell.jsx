@@ -68,8 +68,8 @@ const NAV_SECTIONS = [
     { to: "/app", label: "Executive Overview", icon: LayoutDashboard, end: true },
     { to: "/app/control-intelligence", label: "Control Intelligence", icon: Layers },
   ]},
-  { section: "AI Security", cat: true, color: "ai", items: [
-    { to: "/app/agentic-ai-security", label: "Agentic AI Security", icon: Bot },
+  { section: "Governance", cat: true, color: "ai", items: [
+    { to: "/app/agentic-ai-security", label: "Agent Governance", icon: Bot },
     { to: "/app/control-assurance", label: "Control Assurance", icon: Gauge },
   ]},
   { section: "Sources", cat: true, color: "primary", items: [
@@ -320,7 +320,7 @@ export default function AppShell() {
             </button>
             <img src="/brand-lockup.png" alt="Obserra" className="h-6 w-auto object-contain md:hidden" />
             <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest truncate hidden lg:block">
-              {sub?.org_name || "Obserra — Agentic AI Security Control & Governance"}
+              {sub?.org_name || "Obserra — Control Intelligence"}
             </div>
             <span data-testid="app-version-badge" className="hidden lg:inline-flex items-center px-1.5 py-0.5 rounded-full border border-ai/30 bg-ai/10 text-ai text-[9px] font-mono font-bold tracking-wider shrink-0">v1</span>
           </div>

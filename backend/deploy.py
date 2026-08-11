@@ -14,12 +14,12 @@ deploy_router = APIRouter(prefix="/api/deploy")
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _ONPREM = os.path.join(_ROOT, "deploy", "onprem")
 _DOCS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "docs")
-_GUIDE_PDF = os.path.join(_DOCS, "Obserra-Agentic-AI-Security-Install-and-User-Guide.pdf")
-_GUIDE_DOCX = os.path.join(_DOCS, "Obserra-Agentic-AI-Security-Install-and-User-Guide.docx")
-_GUIDE_EXEC_PDF = os.path.join(_DOCS, "Obserra-Agentic-AI-Security-Executive-Guide.pdf")
-_GUIDE_EXEC_DOCX = os.path.join(_DOCS, "Obserra-Agentic-AI-Security-Executive-Guide.docx")
-_GUIDE_ADMIN_PDF = os.path.join(_DOCS, "Obserra-Agentic-AI-Security-Admin-Operator-Guide.pdf")
-_GUIDE_ADMIN_DOCX = os.path.join(_DOCS, "Obserra-Agentic-AI-Security-Admin-Operator-Guide.docx")
+_GUIDE_PDF = os.path.join(_DOCS, "Obserra-Control-Intelligence-Install-and-User-Guide.pdf")
+_GUIDE_DOCX = os.path.join(_DOCS, "Obserra-Control-Intelligence-Install-and-User-Guide.docx")
+_GUIDE_EXEC_PDF = os.path.join(_DOCS, "Obserra-Control-Intelligence-Executive-Guide.pdf")
+_GUIDE_EXEC_DOCX = os.path.join(_DOCS, "Obserra-Control-Intelligence-Executive-Guide.docx")
+_GUIDE_ADMIN_PDF = os.path.join(_DOCS, "Obserra-Control-Intelligence-Admin-Operator-Guide.pdf")
+_GUIDE_ADMIN_DOCX = os.path.join(_DOCS, "Obserra-Control-Intelligence-Admin-Operator-Guide.docx")
 _PDF_MT = "application/pdf"
 _DOCX_MT = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
@@ -62,7 +62,7 @@ async def guide_pdf(user: dict = Depends(get_current_user)):
     if not os.path.exists(_GUIDE_PDF):
         raise HTTPException(404, "Guide not generated yet")
     return FileResponse(_GUIDE_PDF, media_type="application/pdf",
-                        filename="Obserra-Agentic-AI-Security-Install-and-User-Guide.pdf",
+                        filename="Obserra-Control-Intelligence-Install-and-User-Guide.pdf",
                         headers=dict(_DL_CACHE_HEADERS))
 
 
@@ -75,7 +75,7 @@ async def guide_docx(user: dict = Depends(get_current_user)):
     return FileResponse(
         _GUIDE_DOCX,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        filename="Obserra-Agentic-AI-Security-Install-and-User-Guide.docx",
+        filename="Obserra-Control-Intelligence-Install-and-User-Guide.docx",
         headers=dict(_DL_CACHE_HEADERS))
 
 
@@ -83,28 +83,28 @@ async def guide_docx(user: dict = Depends(get_current_user)):
 async def guide_exec_pdf(user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(403, "Only admins can download the guide")
-    return _serve_guide(_GUIDE_EXEC_PDF, _PDF_MT, "Obserra-Agentic-AI-Security-Executive-Guide.pdf")
+    return _serve_guide(_GUIDE_EXEC_PDF, _PDF_MT, "Obserra-Control-Intelligence-Executive-Guide.pdf")
 
 
 @deploy_router.get("/guide-exec.docx")
 async def guide_exec_docx(user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(403, "Only admins can download the guide")
-    return _serve_guide(_GUIDE_EXEC_DOCX, _DOCX_MT, "Obserra-Agentic-AI-Security-Executive-Guide.docx")
+    return _serve_guide(_GUIDE_EXEC_DOCX, _DOCX_MT, "Obserra-Control-Intelligence-Executive-Guide.docx")
 
 
 @deploy_router.get("/guide-admin.pdf")
 async def guide_admin_pdf(user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(403, "Only admins can download the guide")
-    return _serve_guide(_GUIDE_ADMIN_PDF, _PDF_MT, "Obserra-Agentic-AI-Security-Admin-Operator-Guide.pdf")
+    return _serve_guide(_GUIDE_ADMIN_PDF, _PDF_MT, "Obserra-Control-Intelligence-Admin-Operator-Guide.pdf")
 
 
 @deploy_router.get("/guide-admin.docx")
 async def guide_admin_docx(user: dict = Depends(get_current_user)):
     if user.get("role") != "admin":
         raise HTTPException(403, "Only admins can download the guide")
-    return _serve_guide(_GUIDE_ADMIN_DOCX, _DOCX_MT, "Obserra-Agentic-AI-Security-Admin-Operator-Guide.docx")
+    return _serve_guide(_GUIDE_ADMIN_DOCX, _DOCX_MT, "Obserra-Control-Intelligence-Admin-Operator-Guide.docx")
 
 
 _ONPREM_ZIP_CACHE = {"key": None, "data": None}
@@ -1752,7 +1752,7 @@ def _doc_attachments():
     attachments = []
     if os.path.exists(_GUIDE_PDF):
         with open(_GUIDE_PDF, "rb") as f:
-            attachments.append({"filename": "Obserra-Agentic-AI-Security-Install-and-User-Guide.pdf",
+            attachments.append({"filename": "Obserra-Control-Intelligence-Install-and-User-Guide.pdf",
                                 "content": base64.b64encode(f.read()).decode()})
     if os.path.isdir(_ONPREM):
         attachments.append({"filename": onprem_pack.zip_name(),

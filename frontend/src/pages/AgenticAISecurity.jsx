@@ -192,7 +192,7 @@ export default function AgenticAISecurity() {
       const response = await api.post(
         "/studio/report/pdf",
         {
-          title: "Agentic AI Security Executive Brief",
+          title: "Control Intelligence Executive Brief",
           ai_narrative:
             "Executive brief generated from the current Obserra AI agent inventory, AI system inventory, guardrail records, incident records and AI analytics. Modeled agent risk and delegated authority classifications are explicitly derived client-side. Existing red-team values are a deterministic heuristic baseline, not live adversarial runtime testing.",
           blocks,
@@ -218,7 +218,7 @@ export default function AgenticAISecurity() {
           <div className="flex items-center gap-2 flex-wrap">
             <Bot className="w-7 h-7 text-ai" />
             <h1 className="font-head font-black text-3xl tracking-tight">
-              Agentic AI Security Control &amp; Governance
+              Obserra Control Intelligence
             </h1>
             <span className="px-2 py-1 rounded-full border border-ai/25 bg-ai/10 text-ai text-[10px] font-mono">
               MACHINE AUTHORITY INTELLIGENCE
@@ -269,7 +269,7 @@ export default function AgenticAISecurity() {
       <ErrorBanner message={error} onRetry={reload} refreshing={refreshing} />
 
       <AIInsight
-        dashboard="Agentic AI Security Control & Governance"
+        dashboard="Control Intelligence"
         accent="330 81% 60%"
         auto
         slug="agentic-ai-security"

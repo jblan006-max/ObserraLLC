@@ -3,25 +3,25 @@ import { useAuth } from "@/context/AuthContext";
 import { ArrowRight, ArrowLeft } from "lucide-react";
 
 const EXEC_STEPS = [
-  { title: "Welcome to Agentic AI Security",
-    body: "Obserra's control plane for the AI agents and models operating across your enterprise. Every number — modelled agent risk, autonomous agents, toxic capability combinations, shadow AI — recomputes live from your agent records. Switch altitude anytime from the toggle in the top bar." },
+  { title: "Welcome to Obserra Control Intelligence",
+    body: "Your continuous view of control effectiveness and assurance across the enterprise. Every number — control health, framework coverage, evidence freshness, remediation priority — recomputes live from your control feed. Switch altitude anytime from the toggle in the top bar." },
   { title: "Executive Mode", spotlight: true,
-    body: "The boardroom view — highlighted above. AI risk framed as posture: which agents exist, how much authority they hold, where guardrails are weak and what needs executive action, without the noise." },
+    body: "The boardroom view — highlighted above. Control posture framed for leadership: how effective your controls are, where coverage is thin and what needs executive action, without the noise." },
   { title: "Operational Mode", spotlight: true,
-    body: "Flip the same toggle to Operational for the working view — agent tools and permissions, guardrail coverage, the heuristic red-team baseline, shadow AI and incidents — so your team can act on specifics." },
-  { title: "Start at the Control Plane", spotlight: true, target: "nav-agentic-ai-security",
-    body: "Highlighted in the sidebar — Agentic AI Security is where you explore the Tool Toxicity Map, run red-team baselines, discover shadow AI and apply one-click runtime enforcement (Suspend / Kill). Come back here anytime." },
+    body: "Flip the same toggle to Operational for the working view — control-by-control effectiveness, evidence status, framework gaps and the remediation queue — so your team can act on specifics." },
+  { title: "Start at Control Intelligence", spotlight: true, target: "nav-control-intelligence",
+    body: "Highlighted in the sidebar — Control Intelligence is where you explore Mission Control, framework readiness, evidence assurance, remediation and defensibility. Come back here anytime." },
 ];
 
 const OPS_STEPS = [
-  { title: "Welcome to Agentic AI Security",
-    body: "This is your operational cockpit for enterprise AI. Every metric is grounded in your live agent telemetry and carries its data class, so you always know exactly what you're acting on." },
+  { title: "Welcome to Obserra Control Intelligence",
+    body: "This is your operational cockpit for continuous control assurance. Every metric is grounded in your live control feed and carries its data class, so you always know exactly what you're acting on." },
   { title: "Operational Mode", spotlight: true,
-    body: "The toggle above keeps you in Operational view — agent inventory, authority & tools, guardrails & red team, shadow AI and incidents. This is your day-to-day working surface." },
+    body: "The toggle above keeps you in Operational view — control effectiveness, evidence freshness, framework gaps, remediation priority and drift. This is your day-to-day working surface." },
   { title: "Where you'll work",
-    body: "Jump into the Agentic AI Security Control & Governance from the sidebar to inspect the Tool Toxicity Map, sanction shadow AI and enforce Suspend/Kill on risky agents. The Obserrian Advisor can help you triage too." },
-  { title: "Start at the Control Plane", spotlight: true, target: "nav-agentic-ai-security",
-    body: "Highlighted in the sidebar — Agentic AI Security is your triage home base: toxicity map, guardrail evidence and one-click runtime enforcement, with the Obserrian Advisor one click away." },
+    body: "Jump into Obserra Control Intelligence from the sidebar to review Mission Control, close framework gaps and work the remediation queue. The Obserrian Advisor can help you triage too." },
+  { title: "Start at Control Intelligence", spotlight: true, target: "nav-control-intelligence",
+    body: "Highlighted in the sidebar — Control Intelligence is your triage home base: control health, evidence assurance and remediation priority, with the Obserrian Advisor one click away." },
 ];
 
 export const OnboardingTour = () => {

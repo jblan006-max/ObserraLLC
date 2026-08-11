@@ -26,7 +26,7 @@ const lazyWithRetry = (importer) => lazy(async () => {
   }
 });
 
-// Route-level code splitting — Obserra Agentic AI Security dashboards.
+// Route-level code splitting — Obserra Control Intelligence dashboards.
 const AccessOverview = lazyWithRetry(() => import("@/pages/AccessOverview"));
 const SodCommandCenter = lazyWithRetry(() => import("@/pages/SodCommandCenter"));
 const Identities = lazyWithRetry(() => import("@/pages/Identities"));
