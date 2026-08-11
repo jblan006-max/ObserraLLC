@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 123 validation for Control Intelligence Executive Assurance Brief enhancements. Backend: 6/6 pytest passed (cadence quarterly roundtrip, invalid coerces to monthly, auditor-link generation with 90d expiry, public auditor endpoint returns org/health/frameworks/weak_controls with no auth, invalid token 404, nudge preview groups carry per-owner email + top-level personalized). Frontend: Defensibility tab cadence Monthly/Quarterly buttons work, settings persist including cadence:'quarterly', recipient chip renders and who-receives summary line ('N Board · M Auditor · admins/execs always Board') updates on add, auditor link generate reveals URL/Copy/Open, public /ci-audit/<token> route renders read-only portal (title, tiles, frameworks, weak_controls) without login, invalid /ci-audit/deadbeef shows ci-auditor-error, Remediation & Drift tab (demo mode) shows per-owner routing lines: 'Dana Ops → emails analyst@obserra.demo' and 'Sam Vuln → rollup to admins/execs'. Settings reset to defaults post-test.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_ci_iteration_123.py",
+    "/app/test_reports/pytest/iter123.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Public auditor endpoint returns 'org_name' not 'org' — internal contract is consistent with UI usage, no change needed but flag for main-agent docs.",
+    "Next-send line correctly shows 'Scheduled send is off — enable it above' when enabled=false; enabled toggle testid was not verified in this run but the schedule-off state message renders as expected."
+  ],
+  "updated_files": ["/app/backend/tests/test_ci_iteration_123.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin)",
+  "seed_data_creation": "ci_auditor_links doc created via POST /auditor-link during test; reused if active (harmless per main agent note). Settings cleaned to {recipients:[],send_day:1,enabled:false,cadence:'monthly'} at end.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 4 iteration-123 features (cadence schedule, auditor portal link + public no-auth page, per-owner nudge routing, who-receives summary) verified end-to-end on preview URL. Public route /ci-audit/<token> is lazy-loaded — wait for [data-testid=ci-auditor-portal] to be visible (brand splash appears briefly first). Backend contract for public endpoint uses 'org_name' key. Nudge preview has top-level 'personalized' set (not per-group). Settings cleanup already run."
+}

@@ -111,21 +111,41 @@ def _nudge_html(at_risk, by_owner):
             f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence — automated remediation nudge.</p></div>")
 
 
-async def _nudge_recipients(org_id, by_owner):
-    recipients = await db.users.find(
+async def _admin_exec_emails(org_id):
+    recips = await db.users.find(
         {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
-    emails = {r["email"] for r in recipients if r.get("email")}
+    return {r["email"] for r in recips if r.get("email")}
+
+
+async def _owner_email_map(org_id, by_owner):
     owner_names = {(o or "").strip().lower() for o in by_owner if o and o.lower() != "unassigned"}
+    mp = {}
     if owner_names:
         allusers = await db.users.find({"org_id": org_id}, {"_id": 0, "email": 1, "name": 1}).to_list(500)
         for u in allusers:
-            if (u.get("name") or "").strip().lower() in owner_names and u.get("email"):
-                emails.add(u["email"])
-    return sorted(emails)
+            nm = (u.get("name") or "").strip().lower()
+            if nm in owner_names and u.get("email") and nm not in mp:
+                mp[nm] = u["email"]
+    return mp
 
 
-def _nudge_groups(by_owner):
+def _nudge_owner_html(owner, ctrls):
+    items = "".join(
+        f"<li><strong>{c['control_id']}</strong> {c['name']} — {c['status']}, "
+        f"effectiveness {c['effectiveness']}%"
+        + (f", evidence expires in {c['days_to_expiry']}d" if c.get('days_to_expiry') is not None else "")
+        + "</li>" for c in ctrls)
+    return (f"<div style='font:400 14px Arial;color:#1f2937;max-width:640px;margin:auto'>"
+            f"<h2 style='color:#0f1e3d'>Your controls need attention</h2>"
+            f"<p>Hi {owner}, {len(ctrls)} control(s) you own need remediation. Here is exactly what to pick up:</p>"
+            f"<ul>{items}</ul>"
+            f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence — personalized remediation nudge.</p></div>")
+
+
+def _nudge_groups(by_owner, owner_map=None):
+    owner_map = owner_map or {}
     return [{"owner": o, "count": len(ctrls),
+             "email": owner_map.get((o or "").strip().lower()),
              "controls": [{"control_id": c["control_id"], "name": c["name"], "status": c["status"],
                            "effectiveness": c["effectiveness"], "days_to_expiry": c.get("days_to_expiry")}
                           for c in ctrls]}
@@ -136,19 +156,31 @@ async def _run_ci_owner_nudges(org_id, actor="scheduler@obserra"):
     a = await _ci_aggregate(org_id)
     at_risk = _at_risk(a["statuses"])
     if not at_risk:
-        return {"at_risk": 0, "emailed": [], "owners": 0}
+        return {"at_risk": 0, "emailed": [], "owners": 0, "personalized": 0}
     by_owner = _group_at_risk(at_risk)
-    html = _nudge_html(at_risk, by_owner)
-    emails = await _nudge_recipients(org_id, by_owner)
-    for em in emails:
-        await notifications.send_email(em, "Controls need remediation — Obserra Control Intelligence", html)
+    owner_map = await _owner_email_map(org_id, by_owner)
+    personalized = set()
+    for owner, ctrls in by_owner.items():
+        em = owner_map.get((owner or "").strip().lower())
+        if em:
+            await notifications.send_email(
+                em, "Your controls need remediation — Obserra Control Intelligence",
+                _nudge_owner_html(owner, ctrls))
+            personalized.add(em)
+    rollup = (await _admin_exec_emails(org_id)) - personalized
+    if rollup:
+        html = _nudge_html(at_risk, by_owner)
+        for em in sorted(rollup):
+            await notifications.send_email(em, "Controls need remediation — Obserra Control Intelligence", html)
+    emailed = sorted(personalized | rollup)
     try:
         await notifications.create(org_id, "control", "Control remediation reminder sent",
-                                   f"{len(at_risk)} at-risk control(s) across {len(by_owner)} owner(s) — reminder emailed to {len(emails)} recipient(s).",
+                                   f"{len(at_risk)} at-risk control(s) across {len(by_owner)} owner(s) — "
+                                   f"{len(personalized)} owner-specific + rollup to {len(rollup)} recipient(s).",
                                    ref="control-intelligence")
     except Exception:
         pass
-    return {"at_risk": len(at_risk), "emailed": emails, "owners": len(by_owner)}
+    return {"at_risk": len(at_risk), "emailed": emailed, "owners": len(by_owner), "personalized": len(personalized)}
 
 
 async def _run_ci_owner_nudges_all():
@@ -231,12 +263,21 @@ async def _run_ci_brief_email(org_id, actor="scheduler@obserra", extra_recipient
         if e and "@" in e:
             role_map["board"].add(e.strip().lower())
     role_map["auditor"] -= role_map["board"]  # board takes precedence on overlap
+    auditor_link = None
+    if role_map["auditor"]:
+        try:
+            auditor_link = (await _ensure_ci_auditor_link(org_id))["url"]
+        except Exception:
+            auditor_link = None
     sent, to = 0, []
     for role in ("board", "auditor"):
         emails = role_map[role]
         if not emails:
             continue
-        role_md = _ROLE_INTRO[role] + "\n\n" + md
+        intro = _ROLE_INTRO[role]
+        if role == "auditor" and auditor_link:
+            intro += f"\n\nVerify this evidence live in Obserra (read-only): {auditor_link}"
+        role_md = intro + "\n\n" + md
         html = _report_html(role_md, title)
         subject = f"{title} — Obserra ({_ROLE_LABEL[role]})"
         for em in sorted(emails):
@@ -261,6 +302,9 @@ async def _run_ci_brief_email_all(scheduled=False):
             if scheduled:
                 if not org.get("ci_brief_enabled"):
                     continue
+                cadence = org.get("ci_brief_cadence") or "monthly"
+                if cadence == "quarterly" and now.month not in (1, 4, 7, 10):
+                    continue
                 send_day = max(1, min(28, int(org.get("ci_brief_send_day") or 1)))
                 if now.day != send_day:
                     continue
@@ -279,15 +323,21 @@ class CIBriefSettings(BaseModel):
     recipients: Optional[list] = None
     send_day: Optional[int] = None
     enabled: Optional[bool] = None
+    cadence: Optional[str] = None
+
+
+_BRIEF_CADENCES = {"monthly", "quarterly"}
 
 
 async def _ci_settings(org_id):
     org = await db.organizations.find_one(
         {"_id": ObjectId(org_id)},
-        {"ci_brief_recipients": 1, "ci_brief_send_day": 1, "ci_brief_enabled": 1}) or {}
+        {"ci_brief_recipients": 1, "ci_brief_send_day": 1, "ci_brief_enabled": 1, "ci_brief_cadence": 1}) or {}
+    cadence = org.get("ci_brief_cadence")
     return {"recipients": _norm_recipients(org.get("ci_brief_recipients")),
             "send_day": max(1, min(28, int(org.get("ci_brief_send_day") or 1))),
-            "enabled": bool(org.get("ci_brief_enabled", False))}
+            "enabled": bool(org.get("ci_brief_enabled", False)),
+            "cadence": cadence if cadence in _BRIEF_CADENCES else "monthly"}
 
 
 @ci_router.get("/settings")
@@ -304,6 +354,8 @@ async def set_ci_settings(body: CIBriefSettings, admin: dict = Depends(require_r
         update["ci_brief_send_day"] = max(1, min(28, int(body.send_day)))
     if body.enabled is not None:
         update["ci_brief_enabled"] = bool(body.enabled)
+    if body.cadence is not None:
+        update["ci_brief_cadence"] = body.cadence if body.cadence in _BRIEF_CADENCES else "monthly"
     if update:
         await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": update})
     return await _ci_settings(admin["org_id"])
@@ -336,9 +388,13 @@ async def owner_nudges_preview(demo: bool = False, admin: dict = Depends(require
         statuses = _apply_demo_at_risk(statuses)
     at_risk = _at_risk(statuses)
     by_owner = _group_at_risk(at_risk)
-    emails = await _nudge_recipients(org_id, by_owner) if at_risk else []
+    owner_map = await _owner_email_map(org_id, by_owner) if at_risk else {}
+    personalized = set(owner_map.values())
+    rollup = ((await _admin_exec_emails(org_id)) - personalized) if at_risk else set()
     return {"at_risk": len(at_risk), "owners": len(by_owner),
-            "recipients": emails, "groups": _nudge_groups(by_owner), "demo": bool(demo)}
+            "recipients": sorted(personalized | rollup),
+            "personalized": sorted(personalized),
+            "groups": _nudge_groups(by_owner, owner_map), "demo": bool(demo)}
 
 
 @ci_router.get("/brief/preview")
@@ -347,6 +403,48 @@ async def brief_preview(admin: dict = Depends(require_roles("admin"))):
     md = _ci_brief_markdown(a)
     title = "Control Intelligence Executive Assurance Brief"
     return {"title": title, "markdown": md, "html": _report_html(md, title)}
+
+
+async def _ensure_ci_auditor_link(org_id, days=90):
+    import uuid
+    from datetime import timedelta
+    now = datetime.now(timezone.utc)
+    doc = await db.ci_auditor_links.find_one(
+        {"org_id": org_id, "revoked": {"$ne": True}, "expires_at": {"$gt": now.isoformat()}})
+    if not doc:
+        doc = {"org_id": org_id, "token": uuid.uuid4().hex, "created_at": now.isoformat(),
+               "expires_at": (now + timedelta(days=days)).isoformat(), "revoked": False}
+        await db.ci_auditor_links.insert_one(dict(doc))
+    base = os.environ.get("FRONTEND_URL", "").rstrip("/")
+    return {"token": doc["token"], "url": f"{base}/ci-audit/{doc['token']}", "expires_at": doc["expires_at"]}
+
+
+@ci_router.post("/auditor-link")
+async def create_auditor_link(admin: dict = Depends(require_roles("admin"))):
+    return await _ensure_ci_auditor_link(admin["org_id"])
+
+
+@ci_router.get("/public/auditor-link/{token}")
+async def public_auditor_link(token: str):
+    from fastapi import HTTPException
+    now = datetime.now(timezone.utc)
+    doc = await db.ci_auditor_links.find_one({"token": token})
+    if not doc or doc.get("revoked") or doc.get("expires_at", "") <= now.isoformat():
+        raise HTTPException(status_code=404, detail="This auditor link is invalid or has expired.")
+    org_id = doc["org_id"]
+    a = await _ci_aggregate(org_id)
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1})
+    weak = sorted(a["statuses"], key=lambda c: c["effectiveness"])[:8]
+    return {
+        "org_name": (org or {}).get("name") or "Organization",
+        "generated_at": now.isoformat(), "expires_at": doc["expires_at"],
+        "health": a["health"], "coverage": a["coverage"], "total": a["total"],
+        "passing": a["passing"], "avg_eff": a["avg_eff"], "avg_maturity": a["avg_maturity"],
+        "frameworks": sorted(a["frameworks"], key=lambda x: -x["coverage"]),
+        "weak_controls": [{"control_id": c["control_id"], "name": c["name"], "status": c["status"],
+                           "effectiveness": c["effectiveness"], "criticality": c.get("criticality")}
+                          for c in weak],
+    }
 
 
 @ci_router.post("/email-brief")

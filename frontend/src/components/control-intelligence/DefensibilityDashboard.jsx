@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  Calendar, CheckCircle2, Database, Eye, Gavel, Loader2, Mail, Send, ShieldCheck, Users, X, XCircle,
+  Calendar, CheckCircle2, Copy, Database, Eye, Gavel, Link2, Loader2, Mail, Send, ShieldCheck, Users, X, XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -19,13 +19,19 @@ const ROLE_META = {
   auditor: { label: "Auditor", icon: Gavel, tone: "border-med/40 bg-med/10 text-med" },
 };
 
-function nextSendDate(sendDay, enabled) {
+function nextSendDate(sendDay, enabled, cadence) {
   if (!enabled) return null;
   const now = new Date();
   const day = Math.max(1, Math.min(28, sendDay || 1));
-  let target = new Date(now.getFullYear(), now.getMonth(), day);
-  if (now.getDate() > day) target = new Date(now.getFullYear(), now.getMonth() + 1, day);
-  return target;
+  const isQ = cadence === "quarterly";
+  const qMonths = [0, 3, 6, 9];
+  for (let i = 0; i < 16; i++) {
+    const target = new Date(now.getFullYear(), now.getMonth() + i, day);
+    if (isQ && !qMonths.includes(target.getMonth())) continue;
+    if (i === 0 && now.getDate() > day) continue;
+    return target;
+  }
+  return null;
 }
 
 function BriefPreviewModal({ html, loading, onClose }) {
@@ -53,12 +59,7 @@ function BriefPreviewModal({ html, loading, onClose }) {
               <Loader2 className="w-4 h-4 animate-spin" /> Building preview…
             </div>
           ) : (
-            <iframe
-              title="brief-preview"
-              srcDoc={html}
-              className="w-full h-[70vh] border-0"
-              data-testid="ci-brief-preview-frame"
-            />
+            <iframe title="brief-preview" srcDoc={html} className="w-full h-[70vh] border-0" data-testid="ci-brief-preview-frame" />
           )}
         </div>
       </div>
@@ -71,6 +72,7 @@ function BriefSettingsCard() {
   const [recipients, setRecipients] = useState([]);
   const [sendDay, setSendDay] = useState(1);
   const [enabled, setEnabled] = useState(false);
+  const [cadence, setCadence] = useState("monthly");
   const [entry, setEntry] = useState("");
   const [entryRole, setEntryRole] = useState("board");
   const [loading, setLoading] = useState(true);
@@ -79,6 +81,8 @@ function BriefSettingsCard() {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewHtml, setPreviewHtml] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
+  const [auditorLink, setAuditorLink] = useState(null);
+  const [linkBusy, setLinkBusy] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -87,6 +91,7 @@ function BriefSettingsCard() {
         setRecipients(r.data.recipients || []);
         setSendDay(r.data.send_day || 1);
         setEnabled(Boolean(r.data.enabled));
+        setCadence(r.data.cadence || "monthly");
       } catch {
         /* keep defaults */
       } finally {
@@ -109,23 +114,21 @@ function BriefSettingsCard() {
     setEntry("");
   };
 
-  const removeRecipient = (email) =>
-    setRecipients((list) => list.filter((item) => item.email !== email));
+  const removeRecipient = (email) => setRecipients((list) => list.filter((item) => item.email !== email));
 
   const toggleRole = (email) =>
     setRecipients((list) =>
-      list.map((item) =>
-        item.email === email ? { ...item, role: item.role === "board" ? "auditor" : "board" } : item
-      )
+      list.map((item) => (item.email === email ? { ...item, role: item.role === "board" ? "auditor" : "board" } : item))
     );
 
   const save = async () => {
     setSaving(true);
     try {
-      const r = await api.put("/control-intelligence/settings", { recipients, send_day: sendDay, enabled });
+      const r = await api.put("/control-intelligence/settings", { recipients, send_day: sendDay, enabled, cadence });
       setRecipients(r.data.recipients || []);
       setSendDay(r.data.send_day || 1);
       setEnabled(Boolean(r.data.enabled));
+      setCadence(r.data.cadence || "monthly");
       toast.success("Board brief settings saved.");
     } catch (e) {
       toast.error(e.response?.data?.detail || "Unable to save settings.");
@@ -161,12 +164,37 @@ function BriefSettingsCard() {
     }
   };
 
-  const next = nextSendDate(sendDay, enabled);
+  const genLink = async () => {
+    setLinkBusy(true);
+    try {
+      const r = await api.post("/control-intelligence/auditor-link");
+      setAuditorLink(r.data);
+      toast.success("Auditor verification link ready.");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to generate the auditor link.");
+    } finally {
+      setLinkBusy(false);
+    }
+  };
+
+  const copyLink = async () => {
+    if (!auditorLink?.url) return;
+    try {
+      await navigator.clipboard.writeText(auditorLink.url);
+      toast.success("Auditor link copied.");
+    } catch {
+      toast.error("Copy failed — select and copy manually.");
+    }
+  };
+
+  const next = nextSendDate(sendDay, enabled, cadence);
+  const boardCount = recipients.filter((r) => r.role === "board").length;
+  const auditorCount = recipients.filter((r) => r.role === "auditor").length;
 
   return (
     <Panel
       title="Executive Assurance Brief — recipients & schedule"
-      subtitle="Choose who receives the board brief, assign each a Board or Auditor cover note, and pick which day of the month it is emailed. Admins and executives always receive the Board version."
+      subtitle="Choose who receives the board brief, assign each a Board or Auditor cover note, and pick the cadence and day it is emailed. Admins and executives always receive the Board version."
       testid="control-intel-brief-settings"
     >
       {loading ? (
@@ -216,6 +244,9 @@ function BriefSettingsCard() {
                 );
               })}
             </div>
+            <div className="text-[11px] text-muted-foreground mt-2" data-testid="ci-brief-recipient-summary">
+              {boardCount} Board · {auditorCount} Auditor · admins/execs always Board
+            </div>
             <div className="flex flex-wrap gap-2 mt-3">
               <input
                 value={entry}
@@ -255,11 +286,26 @@ function BriefSettingsCard() {
             </div>
           </div>
 
-          <div className="grid sm:grid-cols-2 gap-4">
+          <div className="grid sm:grid-cols-3 gap-4">
             <div>
-              <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-                Send day of month (1–28)
-              </label>
+              <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Cadence</label>
+              <div className="mt-2 inline-flex w-full rounded-md border border-border overflow-hidden" data-testid="ci-brief-cadence">
+                {["monthly", "quarterly"].map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setCadence(c)}
+                    data-testid={`ci-brief-cadence-${c}`}
+                    className={`flex-1 px-2 py-2 text-xs font-head font-bold capitalize transition-colors ${
+                      cadence === c ? "bg-primary text-primary-foreground" : "bg-secondary/40 text-muted-foreground"
+                    }`}
+                  >
+                    {c}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Send day (1–28)</label>
               <input
                 type="number"
                 min={1}
@@ -271,9 +317,7 @@ function BriefSettingsCard() {
               />
             </div>
             <div>
-              <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
-                Scheduled monthly send
-              </label>
+              <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Scheduled send</label>
               <button
                 onClick={() => setEnabled((v) => !v)}
                 data-testid="ci-brief-enabled-toggle"
@@ -281,7 +325,7 @@ function BriefSettingsCard() {
                   enabled ? "border-low/40 bg-low/10 text-low" : "border-border bg-secondary/40 text-muted-foreground"
                 }`}
               >
-                {enabled ? "Enabled" : "Disabled"}
+                {enabled ? "On" : "Off"}
                 <span className={`h-4 w-8 rounded-full relative transition-colors ${enabled ? "bg-low" : "bg-secondary"}`}>
                   <span className={`absolute top-0.5 h-3 w-3 rounded-full bg-background transition-all ${enabled ? "left-4" : "left-0.5"}`} />
                 </span>
@@ -295,8 +339,60 @@ function BriefSettingsCard() {
           >
             <Calendar className="w-3.5 h-3.5 text-primary" />
             {next
-              ? `Next scheduled send: ${next.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })} (08:00 UTC)`
-              : "Scheduled send is off — enable it above to auto-email the brief each month."}
+              ? `Next scheduled send: ${next.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })} (08:00 UTC, ${cadence})`
+              : "Scheduled send is off — enable it above to auto-email the brief."}
+          </div>
+
+          <div className="rounded-lg border border-border p-4">
+            <label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+              <Gavel className="w-3 h-3" /> Auditor verification link
+            </label>
+            <p className="text-xs text-muted-foreground mt-1">
+              A read-only Obserra link external auditors can open to verify live control evidence in-app. It is auto-included in Auditor-role briefs.
+            </p>
+            {auditorLink ? (
+              <div className="mt-3 space-y-1.5">
+                <div className="flex flex-wrap gap-2">
+                  <input
+                    readOnly
+                    value={auditorLink.url}
+                    data-testid="ci-auditor-link-url"
+                    className="flex-1 min-w-[220px] rounded-md border border-border bg-background px-3 py-2 text-xs font-mono"
+                  />
+                  <button
+                    onClick={copyLink}
+                    data-testid="ci-auditor-link-copy"
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold"
+                  >
+                    <Copy className="w-3.5 h-3.5" /> Copy
+                  </button>
+                  <a
+                    href={auditorLink.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    data-testid="ci-auditor-link-open"
+                    className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold"
+                  >
+                    <Link2 className="w-3.5 h-3.5" /> Open
+                  </a>
+                </div>
+                {auditorLink.expires_at && (
+                  <div className="text-[10px] font-mono text-muted-foreground">
+                    Expires {new Date(auditorLink.expires_at).toLocaleDateString()}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <button
+                onClick={genLink}
+                disabled={linkBusy}
+                data-testid="ci-auditor-link-generate"
+                className="mt-3 inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50"
+              >
+                {linkBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />}
+                Generate auditor link
+              </button>
+            )}
           </div>
 
           <div className="flex flex-wrap gap-2 pt-1">

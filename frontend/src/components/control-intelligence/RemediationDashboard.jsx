@@ -91,6 +91,11 @@ export default function RemediationDashboard({ controls, gaps, onSelectControl, 
                       className="rounded-lg border border-border bg-card p-3">
                       <div className="font-head font-bold text-sm">{group.owner}</div>
                       <div className="text-[10px] font-mono text-muted-foreground">{group.count} control(s)</div>
+                      <div className="text-[10px] font-mono mt-0.5" data-testid={`ci-nudge-owner-target-${group.owner}`}>
+                        {group.email
+                          ? <span className="text-low">→ emails {group.email}</span>
+                          : <span className="text-muted-foreground">rollup to admins/execs</span>}
+                      </div>
                       <ul className="mt-2 space-y-1.5">
                         {group.controls.map((c) => (
                           <li key={c.control_id} className="text-xs flex items-start justify-between gap-2">
