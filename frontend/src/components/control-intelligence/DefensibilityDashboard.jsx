@@ -98,6 +98,7 @@ function BriefSettingsCard() {
   const [recapEnabled, setRecapEnabled] = useState(false);
   const [recapWeekday, setRecapWeekday] = useState(0);
   const [timeline, setTimeline] = useState(null);
+  const [recapHistory, setRecapHistory] = useState(null);
 
   const refreshCounts = () =>
     api.get("/control-intelligence/brief/recipients").then((r) => setCounts(r.data)).catch(() => {});
@@ -267,6 +268,7 @@ function BriefSettingsCard() {
     try {
       const r = await api.post("/control-intelligence/auditor-link/recap/send?days=7");
       setRecap(r.data.recap);
+      loadHistory();
       toast.success(`Weekly recap sent to ${r.data.sent} recipient(s).`);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Unable to send the recap.");
@@ -274,6 +276,12 @@ function BriefSettingsCard() {
       setRecapBusy(false);
     }
   };
+
+  const loadHistory = () =>
+    api.get("/control-intelligence/auditor-link/recap/history?limit=10").then((r) => setRecapHistory(r.data.history || [])).catch(() => {});
+
+  const exportTimeline = () =>
+    window.open(`${process.env.REACT_APP_BACKEND_URL}/api/control-intelligence/auditor-link/timeline.pdf`, "_blank");
 
   const copyLink = async () => {
     if (!auditorLink?.url) return;
@@ -630,6 +638,7 @@ function BriefSettingsCard() {
                 <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Weekly assurance recap</div>
                 <div className="flex items-center gap-2">
                   <button onClick={previewRecap} data-testid="ci-recap-preview" className="text-[10px] font-mono text-muted-foreground hover:text-foreground">Preview</button>
+                  <button onClick={loadHistory} data-testid="ci-recap-history-btn" className="text-[10px] font-mono text-muted-foreground hover:text-foreground">History</button>
                   <button onClick={sendRecap} disabled={recapBusy} data-testid="ci-recap-send" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-ai/40 bg-ai/10 text-ai text-[10px] font-head font-bold disabled:opacity-50">
                     {recapBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Send className="w-2.5 h-2.5" />} Send now
                   </button>
@@ -671,16 +680,39 @@ function BriefSettingsCard() {
               ) : (
                 <div className="text-[11px] text-muted-foreground">Preview the 7-day recap (auditor engagement, chase list &amp; readiness nudges), or send it to admins &amp; execs now.</div>
               )}
+              {recapHistory && recapHistory.length > 0 && (
+                <div data-testid="ci-recap-history" className="mt-2 space-y-1 border-t border-border/50 pt-2">
+                  <div className="text-[9px] font-mono uppercase text-muted-foreground">Recent recaps sent</div>
+                  {recapHistory.map((h, i) => (
+                    <div key={i} data-testid={`ci-recap-history-${i}`} className="flex items-center justify-between text-[10px] font-mono text-muted-foreground">
+                      <span>{new Date(h.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} · {h.trigger}</span>
+                      <span>{h.views}v · {h.downloads}d · {(h.to || []).length} recipient(s)</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {timeline && timeline.length > 0 && (
               <div className="mt-4 border-t border-border pt-3" data-testid="ci-reviewer-timeline">
-                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Reviewer timeline</div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Reviewer timeline</div>
+                  <button onClick={exportTimeline} data-testid="ci-timeline-export" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-border text-[10px] font-head font-bold text-muted-foreground hover:text-foreground">
+                    <FileText className="w-2.5 h-2.5" /> Export PDF
+                  </button>
+                </div>
                 <div className="space-y-2">
                   {timeline.map((p, i) => (
                     <div key={p.who} data-testid={`ci-timeline-person-${i}`} className="rounded-lg border border-border bg-secondary/20 p-2">
                       <div className="flex items-center justify-between text-[11px] mb-1">
-                        <span className="font-head font-bold">{p.who}</span>
+                        <span className="font-head font-bold flex items-center gap-1.5">
+                          {p.who}
+                          {p.stalled && (
+                            <span data-testid={`ci-timeline-stalled-${i}`} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-red-400/40 bg-red-400/10 text-red-400 text-[9px] font-mono">
+                              STALLED · {p.views} views, no download
+                            </span>
+                          )}
+                        </span>
                         {p.review_seconds != null ? (
                           <span data-testid={`ci-timeline-duration-${i}`} className="font-mono text-low">
                             view→download in {p.review_seconds >= 3600

@@ -1064,7 +1064,8 @@ async def auditor_recap_send(days: int = 7, admin: dict = Depends(require_roles(
     emails = sorted(await _admin_exec_emails(org_id))
     if not emails:
         raise HTTPException(status_code=400, detail="No admin/executive recipients to send to.")
-    html = _recap_html(org_name, rec)
+    role_map = await _brief_role_map(org_id)
+    html = _recap_html(org_name, rec, sorted(role_map["auditor"]))
     sent = 0
     for em in emails:
         try:
@@ -1072,6 +1073,7 @@ async def auditor_recap_send(days: int = 7, admin: dict = Depends(require_roles(
             sent += 1
         except Exception:
             pass
+    await _log_recap(org_id, rec, emails, "manual")
     return {"sent": sent, "to": emails, "recap": rec}
 
 
@@ -1083,20 +1085,23 @@ async def auditor_activity(days: int = 30, user: dict = Depends(require_roles("a
             "reviewers": len(rec["reviewers"]), "days": days}
 
 
-@ci_router.get("/auditor-link/timeline")
-async def auditor_timeline(admin: dict = Depends(require_roles("admin"))):
-    org_id = admin["org_id"]
+async def _auditor_timeline_data(org_id):
     rows = await db.ci_auditor_access.find(
         {"org_id": org_id}, {"_id": 0, "kind": 1, "who": 1, "at": 1}).sort("at", 1).to_list(5000)
     people = {}
     for r in rows:
         who = (r.get("who") or "").strip() or "Anonymous"
-        p = people.setdefault(who, {"who": who, "events": [], "first_view": None, "first_download": None})
+        p = people.setdefault(who, {"who": who, "events": [], "first_view": None, "first_download": None,
+                                    "views": 0, "downloads": 0})
         p["events"].append({"kind": r.get("kind"), "at": r.get("at")})
-        if r.get("kind") == "view" and not p["first_view"]:
-            p["first_view"] = r.get("at")
-        if r.get("kind") == "download" and not p["first_download"]:
-            p["first_download"] = r.get("at")
+        if r.get("kind") == "view":
+            p["views"] += 1
+            if not p["first_view"]:
+                p["first_view"] = r.get("at")
+        if r.get("kind") == "download":
+            p["downloads"] += 1
+            if not p["first_download"]:
+                p["first_download"] = r.get("at")
     out = []
     for p in people.values():
         secs = None
@@ -1107,7 +1112,70 @@ async def auditor_timeline(admin: dict = Depends(require_roles("admin"))):
             except Exception:
                 secs = None
         p["review_seconds"] = secs
+        p["stalled"] = p["views"] >= 2 and p["downloads"] == 0 and p["who"] != "Anonymous"
         p["last_at"] = p["events"][-1]["at"] if p["events"] else None
         out.append(p)
     out.sort(key=lambda x: x["last_at"] or "", reverse=True)
-    return {"people": out}
+    out.sort(key=lambda x: 0 if x["stalled"] else 1)
+    return out
+
+
+@ci_router.get("/auditor-link/timeline")
+async def auditor_timeline(admin: dict = Depends(require_roles("admin"))):
+    return {"people": await _auditor_timeline_data(admin["org_id"])}
+
+
+def _fmt_secs(s):
+    if s is None:
+        return "n/a"
+    if s >= 3600:
+        return f"{s // 3600}h {(s % 3600) // 60}m"
+    if s >= 60:
+        return f"{s // 60}m {s % 60}s"
+    return f"{s}s"
+
+
+async def _log_recap(org_id, rec, to, trigger):
+    try:
+        await db.ci_recap_log.insert_one({
+            "org_id": org_id, "at": datetime.now(timezone.utc).isoformat(), "trigger": trigger,
+            "to": to, "days": rec["days"], "views": rec["views"], "downloads": rec["downloads"],
+            "reviewers": rec["reviewers"], "awaiting": len(rec.get("awaiting") or []),
+            "nudged_owners": rec.get("nudged_owners") or []})
+    except Exception:
+        pass
+
+
+@ci_router.get("/auditor-link/recap/history")
+async def auditor_recap_history(limit: int = 20, admin: dict = Depends(require_roles("admin"))):
+    limit = max(1, min(100, int(limit or 20)))
+    rows = await db.ci_recap_log.find(
+        {"org_id": admin["org_id"]}, {"_id": 0, "org_id": 0}).sort("at", -1).to_list(limit)
+    return {"history": rows}
+
+
+@ci_router.get("/auditor-link/timeline.pdf")
+async def auditor_timeline_pdf(admin: dict = Depends(require_roles("admin"))):
+    from fastapi.responses import StreamingResponse
+    import io
+    org_id = admin["org_id"]
+    people = await _auditor_timeline_data(org_id)
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1, "report_branding": 1})
+    org_name = (org or {}).get("name") or "Organization"
+    lines = ["# Reviewer Access Timeline", "",
+             "Chain-of-custody record of external auditor access to the sealed assurance evidence.", ""]
+    if not people:
+        lines.append("- No auditor access recorded yet.")
+    for p in people:
+        dur = ("view\u2192download in " + _fmt_secs(p["review_seconds"])) if p["review_seconds"] is not None \
+            else ("downloaded" if p["downloads"] else "not downloaded")
+        flag = " [STALLED]" if p["stalled"] else ""
+        lines.append(f"## {p['who']}{flag}")
+        lines.append(f"- {p['views']} view(s), {p['downloads']} download(s) \u2014 {dur}")
+        for ev in p["events"]:
+            lines.append(f"- {(ev['kind'] or '').upper()} \u2014 {ev['at']}")
+        lines.append("")
+    md = "\n".join(lines)
+    pdf = _build_pdf(md, "Reviewer Access Timeline", cover=True, org_name=org_name, brand=_resolve_brand(org))
+    return StreamingResponse(io.BytesIO(pdf.getvalue()), media_type="application/pdf",
+                             headers={"Content-Disposition": 'attachment; filename="obserra-reviewer-timeline.pdf"'})
