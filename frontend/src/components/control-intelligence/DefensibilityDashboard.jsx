@@ -95,6 +95,9 @@ function BriefSettingsCard() {
   const [askName, setAskName] = useState(false);
   const [recap, setRecap] = useState(null);
   const [recapBusy, setRecapBusy] = useState(false);
+  const [recapEnabled, setRecapEnabled] = useState(false);
+  const [recapWeekday, setRecapWeekday] = useState(0);
+  const [timeline, setTimeline] = useState(null);
 
   const refreshCounts = () =>
     api.get("/control-intelligence/brief/recipients").then((r) => setCounts(r.data)).catch(() => {});
@@ -102,6 +105,8 @@ function BriefSettingsCard() {
     api.get("/control-intelligence/auditor-link/access?limit=12").then((r) => setAccessLog(r.data.events || [])).catch(() => {});
   const refreshAnalytics = () =>
     api.get("/control-intelligence/auditor-link/analytics").then((r) => setAnalytics(r.data)).catch(() => {});
+  const refreshTimeline = () =>
+    api.get("/control-intelligence/auditor-link/timeline").then((r) => setTimeline(r.data.people || [])).catch(() => {});
 
   useEffect(() => {
     (async () => {
@@ -113,6 +118,8 @@ function BriefSettingsCard() {
         setCadence(r.data.cadence || "monthly");
         setDropDays(r.data.drop_days === 3 ? 3 : 2);
         setAskName(Boolean(r.data.ask_name));
+        setRecapEnabled(Boolean(r.data.recap_enabled));
+        setRecapWeekday(Math.max(0, Math.min(6, Number(r.data.recap_weekday) || 0)));
       } catch {
         /* keep defaults */
       } finally {
@@ -127,6 +134,7 @@ function BriefSettingsCard() {
       refreshCounts();
       refreshAccess();
       refreshAnalytics();
+      refreshTimeline();
     })();
   }, []);
 
@@ -154,13 +162,15 @@ function BriefSettingsCard() {
   const save = async () => {
     setSaving(true);
     try {
-      const r = await api.put("/control-intelligence/settings", { recipients, send_day: sendDay, enabled, cadence, drop_days: dropDays, ask_name: askName });
+      const r = await api.put("/control-intelligence/settings", { recipients, send_day: sendDay, enabled, cadence, drop_days: dropDays, ask_name: askName, recap_enabled: recapEnabled, recap_weekday: recapWeekday });
       setRecipients(r.data.recipients || []);
       setSendDay(r.data.send_day || 1);
       setEnabled(Boolean(r.data.enabled));
       setCadence(r.data.cadence || "monthly");
       setDropDays(r.data.drop_days === 3 ? 3 : 2);
       setAskName(Boolean(r.data.ask_name));
+      setRecapEnabled(Boolean(r.data.recap_enabled));
+      setRecapWeekday(Math.max(0, Math.min(6, Number(r.data.recap_weekday) || 0)));
       refreshCounts();
       toast.success("Board brief settings saved.");
     } catch (e) {
@@ -625,15 +635,77 @@ function BriefSettingsCard() {
                   </button>
                 </div>
               </div>
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                <button
+                  onClick={() => setRecapEnabled((v) => !v)}
+                  data-testid="ci-recap-enabled-toggle"
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md border text-[10px] font-head font-bold transition-colors ${
+                    recapEnabled ? "border-low/40 bg-low/10 text-low" : "border-border bg-secondary/40 text-muted-foreground"
+                  }`}
+                >
+                  Auto-send {recapEnabled ? "On" : "Off"}
+                </button>
+                <select
+                  value={recapWeekday}
+                  onChange={(e) => setRecapWeekday(Number(e.target.value))}
+                  disabled={!recapEnabled}
+                  data-testid="ci-recap-weekday"
+                  className="rounded-md border border-border bg-background px-2 py-1 text-[11px] disabled:opacity-50"
+                >
+                  {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((d, i) => (
+                    <option key={d} value={i}>{d}</option>
+                  ))}
+                </select>
+                <span className="text-[10px] text-muted-foreground">Save settings to apply</span>
+              </div>
               {recap ? (
-                <div data-testid="ci-recap-body" className="text-[11px] text-muted-foreground font-mono">
-                  Last {recap.days}d · {recap.views} view(s) · {recap.downloads} download(s) · {recap.reviewers.length} reviewer(s)
-                  {recap.reviewers.length > 0 && <span> · {recap.reviewers.join(", ")}</span>}
+                <div data-testid="ci-recap-body" className="text-[11px] text-muted-foreground font-mono space-y-0.5">
+                  <div>Last {recap.days}d · {recap.views} view(s) · {recap.downloads} download(s) · {recap.reviewers.length} reviewer(s){recap.reviewers.length > 0 ? ` · ${recap.reviewers.join(", ")}` : ""}</div>
+                  {recap.awaiting && recap.awaiting.length > 0 && (
+                    <div data-testid="ci-recap-awaiting" className="text-med">{recap.awaiting.length} link(s) viewed but not downloaded</div>
+                  )}
+                  {recap.nudged_owners && recap.nudged_owners.length > 0 && (
+                    <div data-testid="ci-recap-nudged">Readiness nudges this week: {recap.nudged_owners.join(", ")}</div>
+                  )}
                 </div>
               ) : (
-                <div className="text-[11px] text-muted-foreground">Preview the 7-day auditor engagement recap, or send it to admins &amp; execs now.</div>
+                <div className="text-[11px] text-muted-foreground">Preview the 7-day recap (auditor engagement, chase list &amp; readiness nudges), or send it to admins &amp; execs now.</div>
               )}
             </div>
+
+            {timeline && timeline.length > 0 && (
+              <div className="mt-4 border-t border-border pt-3" data-testid="ci-reviewer-timeline">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Reviewer timeline</div>
+                <div className="space-y-2">
+                  {timeline.map((p, i) => (
+                    <div key={p.who} data-testid={`ci-timeline-person-${i}`} className="rounded-lg border border-border bg-secondary/20 p-2">
+                      <div className="flex items-center justify-between text-[11px] mb-1">
+                        <span className="font-head font-bold">{p.who}</span>
+                        {p.review_seconds != null ? (
+                          <span data-testid={`ci-timeline-duration-${i}`} className="font-mono text-low">
+                            view→download in {p.review_seconds >= 3600
+                              ? `${Math.floor(p.review_seconds / 3600)}h ${Math.floor((p.review_seconds % 3600) / 60)}m`
+                              : p.review_seconds >= 60
+                                ? `${Math.floor(p.review_seconds / 60)}m ${p.review_seconds % 60}s`
+                                : `${p.review_seconds}s`}
+                          </span>
+                        ) : (
+                          <span className="font-mono text-muted-foreground">{p.first_download ? "downloaded" : "not downloaded"}</span>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {p.events.map((ev, j) => (
+                          <span key={j} className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-mono ${ev.kind === "download" ? "bg-ai/10 text-ai" : "bg-secondary/60 text-muted-foreground"}`}>
+                            {ev.kind === "download" ? <Download className="w-2.5 h-2.5" /> : <Eye className="w-2.5 h-2.5" />}
+                            {new Date(ev.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="flex flex-wrap gap-2 pt-1">

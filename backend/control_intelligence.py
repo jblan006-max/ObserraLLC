@@ -435,6 +435,8 @@ class CIBriefSettings(BaseModel):
     cadence: Optional[str] = None
     drop_days: Optional[int] = None
     ask_name: Optional[bool] = None
+    recap_enabled: Optional[bool] = None
+    recap_weekday: Optional[int] = None
 
 
 _BRIEF_CADENCES = {"monthly", "quarterly"}
@@ -444,14 +446,16 @@ async def _ci_settings(org_id):
     org = await db.organizations.find_one(
         {"_id": ObjectId(org_id)},
         {"ci_brief_recipients": 1, "ci_brief_send_day": 1, "ci_brief_enabled": 1, "ci_brief_cadence": 1,
-         "ci_nudge_drop_days": 1, "ci_auditor_ask_name": 1}) or {}
+         "ci_nudge_drop_days": 1, "ci_auditor_ask_name": 1, "ci_recap_enabled": 1, "ci_recap_weekday": 1}) or {}
     cadence = org.get("ci_brief_cadence")
     return {"recipients": _norm_recipients(org.get("ci_brief_recipients")),
             "send_day": max(1, min(28, int(org.get("ci_brief_send_day") or 1))),
             "enabled": bool(org.get("ci_brief_enabled", False)),
             "cadence": cadence if cadence in _BRIEF_CADENCES else "monthly",
             "drop_days": 3 if int(org.get("ci_nudge_drop_days") or 2) == 3 else 2,
-            "ask_name": bool(org.get("ci_auditor_ask_name", False))}
+            "ask_name": bool(org.get("ci_auditor_ask_name", False)),
+            "recap_enabled": bool(org.get("ci_recap_enabled", False)),
+            "recap_weekday": max(0, min(6, int(org.get("ci_recap_weekday") or 0)))}
 
 
 @ci_router.get("/settings")
@@ -474,6 +478,10 @@ async def set_ci_settings(body: CIBriefSettings, admin: dict = Depends(require_r
         update["ci_nudge_drop_days"] = 3 if int(body.drop_days) == 3 else 2
     if body.ask_name is not None:
         update["ci_auditor_ask_name"] = bool(body.ask_name)
+    if body.recap_enabled is not None:
+        update["ci_recap_enabled"] = bool(body.recap_enabled)
+    if body.recap_weekday is not None:
+        update["ci_recap_weekday"] = max(0, min(6, int(body.recap_weekday)))
     if update:
         await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": update})
     return await _ci_settings(admin["org_id"])
@@ -927,14 +935,39 @@ async def _run_ci_engagement_nudges_all():
 
 async def _auditor_recap_payload(org_id, days=7):
     from datetime import timedelta
-    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    now = datetime.now(timezone.utc)
+    since = (now - timedelta(days=days)).isoformat()
     rows = await db.ci_auditor_access.find(
-        {"org_id": org_id, "at": {"$gt": since}}, {"_id": 0, "kind": 1, "who": 1}).to_list(5000)
+        {"org_id": org_id, "at": {"$gt": since}}, {"_id": 0, "kind": 1, "who": 1, "token": 1}).to_list(5000)
     views = sum(1 for r in rows if r.get("kind") == "view")
     downloads = sum(1 for r in rows if r.get("kind") == "download")
     reviewers = sorted({(r.get("who") or "").strip() for r in rows
                         if r.get("kind") == "download" and (r.get("who") or "").strip()})
-    return {"views": views, "downloads": downloads, "reviewers": reviewers, "days": days, "events": len(rows)}
+    per = {}
+    for r in rows:
+        t = r.get("token")
+        if not t:
+            continue
+        p = per.setdefault(t, {"views": 0, "downloads": 0, "viewers": set()})
+        if r.get("kind") == "view":
+            p["views"] += 1
+            w = (r.get("who") or "").strip()
+            if w:
+                p["viewers"].add(w)
+        elif r.get("kind") == "download":
+            p["downloads"] += 1
+    active = {d["token"] for d in await db.ci_auditor_links.find(
+        {"org_id": org_id, "revoked": {"$ne": True}, "expires_at": {"$gt": now.isoformat()}},
+        {"_id": 0, "token": 1}).to_list(500)}
+    awaiting = [{"token": t, "url": _ci_link_url(t), "viewers": sorted(p["viewers"])}
+                for t, p in per.items() if t in active and p["views"] > 0 and p["downloads"] == 0]
+    prefix = f"ci-engage-drop:{org_id}:"
+    marks = await db.ci_sent_markers.find(
+        {"marker": {"$regex": f"^{prefix}"}, "at": {"$gt": since}}, {"_id": 0, "marker": 1}).to_list(500)
+    nudged_owners = sorted({m["marker"][len(prefix):].rsplit(":", 1)[0]
+                            for m in marks if m["marker"].startswith(prefix)})
+    return {"views": views, "downloads": downloads, "reviewers": reviewers, "days": days,
+            "events": len(rows), "awaiting": awaiting, "nudged_owners": nudged_owners}
 
 
 @ci_router.get("/auditor-link/recap/preview")
@@ -943,26 +976,52 @@ async def auditor_recap_preview(days: int = 7, admin: dict = Depends(require_rol
     return await _auditor_recap_payload(admin["org_id"], days)
 
 
-def _recap_html(org_name, rec):
+def _recap_html(org_name, rec, auditor_recipients=None):
+    from urllib.parse import quote
     rv = rec["reviewers"]
-    return (f"<div style='font:400 14px Arial;color:#1f2937;max-width:620px;margin:auto'>"
-            f"<h2 style='color:#0f1e3d'>Weekly assurance recap \u2014 {org_name}</h2>"
-            f"<p>External auditor engagement over the last {rec['days']} days:</p>"
-            f"<ul><li><strong>{rec['views']}</strong> portal view(s)</li>"
-            f"<li><strong>{rec['downloads']}</strong> signed-PDF download(s)</li>"
-            f"<li><strong>{len(rv)}</strong> named reviewer(s){(': ' + ', '.join(rv)) if rv else ''}</li></ul>"
-            f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence \u2014 weekly assurance recap.</p></div>")
+    parts = [f"<div style='font:400 14px Arial;color:#1f2937;max-width:620px;margin:auto'>",
+             f"<h2 style='color:#0f1e3d'>Weekly assurance recap \u2014 {org_name}</h2>",
+             f"<p>External auditor engagement over the last {rec['days']} days:</p>",
+             f"<ul><li><strong>{rec['views']}</strong> portal view(s)</li>",
+             f"<li><strong>{rec['downloads']}</strong> signed-PDF download(s)</li>",
+             f"<li><strong>{len(rv)}</strong> named reviewer(s){(': ' + ', '.join(rv)) if rv else ''}</li></ul>"]
+    aw = rec.get("awaiting") or []
+    if aw:
+        to = ",".join(auditor_recipients or [])
+        parts.append("<h3 style='color:#b45309;margin:14px 0 4px'>Viewed but not downloaded \u2014 chase these</h3><ul>")
+        for a in aw:
+            who = f" (viewed by {', '.join(a['viewers'])})" if a.get("viewers") else ""
+            subject = quote(f"Please download your {org_name} assurance evidence")
+            body = quote(f"Hi,\n\nOur read-only assurance portal was opened but the signed evidence PDF "
+                         f"has not been downloaded yet. Please pull the sealed brief here:\n{a['url']}\n\nThank you.")
+            mailto = f"mailto:{to}?subject={subject}&body={body}"
+            parts.append(f"<li><a href='{a['url']}' style='color:#12b4d6'>{a['url']}</a>{who} "
+                         f"\u2014 <a href='{mailto}' style='color:#0f1e3d;font-weight:bold'>Nudge auditor</a></li>")
+        parts.append("</ul>")
+    no = rec.get("nudged_owners") or []
+    if no:
+        parts.append(f"<h3 style='color:#0f1e3d;margin:14px 0 4px'>Readiness nudges sent this week</h3>"
+                     f"<p>{len(no)} owner(s) were auto-nudged for declining control readiness: "
+                     f"{', '.join(no)}.</p>")
+    parts.append("<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence \u2014 weekly assurance recap.</p></div>")
+    return "".join(parts)
 
 
 async def _run_ci_weekly_assurance_recap_all():
     now = datetime.now(timezone.utc)
     week = now.strftime("%Y-%W")
-    orgs = await db.organizations.find({}, {"_id": 1, "name": 1}).to_list(1000)
+    weekday = now.weekday()
+    orgs = await db.organizations.find(
+        {}, {"_id": 1, "name": 1, "ci_recap_enabled": 1, "ci_recap_weekday": 1}).to_list(1000)
     for org in orgs:
         org_id = str(org["_id"])
         try:
+            if not org.get("ci_recap_enabled"):
+                continue
+            if int(org.get("ci_recap_weekday") or 0) != weekday:
+                continue
             rec = await _auditor_recap_payload(org_id, 7)
-            if not (rec["views"] or rec["downloads"]):
+            if not (rec["views"] or rec["downloads"] or rec["nudged_owners"]):
                 continue
             marker = f"ci-recap:{org_id}:{week}"
             if await db.ci_sent_markers.find_one({"marker": marker}):
@@ -970,7 +1029,8 @@ async def _run_ci_weekly_assurance_recap_all():
             emails = sorted(await _admin_exec_emails(org_id))
             if not emails:
                 continue
-            html = _recap_html(org.get("name") or "Organization", rec)
+            role_map = await _brief_role_map(org_id)
+            html = _recap_html(org.get("name") or "Organization", rec, sorted(role_map["auditor"]))
             for em in emails:
                 try:
                     await notifications.send_email(em, f"Weekly assurance recap \u2014 {org.get('name') or 'Organization'}", html)
@@ -1021,3 +1081,33 @@ async def auditor_activity(days: int = 30, user: dict = Depends(require_roles("a
     rec = await _auditor_engagement(user["org_id"], days)
     return {"views": rec["views"], "downloads": rec["downloads"],
             "reviewers": len(rec["reviewers"]), "days": days}
+
+
+@ci_router.get("/auditor-link/timeline")
+async def auditor_timeline(admin: dict = Depends(require_roles("admin"))):
+    org_id = admin["org_id"]
+    rows = await db.ci_auditor_access.find(
+        {"org_id": org_id}, {"_id": 0, "kind": 1, "who": 1, "at": 1}).sort("at", 1).to_list(5000)
+    people = {}
+    for r in rows:
+        who = (r.get("who") or "").strip() or "Anonymous"
+        p = people.setdefault(who, {"who": who, "events": [], "first_view": None, "first_download": None})
+        p["events"].append({"kind": r.get("kind"), "at": r.get("at")})
+        if r.get("kind") == "view" and not p["first_view"]:
+            p["first_view"] = r.get("at")
+        if r.get("kind") == "download" and not p["first_download"]:
+            p["first_download"] = r.get("at")
+    out = []
+    for p in people.values():
+        secs = None
+        if p["first_view"] and p["first_download"] and p["first_download"] >= p["first_view"]:
+            try:
+                secs = int((datetime.fromisoformat(p["first_download"])
+                            - datetime.fromisoformat(p["first_view"])).total_seconds())
+            except Exception:
+                secs = None
+        p["review_seconds"] = secs
+        p["last_at"] = p["events"][-1]["at"] if p["events"] else None
+        out.append(p)
+    out.sort(key=lambda x: x["last_at"] or "", reverse=True)
+    return {"people": out}
