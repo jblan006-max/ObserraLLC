@@ -110,6 +110,7 @@ function BriefSettingsCard() {
     try {
       const r = await api.post("/control-intelligence/auditor-link/demo/seed");
       setDemoActive(true);
+      window.dispatchEvent(new Event("ci-demo-changed"));
       refreshAccess();
       refreshAnalytics();
       refreshTimeline();
@@ -127,6 +128,7 @@ function BriefSettingsCard() {
     try {
       await api.post("/control-intelligence/auditor-link/demo/clear");
       setDemoActive(false);
+      window.dispatchEvent(new Event("ci-demo-changed"));
       refreshAccess();
       refreshAnalytics();
       refreshTimeline();

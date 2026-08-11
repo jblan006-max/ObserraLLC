@@ -33,6 +33,7 @@ from dashboards import dash_router
 from risk_engine import risk_engine_router
 from connectors_catalog import connectors_router
 from control_intelligence import ci_router
+import ci_demo  # noqa: F401 — registers demo-journey routes on ci_router
 from sap_uac import sap_router, seed_sap_uac
 from starlette.middleware.sessions import SessionMiddleware
 

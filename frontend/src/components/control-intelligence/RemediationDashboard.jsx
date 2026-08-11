@@ -29,6 +29,13 @@ export default function RemediationDashboard({ controls, gaps, onSelectControl, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
 
+  useEffect(() => {
+    // When the demo showcase is active, auto-open the owner-reminder preview so the
+    // whole Remediation walkthrough lights up together.
+    if (demo) loadPreview();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [demo]);
+
   const applyPref = async (body, msg) => {
     setMuteBusy(true);
     try {

@@ -25,6 +25,7 @@ import RemediationDashboard from "@/components/control-intelligence/RemediationD
 import DefensibilityDashboard from "@/components/control-intelligence/DefensibilityDashboard";
 import ControlDetailModal from "@/components/control-intelligence/ControlDetailModal";
 import { useControlIntelligenceData } from "@/hooks/useControlIntelligenceData";
+import { useDemoState } from "@/hooks/useDemoState";
 import { api } from "@/lib/api";
 import { boardReportBlocks } from "@/lib/controlIntelligenceModels";
 import { useAuth } from "@/context/AuthContext";
@@ -53,8 +54,10 @@ export default function ControlIntelligence() {
   const { user, mode } = useAuth();
   const isAdmin = user?.role === "admin";
   const [demo, setDemo] = useState(false);
+  const { demoActive } = useDemoState();
+  const effectiveDemo = demo || demoActive;
   const { data, loading, refreshing, error, sourceStatus, reload } =
-    useControlIntelligenceData(demo);
+    useControlIntelligenceData(effectiveDemo);
 
   const [activeTab, setActiveTab] = useState(
     () => localStorage.getItem("control-intelligence-tab") || "mission"
@@ -302,7 +305,7 @@ export default function ControlIntelligence() {
           gaps={data?.gaps || []}
           onSelectControl={setSelectedControl}
           isAdmin={isAdmin}
-          demo={demo}
+          demo={effectiveDemo}
         />
       )}
 
