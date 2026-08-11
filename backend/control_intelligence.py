@@ -833,6 +833,72 @@ async def auditor_link_analytics(admin: dict = Depends(require_roles("admin"))):
     return {"links": out_links, "reviewers": out_reviewers, "totals": totals}
 
 
+# ---------------------------------------------------------------- demo auditor journey (admin, labelled, reversible)
+
+@ci_router.get("/auditor-link/demo/status")
+async def auditor_demo_status(admin: dict = Depends(require_roles("admin"))):
+    org_id = admin["org_id"]
+    events = await db.ci_auditor_access.count_documents({"org_id": org_id, "demo": True})
+    links = await db.ci_auditor_links.count_documents({"org_id": org_id, "demo": True})
+    recaps = await db.ci_recap_log.count_documents({"org_id": org_id, "demo": True})
+    return {"active": (events + links + recaps) > 0, "events": events, "links": links, "recaps": recaps}
+
+
+@ci_router.post("/auditor-link/demo/seed")
+async def auditor_demo_seed(admin: dict = Depends(require_roles("admin"))):
+    import uuid
+    from datetime import timedelta
+    org_id = admin["org_id"]
+    now = datetime.now(timezone.utc)
+    # idempotent: clear any prior demo rows first
+    await db.ci_auditor_access.delete_many({"org_id": org_id, "demo": True})
+    await db.ci_auditor_links.delete_many({"org_id": org_id, "demo": True})
+    await db.ci_recap_log.delete_many({"org_id": org_id, "demo": True})
+
+    def _link():
+        return {"org_id": org_id, "token": uuid.uuid4().hex, "created_at": now.isoformat(),
+                "expires_at": (now + timedelta(days=90)).isoformat(), "revoked": False,
+                "demo": True, "downloads": 0}
+
+    link_a, link_b = _link(), _link()
+    await db.ci_auditor_links.insert_many([dict(link_a), dict(link_b)])
+
+    def _acc(token, kind, who, dt):
+        return {"token": token, "org_id": org_id, "kind": kind, "who": who,
+                "at": dt.isoformat(), "demo": True}
+
+    rows = [
+        _acc(link_a["token"], "view", "Priya Nair \u2014 KPMG", now - timedelta(days=3, hours=5)),
+        _acc(link_a["token"], "download", "Priya Nair \u2014 KPMG", now - timedelta(days=3, hours=4, minutes=56)),
+        _acc(link_a["token"], "view", "Elena Rossi \u2014 EY", now - timedelta(days=1, hours=3)),
+        _acc(link_a["token"], "download", "Elena Rossi \u2014 EY", now - timedelta(days=1, hours=2, minutes=58)),
+        _acc(link_b["token"], "view", "Marcus Webb \u2014 Deloitte", now - timedelta(days=2, hours=6)),
+        _acc(link_b["token"], "view", "Marcus Webb \u2014 Deloitte", now - timedelta(days=2, hours=5, minutes=52)),
+    ]
+    await db.ci_auditor_access.insert_many(rows)
+    await db.ci_auditor_links.update_one(
+        {"token": link_a["token"]},
+        {"$set": {"downloads": 2,
+                  "last_downloaded_at": (now - timedelta(days=1, hours=2, minutes=58)).isoformat(),
+                  "last_downloaded_by": "Elena Rossi \u2014 EY"}})
+    await db.ci_recap_log.insert_one({
+        "org_id": org_id, "at": now.isoformat(), "trigger": "demo", "to": [admin.get("email")],
+        "days": 7, "views": 3, "downloads": 2,
+        "reviewers": ["Priya Nair \u2014 KPMG", "Elena Rossi \u2014 EY"], "awaiting": 1,
+        "nudged_owners": [], "demo": True})
+    return {"seeded": True, "events": len(rows), "links": 2, "reviewers": 2,
+            "note": "Demo auditor journey seeded (labelled DEMO). Clear it before relying on live evidence."}
+
+
+@ci_router.post("/auditor-link/demo/clear")
+async def auditor_demo_clear(admin: dict = Depends(require_roles("admin"))):
+    org_id = admin["org_id"]
+    a = await db.ci_auditor_access.delete_many({"org_id": org_id, "demo": True})
+    l = await db.ci_auditor_links.delete_many({"org_id": org_id, "demo": True})
+    r = await db.ci_recap_log.delete_many({"org_id": org_id, "demo": True})
+    return {"cleared": True, "events": a.deleted_count, "links": l.deleted_count, "recaps": r.deleted_count}
+
+
 # ---------------------------------------------------------------- engagement follow-ups
 
 def _ci_link_url(token):

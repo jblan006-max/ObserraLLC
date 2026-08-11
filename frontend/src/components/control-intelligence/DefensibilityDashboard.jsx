@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  Calendar, CheckCircle2, Copy, Database, Download, Eye, FileText, Gavel, Link2, Loader2, Mail, RefreshCw, Send, ShieldCheck, Trash2, Users, X, XCircle,
+  Calendar, CheckCircle2, Copy, Database, Download, Eye, FileText, FlaskConical, Gavel, Link2, Loader2, Mail, RefreshCw, Send, ShieldCheck, Trash2, Users, X, XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -99,6 +99,45 @@ function BriefSettingsCard() {
   const [recapWeekday, setRecapWeekday] = useState(0);
   const [timeline, setTimeline] = useState(null);
   const [recapHistory, setRecapHistory] = useState(null);
+  const [demoActive, setDemoActive] = useState(false);
+  const [demoBusy, setDemoBusy] = useState(false);
+
+  const refreshDemoStatus = () =>
+    api.get("/control-intelligence/auditor-link/demo/status").then((r) => setDemoActive(Boolean(r.data.active))).catch(() => {});
+
+  const seedDemo = async () => {
+    setDemoBusy(true);
+    try {
+      const r = await api.post("/control-intelligence/auditor-link/demo/seed");
+      setDemoActive(true);
+      refreshAccess();
+      refreshAnalytics();
+      refreshTimeline();
+      loadHistory();
+      toast.success(`Demo auditor journey seeded — ${r.data.events} events across ${r.data.links} links.`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to seed the demo journey.");
+    } finally {
+      setDemoBusy(false);
+    }
+  };
+
+  const clearDemo = async () => {
+    setDemoBusy(true);
+    try {
+      await api.post("/control-intelligence/auditor-link/demo/clear");
+      setDemoActive(false);
+      refreshAccess();
+      refreshAnalytics();
+      refreshTimeline();
+      loadHistory();
+      toast.success("Demo auditor journey cleared.");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to clear the demo journey.");
+    } finally {
+      setDemoBusy(false);
+    }
+  };
 
   const refreshCounts = () =>
     api.get("/control-intelligence/brief/recipients").then((r) => setCounts(r.data)).catch(() => {});
@@ -136,6 +175,7 @@ function BriefSettingsCard() {
       refreshAccess();
       refreshAnalytics();
       refreshTimeline();
+      refreshDemoStatus();
     })();
   }, []);
 
@@ -490,6 +530,44 @@ function BriefSettingsCard() {
             <p className="text-xs text-muted-foreground mt-1">
               A read-only Obserra link external auditors can open to verify live control evidence in-app. It is auto-included in Auditor-role briefs.
             </p>
+
+            <div data-testid="ci-demo-journey-panel" className="mt-3 rounded-lg border border-med/30 bg-med/5 p-3">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-mono uppercase tracking-wider text-med flex items-center gap-1.5">
+                    <FlaskConical className="w-3 h-3" /> Demo auditor journey
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-1 max-w-md">
+                    Seed a sample reviewer journey (named auditors, views, downloads and an awaiting-download link) to showcase the Access Log, Reviewer Timeline and Engagement Analytics below. Clearly labelled DEMO and fully separate from live evidence — clear it in one click.
+                  </p>
+                </div>
+                {demoActive ? (
+                  <button
+                    onClick={clearDemo}
+                    disabled={demoBusy}
+                    data-testid="ci-demo-journey-clear"
+                    className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-crit/40 bg-crit/10 text-crit text-xs font-head font-bold disabled:opacity-50"
+                  >
+                    {demoBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Clear demo
+                  </button>
+                ) : (
+                  <button
+                    onClick={seedDemo}
+                    disabled={demoBusy}
+                    data-testid="ci-demo-journey-seed"
+                    className="shrink-0 inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-med/40 bg-med/15 text-med text-xs font-head font-bold disabled:opacity-50"
+                  >
+                    {demoBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FlaskConical className="w-3.5 h-3.5" />} Seed demo journey
+                  </button>
+                )}
+              </div>
+              {demoActive && (
+                <div data-testid="ci-demo-journey-active" className="mt-2 flex items-center gap-1.5 text-[11px] font-mono text-med">
+                  <span className="w-1.5 h-1.5 rounded-full bg-med animate-pulse" />
+                  DEMO DATA ACTIVE — the auditor panels below include sample data. Clear before relying on live evidence.
+                </div>
+              )}
+            </div>
             <div className="flex items-center gap-2 mt-3">
               <span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Valid for</span>
               <input
@@ -553,6 +631,9 @@ function BriefSettingsCard() {
                         {ev.kind === "download" ? <Download className="w-3 h-3 text-ai" /> : <Eye className="w-3 h-3 text-muted-foreground" />}
                         <span className="font-head font-bold capitalize">{ev.kind}</span>
                         <span className="text-muted-foreground">{ev.who || "anonymous"}</span>
+                        {ev.demo && (
+                          <span data-testid={`ci-auditor-access-demo-${i}`} className="text-[8px] font-mono font-bold px-1 py-0.5 rounded border border-med/40 bg-med/10 text-med uppercase">demo</span>
+                        )}
                       </span>
                       <span className="font-mono text-muted-foreground">
                         {new Date(ev.at).toLocaleString(undefined, { dateStyle: "short", timeStyle: "short" })}
