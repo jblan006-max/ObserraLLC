@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
-import { Loader2, ScrollText, ShieldCheck, Download, FileText } from "lucide-react";
+import { Loader2, ScrollText, ShieldCheck, Download, FileText, Link2 } from "lucide-react";
 import { toast } from "sonner";
 import { AIInsight } from "@/components/AIInsight";
 
@@ -10,6 +10,7 @@ export default function AuditLog() {
   const [since, setSince] = useState("");
   const [until, setUntil] = useState("");
   const [trustedOnly, setTrustedOnly] = useState(false);
+  const [trustLinksOnly, setTrustLinksOnly] = useState(false);
   const [exporting, setExporting] = useState("");
   useEffect(() => { api.get("/audit-logs").then((r) => setLogs(r.data)); }, []);
 
@@ -19,7 +20,8 @@ export default function AuditLog() {
   const shown = logs.filter((l) => (!actor || l.actor === actor)
     && (!since || (l.ts || "").slice(0, 10) >= since)
     && (!until || (l.ts || "").slice(0, 10) <= until)
-    && (!trustedOnly || (l.action || "").toLowerCase().includes("trusted")));
+    && (!trustedOnly || (l.action || "").toLowerCase().includes("trusted"))
+    && (!trustLinksOnly || (l.action || "").toLowerCase().includes("trust_link")));
 
   const exportFile = async (fmt) => {
     setExporting(fmt);
@@ -56,7 +58,11 @@ export default function AuditLog() {
           className={`inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm border transition-colors ${trustedOnly ? "bg-ai/15 border-ai text-ai" : "bg-secondary/60 border-transparent text-muted-foreground hover:text-foreground"}`}>
           <ShieldCheck className="w-3.5 h-3.5" /> Trusted rule changes
         </button>
-        {(actor || since || until || trustedOnly) && <button data-testid="audit-clear" onClick={() => { setActor(""); setSince(""); setUntil(""); setTrustedOnly(false); }} className="text-sm text-muted-foreground hover:text-foreground px-2">Clear</button>}
+        <button data-testid="audit-trustlinks-filter" onClick={() => setTrustLinksOnly((v) => !v)}
+          className={`inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm border transition-colors ${trustLinksOnly ? "bg-ai/15 border-ai text-ai" : "bg-secondary/60 border-transparent text-muted-foreground hover:text-foreground"}`}>
+          <Link2 className="w-3.5 h-3.5" /> Trust links used
+        </button>
+        {(actor || since || until || trustedOnly || trustLinksOnly) && <button data-testid="audit-clear" onClick={() => { setActor(""); setSince(""); setUntil(""); setTrustedOnly(false); setTrustLinksOnly(false); }} className="text-sm text-muted-foreground hover:text-foreground px-2">Clear</button>}
         <div className="ml-auto flex items-center gap-2">
           <button data-testid="audit-export-csv" onClick={() => exportFile("csv")} disabled={!!exporting} className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm bg-secondary/60 border border-border hover:bg-secondary disabled:opacity-50">
             {exporting === "csv" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} CSV
@@ -69,7 +75,7 @@ export default function AuditLog() {
 
       <div className="bg-card fact-border rounded-lg overflow-hidden">
         <div className="px-5 py-3 border-b border-border flex items-center gap-2 text-xs font-mono text-muted-foreground uppercase tracking-widest">
-          <ShieldCheck className="w-3.5 h-3.5 text-low" /> {shown.length} of {logs.length} entries · tamper-evident{trustedOnly ? " · trusted rule changes" : ""}
+          <ShieldCheck className="w-3.5 h-3.5 text-low" /> {shown.length} of {logs.length} entries · tamper-evident{trustedOnly ? " · trusted rule changes" : ""}{trustLinksOnly ? " · trust links used" : ""}
         </div>
         <div className="divide-y divide-border/60">
           {shown.map((l, i) => (

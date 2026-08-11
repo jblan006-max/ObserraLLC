@@ -1,6 +1,17 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Trust Link Audit + Snooze Reason Required + Digest PDF Preview + Exec Mute Badge (iteration_119, backend 7/7 pytest + frontend 100%)
+User-approved 4-feature batch, all live/no-mock:
+- **Trust Link Audit**: `apply_trust_suggestion` now also writes a distinct `agent.trust_link_used` audit entry (actor + value + "link minted <ts>"). Audit Log page gained a `audit-trustlinks-filter` chip (action contains "trust_link") alongside the existing "Trusted rule changes" chip.
+- **Snooze Reason Required**: both `POST /alerts/snooze` (hours>0) and `POST /alerts/snooze-schedule` (set) now 400 without a non-empty reason. UI disables `gov-snooze-btn` until `gov-snooze-reason` filled, and `gov-snooze-schedule-btn` until start+end+`gov-snooze-window-reason` filled.
+- **Digest PDF Preview/Download**: refactored the sealed-PDF builder into `_build_audit_digest_pdf(org, rows)` (shared by the weekly email attachment and a new admin `GET /api/agents/runtime/audit-digest.pdf`). Preview panel gained `gov-audit-digest-download-pdf` ("Download PDF").
+- **Exec Mute Badge**: new `GET /api/agents/runtime/alerts/mute-status` (any org member) returns `{muted,reason,until,source}` via `_is_alerts_snoozed`. `AIExecutiveOverview` renders `MuteBadge` (`exec-mute-badge`, polls every 60s) showing "ALERTS MUTED · <reason>" whenever instant alerts are muted (immediate or scheduled window); hidden when not muted.
+- Regression pytest: `/app/backend/tests/test_iter119_mute_status_trust_link_audit_digest_pdf.py` (7/7). Paired one-edit-per-file strategy again → NO drop-hazard this batch. Non-blocking pre-existing: `<span>`-in-`<option>` hydration warning in the fire-drill select. Tester + main-agent cleanup done: trust_add_tokens purged, trusted_countries [], org left UN-muted.
+- Code-review note (backlog): agents.py >2900 lines — consider splitting runtime alert-governance / audit-digest routes into a sub-module; trust_link_used stores value in free-form detail (could add structured meta for durable auditor queries).
+
+
+
 ## Status (Jun 2026) — Trust Link Expiry + Digest Preview + Snooze Reason + Channels status line (iteration_118, backend 6/6 pytest + frontend 100%)
 User-approved 4-feature batch, all live/no-mock:
 - **Trust Link Expiry (72h)**: `_make_trust_token` now stores `expires_at = now+72h`. `GET /api/agents/runtime/trust-suggestion/{token}` returns `{kind,value,used,expired,expires_at}`; `POST …/apply` returns 400 ("This trust link has expired…") for expired tokens. `TrustSuggestionBanner` shows the expired/invalid variant.

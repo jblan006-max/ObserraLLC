@@ -19,6 +19,29 @@ import { AIInsight } from "@/components/AIInsight";
 
 const ACCENT = "330 81% 60%";
 
+function MuteBadge() {
+  const [m, setM] = useState(null);
+  const navigate = useNavigate();
+  useEffect(() => {
+    let ok = true;
+    const load = () => api.get("/agents/runtime/alerts/mute-status").then(({ data }) => { if (ok) setM(data); }).catch(() => {});
+    load();
+    const t = setInterval(load, 60000);
+    return () => { ok = false; clearInterval(t); };
+  }, []);
+  if (!m || !m.muted) return null;
+  const tone = "35 90% 55%";
+  const reason = m.reason ? ` · ${m.reason}` : " · no reason given";
+  return (
+    <button data-testid="exec-mute-badge" onClick={() => navigate("/app/agentic-ai-security")}
+      title={`Instant suspicious-access alerts are currently muted (${m.source})${m.until ? ` until ${new Date(m.until).toLocaleString()}` : ""}`}
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-mono font-bold transition-transform hover:scale-[1.03]"
+      style={{ borderColor: `hsl(${tone} / 0.45)`, background: `hsl(${tone} / 0.12)`, color: `hsl(${tone})` }}>
+      <EyeOff className="w-3 h-3" />ALERTS MUTED{reason}
+    </button>
+  );
+}
+
 function MiniSparkline({ points, tone }) {
   if (!points || points.length < 2) return null;
   const w = 132, h = 22;
@@ -134,6 +157,7 @@ export default function AIExecutiveOverview() {
             <span data-testid="overview-version-badge" className="px-2 py-1 rounded-full border border-border bg-secondary/60 text-muted-foreground text-[10px] font-mono font-bold">v1</span>
             <GoLiveBadge />
             {isAdmin && <ControlAssuranceBadge />}
+            <MuteBadge />
           </div>
           <p className="text-sm text-muted-foreground mt-2 max-w-3xl">
             A single board-ready rollup of the whole Agentic AI Security estate — modelled agent risk, delegated

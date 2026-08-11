@@ -2725,6 +2725,8 @@ async def snooze_instant_alerts(body: SnoozeBody, admin: dict = Depends(require_
         await _log_audit(admin["org_id"], admin["email"], "agent.alerts_snooze_cleared",
                          "Resumed instant suspicious-access alerts")
         return {"ok": True, "snooze_alerts_until": "", "snooze_reason": ""}
+    if not reason:
+        raise HTTPException(400, "A reason is required to mute alerts \u2014 it's written to the audit trail.")
     until = datetime.now(timezone.utc) + timedelta(hours=hours)
     iso = until.isoformat()
     await db.organizations.update_one({"_id": ObjectId(admin["org_id"])},
@@ -2845,6 +2847,8 @@ async def schedule_snooze_window(body: SnoozeScheduleBody, admin: dict = Depends
         await _log_audit(admin["org_id"], admin["email"], "agent.alerts_snooze_schedule_cleared",
                          "Cleared the scheduled alert-mute window")
         return {"ok": True, "snooze_window_start": "", "snooze_window_end": "", "snooze_window_reason": ""}
+    if not reason:
+        raise HTTPException(400, "A reason is required to schedule a mute window \u2014 it's written to the audit trail.")
 
     def _p(s):
         try:
@@ -2922,7 +2926,36 @@ async def apply_trust_suggestion(token: str, admin: dict = Depends(require_roles
     await db.trust_add_tokens.update_one({"token": token}, {"$set": {"used": True}})
     await _log_audit(admin["org_id"], admin["email"], "agent.trusted_rules_changed",
                      f"Trusted access rules changed \u2014 {'countries' if kind == 'country' else 'auditors'} +[{value}] (via alert one-click)")
+    await _log_audit(admin["org_id"], admin["email"], "agent.trust_link_used",
+                     f"One-click trust link used \u2014 added {value} to {'trusted countries' if kind == 'country' else 'trusted auditors'}"
+                     + (f" (link minted {(doc.get('created_at') or '')[:16].replace('T', ' ')} UTC)" if doc.get('created_at') else ""))
     return {"ok": True, "kind": kind, "value": value, "field": field}
+
+
+@agents_router.get("/runtime/alerts/mute-status")
+async def alerts_mute_status(user: dict = Depends(get_current_user)):
+    """Any org member: is instant suspicious-access alerting currently muted, and why? (for the exec badge)."""
+    from bson import ObjectId
+    from datetime import datetime, timezone
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])},
+        {"snooze_alerts_until": 1, "snooze_reason": 1, "snooze_window_start": 1,
+         "snooze_window_end": 1, "snooze_window_reason": 1}) or {}
+    now = datetime.now(timezone.utc)
+    muted = _is_alerts_snoozed(org, now)
+    source, reason, until = "", "", ""
+    if muted:
+        def _p(s):
+            try:
+                d = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+                return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+            except Exception:
+                return None
+        iu = _p(org.get("snooze_alerts_until")) if org.get("snooze_alerts_until") else None
+        if iu and iu > now:
+            source, reason, until = "immediate", org.get("snooze_reason") or "", org.get("snooze_alerts_until") or ""
+        else:
+            source, reason, until = "scheduled", org.get("snooze_window_reason") or "", org.get("snooze_window_end") or ""
+    return {"muted": muted, "reason": reason, "until": until, "source": source}
 
 
 _AUDIT_RELAX_ACTIONS = ("trusted_rules_changed", "alerts_snoozed", "alerts_snooze_cleared",
@@ -2954,6 +2987,50 @@ async def preview_audit_digest(admin: dict = Depends(require_roles("admin"))):
     return {"changes": len(rows), "recipients": recips,
             "rows": [{"ts": r.get("ts"), "action": r.get("action"), "actor": r.get("actor"),
                       "detail": r.get("detail")} for r in rows[:60]]}
+
+
+async def _build_audit_digest_pdf(org, rows):
+    """Build the branded, watermarked, SHA-256-sealed control-change digest PDF (shared by the weekly
+    email attachment and the on-demand download)."""
+    from datetime import datetime, timezone
+    from bson import ObjectId
+    from reports import _build_pdf, _resolve_brand
+    oid = str(org["_id"])
+    now = datetime.now(timezone.utc)
+    try:
+        brand = _resolve_brand(await db.organizations.find_one({"_id": ObjectId(oid)}))
+    except Exception:
+        brand = None
+    plines = [f"Weekly control-change digest \u2014 {now.strftime('%B %d, %Y')} \u2014 last 7 days.",
+              f"**Changes:** {len(rows)}", "", "## Control-relaxing / governance changes (last 7 days)"]
+    for r in rows:
+        ts = (r.get("ts") or "")[:19].replace("T", " ")
+        plines.append(f"- **{ts} UTC** \u00b7 `{r.get('action', '')}` by {r.get('actor', 'system')} \u2014 {r.get('detail', '')}")
+    buf = _build_pdf("\n".join(plines), "Weekly control-change digest", cover=True,
+                     org_name=org.get("name"), brand=brand)
+    raw = buf.getvalue()
+    try:
+        raw = await _brand_watermark_pdf(raw, org_id=oid, room_url="",
+                                         subtext=f"Control-change digest \u00b7 {len(rows)} changes")
+        raw = _stamp_verified_seal(raw, _canonical_snapshot_hash({"rows": rows}))
+    except Exception:
+        pass
+    return raw
+
+
+@agents_router.get("/runtime/audit-digest.pdf")
+async def audit_digest_pdf(admin: dict = Depends(require_roles("admin"))):
+    """Download the exact sealed control-change digest PDF (same as the weekly board attachment)."""
+    import io
+    from datetime import datetime, timezone
+    from fastapi.responses import StreamingResponse
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}) or {}
+    rows = await _audit_digest_rows(admin["org_id"])
+    raw = await _build_audit_digest_pdf(org, rows)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")
+    return StreamingResponse(io.BytesIO(raw), media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="obserra-control-change-digest-{stamp}.pdf"'})
 
 
 async def _run_audit_digest(org_id=None, on_demand=False):
@@ -3009,24 +3086,7 @@ async def _run_audit_digest(org_id=None, on_demand=False):
                     f"<ul style='padding-left:18px'>{items}</ul>"
                     f"<p style='font-size:12px;color:#6b7280'>Full tamper-evident detail is attached as a sealed PDF.</p>"
                     f"<p style='font-size:11px;color:#9ca3af'>Obserra \u2014 Agentic AI Security Control &amp; Governance</p></div>")
-            try:
-                brand = _resolve_brand(await db.organizations.find_one({"_id": ObjectId(oid)}))
-            except Exception:
-                brand = None
-            plines = [f"Weekly control-change digest \u2014 {now.strftime('%B %d, %Y')} \u2014 last 7 days.",
-                      f"**Changes:** {len(rows)}", "", "## Control-relaxing / governance changes (last 7 days)"]
-            for r in rows:
-                ts = (r.get("ts") or "")[:19].replace("T", " ")
-                plines.append(f"- **{ts} UTC** \u00b7 `{r.get('action', '')}` by {r.get('actor', 'system')} \u2014 {r.get('detail', '')}")
-            buf = _build_pdf("\n".join(plines), "Weekly control-change digest", cover=True,
-                             org_name=org.get("name"), brand=brand)
-            raw = buf.getvalue()
-            try:
-                raw = await _brand_watermark_pdf(raw, org_id=oid, room_url="",
-                                                 subtext=f"Control-change digest \u00b7 {len(rows)} changes")
-                raw = _stamp_verified_seal(raw, _canonical_snapshot_hash({"rows": rows}))
-            except Exception:
-                pass
+            raw = await _build_audit_digest_pdf(org, rows)
             att = [{"filename": "obserra-control-change-digest.pdf", "content": _b64.b64encode(raw).decode()}]
             for em in recips:
                 try:

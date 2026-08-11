@@ -375,6 +375,17 @@ function GovernanceSettingsCard() {
       setPreviewData(data);
     } catch (e) { toast.error("Could not load preview."); setPreviewOpen(false); }
   };
+  const downloadDigestPdf = async () => {
+    try {
+      const { data } = await api.get("/agents/runtime/audit-digest.pdf", { responseType: "blob" });
+      const url = URL.createObjectURL(data);
+      const a = document.createElement("a");
+      a.href = url; a.download = "obserra-control-change-digest.pdf";
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+      toast.success("Digest PDF downloaded");
+    } catch (e) { toast.error("Could not download PDF."); }
+  };
   const emailCount = alertEmails.split(",").map((x) => x.trim()).filter(Boolean).length;
   const channelSummary = `${emailCount ? `${emailCount} email(s)` : "all admins & execs"} · ${alertWebhook.trim() ? (/hooks\.slack\.com/i.test(alertWebhook) ? "Slack ✓" : /office\.com|azure\.com/i.test(alertWebhook) ? "Teams ✓" : "webhook ✓") : "org chat"}`;
   if (!s) return null;
@@ -466,8 +477,8 @@ function GovernanceSettingsCard() {
                 <option value="8">8 hours</option>
                 <option value="24">24 hours</option>
               </select>
-              <input data-testid="gov-snooze-reason" value={snoozeReason} onChange={(e) => setSnoozeReason(e.target.value)} placeholder="Reason (e.g. SOC2 fieldwork)" className="bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary min-w-[180px]" />
-              <button data-testid="gov-snooze-btn" onClick={() => doSnooze(snoozeHours)} disabled={snoozing} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-foreground text-xs font-head font-bold border border-border disabled:opacity-50">{snoozing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Snooze alerts</button>
+              <input data-testid="gov-snooze-reason" value={snoozeReason} onChange={(e) => setSnoozeReason(e.target.value)} placeholder="Reason (required — e.g. SOC2 fieldwork)" className="bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary min-w-[180px]" />
+              <button data-testid="gov-snooze-btn" onClick={() => doSnooze(snoozeHours)} disabled={snoozing || !snoozeReason.trim()} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-foreground text-xs font-head font-bold border border-border disabled:opacity-50">{snoozing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Snooze alerts</button>
             </div>
           )}
           <div className="border-t border-border/60 pt-3 mt-3" data-testid="gov-snooze-schedule">
@@ -480,8 +491,8 @@ function GovernanceSettingsCard() {
               <div className="flex flex-wrap items-end gap-2">
                 <label className="block"><span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Mute from</span><input data-testid="gov-snooze-window-start" type="datetime-local" value={snoozeStart} onChange={(e) => setSnoozeStart(e.target.value)} className="mt-1 block bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary" /></label>
                 <label className="block"><span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Until</span><input data-testid="gov-snooze-window-end" type="datetime-local" value={snoozeEnd} onChange={(e) => setSnoozeEnd(e.target.value)} className="mt-1 block bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary" /></label>
-                <label className="block"><span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Reason</span><input data-testid="gov-snooze-window-reason" value={scheduleReason} onChange={(e) => setScheduleReason(e.target.value)} placeholder="e.g. PCI audit week" className="mt-1 block bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary" /></label>
-                <button data-testid="gov-snooze-schedule-btn" onClick={() => doSchedule(false)} disabled={scheduling || !snoozeStart || !snoozeEnd} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-foreground text-xs font-head font-bold border border-border disabled:opacity-50">{scheduling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Calendar className="w-3.5 h-3.5" />} Schedule mute window</button>
+                <label className="block"><span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Reason (required)</span><input data-testid="gov-snooze-window-reason" value={scheduleReason} onChange={(e) => setScheduleReason(e.target.value)} placeholder="e.g. PCI audit week" className="mt-1 block bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary" /></label>
+                <button data-testid="gov-snooze-schedule-btn" onClick={() => doSchedule(false)} disabled={scheduling || !snoozeStart || !snoozeEnd || !scheduleReason.trim()} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-foreground text-xs font-head font-bold border border-border disabled:opacity-50">{scheduling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Calendar className="w-3.5 h-3.5" />} Schedule mute window</button>
               </div>
             )}
           </div>
@@ -494,7 +505,10 @@ function GovernanceSettingsCard() {
             <div className="mt-2 rounded-md border border-border/60 bg-secondary/20 p-3" data-testid="gov-audit-digest-preview-panel">
               {!previewData ? <span className="text-sm text-muted-foreground">Loading…</span> : (
                 <div>
-                  <div className="text-[11px] font-mono text-muted-foreground uppercase tracking-wider mb-2">{previewData.changes} change(s) · would email {previewData.recipients?.length || 0} recipient(s)</div>
+                  <div className="flex items-center justify-between gap-2 mb-2">
+                    <span className="text-[11px] font-mono text-muted-foreground uppercase tracking-wider">{previewData.changes} change(s) · would email {previewData.recipients?.length || 0} recipient(s)</span>
+                    <button type="button" data-testid="gov-audit-digest-download-pdf" onClick={downloadDigestPdf} className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-secondary text-foreground text-[11px] font-head font-bold border border-border">Download PDF</button>
+                  </div>
                   {previewData.changes === 0 ? <span className="text-sm text-muted-foreground">No control changes in the last 7 days.</span> : (
                     <ul className="space-y-1.5 max-h-64 overflow-auto">
                       {previewData.rows.map((r, i) => (
