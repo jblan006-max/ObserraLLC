@@ -323,13 +323,18 @@ function GovernanceSettingsCard() {
   const [snoozeEnd, setSnoozeEnd] = useState("");
   const [testing, setTesting] = useState(false);
   const [scheduling, setScheduling] = useState(false);
+  const [snoozeReason, setSnoozeReason] = useState("");
+  const [scheduleReason, setScheduleReason] = useState("");
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewData, setPreviewData] = useState(null);
   const hydrate = (data) => { setS(data); setRecips((data.board_digest_recipients || []).join(", ")); setOncall((data.auditor_oncall_rotation || []).join(", ")); setTrusted((data.trusted_countries || []).join(", ")); setTrustedIps((data.trusted_ip_ranges || []).join(", ")); setTauds((data.trusted_auditors || []).join(", ")); setAlertEmails((data.alert_channel_emails || []).join(", ")); setAlertWebhook(data.alert_channel_webhook || ""); setAuditRecips((data.audit_digest_recipients || []).join(", ")); };
   useEffect(() => { api.get("/agents/runtime/governance-settings").then(({ data }) => hydrate(data)).catch(() => {}); }, []);
   const doSnooze = async (hours) => {
     setSnoozing(true);
     try {
-      const { data } = await api.post("/agents/runtime/alerts/snooze", { hours: Number(hours) || 0 });
-      setS((prev) => ({ ...prev, snooze_alerts_until: data.snooze_alerts_until || "" }));
+      const { data } = await api.post("/agents/runtime/alerts/snooze", { hours: Number(hours) || 0, reason: snoozeReason });
+      setS((prev) => ({ ...prev, snooze_alerts_until: data.snooze_alerts_until || "", snooze_reason: data.snooze_reason || "" }));
+      if (Number(hours) > 0) setSnoozeReason("");
       toast.success(Number(hours) > 0 ? `Instant alerts muted for ${hours}h` : "Instant alerts resumed");
     } catch (e) { toast.error(e.response?.data?.detail || "Snooze failed."); }
     finally { setSnoozing(false); }
@@ -348,10 +353,10 @@ function GovernanceSettingsCard() {
   const doSchedule = async (clear) => {
     setScheduling(true);
     try {
-      const body = clear ? { start: "", end: "" } : { start: snoozeStart ? new Date(snoozeStart).toISOString() : "", end: snoozeEnd ? new Date(snoozeEnd).toISOString() : "" };
+      const body = clear ? { start: "", end: "" } : { start: snoozeStart ? new Date(snoozeStart).toISOString() : "", end: snoozeEnd ? new Date(snoozeEnd).toISOString() : "", reason: scheduleReason };
       const { data } = await api.post("/agents/runtime/alerts/snooze-schedule", body);
-      setS((prev) => ({ ...prev, snooze_window_start: data.snooze_window_start || "", snooze_window_end: data.snooze_window_end || "" }));
-      if (clear) { setSnoozeStart(""); setSnoozeEnd(""); }
+      setS((prev) => ({ ...prev, snooze_window_start: data.snooze_window_start || "", snooze_window_end: data.snooze_window_end || "", snooze_window_reason: data.snooze_window_reason || "" }));
+      if (clear) { setSnoozeStart(""); setSnoozeEnd(""); setScheduleReason(""); }
       toast.success(clear ? "Scheduled mute window cleared" : "Mute window scheduled");
     } catch (e) { toast.error(e.response?.data?.detail || "Schedule failed."); }
     finally { setScheduling(false); }
@@ -362,6 +367,16 @@ function GovernanceSettingsCard() {
       toast.success(data.changes ? `Digest sent (${data.changes} change(s), ${data.sent} recipient(s))` : "No control changes in the last 7 days");
     } catch (e) { toast.error(e.response?.data?.detail || "Send failed."); }
   };
+  const loadPreview = async () => {
+    if (previewOpen) { setPreviewOpen(false); return; }
+    setPreviewOpen(true); setPreviewData(null);
+    try {
+      const { data } = await api.get("/agents/runtime/audit-digest/preview");
+      setPreviewData(data);
+    } catch (e) { toast.error("Could not load preview."); setPreviewOpen(false); }
+  };
+  const emailCount = alertEmails.split(",").map((x) => x.trim()).filter(Boolean).length;
+  const channelSummary = `${emailCount ? `${emailCount} email(s)` : "all admins & execs"} · ${alertWebhook.trim() ? (/hooks\.slack\.com/i.test(alertWebhook) ? "Slack ✓" : /office\.com|azure\.com/i.test(alertWebhook) ? "Teams ✓" : "webhook ✓") : "org chat"}`;
   if (!s) return null;
   const sbp = s.auditor_question_sla_by_priority || {};
   const setSbp = (k, v) => setS({ ...s, auditor_question_sla_by_priority: { ...sbp, [k]: v } });
@@ -435,11 +450,12 @@ function GovernanceSettingsCard() {
         <div className="md:col-span-2" data-testid="gov-alert-test-row">
           <button data-testid="gov-alert-test" onClick={doTest} disabled={testing} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-secondary text-foreground text-xs font-head font-bold border border-border disabled:opacity-50">{testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />} Send test alert</button>
           <span className="ml-2 text-[11px] text-muted-foreground">Fires a sample alert through the channels above so you can confirm delivery.</span>
+          <div className="mt-2 text-[11px] font-mono text-muted-foreground" data-testid="gov-alert-channels-status">channels: {channelSummary}</div>
         </div>
         <div className="md:col-span-2 rounded-md border border-border/60 bg-secondary/30 p-3" data-testid="gov-snooze">
           {s.snooze_alerts_until && new Date(s.snooze_alerts_until) > new Date() ? (
             <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-sm text-high" data-testid="gov-snooze-status">Instant alerts muted until {new Date(s.snooze_alerts_until).toLocaleString()} · logged to the audit trail</span>
+              <span className="text-sm text-high" data-testid="gov-snooze-status">Instant alerts muted until {new Date(s.snooze_alerts_until).toLocaleString()}{s.snooze_reason ? ` · ${s.snooze_reason}` : ""} · logged to the audit trail</span>
               <button data-testid="gov-snooze-resume" onClick={() => doSnooze(0)} disabled={snoozing} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">{snoozing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Resume alerts now</button>
             </div>
           ) : (
@@ -450,19 +466,21 @@ function GovernanceSettingsCard() {
                 <option value="8">8 hours</option>
                 <option value="24">24 hours</option>
               </select>
+              <input data-testid="gov-snooze-reason" value={snoozeReason} onChange={(e) => setSnoozeReason(e.target.value)} placeholder="Reason (e.g. SOC2 fieldwork)" className="bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary min-w-[180px]" />
               <button data-testid="gov-snooze-btn" onClick={() => doSnooze(snoozeHours)} disabled={snoozing} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-foreground text-xs font-head font-bold border border-border disabled:opacity-50">{snoozing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : null} Snooze alerts</button>
             </div>
           )}
-          <div className="border-t border-border/60 pt-3" data-testid="gov-snooze-schedule">
+          <div className="border-t border-border/60 pt-3 mt-3" data-testid="gov-snooze-schedule">
             {s.snooze_window_start && s.snooze_window_end && new Date(s.snooze_window_end) > new Date() ? (
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className="text-sm text-med" data-testid="gov-snooze-window-status">Scheduled mute window: {new Date(s.snooze_window_start).toLocaleString()} → {new Date(s.snooze_window_end).toLocaleString()}</span>
+                <span className="text-sm text-med" data-testid="gov-snooze-window-status">Scheduled mute window: {new Date(s.snooze_window_start).toLocaleString()} → {new Date(s.snooze_window_end).toLocaleString()}{s.snooze_window_reason ? ` · ${s.snooze_window_reason}` : ""}</span>
                 <button data-testid="gov-snooze-window-clear" onClick={() => doSchedule(true)} disabled={scheduling} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-foreground text-xs font-head font-bold border border-border disabled:opacity-50">Clear scheduled window</button>
               </div>
             ) : (
               <div className="flex flex-wrap items-end gap-2">
                 <label className="block"><span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Mute from</span><input data-testid="gov-snooze-window-start" type="datetime-local" value={snoozeStart} onChange={(e) => setSnoozeStart(e.target.value)} className="mt-1 block bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary" /></label>
                 <label className="block"><span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Until</span><input data-testid="gov-snooze-window-end" type="datetime-local" value={snoozeEnd} onChange={(e) => setSnoozeEnd(e.target.value)} className="mt-1 block bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary" /></label>
+                <label className="block"><span className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Reason</span><input data-testid="gov-snooze-window-reason" value={scheduleReason} onChange={(e) => setScheduleReason(e.target.value)} placeholder="e.g. PCI audit week" className="mt-1 block bg-secondary/60 rounded-md px-2 py-1.5 text-sm outline-none focus:ring-1 focus:ring-primary" /></label>
                 <button data-testid="gov-snooze-schedule-btn" onClick={() => doSchedule(false)} disabled={scheduling || !snoozeStart || !snoozeEnd} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-foreground text-xs font-head font-bold border border-border disabled:opacity-50">{scheduling ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Calendar className="w-3.5 h-3.5" />} Schedule mute window</button>
               </div>
             )}
@@ -470,6 +488,28 @@ function GovernanceSettingsCard() {
         </div>
         <label className="flex items-start gap-2 md:col-span-2 cursor-pointer"><input data-testid="gov-audit-digest-enabled" type="checkbox" checked={!!s.audit_digest_enabled} onChange={(e) => setS({ ...s, audit_digest_enabled: e.target.checked })} className="accent-ai w-4 h-4 mt-0.5" /><span className="text-sm">Weekly control-change digest — email the board a Monday rollup of who relaxed controls (trusted-rule edits, snoozes, governance changes) with the sealed audit PDF attached</span></label>
         <label className="block md:col-span-2"><span className={lbl}>Control-change digest recipients (comma-separated — blank = board digest recipients or admins &amp; execs)</span><input data-testid="gov-audit-digest-recipients" value={auditRecips} onChange={(e) => setAuditRecips(e.target.value)} placeholder="board@company.com, audit-committee@company.com" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1"><button type="button" data-testid="gov-audit-digest-send" onClick={sendAuditDigest} className="text-ai hover:underline">Send now</button> to email this week's digest immediately.</span></label>
+        <div className="md:col-span-2" data-testid="gov-audit-digest-preview-wrap">
+          <button type="button" data-testid="gov-audit-digest-preview" onClick={loadPreview} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-foreground text-xs font-head font-bold border border-border">{previewOpen ? "Hide preview" : "Preview this week's digest"}</button>
+          {previewOpen && (
+            <div className="mt-2 rounded-md border border-border/60 bg-secondary/20 p-3" data-testid="gov-audit-digest-preview-panel">
+              {!previewData ? <span className="text-sm text-muted-foreground">Loading…</span> : (
+                <div>
+                  <div className="text-[11px] font-mono text-muted-foreground uppercase tracking-wider mb-2">{previewData.changes} change(s) · would email {previewData.recipients?.length || 0} recipient(s)</div>
+                  {previewData.changes === 0 ? <span className="text-sm text-muted-foreground">No control changes in the last 7 days.</span> : (
+                    <ul className="space-y-1.5 max-h-64 overflow-auto">
+                      {previewData.rows.map((r, i) => (
+                        <li key={i} data-testid={`gov-digest-preview-row-${i}`} className="text-[13px]">
+                          <span className="font-mono text-[11px] text-muted-foreground">{(r.ts || "").slice(0, 16).replace("T", " ")} UTC</span> · <span className="text-ai">{r.action}</span> <span className="text-muted-foreground">by {r.actor || "system"}</span>
+                          <div className="text-muted-foreground text-[12px]">{r.detail}</div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
       <SnapshotRetire />
     </Panel>
@@ -809,9 +849,11 @@ function TrustSuggestionBanner() {
     try {
       await api.post(`/agents/runtime/trust-suggestion/${token}/apply`, {});
       toast.success(sug.already ? "Already trusted" : `${label} — done`);
-      dismiss();
-    } catch (e) { toast.error(e.response?.data?.detail || "Could not apply."); }
-    finally { setBusy(false); }
+      setTimeout(() => { window.location.href = window.location.pathname; }, 700);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Could not apply.");
+      setBusy(false);
+    }
   };
   return (
     <div className="rounded-lg border border-ai/40 bg-ai/10 p-4 flex flex-wrap items-center justify-between gap-3" data-testid="trust-suggestion-banner">

@@ -1817,9 +1817,12 @@ async def _make_trust_token(org_id, kind, value):
     import secrets
     from datetime import datetime, timezone
     tok = secrets.token_urlsafe(24)
+    from datetime import timedelta
+    _now = datetime.now(timezone.utc)
     await db.trust_add_tokens.insert_one({
         "token": tok, "org_id": org_id, "kind": kind, "value": value,
-        "used": False, "created_at": datetime.now(timezone.utc).isoformat()})
+        "used": False, "created_at": _now.isoformat(),
+        "expires_at": (_now + timedelta(hours=72)).isoformat()})
     return tok
 
 
@@ -2574,8 +2577,10 @@ async def get_governance_settings(admin: dict = Depends(require_roles("admin")))
             "alert_channel_emails": org.get("alert_channel_emails") or [],
             "alert_channel_webhook": org.get("alert_channel_webhook") or "",
             "snooze_alerts_until": org.get("snooze_alerts_until") or "",
+            "snooze_reason": org.get("snooze_reason") or "",
             "snooze_window_start": org.get("snooze_window_start") or "",
             "snooze_window_end": org.get("snooze_window_end") or "",
+            "snooze_window_reason": org.get("snooze_window_reason") or "",
             "audit_digest_enabled": bool(org.get("audit_digest_enabled", False)),
             "audit_digest_recipients": org.get("audit_digest_recipients") or []}
 
@@ -2703,26 +2708,31 @@ async def set_governance_settings(body: GovSettingsBody, admin: dict = Depends(r
 
 class SnoozeBody(BaseModel):
     hours: int = 24
+    reason: str = ""
 
 
 @agents_router.post("/runtime/alerts/snooze")
 async def snooze_instant_alerts(body: SnoozeBody, admin: dict = Depends(require_roles("admin"))):
     """Temporarily mute instant suspicious-access alerts (e.g. during a known audit push). hours=0 resumes.
-    The mute (and resume) is written to the immutable audit log for auditor visibility."""
+    The mute (and resume) — and the admin's reason — is written to the immutable audit log for auditors."""
     from bson import ObjectId
     from datetime import datetime, timezone, timedelta
     hours = max(0, min(168, int(body.hours or 0)))
+    reason = (body.reason or "").strip()[:200]
     if hours <= 0:
-        await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$unset": {"snooze_alerts_until": ""}})
+        await db.organizations.update_one({"_id": ObjectId(admin["org_id"])},
+                                          {"$unset": {"snooze_alerts_until": "", "snooze_reason": ""}})
         await _log_audit(admin["org_id"], admin["email"], "agent.alerts_snooze_cleared",
                          "Resumed instant suspicious-access alerts")
-        return {"ok": True, "snooze_alerts_until": ""}
+        return {"ok": True, "snooze_alerts_until": "", "snooze_reason": ""}
     until = datetime.now(timezone.utc) + timedelta(hours=hours)
     iso = until.isoformat()
-    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {"snooze_alerts_until": iso}})
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])},
+                                      {"$set": {"snooze_alerts_until": iso, "snooze_reason": reason}})
     await _log_audit(admin["org_id"], admin["email"], "agent.alerts_snoozed",
-                     f"Muted instant suspicious-access alerts for {hours}h \u2014 until {iso[:19].replace('T', ' ')} UTC")
-    return {"ok": True, "snooze_alerts_until": iso, "hours": hours}
+                     f"Muted instant suspicious-access alerts for {hours}h \u2014 until {iso[:19].replace('T', ' ')} UTC"
+                     + (f" \u2014 reason: {reason}" if reason else ""))
+    return {"ok": True, "snooze_alerts_until": iso, "hours": hours, "snooze_reason": reason}
 
 
 async def _audit_rows(org_id, trusted=False):
@@ -2793,6 +2803,7 @@ async def audit_log_pdf(trusted: bool = False, admin: dict = Depends(require_rol
 class SnoozeScheduleBody(BaseModel):
     start: str | None = None
     end: str | None = None
+    reason: str = ""
 
 
 @agents_router.post("/runtime/alerts/test")
@@ -2822,17 +2833,18 @@ async def test_instant_alert(admin: dict = Depends(require_roles("admin"))):
 @agents_router.post("/runtime/alerts/snooze-schedule")
 async def schedule_snooze_window(body: SnoozeScheduleBody, admin: dict = Depends(require_roles("admin"))):
     """Pre-schedule a mute window (e.g. for a known audit date). Instant alerts are muted while now is
-    inside [start, end]. Empty start+end clears the window. Logged to the audit trail."""
+    inside [start, end]. Empty start+end clears the window. The window (and reason) is logged to the audit trail."""
     from bson import ObjectId
     from datetime import datetime, timezone, timedelta
     start = (body.start or "").strip()
     end = (body.end or "").strip()
+    reason = (body.reason or "").strip()[:200]
     if not start and not end:
         await db.organizations.update_one({"_id": ObjectId(admin["org_id"])},
-                                          {"$unset": {"snooze_window_start": "", "snooze_window_end": ""}})
+                                          {"$unset": {"snooze_window_start": "", "snooze_window_end": "", "snooze_window_reason": ""}})
         await _log_audit(admin["org_id"], admin["email"], "agent.alerts_snooze_schedule_cleared",
                          "Cleared the scheduled alert-mute window")
-        return {"ok": True, "snooze_window_start": "", "snooze_window_end": ""}
+        return {"ok": True, "snooze_window_start": "", "snooze_window_end": "", "snooze_window_reason": ""}
 
     def _p(s):
         try:
@@ -2847,26 +2859,52 @@ async def schedule_snooze_window(body: SnoozeScheduleBody, admin: dict = Depends
         raise HTTPException(400, "The mute window can't be more than ~1 year out.")
     si, ei = ds.isoformat(), de.isoformat()
     await db.organizations.update_one({"_id": ObjectId(admin["org_id"])},
-                                      {"$set": {"snooze_window_start": si, "snooze_window_end": ei}})
+                                      {"$set": {"snooze_window_start": si, "snooze_window_end": ei, "snooze_window_reason": reason}})
     await _log_audit(admin["org_id"], admin["email"], "agent.alerts_snooze_scheduled",
-                     f"Scheduled an alert-mute window {si[:16].replace('T', ' ')} \u2192 {ei[:16].replace('T', ' ')} UTC")
-    return {"ok": True, "snooze_window_start": si, "snooze_window_end": ei}
+                     f"Scheduled an alert-mute window {si[:16].replace('T', ' ')} \u2192 {ei[:16].replace('T', ' ')} UTC"
+                     + (f" \u2014 reason: {reason}" if reason else ""))
+    return {"ok": True, "snooze_window_start": si, "snooze_window_end": ei, "snooze_window_reason": reason}
 
 
 @agents_router.get("/runtime/trust-suggestion/{token}")
 async def get_trust_suggestion(token: str, admin: dict = Depends(require_roles("admin"))):
+    from datetime import datetime, timezone
     doc = await db.trust_add_tokens.find_one({"token": token, "org_id": admin["org_id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(404, "This trust link is invalid or belongs to another organization.")
-    return {"kind": doc.get("kind"), "value": doc.get("value"), "used": bool(doc.get("used"))}
+    expired = False
+    exp = doc.get("expires_at")
+    if exp:
+        try:
+            ed = datetime.fromisoformat(str(exp).replace("Z", "+00:00"))
+            if ed.tzinfo is None:
+                ed = ed.replace(tzinfo=timezone.utc)
+            expired = ed < datetime.now(timezone.utc)
+        except Exception:
+            expired = False
+    return {"kind": doc.get("kind"), "value": doc.get("value"), "used": bool(doc.get("used")),
+            "expired": expired, "expires_at": exp or ""}
 
 
 @agents_router.post("/runtime/trust-suggestion/{token}/apply")
 async def apply_trust_suggestion(token: str, admin: dict = Depends(require_roles("admin"))):
     from bson import ObjectId
+    from datetime import datetime, timezone
     doc = await db.trust_add_tokens.find_one({"token": token, "org_id": admin["org_id"]})
     if not doc:
         raise HTTPException(404, "This trust link is invalid or belongs to another organization.")
+    exp = doc.get("expires_at")
+    if exp:
+        try:
+            ed = datetime.fromisoformat(str(exp).replace("Z", "+00:00"))
+            if ed.tzinfo is None:
+                ed = ed.replace(tzinfo=timezone.utc)
+            if ed < datetime.now(timezone.utc):
+                raise HTTPException(400, "This trust link has expired. Add the rule from Governance settings instead.")
+        except HTTPException:
+            raise
+        except Exception:
+            pass
     kind, value = doc.get("kind"), (doc.get("value") or "").strip()
     if doc.get("used"):
         return {"ok": True, "already": True, "kind": kind, "value": value}
@@ -2887,6 +2925,37 @@ async def apply_trust_suggestion(token: str, admin: dict = Depends(require_roles
     return {"ok": True, "kind": kind, "value": value, "field": field}
 
 
+_AUDIT_RELAX_ACTIONS = ("trusted_rules_changed", "alerts_snoozed", "alerts_snooze_cleared",
+                        "alerts_snooze_scheduled", "alerts_snooze_schedule_cleared",
+                        "governance_settings", "alerts_test", "audit_digest")
+
+
+async def _audit_digest_rows(org_id):
+    from datetime import datetime, timezone, timedelta
+    since = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
+    return await db.audit_logs.find(
+        {"org_id": org_id, "ts": {"$gte": since}, "action": {"$regex": "|".join(_AUDIT_RELAX_ACTIONS)}},
+        {"_id": 0}).sort("ts", -1).to_list(2000)
+
+
+@agents_router.get("/runtime/audit-digest/preview")
+async def preview_audit_digest(admin: dict = Depends(require_roles("admin"))):
+    """Read-only preview of this week's control-change digest (last 7 days) before it emails the board."""
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])},
+                                          {"audit_digest_recipients": 1, "board_digest_recipients": 1}) or {}
+    rows = await _audit_digest_rows(admin["org_id"])
+    recips = [e for e in (org.get("audit_digest_recipients") or []) if e] or \
+             [e for e in (org.get("board_digest_recipients") or []) if e]
+    if not recips:
+        urows = await db.users.find({"org_id": admin["org_id"], "role": {"$in": ["admin", "executive"]}},
+                                    {"_id": 0, "email": 1}).to_list(200)
+        recips = [r["email"] for r in urows if r.get("email")]
+    return {"changes": len(rows), "recipients": recips,
+            "rows": [{"ts": r.get("ts"), "action": r.get("action"), "actor": r.get("actor"),
+                      "detail": r.get("detail")} for r in rows[:60]]}
+
+
 async def _run_audit_digest(org_id=None, on_demand=False):
     """Weekly (Monday) board email: a rollup of control-relaxing / governance audit events (who relaxed
     controls) in the last 7 days, with the branded, sealed audit PDF attached. Only for opted-in orgs
@@ -2898,8 +2967,7 @@ async def _run_audit_digest(org_id=None, on_demand=False):
     now = datetime.now(timezone.utc)
     since = (now - timedelta(days=7)).isoformat()
     week = now.strftime("%Y-%W")
-    RELAX = ("trusted_rules_changed", "alerts_snoozed", "alerts_snooze_cleared",
-             "alerts_snooze_scheduled", "alerts_snooze_schedule_cleared", "governance_settings", "alerts_test")
+    RELAX = _AUDIT_RELAX_ACTIONS
     if org_id:
         o = await db.organizations.find_one({"_id": ObjectId(org_id)},
                                             {"name": 1, "audit_digest_enabled": 1, "audit_digest_recipients": 1,

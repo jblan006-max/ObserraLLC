@@ -1,6 +1,17 @@
 # Obserra EIOS — PRD
 
 
+## Status (Jun 2026) — Trust Link Expiry + Digest Preview + Snooze Reason + Channels status line (iteration_118, backend 6/6 pytest + frontend 100%)
+User-approved 4-feature batch, all live/no-mock:
+- **Trust Link Expiry (72h)**: `_make_trust_token` now stores `expires_at = now+72h`. `GET /api/agents/runtime/trust-suggestion/{token}` returns `{kind,value,used,expired,expires_at}`; `POST …/apply` returns 400 ("This trust link has expired…") for expired tokens. `TrustSuggestionBanner` shows the expired/invalid variant.
+- **Digest Preview**: `GET /api/agents/runtime/audit-digest/preview` (admin, side-effect-free) returns `{changes, recipients, rows[{ts,action,actor,detail}]}` for the last 7 days via shared `_AUDIT_RELAX_ACTIONS` + `_audit_digest_rows()`. UI: `gov-audit-digest-preview` toggle → `gov-audit-digest-preview-panel` list (`gov-digest-preview-row-*`) with a "N change(s) · would email M recipient(s)" header.
+- **Snooze Reason**: `SnoozeBody.reason` + `SnoozeScheduleBody.reason`; stored as `snooze_reason` / `snooze_window_reason`, surfaced by `GET /governance-settings`, included in audit `detail`, and shown in the status lines. Cleared on resume / window-clear. UI: `gov-snooze-reason` + `gov-snooze-window-reason` inputs.
+- **Channels status line**: live `gov-alert-channels-status` under the Send-test-alert button — client-computed `channelSummary` ("N email(s) / all admins & execs · Slack ✓ / Teams ✓ / webhook ✓ / org chat") that updates as the alert email/webhook inputs change.
+- UX polish: after `trust-suggestion-apply` the banner does a clean same-path refresh so `gov-trusted-countries` immediately reflects the added value.
+- Regression pytest: `/app/backend/tests/test_iter118_trust_expiry_snooze_reason_digest_preview.py` (6/6). This batch used the paired-edit strategy (one agents.py edit + one different-file edit per turn) and NO drops occurred. Non-blocking pre-existing: `<option>` hydration warning in the fire-drill select. Tester cleanup done: 'Testland' removed from trusted_countries, `trust_add_tokens` purged.
+
+
+
 ## Status (Jun 2026) — Alert Test Ping + Scheduled Snooze + Weekly Audit Digest + One-click Trust link (iteration_117, backend 5/5 pytest + frontend 100%)
 User-approved 4-feature batch, all live/no-mock:
 - **Alert Test Ping**: `POST /api/agents/runtime/alerts/test` (admin) fires a real sample suspicious-access alert through the org's configured channels (specific emails + Slack/Teams webhook) or the admin/exec + org-chat fallback, via the new shared `_dispatch_suspicious_alert(org, org_id, subject, html, chat_text, dedupe_key)` helper (extracted from `_instant_suspicious_check`, returns `{emails[], webhook, chat_fallback}`). Logs `action="agent.alerts_test"`. UI: `gov-alert-test` button under the alert-channel inputs.

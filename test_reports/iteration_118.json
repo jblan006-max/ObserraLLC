@@ -1,0 +1,30 @@
+{
+  "summary": "Iteration 118 — full backend + frontend E2E for the 4 Governance-card features (trust link expiry, snooze reason instant+scheduled, digest preview, channels status line). All 6 pytest cases pass and all frontend flows pass (trust E2E, channels live update, snooze reason, scheduled snooze reason, digest preview toggle, bogus token invalid variant).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter118_trust_expiry_snooze_reason_digest_preview.py",
+    "/app/test_reports/pytest/iter118.xml"
+  ],
+  "action_items": [
+    "Main agent: clean up the applied seeded trust token (60WMUbma7oOLPXvQ-H-0uNuoX-wZ65gr is now used=true) and remove 'Testland' from trusted_countries as noted in the request.",
+    "Optional polish (not blocking): a benign React hydration warning fires from a <select><option> value binding under KillReplayDrillCard (`fire-drill…` select). Not caused by this batch, but visible in console.",
+    "Optional UX polish: after clicking `trust-suggestion-apply`, `gov-trusted-countries` input does not immediately reflect the new value (empty until governance-settings is refetched on tab reload). The API/DB persist correctly; a client-side refresh of the trusted list after apply would make the flow feel complete."
+  ],
+  "critical_code_review_comments": [
+    "GovernanceSettingsCard: channelSummary correctly detects Slack/Teams/webhook via URL sniffing and updates live — verified for Slack ✓ and Teams ✓.",
+    "preview_audit_digest is side-effect free (two successive GETs return the same `changes` count and produce no `agent.audit_digest` audit row).",
+    "apply_trust_suggestion correctly 400s expired tokens with the requested error copy 'This trust link has expired...'.",
+    "SnoozeBody.reason and SnoozeScheduleBody.reason persist in `snooze_reason` / `snooze_window_reason` and are surfaced by `GET /governance-settings` and included in audit `detail` lines."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter118_trust_expiry_snooze_reason_digest_preview.py (new)"
+  ],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "100% (all flows)"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "Test uses ephemeral TEST_-prefixed trust tokens (auto-cleaned in fixtures). Seeded token 60WMUbma7oOLPXvQ-H-0uNuoX-wZ65gr was consumed by the UI E2E (used=true, Testland now in trusted_countries) — main agent will clean up.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "test_iter118 covers: (a) future-expiry token GET returns expired=false; (b) past-expiry token GET returns expired=true AND apply 400s with 'expired' message; (c) valid-unexpired apply appends to trusted_countries and marks token used; (d) instant snooze reason persists+audits+clears on hours=0; (e) scheduled snooze reason persists+audits+clears on empty start/end; (f) digest preview returns changes/recipients/rows and is idempotent (no audit event). Frontend covered: channels status line (emails count + Slack/Teams detection), snooze reason surfacing in status line, scheduled reason surfacing in window status, preview panel toggle with rows and 'N change(s) · would email M recipient(s)' header, trust apply E2E strips ?trust from URL and persists Testland, bogus ?trust token shows invalid variant with dismiss.",
+  "rca of the issue": "N/A — no bugs found in this batch."
+}
