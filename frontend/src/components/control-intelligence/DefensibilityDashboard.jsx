@@ -105,6 +105,7 @@ function BriefSettingsCard() {
   const [digestEnabled, setDigestEnabled] = useState(false);
   const [digestDay, setDigestDay] = useState(1);
   const [digestBusy, setDigestBusy] = useState(false);
+  const [digestHistory, setDigestHistory] = useState(null);
   const [showRecapRecipients, setShowRecapRecipients] = useState(false);
 
   const refreshDemoStatus = () =>
@@ -344,10 +345,14 @@ function BriefSettingsCard() {
   const loadHistory = () =>
     api.get("/control-intelligence/auditor-link/recap/history?limit=10").then((r) => setRecapHistory(r.data.history || [])).catch(() => {});
 
+  const loadDigestHistory = () =>
+    api.get("/control-intelligence/assurance-digest/history?limit=10").then((r) => setDigestHistory(r.data.history || [])).catch(() => {});
+
   const sendDigest = async () => {
     setDigestBusy(true);
     try {
       const r = await api.post("/control-intelligence/assurance-digest/send");
+      loadDigestHistory();
       toast.success(`Monthly assurance digest emailed to ${r.data.sent} recipient(s).`);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Unable to send the assurance digest.");
@@ -843,9 +848,12 @@ function BriefSettingsCard() {
             <div className="mt-4 border-t border-border pt-3" data-testid="ci-digest-panel">
               <div className="flex items-center justify-between mb-2">
                 <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Monthly assurance digest</div>
-                <button onClick={sendDigest} disabled={digestBusy} data-testid="ci-digest-send" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-ai/40 bg-ai/10 text-ai text-[10px] font-head font-bold disabled:opacity-50">
-                  {digestBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Send className="w-2.5 h-2.5" />} Send now
-                </button>
+                <div className="flex items-center gap-2">
+                  <button onClick={loadDigestHistory} data-testid="ci-digest-history-btn" className="text-[10px] font-mono text-muted-foreground hover:text-foreground">History</button>
+                  <button onClick={sendDigest} disabled={digestBusy} data-testid="ci-digest-send" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-ai/40 bg-ai/10 text-ai text-[10px] font-head font-bold disabled:opacity-50">
+                    {digestBusy ? <Loader2 className="w-2.5 h-2.5 animate-spin" /> : <Send className="w-2.5 h-2.5" />} Send now
+                  </button>
+                </div>
               </div>
               <div className="flex flex-wrap items-center gap-2 mb-2">
                 <button
@@ -870,7 +878,18 @@ function BriefSettingsCard() {
                 />
                 <span className="text-[10px] text-muted-foreground">of each month · sent to board &amp; auditor recipients + admins · save to apply</span>
               </div>
-              <div className="text-[11px] text-muted-foreground">A board-ready monthly email rolling up 30 days of control effectiveness, framework readiness and external auditor engagement.</div>
+              <div className="text-[11px] text-muted-foreground">A board-ready monthly email — with a branded, sealed PDF attached — rolling up 30 days of control effectiveness, framework readiness and external auditor engagement.</div>
+              {digestHistory && digestHistory.length > 0 && (
+                <div data-testid="ci-digest-history" className="mt-2 space-y-1 border-t border-border/50 pt-2">
+                  <div className="text-[9px] font-mono uppercase text-muted-foreground">Recent digests sent</div>
+                  {digestHistory.map((h, i) => (
+                    <div key={i} data-testid={`ci-digest-history-${i}`} className="flex items-center justify-between text-[10px] font-mono text-muted-foreground">
+                      <span>{new Date(h.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })} · {h.trigger}</span>
+                      <span>{(h.to || []).length} recipient(s) · health {h.health}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {timeline && timeline.length > 0 && (

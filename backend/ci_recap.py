@@ -203,12 +203,57 @@ def _recap_html(org_name, rec, auditor_recipients=None):
     return "".join(parts)
 
 
+def _recap_markdown(org_name, rec):
+    rv = rec["reviewers"]
+    lines = [f"## Weekly Assurance Recap \u2014 {org_name}",
+             f"External auditor engagement over the last {rec['days']} days.",
+             "", "## Engagement",
+             f"- Portal views: {rec['views']}",
+             f"- Signed-PDF downloads: {rec['downloads']}",
+             f"- Named reviewers: {len(rv)}" + (f" ({', '.join(rv)})" if rv else "")]
+    aw = rec.get("awaiting") or []
+    if aw:
+        lines += ["", "## Viewed but not downloaded \u2014 chase these"]
+        for a in aw:
+            who = f" (viewed by {', '.join(a['viewers'])})" if a.get("viewers") else ""
+            lines.append(f"- {a['url']}{who}")
+    no = rec.get("nudged_owners") or []
+    if no:
+        lines += ["", "## Readiness nudges sent this week", f"- {', '.join(no)}"]
+    lines += ["", "## Defensibility",
+              "- Views/downloads/reviewers are FACT values from the auditor access log.",
+              "- Obserra Control Intelligence \u2014 weekly assurance recap."]
+    return "\n".join(lines)
+
+
+def _recap_pdf(org_name, rec, brand):
+    import hashlib
+    md = _recap_markdown(org_name, rec)
+    raw = _build_pdf(md, "Weekly Assurance Recap", cover=True, org_name=org_name, brand=brand).getvalue()
+    try:
+        from agent_reports import _stamp_verified_seal
+        raw = _stamp_verified_seal(raw, hashlib.sha256(md.encode()).hexdigest())
+    except Exception as e:
+        logger.warning(f"CI recap seal failed: {e}")
+    return raw
+
+
+def _recap_attachments(org, rec):
+    try:
+        org_name = (org or {}).get("name") or "Organization"
+        raw = _recap_pdf(org_name, rec, _resolve_brand(org))
+        return [{"filename": "obserra-weekly-assurance-recap.pdf", "content": base64.b64encode(raw).decode()}]
+    except Exception as e:
+        logger.warning(f"CI recap PDF build failed: {e}")
+        return []
+
+
 async def _run_ci_weekly_assurance_recap_all():
     now = datetime.now(timezone.utc)
     week = now.strftime("%Y-%W")
     weekday = now.weekday()
     orgs = await db.organizations.find(
-        {}, {"_id": 1, "name": 1, "ci_recap_enabled": 1, "ci_recap_weekday": 1}).to_list(1000)
+        {}, {"_id": 1, "name": 1, "ci_recap_enabled": 1, "ci_recap_weekday": 1, "report_branding": 1}).to_list(1000)
     for org in orgs:
         org_id = str(org["_id"])
         try:
@@ -226,10 +271,13 @@ async def _run_ci_weekly_assurance_recap_all():
             emails = sorted(role_map["board"] | role_map["auditor"])
             if not emails:
                 continue
-            html = _recap_html(org.get("name") or "Organization", rec, sorted(role_map["auditor"]))
+            org_name = org.get("name") or "Organization"
+            html = _recap_html(org_name, rec, sorted(role_map["auditor"]))
+            attachments = _recap_attachments(org, rec)
             for em in emails:
                 try:
-                    await notifications.send_email(em, f"Weekly assurance recap \u2014 {org.get('name') or 'Organization'}", html)
+                    await notifications.send_email(em, f"Weekly assurance recap \u2014 {org_name}", html,
+                                                   attachments=attachments)
                 except Exception:
                     pass
             await db.ci_sent_markers.insert_one({"marker": marker, "at": now.isoformat()})
@@ -255,17 +303,19 @@ async def auditor_recap_send(days: int = 7, admin: dict = Depends(require_roles(
     days = max(1, min(90, int(days or 7)))
     org_id = admin["org_id"]
     rec = await _auditor_recap_payload(org_id, days)
-    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1})
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1, "report_branding": 1})
     org_name = (org or {}).get("name") or "Organization"
     role_map = await _brief_role_map(org_id)
     emails = sorted(role_map["board"] | role_map["auditor"])
     if not emails:
         raise HTTPException(status_code=400, detail="No recipients configured to send to.")
     html = _recap_html(org_name, rec, sorted(role_map["auditor"]))
+    attachments = _recap_attachments(org, rec)
     sent = 0
     for em in emails:
         try:
-            await notifications.send_email(em, f"Assurance recap ({days}d) \u2014 {org_name}", html)
+            await notifications.send_email(em, f"Assurance recap ({days}d) \u2014 {org_name}", html,
+                                           attachments=attachments)
             sent += 1
         except Exception:
             pass
@@ -279,14 +329,16 @@ async def auditor_recap_test(days: int = 7, admin: dict = Depends(require_roles(
     days = max(1, min(90, int(days or 7)))
     org_id = admin["org_id"]
     rec = await _auditor_recap_payload(org_id, days)
-    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1})
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1, "report_branding": 1})
     org_name = (org or {}).get("name") or "Organization"
     role_map = await _brief_role_map(org_id)
     to = admin["email"]
     html = _recap_html(org_name, rec, sorted(role_map["auditor"]))
+    attachments = _recap_attachments(org, rec)
     sent = 0
     try:
-        await notifications.send_email(to, f"[Test copy] Assurance recap ({days}d) \u2014 {org_name}", html)
+        await notifications.send_email(to, f"[Test copy] Assurance recap ({days}d) \u2014 {org_name}", html,
+                                       attachments=attachments)
         sent = 1
     except Exception:
         pass
@@ -599,3 +651,11 @@ async def assurance_digest_send(admin: dict = Depends(require_roles("admin"))):
     if not res["to"]:
         raise HTTPException(status_code=400, detail="No recipients configured to send to.")
     return res
+
+
+@ci_router.get("/assurance-digest/history")
+async def assurance_digest_history(limit: int = 10, admin: dict = Depends(require_roles("admin"))):
+    limit = max(1, min(100, int(limit or 10)))
+    rows = await db.ci_digest_log.find(
+        {"org_id": admin["org_id"]}, {"_id": 0, "org_id": 0}).sort("at", -1).to_list(limit)
+    return {"history": rows}
