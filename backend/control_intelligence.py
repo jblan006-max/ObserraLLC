@@ -490,6 +490,7 @@ async def public_auditor_link(token: str):
     try:
         await db.ci_auditor_access.insert_one({"token": token, "org_id": org_id, "kind": "view",
                                                "who": "", "at": now.isoformat()})
+        await _maybe_alert_auditor_access(doc, "view", "")
     except Exception:
         pass
     return {
@@ -587,6 +588,7 @@ async def public_auditor_brief_pdf(token: str, who: str = ""):
                                "$set": {"last_downloaded_at": now.isoformat(), "last_downloaded_by": auditor}})
         await db.ci_auditor_access.insert_one({"token": token, "org_id": org_id, "kind": "download",
                                                "who": auditor, "at": now.isoformat()})
+        await _maybe_alert_auditor_access(doc, "download", auditor)
     except Exception:
         pass
     return StreamingResponse(io.BytesIO(raw), media_type="application/pdf",
@@ -598,3 +600,61 @@ async def auditor_link_access(limit: int = 25, admin: dict = Depends(require_rol
     limit = max(1, min(200, int(limit or 25)))
     rows = await db.ci_auditor_access.find({"org_id": admin["org_id"]}, {"_id": 0}).sort("at", -1).to_list(limit)
     return {"events": rows}
+
+
+async def _maybe_alert_auditor_access(doc, kind, who):
+    if doc.get("alerted"):
+        return
+    now = datetime.now(timezone.utc)
+    res = await db.ci_auditor_links.update_one(
+        {"token": doc["token"], "alerted": {"$ne": True}},
+        {"$set": {"alerted": True, "alerted_at": now.isoformat()}})
+    if res.modified_count == 0:
+        return
+    org_id = doc["org_id"]
+    admins = await db.users.find(
+        {"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200)
+    emails = sorted({a["email"] for a in admins if a.get("email")})
+    if not emails:
+        return
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1})
+    org_name = (org or {}).get("name") or "Organization"
+    label = "downloaded the assurance PDF" if kind == "download" else "opened the read-only auditor portal"
+    body = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:620px;margin:auto'>"
+            f"<h2 style='color:#0f1e3d'>An auditor engaged your {org_name} assurance link</h2>"
+            f"<p>An external auditor{(' (' + who + ')') if who else ''} just {label}.</p>"
+            f"<p style='font-size:11px;color:#9ca3af'>You are notified once, on first engagement with this link. "
+            f"Full open/download history is in the Defensibility tab of Control Intelligence.</p></div>")
+    for em in emails:
+        try:
+            await notifications.send_email(em, f"Auditor engaged — {org_name} Control Intelligence", body)
+        except Exception:
+            pass
+
+
+@ci_router.get("/brief.pdf")
+async def brief_pdf(admin: dict = Depends(require_roles("admin"))):
+    from fastapi.responses import StreamingResponse
+    import io
+    a = await _ci_aggregate(admin["org_id"])
+    org = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])}, {"name": 1, "report_branding": 1})
+    org_name = (org or {}).get("name") or "Organization"
+    md = _ci_brief_markdown(a)
+    title = "Control Intelligence Executive Assurance Brief"
+    pdf = _build_pdf(md, title, cover=True, org_name=org_name, brand=_resolve_brand(org))
+    return StreamingResponse(io.BytesIO(pdf.getvalue()), media_type="application/pdf",
+                             headers={"Content-Disposition": 'inline; filename="obserra-brief-preview.pdf"'})
+
+
+@ci_router.get("/muted-owners")
+async def muted_owners(admin: dict = Depends(require_roles("admin"))):
+    now = datetime.now(timezone.utc).isoformat()
+    rows = await db.users.find(
+        {"org_id": admin["org_id"], "$or": [{"ci_nudge_muted": True}, {"ci_nudge_muted_until": {"$gt": now}}]},
+        {"_id": 0, "name": 1, "email": 1, "ci_nudge_muted": 1, "ci_nudge_muted_until": 1}).to_list(500)
+    out = []
+    for u in rows:
+        indefinite = bool(u.get("ci_nudge_muted"))
+        out.append({"name": u.get("name") or u.get("email"), "email": u.get("email"),
+                    "indefinite": indefinite, "until": None if indefinite else u.get("ci_nudge_muted_until")})
+    return {"owners": out}

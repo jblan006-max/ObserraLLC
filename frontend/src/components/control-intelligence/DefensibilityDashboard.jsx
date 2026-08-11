@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import {
-  Calendar, CheckCircle2, Copy, Database, Download, Eye, Gavel, Link2, Loader2, Mail, RefreshCw, Send, ShieldCheck, Trash2, Users, X, XCircle,
+  Calendar, CheckCircle2, Copy, Database, Download, Eye, FileText, Gavel, Link2, Loader2, Mail, RefreshCw, Send, ShieldCheck, Trash2, Users, X, XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -34,7 +34,7 @@ function nextSendDate(sendDay, enabled, cadence) {
   return null;
 }
 
-function BriefPreviewModal({ html, loading, onClose }) {
+function BriefPreviewModal({ html, src, loading, onClose }) {
   return createPortal(
     <div
       className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
@@ -47,7 +47,8 @@ function BriefPreviewModal({ html, loading, onClose }) {
       >
         <div className="px-5 py-4 border-b border-border flex items-center justify-between">
           <div className="font-head font-black text-lg flex items-center gap-2">
-            <Eye className="w-4 h-4 text-ai" /> Assurance brief preview
+            {src ? <FileText className="w-4 h-4 text-ai" /> : <Eye className="w-4 h-4 text-ai" />}
+            {src ? "Branded PDF preview" : "Assurance brief preview"}
           </div>
           <button onClick={onClose} data-testid="ci-brief-preview-close" className="text-muted-foreground hover:text-foreground">
             <X className="w-5 h-5" />
@@ -58,6 +59,8 @@ function BriefPreviewModal({ html, loading, onClose }) {
             <div className="py-20 flex items-center justify-center gap-2 text-sm text-gray-500">
               <Loader2 className="w-4 h-4 animate-spin" /> Building preview…
             </div>
+          ) : src ? (
+            <iframe title="brief-pdf-preview" src={src} className="w-full h-[70vh] border-0" data-testid="ci-brief-preview-frame" />
           ) : (
             <iframe title="brief-preview" srcDoc={html} className="w-full h-[70vh] border-0" data-testid="ci-brief-preview-frame" />
           )}
@@ -80,6 +83,7 @@ function BriefSettingsCard() {
   const [sending, setSending] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewHtml, setPreviewHtml] = useState("");
+  const [previewSrc, setPreviewSrc] = useState(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [auditorLink, setAuditorLink] = useState(null);
   const [expiryDays, setExpiryDays] = useState(90);
@@ -167,6 +171,7 @@ function BriefSettingsCard() {
   };
 
   const openPreview = async () => {
+    setPreviewSrc(null);
     setPreviewOpen(true);
     setPreviewLoading(true);
     try {
@@ -179,6 +184,18 @@ function BriefSettingsCard() {
     } finally {
       setPreviewLoading(false);
     }
+  };
+
+  const openPdfPreview = () => {
+    setPreviewHtml("");
+    setPreviewLoading(false);
+    setPreviewSrc(`${process.env.REACT_APP_BACKEND_URL}/api/control-intelligence/brief.pdf`);
+    setPreviewOpen(true);
+  };
+
+  const closePreview = () => {
+    setPreviewOpen(false);
+    setPreviewSrc(null);
   };
 
   const generateLink = async (reissue) => {
@@ -462,6 +479,10 @@ function BriefSettingsCard() {
               <Eye className="w-3.5 h-3.5" />
               Preview brief
             </button>
+            <button onClick={openPdfPreview} data-testid="ci-brief-pdf-preview" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">
+              <FileText className="w-3.5 h-3.5" />
+              Preview branded PDF
+            </button>
             <button onClick={sendNow} disabled={sending} data-testid="ci-brief-send-now" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">
               {sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
               {sendLabel}
@@ -470,7 +491,7 @@ function BriefSettingsCard() {
         </div>
       )}
 
-      {previewOpen && <BriefPreviewModal html={previewHtml} loading={previewLoading} onClose={() => setPreviewOpen(false)} />}
+      {previewOpen && <BriefPreviewModal html={previewHtml} src={previewSrc} loading={previewLoading} onClose={closePreview} />}
     </Panel>
   );
 }

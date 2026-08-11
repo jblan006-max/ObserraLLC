@@ -10,19 +10,31 @@ export default function RemediationDashboard({ controls, gaps, onSelectControl, 
   const [preview, setPreview] = useState(null);
   const [pref, setPref] = useState({ muted: false, muted_until: null, active: false });
   const [muteBusy, setMuteBusy] = useState(false);
+  const [mutedOwners, setMutedOwners] = useState([]);
+
+  const refreshMuted = () => {
+    if (!isAdmin) return;
+    api
+      .get("/control-intelligence/muted-owners")
+      .then((r) => setMutedOwners(r.data.owners || []))
+      .catch(() => {});
+  };
 
   useEffect(() => {
     api
       .get("/control-intelligence/my-nudge-pref")
       .then((r) => setPref(r.data))
       .catch(() => {});
-  }, []);
+    refreshMuted();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin]);
 
   const applyPref = async (body, msg) => {
     setMuteBusy(true);
     try {
       const r = await api.put("/control-intelligence/my-nudge-pref", body);
       setPref(r.data);
+      refreshMuted();
       toast.success(msg);
     } catch (e) {
       toast.error(e.response?.data?.detail || "Unable to update your reminder preference.");
@@ -64,6 +76,28 @@ export default function RemediationDashboard({ controls, gaps, onSelectControl, 
 
   return (
     <div className="space-y-5">
+      {isAdmin && mutedOwners.length > 0 && (
+        <div data-testid="ci-muted-owners" className="rounded-xl border border-med/25 bg-med/5 p-3">
+          <div className="text-[10px] font-mono uppercase tracking-wider text-med mb-1.5 flex items-center gap-1.5">
+            <BellOff className="w-3 h-3" /> Owners with muted / snoozed reminders ({mutedOwners.length})
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {mutedOwners.map((o) => (
+              <span
+                key={o.email}
+                data-testid={`ci-muted-owner-${o.email}`}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-border bg-secondary/40 text-xs"
+              >
+                <span className="font-head font-bold">{o.name}</span>
+                <span className="text-muted-foreground">
+                  {o.indefinite ? "muted" : `snoozed until ${new Date(o.until).toLocaleDateString()}`}
+                </span>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+
       <Panel
         title="Control remediation priority"
         subtitle="MODELLED priority is derived client-side from existing status, effectiveness, maturity, drift and evidence freshness."
