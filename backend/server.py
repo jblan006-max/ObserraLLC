@@ -34,6 +34,8 @@ from risk_engine import risk_engine_router
 from connectors_catalog import connectors_router
 from control_intelligence import ci_router
 import ci_demo  # noqa: F401 — registers demo-journey routes on ci_router
+import ci_auditor  # noqa: F401 — registers auditor-link / brief-delivery / nudge-pref routes
+import ci_recap  # noqa: F401 — registers engagement follow-up / recap / timeline routes
 from sap_uac import sap_router, seed_sap_uac
 from starlette.middleware.sessions import SessionMiddleware
 

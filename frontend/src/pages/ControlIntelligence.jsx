@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   Download,
   FileCheck2,
@@ -26,6 +26,8 @@ import DefensibilityDashboard from "@/components/control-intelligence/Defensibil
 import ControlDetailModal from "@/components/control-intelligence/ControlDetailModal";
 import { useControlIntelligenceData } from "@/hooks/useControlIntelligenceData";
 import { useDemoState } from "@/hooks/useDemoState";
+import { useSearchParams } from "react-router-dom";
+import { ProspectTour } from "@/components/control-intelligence/ProspectTour";
 import { api } from "@/lib/api";
 import { boardReportBlocks } from "@/lib/controlIntelligenceModels";
 import { useAuth } from "@/context/AuthContext";
@@ -71,6 +73,23 @@ export default function ControlIntelligence() {
     setActiveTab(tab);
     localStorage.setItem("control-intelligence-tab", tab);
   };
+
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [tourOpen, setTourOpen] = useState(false);
+
+  useEffect(() => {
+    if (searchParams.get("panel") !== "demo") return undefined;
+    openTab("defensibility");
+    const t = setTimeout(() => {
+      document
+        .querySelector('[data-testid="ci-demo-journey-panel"]')
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }, 400);
+    const next = new URLSearchParams(searchParams);
+    next.delete("panel");
+    setSearchParams(next, { replace: true });
+    return () => clearTimeout(t);
+  }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const evidencePack = async (control) => {
     setBusyId(control.control_id);
@@ -199,6 +218,16 @@ export default function ControlIntelligence() {
               {demo ? "Demo: At-risk ON" : "Demo mode"}
             </button>
           )}
+          {isAdmin && (
+            <button
+              onClick={() => setTourOpen(true)}
+              data-testid="control-intel-start-walkthrough"
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-med/40 bg-med/10 text-med text-xs font-head font-bold hover:bg-med/20 transition-colors"
+            >
+              <FlaskConical className="w-3.5 h-3.5" />
+              Start walkthrough
+            </button>
+          )}
           <button
             onClick={reload}
             disabled={refreshing}
@@ -322,6 +351,8 @@ export default function ControlIntelligence() {
           onExportLog={exportLog}
         />
       )}
+
+      <ProspectTour open={tourOpen} onClose={() => setTourOpen(false)} openTab={openTab} />
     </div>
   );
 }

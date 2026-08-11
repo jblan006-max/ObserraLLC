@@ -748,7 +748,7 @@ function BriefSettingsCard() {
                     <option key={d} value={i}>{d}</option>
                   ))}
                 </select>
-                <span className="text-[10px] text-muted-foreground">Save settings to apply</span>
+                <span className="text-[10px] text-muted-foreground">Sent to your board &amp; auditor recipients (above) + admins · save to apply</span>
               </div>
               {recap ? (
                 <div data-testid="ci-recap-body" className="text-[11px] text-muted-foreground font-mono space-y-0.5">
@@ -761,7 +761,7 @@ function BriefSettingsCard() {
                   )}
                 </div>
               ) : (
-                <div className="text-[11px] text-muted-foreground">Preview the 7-day recap (auditor engagement, chase list &amp; readiness nudges), or send it to admins &amp; execs now.</div>
+                <div className="text-[11px] text-muted-foreground">Preview the 7-day recap (auditor engagement, chase list &amp; readiness nudges), or send it now to your board &amp; auditor recipients plus admins.</div>
               )}
               {recapHistory && recapHistory.length > 0 && (
                 <div data-testid="ci-recap-history" className="mt-2 space-y-1 border-t border-border/50 pt-2">
