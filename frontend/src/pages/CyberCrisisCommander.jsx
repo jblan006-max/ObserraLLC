@@ -40,6 +40,10 @@ import {
   Rss,
   Link2,
   MoreVertical,
+  Bot,
+  KeyRound,
+  Megaphone,
+  Activity,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -77,20 +81,26 @@ import {
 import { APP_VERSION_LABEL } from "@/version";
 import { CrisisTour } from "@/components/crisis/CrisisTour";
 import { NativeConnectors, WarRoomBroadcast, BoardCrisisDashboard, PresentToBoard, SitrepConsole, ConnectorHealthTile } from "@/components/crisis/CrisisExtensions";
+import { IdentityCrisisIntelligence, AIIncidentIntelligence, ExecutiveCommsCenter, ResilienceIntelligence, PostIncidentReview } from "@/components/crisis/CrisisVisionDashboards";
 
 const TABS = [
   ["mission", "Mission Control", Gauge],
   ["command", "Incident Command", Siren],
+  ["aincident", "AI Incident Intel", Bot],
+  ["identity", "Identity Crisis", KeyRound],
   ["decisions", "Decision Room", Gavel],
   ["impact", "Business Impact", Banknote],
   ["response", "Containment & Recovery", Wrench],
   ["warroom", "War Room", Users],
+  ["comms", "Comms Center", Megaphone],
   ["recovery", "Recovery", HeartPulse],
+  ["resilience", "Resilience", Activity],
   ["regulatory", "Regulatory & Legal", Scale],
   ["controls", "Control Failures", ShieldAlert],
   ["timeline", "Timeline & Evidence", GitCommitVertical],
   ["briefing", "Executive Briefing", FileText],
   ["board", "Board View", Landmark],
+  ["pir", "Post-Incident Review", ClipboardList],
   ["defensibility", "Defensibility", ShieldCheck],
 ];
 
@@ -227,6 +237,8 @@ function MissionControl({ data, selectedCase, caseDetail, openTab }) {
         <MetricCard testid="crisis-kpi-decisions" label="Decisions pending" value={response.awaitingApproval} sub={`${response.open} response actions open`} icon={Clock3} accent="266 85% 66%" onClick={() => openTab("decisions")} />
         <MetricCard testid="crisis-kpi-progress" label="Response progress" value={`${response.progress}%`} sub={`${response.verified}/${response.total} verified or complete`} kind="MODELLED" icon={CheckCircle2} accent="142 70% 45%" onClick={() => openTab("response")} />
       </div>
+
+      <ConnectorHealthTile openTab={openTab} />
 
       <div className="grid xl:grid-cols-3 gap-5">
         <Panel testid="crisis-active-command" title="Mission Control — Active Crisis Command" subtitle="Persistent crisis leadership and phase state.">
@@ -1079,7 +1091,6 @@ function WarRoom({ selectedCase, caseDetail, changed, user, live }) {
       </Panel>
       </div>
       <WarRoomChat selectedCase={selectedCase} caseDetail={caseDetail} user={user} live={live} changed={changed} />
-      <RiskyUsers selectedCase={selectedCase} changed={changed} />
     </div>
   );
 }
@@ -1661,7 +1672,7 @@ export default function CyberCrisisCommander() {
       {activeTab === "command" && <div className="space-y-5"><IncidentCommand data={effectiveData} selectedCase={selectedCase} caseDetail={caseDetail} loadCase={loadCase} changed={changed} created={created} />{canOperate && <WebhookFeed />}{canOperate && <NativeConnectors />}</div>}
       {activeTab === "decisions" && <DecisionRoom selectedCase={selectedCase} caseDetail={caseDetail} recommendations={effectiveData?.recommendations || []} decisions={effectiveData?.decisions || []} changed={changed} />}
       {activeTab === "impact" && <BusinessImpact data={effectiveData} selectedCase={selectedCase} />}
-      {activeTab === "response" && <div className="space-y-5"><ResponseActions selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} /><EntraContainment selectedCase={selectedCase} changed={changed} /></div>}
+      {activeTab === "response" && <ResponseActions selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}
       {activeTab === "warroom" && <div className="space-y-5">{canOperate && <WarRoomBroadcast selectedCase={selectedCase} changed={changed} />}{canOperate && <SitrepConsole selectedCase={selectedCase} changed={changed} />}<WarRoom selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} user={user} live={activeTab === "warroom"} /></div>}
       {activeTab === "recovery" && <RecoveryCommand selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}
       {activeTab === "regulatory" && <RegulatoryLegal selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}
@@ -1669,6 +1680,11 @@ export default function CyberCrisisCommander() {
       {activeTab === "timeline" && <TimelineEvidence selectedCase={selectedCase} caseDetail={caseDetail} data={effectiveData} changed={changed} />}
       {activeTab === "briefing" && <ExecutiveBriefing data={effectiveData} selectedCase={selectedCase} caseDetail={caseDetail} reportBusy={reportBusy} generateReport={generateReport} />}
       {activeTab === "board" && <BoardCrisisDashboard selectedCase={selectedCase} />}
+      {activeTab === "aincident" && <AIIncidentIntelligence data={effectiveData} />}
+      {activeTab === "identity" && <div className="space-y-5"><IdentityCrisisIntelligence data={effectiveData} caseDetail={caseDetail} selectedCase={selectedCase} />{canOperate && <RiskyUsers selectedCase={selectedCase} changed={changed} />}{canOperate && <EntraContainment selectedCase={selectedCase} changed={changed} />}</div>}
+      {activeTab === "comms" && <ExecutiveCommsCenter data={effectiveData} selectedCase={selectedCase} />}
+      {activeTab === "resilience" && <ResilienceIntelligence data={effectiveData} caseDetail={caseDetail} />}
+      {activeTab === "pir" && <PostIncidentReview data={effectiveData} selectedCase={selectedCase} caseDetail={caseDetail} generatePIR={generatePIR} pirBusy={pirBusy} />}
       {activeTab === "defensibility" && <Defensibility data={effectiveData} sourceStatus={sourceStatus} />}
 
       <CrisisTour open={tourOpen} onClose={() => setTourOpen(false)} openTab={openTab} />

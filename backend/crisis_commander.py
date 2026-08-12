@@ -2925,13 +2925,27 @@ async def director_digest_send_now(user: dict = Depends(get_current_user)):
 
 
 async def run_weekly_director_digest(org_id: str | None = None) -> int:
+    """Called hourly; self-gates each org to its chosen UTC weekday+hour (weekly),
+    unless invoked for a specific org_id (manual/test) which bypasses the gate."""
     from bson import ObjectId
+    now = datetime.now(timezone.utc)
     orgs_q: dict = {"crisis_settings.director_digest": True}
     if org_id:
         orgs_q["_id"] = ObjectId(org_id)
     total = 0
-    async for org in db.organizations.find(orgs_q, {"_id": 1}):
+    async for org in db.organizations.find(orgs_q, {"_id": 1, "crisis_settings": 1}):
+        s = org.get("crisis_settings") or {}
+        if not org_id:
+            wd = int(s.get("director_digest_weekday") if s.get("director_digest_weekday") is not None else 0)
+            hr = int(s.get("director_digest_hour") if s.get("director_digest_hour") is not None else 8)
+            if now.weekday() != wd or now.hour != hr:
+                continue
+            last = _parse_iso(s.get("director_digest_last_sent"))
+            if last and (now - last).total_seconds() < 6 * 24 * 3600:
+                continue
         sent, _n = await _send_director_digest(str(org["_id"]))
+        await db.organizations.update_one(
+            {"_id": org["_id"]}, {"$set": {"crisis_settings.director_digest_last_sent": now.isoformat()}})
         total += sent
     return total
 
@@ -3000,3 +3014,65 @@ async def connector_quiet_check(user: dict = Depends(get_current_user)):
     return {"threshold_hours": s["connector_quiet_hours"],
             "business_hours": _within_business_hours(),
             "enabled": s["connector_quiet"], "quiet": quiet}
+
+
+# ===========================================================================
+# SITREP note templates — reusable snippets operators can drop into a SITREP
+# during a live crisis (e.g. legal-hold, customer-comms). Seeded with defaults.
+# ===========================================================================
+_DEFAULT_SITREP_TEMPLATES = [
+    {"id": "legal-hold", "label": "Legal hold", "text": "Legal hold in effect — preserve all logs, endpoints and mailboxes tied to this incident. Do not delete or alter evidence; route external comms through Legal."},
+    {"id": "customer-comms", "label": "Customer comms", "text": "Customer-facing update pending — hold all external statements until Comms + Legal approve. Holding statement in draft; support scripts to follow."},
+    {"id": "exec-sync", "label": "Exec sync", "text": "Next executive sync scheduled — bridge line open. Decisions required from leadership are listed above; owners please arrive with options and impact."},
+    {"id": "containment", "label": "Containment update", "text": "Containment actions underway — affected systems isolated. Monitoring for lateral movement; recovery sequencing begins once eradication is validated."},
+]
+
+
+async def _org_sitrep_templates(org_id: str) -> list:
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"crisis_sitrep_templates": 1}) or {}
+    t = org.get("crisis_sitrep_templates")
+    return list(_DEFAULT_SITREP_TEMPLATES) if t is None else t
+
+
+@api.get("/sitrep/templates")
+async def sitrep_templates(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    return {"templates": await _org_sitrep_templates(user["org_id"])}
+
+
+class SitrepTemplateBody(BaseModel):
+    label: str = Field(min_length=1, max_length=80)
+    text: str = Field(min_length=1, max_length=500)
+
+
+@api.post("/sitrep/templates")
+async def add_sitrep_template(body: SitrepTemplateBody, user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    import secrets as _s
+    _require_operator(user)
+    org_id = user["org_id"]
+    templates = [t for t in await _org_sitrep_templates(org_id)
+                 if t.get("label", "").strip().lower() != body.label.strip().lower()]
+    templates.append({"id": _s.token_hex(4), "label": body.label.strip(), "text": body.text.strip()})
+    await db.organizations.update_one({"_id": ObjectId(org_id)}, {"$set": {"crisis_sitrep_templates": templates}})
+    await _audit(org_id, _actor(user), "crisis.sitrep_template_add", body.label.strip())
+    return {"templates": templates}
+
+
+@api.delete("/sitrep/templates/{tid}")
+async def delete_sitrep_template(tid: str, user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    _require_operator(user)
+    org_id = user["org_id"]
+    templates = [t for t in await _org_sitrep_templates(org_id) if t.get("id") != tid]
+    await db.organizations.update_one({"_id": ObjectId(org_id)}, {"$set": {"crisis_sitrep_templates": templates}})
+    await _audit(org_id, _actor(user), "crisis.sitrep_template_delete", tid)
+    return {"templates": templates}
+
+
+@api.get("/director-digest/preview")
+async def director_digest_preview(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    html, n = await _build_director_digest(user["org_id"])
+    return {"html": html or "", "crises": n}

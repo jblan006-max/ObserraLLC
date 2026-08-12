@@ -107,7 +107,7 @@ export function NativeConnectors() {
   return (
     <Section testid="crisis-native-connectors" title="Native SIEM / EDR Connectors"
       subtitle="One paste to onboard a tool — each URL already carries the vendor field-mapping and your per-org secret. No transformation needed on the tool's side."
-      actions={<button onClick={() => setReveal((v) => !v)} data-testid="crisis-native-reveal" className="px-2.5 py-1.5 rounded-md border border-border bg-secondary/40 text-[10px] font-mono">{reveal ? "Hide secrets" : "Show secrets"}</button>}>
+      actions={<div className="flex items-center gap-2"><ConnectorWizard /><button onClick={() => setReveal((v) => !v)} data-testid="crisis-native-reveal" className="px-2.5 py-1.5 rounded-md border border-border bg-secondary/40 text-[10px] font-mono">{reveal ? "Hide secrets" : "Show secrets"}</button></div>}>
       <div className="grid gap-3 md:grid-cols-2">
         {(data.connectors || []).map((c) => {
           const url = `${BASE}${c.path}`;
@@ -416,7 +416,22 @@ export function SitrepConsole({ selectedCase, changed }) {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [sending, setSending] = useState(false);
+  const [templates, setTemplates] = useState([]);
   const ref = selectedCase?.ref;
+  useEffect(() => {
+    api.get("/crisis/sitrep/templates").then((r) => setTemplates(r.data.templates || [])).catch(() => {});
+  }, []);
+  const saveAsTemplate = async () => {
+    const text = note.trim();
+    if (!text) { toast.error("Write a note first, then save it as a template."); return; }
+    const label = (window.prompt("Template name?", text.slice(0, 40)) || "").trim();
+    if (!label) return;
+    try {
+      const { data } = await api.post("/crisis/sitrep/templates", { label, text });
+      setTemplates(data.templates || []);
+      toast.success(`Saved template "${label}".`);
+    } catch (e) { toast.error(e.response?.data?.detail || "Unable to save template."); }
+  };
   const load = useCallback(async () => {
     if (!ref) { setPreview(null); return; }
     setLoading(true);
@@ -458,7 +473,17 @@ export function SitrepConsole({ selectedCase, changed }) {
           <pre data-testid="crisis-sitrep-preview" className="whitespace-pre-wrap text-xs bg-background border border-border rounded-md p-3 font-mono leading-relaxed">{loading ? "Loading…" : (preview || "—")}</pre>
         </div>
         <div>
-          <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1">Custom note (added to every SITREP)</div>
+          <div className="flex items-center justify-between gap-2 mb-1">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Custom note (added to every SITREP)</div>
+            <button onClick={saveAsTemplate} data-testid="crisis-sitrep-save-template" className="text-[10px] font-head font-bold text-ai hover:underline">Save as template</button>
+          </div>
+          {templates.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2" data-testid="crisis-sitrep-templates">
+              {templates.map((t) => (
+                <button key={t.id} onClick={() => setNote((n) => (n ? n + " · " : "") + t.text)} data-testid={`crisis-sitrep-tpl-${t.id}`} title={t.text} className="px-2 py-1 rounded-full border border-border bg-secondary/50 text-[10px] font-head font-bold hover:bg-secondary">+ {t.label}</button>
+              ))}
+            </div>
+          )}
           <textarea value={note} onChange={(e) => setNote(e.target.value)} data-testid="crisis-sitrep-note" rows={2}
             placeholder="e.g. Bridge line open +1-555-0100 · Legal engaged · Next exec sync 14:00 UTC"
             className="w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary resize-y" />
@@ -476,20 +501,27 @@ export function SitrepConsole({ selectedCase, changed }) {
 // Weekly Director Digest — opt-in weekly board rollup of all open crises.
 // ---------------------------------------------------------------------------
 export function DirectorDigest() {
-  const [enabled, setEnabled] = useState(false);
+  const [s, setS] = useState({ director_digest: false, director_digest_weekday: 0, director_digest_hour: 8 });
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);
-  useEffect(() => {
-    api.get("/crisis/settings").then((r) => setEnabled(!!r.data.director_digest)).catch(() => {});
+  const [preview, setPreview] = useState(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const load = useCallback(async () => {
+    try { const r = await api.get("/crisis/settings"); setS(r.data); } catch { /* operator-only */ }
   }, []);
-  const toggle = async () => {
+  useEffect(() => { load(); }, [load]);
+  const patch = async (partial, msg) => {
     setBusy(true);
-    try {
-      const { data } = await api.post("/crisis/settings", { director_digest: !enabled });
-      setEnabled(!!data.director_digest);
-      toast.success(data.director_digest ? "Weekly director digest enabled." : "Weekly director digest disabled.");
-    } catch (e) { toast.error(e.response?.data?.detail || "Unable to update."); }
+    try { const { data } = await api.post("/crisis/settings", partial); setS(data); if (msg) toast.success(msg); }
+    catch (e) { toast.error(e.response?.data?.detail || "Unable to update."); }
     finally { setBusy(false); }
+  };
+  const openPreview = async () => {
+    try {
+      const { data } = await api.get("/crisis/director-digest/preview");
+      if (!data.crises) { toast.message("No open crises to include right now."); return; }
+      setPreview(data.html); setShowPreview(true);
+    } catch (e) { toast.error(e.response?.data?.detail || "Preview failed."); }
   };
   const sendNow = async () => {
     setSending(true);
@@ -500,14 +532,32 @@ export function DirectorDigest() {
     } catch (e) { toast.error(e.response?.data?.detail || "Send failed."); }
     finally { setSending(false); }
   };
+  const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
   return (
     <Section testid="crisis-director-digest" title="Weekly Director Digest"
-      subtitle="Email board members a weekly rollup of every open crisis — severity, containment %, decisions pending and exposure.">
-      <div className="flex items-center gap-2.5 flex-wrap">
-        <button onClick={toggle} disabled={busy} data-testid="crisis-digest-toggle" className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-head font-bold disabled:opacity-50 ${enabled ? "border-low/40 bg-low/15 text-low" : "border-border bg-secondary/40"}`}>{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}{enabled ? "Weekly digest: On" : "Weekly digest: Off"}</button>
-        <button onClick={sendNow} disabled={sending} data-testid="crisis-digest-send-now" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}Send now</button>
-        <span className="text-[11px] text-muted-foreground">Delivered to admins, executives &amp; owners.</span>
+      subtitle="Email board members a weekly rollup of every open crisis — pick the day &amp; time, preview it, then switch it on.">
+      <div className="space-y-3">
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <span className="text-[11px] font-mono text-muted-foreground">Send every</span>
+          <select value={s.director_digest_weekday} onChange={(e) => patch({ director_digest_weekday: Number(e.target.value) })} data-testid="crisis-digest-weekday" className="px-2 py-1.5 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">{DAYS.map((d, i) => <option key={i} value={i}>{d}</option>)}</select>
+          <span className="text-[11px] font-mono text-muted-foreground">at</span>
+          <select value={s.director_digest_hour} onChange={(e) => patch({ director_digest_hour: Number(e.target.value) })} data-testid="crisis-digest-hour" className="px-2 py-1.5 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">{Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00 UTC</option>)}</select>
+        </div>
+        <div className="flex items-center gap-2.5 flex-wrap">
+          <button onClick={() => patch({ director_digest: !s.director_digest }, !s.director_digest ? "Weekly director digest enabled." : "Weekly director digest disabled.")} disabled={busy} data-testid="crisis-digest-toggle" className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-head font-bold disabled:opacity-50 ${s.director_digest ? "border-low/40 bg-low/15 text-low" : "border-border bg-secondary/40"}`}>{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}{s.director_digest ? "Weekly digest: On" : "Weekly digest: Off"}</button>
+          <button onClick={openPreview} data-testid="crisis-digest-preview" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold"><Presentation className="w-3.5 h-3.5" />Preview</button>
+          <button onClick={sendNow} disabled={sending} data-testid="crisis-digest-send-now" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}Send now</button>
+          <span className="text-[11px] text-muted-foreground">To admins, executives &amp; owners.</span>
+        </div>
       </div>
+      {showPreview && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" data-testid="crisis-digest-preview-modal" onClick={() => setShowPreview(false)}>
+          <div className="bg-white rounded-xl w-full max-w-2xl max-h-[85vh] overflow-auto p-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-end mb-2"><button onClick={() => setShowPreview(false)} data-testid="crisis-digest-preview-close" className="text-slate-500 text-sm">✕ Close</button></div>
+            <div dangerouslySetInnerHTML={{ __html: preview }} />
+          </div>
+        </div>
+      )}
     </Section>
   );
 }
