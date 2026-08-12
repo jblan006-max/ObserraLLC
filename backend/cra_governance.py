@@ -785,3 +785,279 @@ async def portal_external_signoff(raw_token: str, external_ref: str, body: Exter
     await db.cra_external_assessments.update_one({"org_id":token["org_id"],"ref":external_ref},{"$set":update})
     await ledger_append(token["org_id"],token.get("invited_email") or body.assessor_name,"external_assessment.signed","external_assessment",external_ref,["Article 32","Articles 35-51","Annex VIII"],update)
     return await db.cra_external_assessments.find_one({"org_id":token["org_id"],"ref":external_ref},{"_id":0})
+
+
+# ===========================================================================
+# CRA-grounded AI Analyst — a concise executive summary of the org's live EU
+# CRA posture (classification, overdue Article 14 clocks, CE blockers). Grounded
+# strictly in the live CRA records; never mentions unrelated governance domains.
+# ===========================================================================
+_CRA_INSIGHT_CACHE: dict = {}
+
+
+async def _cra_insight_context(org_id: str) -> dict:
+    products = await db.cra_products.find({"org_id": org_id}, {"_id": 0}).to_list(1000)
+    assessments = await db.cra_assessments.find({"org_id": org_id}, {"_id": 0}).to_list(1000)
+    vulnerabilities = await db.cra_vulnerabilities.find({"org_id": org_id}, {"_id": 0}).to_list(1000)
+    sbom_refs = {s.get("product_ref") for s in await db.cra_sboms.find({"org_id": org_id}, {"_id": 0, "product_ref": 1}).to_list(2000)}
+    latest_assessment = {}
+    for a in sorted(assessments, key=lambda x: x.get("updated_at", ""), reverse=True):
+        latest_assessment.setdefault(a.get("product_ref"), a)
+    by_class = {"Default": 0, "Class I": 0, "Class II": 0, "Critical": 0}
+    approved = ce_ready = 0
+    blockers = []
+    for p in products:
+        cl = p.get("classification") or {}
+        cls = cl.get("classification", "Default")
+        by_class[cls] = by_class.get(cls, 0) + 1
+        if cl.get("classification_status") == "Approved":
+            approved += 1
+        if p.get("ce_status") == "Ready":
+            ce_ready += 1
+        prod_blk = []
+        if cl.get("classification_status") != "Approved":
+            prod_blk.append("classification not approved")
+        la = latest_assessment.get(p["ref"])
+        if not la or la.get("status") != "Complete":
+            prod_blk.append("readiness assessment incomplete")
+        if p["ref"] not in sbom_refs:
+            prod_blk.append("no SBOM")
+        if (p.get("declaration") or {}).get("status") != "Approved":
+            prod_blk.append("EU declaration not approved")
+        if prod_blk:
+            blockers.append({"product": p["name"], "ref": p["ref"], "classification": cls, "blockers": prod_blk})
+    overdue = []
+    for v in vulnerabilities:
+        for st in reporting_clock(v).get("stages", []):
+            if st.get("overdue"):
+                overdue.append({"product": v.get("product_name"), "vuln": v.get("ref"), "title": v.get("title"),
+                                "stage": st["stage"], "hours_overdue": round(-st.get("hours_remaining", 0), 1)})
+    scores = [a.get("score", 0) for a in assessments if a.get("score") is not None]
+    return {
+        "regulation": CRA_VERSION,
+        "reporting_effective_date": REPORTING_EFFECTIVE_DATE,
+        "general_application_date": GENERAL_APPLICATION_DATE,
+        "totals": {"products": len(products), "classification_approved": approved, "ce_ready": ce_ready,
+                   "average_readiness": round(sum(scores) / len(scores)) if scores else 0},
+        "by_class": by_class,
+        "ce_blockers": blockers[:20],
+        "overdue_article14": overdue[:20],
+        "counts": {"products": len(products), "blocked": len(blockers), "overdue_clocks": len(overdue),
+                   "assessments": len(assessments), "vulnerabilities": len(vulnerabilities)},
+    }
+
+
+def _cra_insight_fallback(ctx: dict) -> dict:
+    t = ctx["totals"]
+    insights = [{"text": f"{t['products']} product(s) under CRA governance — {t['classification_approved']} with an approved classification, {t['ce_ready']} CE market-ready. Class split: {ctx['by_class']}.", "kind": "fact"}]
+    if ctx["overdue_article14"]:
+        top = ctx["overdue_article14"][0]
+        insights.append({"text": f"{len(ctx['overdue_article14'])} Article 14 reporting stage(s) are OVERDUE — e.g. {top['product']} · {top['stage']} ({top['hours_overdue']}h past deadline).", "kind": "risk"})
+    else:
+        insights.append({"text": "No Article 14 reporting stages are currently overdue.", "kind": "fact"})
+    if ctx["ce_blockers"]:
+        insights.append({"text": f"{len(ctx['ce_blockers'])} product(s) have open CE-marking blockers (classification approval, readiness assessment, SBOM or EU declaration).", "kind": "estimate"})
+    insights.append({"text": f"Average regulation-mapped readiness across assessments is {t['average_readiness']}%.", "kind": "estimate"})
+    actions = []
+    if ctx["overdue_article14"]:
+        actions.append("Resolve overdue Article 14 reporting stages first — they carry statutory deadlines.")
+    if ctx["ce_blockers"]:
+        actions.append("Clear CE-marking blockers: approve classifications, complete assessments, generate SBOMs and approve EU declarations.")
+    actions.append("Review products still on a Proposed classification and record formal approval.")
+    return {"headline": f"{t['products']} products under EU CRA governance · {ctx['counts']['blocked']} with CE blockers · {ctx['counts']['overdue_clocks']} overdue Article 14 clocks",
+            "insights": insights[:5], "actions": actions[:4], "model": "obserra/cra-grounded", "generated_at": iso()}
+
+
+@cra_router.get("/insight")
+async def cra_insight(user: dict = Depends(get_current_user)):
+    import os
+    import asyncio
+    org_id = user["org_id"]
+    ctx = await _cra_insight_context(org_id)
+    ck = (org_id, ctx["counts"]["products"], ctx["counts"]["blocked"], ctx["counts"]["overdue_clocks"],
+          ctx["totals"]["classification_approved"], ctx["totals"]["ce_ready"], ctx["totals"]["average_readiness"])
+    hit = _CRA_INSIGHT_CACHE.get(ck)
+    if hit and (utcnow() - hit["ts"]).total_seconds() < 120:
+        return hit["data"]
+    if ctx["counts"]["products"] == 0:
+        data = {"headline": "No products under EU CRA governance yet.",
+                "insights": [{"text": "Register a product with digital elements to begin CRA classification, assessment and CE readiness.", "kind": "fact"}],
+                "actions": ["Register your first product from Products & Classification.", "Load sample products to explore the workflow."],
+                "model": "obserra/cra-grounded", "generated_at": iso()}
+        _CRA_INSIGHT_CACHE[ck] = {"ts": utcnow(), "data": data}
+        return data
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
+        system = (
+            "You are the Obserra EU CRA Governance AI Analyst. Read the LIVE EU Cyber Resilience Act posture JSON "
+            "and return a concise, executive compliance briefing STRICTLY as JSON: {\"headline\": str, \"insights\": "
+            "[{\"text\": str, \"kind\": one of \"fact\"|\"estimate\"|\"risk\"}], \"actions\": [str]}. 3-5 insights, "
+            "2-4 actions. Ground EVERY statement in the data — cite product counts, classification split, named CE "
+            "blockers and overdue Article 14 reporting stages with hours overdue. This is EU CRA (Regulation (EU) "
+            "2024/2847) product-compliance guidance: NEVER mention SAP access, SoD conflicts, cyber-incident crisis "
+            "data or any unrelated governance domain. Return ONLY the JSON object.")
+        chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"cra-insight-{org_id}",
+                       system_message=system).with_model("openai", "gpt-5.4")
+        prompt = f"LIVE EU CRA POSTURE (JSON):\n{json.dumps(ctx, default=str)[:9000]}"
+        collected = []
+
+        async def _run():
+            async for ev in chat.stream_message(UserMessage(text=prompt)):
+                if isinstance(ev, TextDelta):
+                    collected.append(ev.content)
+                elif isinstance(ev, StreamDone):
+                    break
+        await asyncio.wait_for(_run(), timeout=16)
+        raw = "".join(collected).strip()
+        m = re.search(r"\{.*\}", raw, re.S)
+        parsed = json.loads(m.group(0)) if m else None
+        if not parsed or not parsed.get("insights"):
+            data = _cra_insight_fallback(ctx)
+        else:
+            parsed.setdefault("actions", [])
+            parsed["model"] = "openai/gpt-5.4"
+            parsed["generated_at"] = iso()
+            data = parsed
+    except Exception:
+        data = _cra_insight_fallback(ctx)
+    _CRA_INSIGHT_CACHE[ck] = {"ts": utcnow(), "data": data}
+    return data
+
+
+# ===========================================================================
+# Sample products — create a small set of REAL, editable CRA product records so
+# the dashboard tells a fuller story on first open. Idempotent; marked sample:True.
+# ===========================================================================
+_SAMPLE_PRODUCTS = [
+    {"name": "Aegis Identity Broker", "version": "4.1", "manufacturer_name": "Aegis Security GmbH",
+     "description": "Enterprise identity and privileged access management with biometric authentication readers.",
+     "core_functionality": "identity management and privileged access management with authentication", "category_codes": ["I-01"], "support_period_years": 8},
+    {"name": "Sentinel Web Firewall", "version": "12.0", "manufacturer_name": "Sentinel Networks Ltd",
+     "description": "Next-generation firewall with intrusion detection and prevention.",
+     "core_functionality": "firewall intrusion detection and prevention system", "category_codes": ["II-02"], "support_period_years": 7},
+    {"name": "HomeGuard Smart Lock", "version": "2.3", "manufacturer_name": "HomeGuard IoT S.A.",
+     "description": "Connected smart door lock with companion mobile app and security camera integration.",
+     "core_functionality": "smart lock and smart home security device", "category_codes": ["I-17"], "support_period_years": 5},
+    {"name": "VaultCore Secure Element", "version": "1.0", "manufacturer_name": "VaultCore Microelectronics",
+     "description": "Tamper-resistant secure element for cryptographic key storage.",
+     "core_functionality": "secure element with secure cryptoprocessing", "category_codes": ["CRIT-03"], "support_period_years": 10},
+    {"name": "NoteFlow Productivity Suite", "version": "3.5", "manufacturer_name": "NoteFlow Software Inc.",
+     "description": "Team note-taking and productivity application.",
+     "core_functionality": "note taking and productivity", "category_codes": [], "support_period_years": 5},
+]
+
+
+async def _seed_sample_product(org_id: str, actor: str, spec: dict) -> dict:
+    ref = await next_ref(org_id, "product", "CRA-PROD")
+    body = ProductCreate(**spec)
+    product = {"org_id": org_id, "ref": ref, **body.model_dump(), "classification": {}, "ce_status": "Not Ready",
+               "declaration": None, "sample": True, "created_at": iso(), "updated_at": iso(), "created_by": actor}
+    result = classify_product_record(product)
+    product["classification"] = result
+    await db.cra_products.insert_one(product)
+    product.pop("_id", None)
+    await ledger_append(org_id, actor, "product.created", "product", ref, ["Article 13", "Article 31"], {"name": body.name, "version": body.version, "sample": True})
+    await ledger_append(org_id, actor, "classification.proposed", "product", ref, result["legal_refs"], result)
+    return product
+
+
+@cra_router.post("/demo/seed")
+async def seed_sample_products(admin: dict = Depends(require_roles("admin"))):
+    org_id = admin["org_id"]
+    actor = admin.get("email", "unknown")
+    if await db.cra_products.find_one({"org_id": org_id, "sample": True}, {"_id": 0, "ref": 1}):
+        return {"ok": True, "created": 0, "note": "Sample products already present."}
+    created = []
+    for spec in _SAMPLE_PRODUCTS:
+        p = await _seed_sample_product(org_id, actor, spec)
+        created.append(p["ref"])
+    if created:
+        first = created[0]
+        aref = await next_ref(org_id, "assessment", "CRA-ASMT")
+        answers = [{"requirement_id": r["requirement_id"], "status": "Conforming" if i % 3 else "Partial", "evidence_refs": [], "comment": ""} for i, r in enumerate(REGULATORY_REQUIREMENTS)]
+        score = assessment_score(answers)
+        await db.cra_assessments.insert_one({"org_id": org_id, "ref": aref, "product_ref": first, "product_name": _SAMPLE_PRODUCTS[0]["name"], "answers": answers, "score": score, "status": "In Progress", "sample": True, "created_at": iso(), "updated_at": iso(), "created_by": actor})
+        await ledger_append(org_id, actor, "assessment.initialized", "assessment", aref, ["Article 6", "Article 13", "Annex I", "Annex VII"], {"product_ref": first, "sample": True})
+        pfirst = await get_product(org_id, first)
+        comps = parse_manifest("requirements.txt", "fastapi==0.110\npydantic>=2.0\nmotor==3.4\ncryptography==42.0")
+        sref = await next_ref(org_id, "sbom", "CRA-SBOM")
+        await db.cra_sboms.insert_one({"org_id": org_id, "ref": sref, "product_ref": first, "product_version": pfirst.get("version"), "format": "cyclonedx-json", "component_count": len(comps), "components": comps, "document": cyclonedx_document(pfirst, comps), "sample": True, "created_at": iso(), "created_by": actor})
+        await ledger_append(org_id, actor, "sbom.generated", "sbom", sref, ["Annex I Part II(1)"], {"product_ref": first, "format": "cyclonedx-json", "component_count": len(comps), "sample": True})
+    await audit(org_id, actor, "cra.demo.seed", f"{len(created)} sample products")
+    return {"ok": True, "created": len(created), "product_refs": created}
+
+
+@cra_router.delete("/demo/seed")
+async def clear_sample_products(admin: dict = Depends(require_roles("admin"))):
+    org_id = admin["org_id"]
+    refs = [p["ref"] for p in await db.cra_products.find({"org_id": org_id, "sample": True}, {"_id": 0, "ref": 1}).to_list(1000)]
+    await db.cra_products.delete_many({"org_id": org_id, "sample": True})
+    await db.cra_assessments.delete_many({"org_id": org_id, "sample": True})
+    await db.cra_sboms.delete_many({"org_id": org_id, "sample": True})
+    await db.cra_vulnerabilities.delete_many({"org_id": org_id, "sample": True})
+    await audit(org_id, admin.get("email", "unknown"), "cra.demo.clear", f"{len(refs)} sample products")
+    return {"ok": True, "removed": len(refs)}
+
+
+# ===========================================================================
+# Auditor verification link — a one-click, tamper-evident public link a notified
+# body can use to independently confirm a product's CRA compliance timeline and
+# ledger-chain integrity. The private Internal Regulatory Ledger data is redacted.
+# ===========================================================================
+async def _verify_ledger_chain(org_id: str):
+    rows = await db.cra_regulatory_ledger.find({"org_id": org_id}, {"_id": 0}).sort("sequence", 1).to_list(100000)
+    intact, break_at, prev = True, None, ""
+    for r in rows:
+        payload = {k: v for k, v in r.items() if k != "record_hash"}
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
+        recomputed = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        if recomputed != r.get("record_hash", "") or r.get("prev_hash", "") != prev:
+            intact, break_at = False, r.get("sequence")
+            break
+        prev = r.get("record_hash", "")
+    return {"chain_intact": intact, "records_verified": len(rows), "break_at_sequence": break_at}, rows
+
+
+@cra_router.post("/products/{ref}/verification-link")
+async def create_verification_link(ref: str, admin: dict = Depends(require_roles("admin"))):
+    org_id = admin["org_id"]
+    await get_product(org_id, ref)
+    issued = await issue_portal_token(org_id, ref, "auditor", None, None, "", 720, admin.get("email", "unknown"))
+    await ledger_append(org_id, admin.get("email", "unknown"), "verification_link.issued", "product", ref, ["Article 28", "Article 31"], {"expires_at": issued["expires_at"]})
+    return {"token": issued["token"], "expires_at": issued["expires_at"], "path": f"/cra-verify/{issued['token']}"}
+
+
+@cra_public_router.get("/verify/{raw_token}")
+async def public_verify(raw_token: str):
+    token = await verify_portal_token(raw_token)
+    if token.get("role") != "auditor":
+        raise HTTPException(403, "This link is not an auditor verification link")
+    org_id = token["org_id"]
+    product = await get_product(org_id, token["product_ref"])
+    integrity, rows = await _verify_ledger_chain(org_id)
+    pref = token["product_ref"]
+    timeline = [
+        {"sequence": r["sequence"], "ts": r["ts"], "event_type": r["event_type"], "object_type": r["object_type"],
+         "object_ref": r["object_ref"], "legal_refs": r.get("legal_refs", []), "actor": r.get("actor"),
+         "record_hash": r.get("record_hash"), "prev_hash": r.get("prev_hash")}
+        for r in rows
+        if r.get("object_ref") == pref or (isinstance(r.get("data"), dict) and r["data"].get("product_ref") == pref)
+    ]
+    cl = product.get("classification") or {}
+    return {
+        "role": "auditor",
+        "expires_at": token["expires_at"].isoformat(),
+        "regulation": CRA_VERSION,
+        "classification_implementing_regulation": CLASSIFICATION_VERSION,
+        "verified_at": iso(),
+        "product": {"ref": product["ref"], "name": product["name"], "version": product.get("version"),
+                    "manufacturer_name": product["manufacturer_name"],
+                    "classification": cl.get("classification", "Default"),
+                    "classification_status": cl.get("classification_status", "Proposed"),
+                    "pathway": (cl.get("pathway") or {}).get("pathway"),
+                    "ce_status": product.get("ce_status"),
+                    "declaration_status": (product.get("declaration") or {}).get("status")},
+        "integrity": integrity,
+        "timeline": timeline,
+        "note": "Read-only, tamper-evident verification view. The private Internal Regulatory Ledger payloads are not exposed; only event metadata and hash-chain integrity are shown.",
+    }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the Obserra SAP UAC guides as PDF and Word (.docx).
+"""Generate the Obserra EU CRA Governance guides as PDF and Word (.docx).
 
 Produces three role-targeted guides from ONE set of sections + screenshots:
   - Install & User Guide  (full)      -> Obserra-EU-CRA-Governance-Install-and-User-Guide.{pdf,docx}
@@ -21,7 +21,7 @@ os.makedirs(OUT, exist_ok=True)
 NAVY = "#0f1e3d"
 AI = "#12b4d6"
 BRAND = "Obserra EU CRA Governance"
-TAGLINE = "EU Cyber Resilience Act (Regulation (EU) 2024/2847) product governance"
+TAGLINE = "European Union Cyber Resilience Act (Regulation (EU) 2024/2847) product governance"
 
 E, A = "exec", "admin"      # audience tags
 ALL = (E, A)
@@ -30,15 +30,17 @@ ALL = (E, A)
 SECTIONS = [
     ("About Obserra EU CRA Governance", [
         "Obserra EU CRA Governance helps manufacturers, importers and distributors bring products "
-        "with digital elements into conformity with the EU Cyber Resilience Act (Regulation (EU) "
-        "2024/2847). It gives compliance, security and executive teams a single live view of product "
-        "classification, regulation-mapped readiness, SBOMs, Article 14 vulnerability reporting clocks, "
-        "notified-body sign-off and CE Declaration of Conformity.",
+        "with digital elements into conformity with the European Union Cyber Resilience Act "
+        "(Regulation (EU) 2024/2847). It gives compliance, security and executive teams a single live "
+        "view of product classification, regulation-mapped readiness, software bills of materials "
+        "(SBOMs), Article 14 vulnerability and incident reporting clocks, notified-body sign-off and "
+        "the EU Declaration of Conformity that underpins CE marking.",
         "Every fact is computed LIVE from the underlying product records (No-Mock): proposed Class I / "
-        "Class II / Critical classification, conformity pathway, assessment scores and market-readiness "
-        "gates are all derived from real records. Every regulatory action is written to a tamper-evident, "
-        "hash-chained Internal Regulatory Ledger so the compliance timeline is audit-defensible, and "
-        "secure vendor / notified-body portals never expose that private ledger.",
+        "Class II / Critical / Default classification, the conformity assessment pathway, assessment "
+        "scores and market-readiness gates are all derived from real records. Every regulatory action "
+        "is written to a tamper-evident, hash-chained Internal Regulatory Ledger so the compliance "
+        "timeline is audit-defensible, and secure vendor / notified-body portals never expose that "
+        "private ledger.",
     ], None, ALL),
 
     ("Installing the App (One-Click PWA)", [
@@ -47,8 +49,8 @@ SECTIONS = [
         "Desktop (Chrome / Edge): click the Install icon in the address bar, or use the in-app "
         "'Install' banner. Android (Chrome): tap the 'Install' banner or menu -> Add to Home "
         "screen. iPhone / iPad (Safari): tap Share -> Add to Home Screen.",
-        "Once installed, the app launches full-screen and can receive push notifications for AI "
-        "security alerts, shadow-AI discoveries and guardrail breaches.",
+        "Once installed, the app launches full-screen and can receive push notifications for "
+        "Article 14 reporting deadlines, classification approvals and CE-readiness changes.",
     ], None, ALL),
 
     ("On-Premise Installation (Docker)", [
@@ -64,122 +66,140 @@ SECTIONS = [
     ("Signing In", [
         "Open the app and sign in with your work email and password. Passwords follow "
         "NIST 800-63B (>=12 chars with upper/lower/number/symbol). Roles determine what you see: "
-        "admins get full enforcement controls, executives get the board view.",
+        "admins get full governance and approval controls, executives get the board-ready view.",
     ], "01_login.jpg", ALL),
 
-    ("Going Live — Production Setup Checklist", [
-        "Follow these steps to take Obserra from first sign-in to a fully live, audit-defensible "
-        "deployment. Progress is tracked automatically by the Go-Live Readiness checklist on the "
-        "Connector Health page — every check runs against real state, so the score reflects your "
-        "actual production readiness (No-Mock).",
-        "1) Connect your sources. Open Connector Health (Sources) and connect your identity, agent "
-        "and security feeds, then use 'Re-probe all connectors' so every source reads healthy and "
-        "fresh. Enterprise connectors that need customer OAuth credentials are shown honestly as "
-        "'credentials required' until you supply them.",
-        "2) Run the Go-Live Readiness checklist. It evaluates eight live checks: database "
-        "connectivity, source-connector ingestion, data freshness, identity inventory, the "
-        "correlation & risk engine, the AI advisor engine, the evidence integrity seal and the "
-        "agent-runtime enforcement webhook. Each item shows Ready / Attention / Blocker with a live "
-        "detail line, and the card auto-refreshes every 30 seconds.",
-        "3) Wire the agent-runtime enforcement webhook. Click 'Fix' on the runtime item (or go to "
-        "Settings -> Agent runtime connector) and register your signed HTTPS endpoint. Once saved, "
-        "Kill / Suspend / Resume actions are dispatched (HMAC-SHA256 signed) to your external agent "
-        "runtime and the checklist reaches 100% — 'Production ready'.",
-        "4) Confirm readiness everywhere. A green 'Production ready' badge with a trend sparkline "
-        "appears on the Executive Overview, and the readiness score is recorded automatically every "
-        "day (no login required) so leadership can watch the trend climb toward 100%.",
-        "5) Export the proof. Download the signed Evidence Pack — every page-one cover carries a "
-        "SHA-256 'Verified by Obserra' integrity seal — and share it with auditors or fold the "
-        "score into the emailed board digest.",
-    ], "20_go_live.jpg", ALL),
-
-    ("Executive Overview", [
-        "The landing dashboard is the complete rollup of the AI security estate: modelled agent "
-        "risk, autonomous agents, toxic capability combinations, shadow-AI exposure, guardrail "
-        "gaps and open AI incidents — all as one board-ready view. Every KPI and card opens a "
-        "standardized deep-dive with an AI strategic brief and recommended actions, and admins can "
-        "email the executive brief on demand or on a cadence from here.",
-    ], "02_exec_overview.jpg", ALL),
-
-    ("Cyber Crisis Commander", [
-        "The dedicated seven-tab workspace: Mission Control, Agent Inventory, Authority & Tools "
-        "(with the Tool Toxicity Map), Guardrails & Red Team, Shadow AI, Incidents and "
-        "Defensibility. Mission Control summarises the estate; every tile is clickable and drills "
-        "into the relevant tab or agent.",
+    ("Getting Started — Load Sample Products", [
+        "New tenants can populate the workspace instantly. On Products & Classification, an admin "
+        "clicks 'Load Samples' to seed a small set of real, editable CRA product records — an "
+        "identity broker, a web firewall, a smart lock, a secure element and a general productivity "
+        "app — spanning Default, Class I, Class II and Critical classifications.",
+        "The sample set also seeds an initial readiness assessment and a CycloneDX SBOM so the "
+        "dashboard, AI Analyst and ledger tell a complete story on first open. Samples are clearly "
+        "flagged and can be removed at any time with 'Clear Samples'; loading is idempotent, so it "
+        "never creates duplicates.",
     ], None, ALL),
 
-    ("Agent Inventory", [
-        "Every registered AI agent with its owner, model, delegated tools and permissions, "
-        "modelled risk score, authority tier, guardrail coverage and governance status. Search and "
-        "filter by status or risk class; open any agent for full evidence and AI analysis.",
-    ], None, (A,)),
-
-    ("Tool Toxicity Map", [
-        "A visual Agent -> Tool -> Permission -> Resource graph that flags toxic capability "
-        "combinations — for example an action-capable tool such as shell.exec paired with write "
-        "permissions and no human-in-the-loop guardrail, or a data-exfiltration-capable tool with "
-        "access to sensitive resources. The heatmap makes the most dangerous agents glanceable so "
-        "reviewers can neutralise them first.",
+    ("Mission Control & the CRA AI Analyst", [
+        "Mission Control is the board-ready rollup: products under governance, average "
+        "regulation-mapped readiness, the Class I / II / Critical split, open external assessments, "
+        "overdue Article 14 clocks and CE-ready count. Every tile is clickable and drills into the "
+        "relevant workspace tab.",
+        "The CRA AI Analyst sits at the top of Mission Control. It reads the LIVE CRA posture — "
+        "product counts, classification split, named CE-marking blockers and overdue Article 14 "
+        "reporting stages — and returns a concise executive briefing: a headline, three-to-five "
+        "grounded insights labelled FACT / ESTIMATE / RISK, and prioritised recommended actions. "
+        "Every statement is grounded in your own records; a deterministic fallback keeps the "
+        "briefing available even if the AI service is momentarily unreachable. Click 'Regenerate' "
+        "to refresh after making changes.",
     ], None, ALL),
 
-    ("Guardrails & Red Team", [
-        "Enterprise guardrail coverage (input/output filtering, tool allowlist, human approval) "
-        "across every agent, plus the heuristic red-team baseline. Admins can toggle a guardrail "
-        "on an agent's governance record and run the deterministic red-team probes; results are "
-        "explicitly labelled as a heuristic baseline, not live adversarial runtime testing.",
-    ], None, (A,)),
-
-    ("Shadow AI Discovery", [
-        "A discovery feed that auto-populates the review queue with unsanctioned AI systems "
-        "detected across the estate — common public GenAI SaaS as well as agents flagged shadow. "
-        "Admins run discovery in one click and sanction each system to bring it under governance.",
-    ], None, (A,)),
-
-    ("Kill Switch & Runtime Enforcement", [
-        "From any agent's detail view, admins can Suspend (restrict), Kill (block) or Resume an "
-        "agent. The runtime enforcement connector flips the agent's governance status, records the "
-        "action to the Defensibility Ledger, posts a Slack/Teams alert, and — when an agent-runtime "
-        "webhook is configured — dispatches the enforcement command to the external execution "
-        "environment. The UI honestly reflects whether enforcement was applied in the control plane "
-        "only or pushed to an external runtime.",
-    ], None, (A,)),
-
-    ("AI Incidents & Workflows", [
-        "AI security incident records (severity, mode, status) from the governance backend, "
-        "alongside the related governance workflows. Each incident opens a deep-dive with an AI "
-        "brief and recommended actions.",
-    ], None, (A,)),
-
-    ("Defensibility & Evidence", [
-        "The evidence layer: live data-source status, an explicit separation of FACT vs MODELLED "
-        "vs HEURISTIC BASELINE vs AI RECOMMENDATION, the runtime-enforcement boundary statement and "
-        "connector health. This is what makes the whole plane audit-defensible.",
+    ("Products & Classification", [
+        "Register each product with digital elements: name, version, manufacturer legal name, "
+        "description, core functionality and any known Annex III / IV category codes. Obserra then "
+        "runs a deterministic, explainable classification: explicit Annex categories take priority, "
+        "and where none are selected a transparent heuristic proposes Default, Class I, Class II or "
+        "Critical with the matching conformity pathway (self-assessment, third-party assessment, or "
+        "critical-product route).",
+        "Classification is always PROPOSED until an authorised user records a formal approval with a "
+        "written rationale. Approving locks the classification into the compliance record and writes "
+        "the decision, actor and legal basis to the Internal Regulatory Ledger. Products can be "
+        "re-classified whenever functionality or categories change.",
     ], None, ALL),
 
-    ("Board Brief Scheduler", [
-        "A one-click control (admin) that emails the Cyber Crisis Commander Executive Brief — modelled agent "
-        "risk, autonomous agents, toxic combinations, shadow AI and open incidents — via the "
-        "managed email pipeline. Choose a weekly or monthly cadence, or send it immediately.",
+    ("CRA Readiness Assessments & the Certification Portal", [
+        "Each product is assessed against a regulation-mapped requirement set. Every question links "
+        "back to specific CRA Articles and Annex I essential requirements, and the score reflects "
+        "conforming, partial and non-conforming answers with evidence references.",
+        "Assessments can be completed internally or delegated. From the Certification Portal, an "
+        "admin issues a tenant-scoped, time-limited link to a vendor (for self-assessment) or to a "
+        "testing lab / notified body (for external sign-off). Tokens are stored only as hashes, and "
+        "the external portal exposes only the invited product context — never the private Internal "
+        "Regulatory Ledger.",
+    ], None, (A,)),
+
+    ("SBOM & Software Components", [
+        "Obserra generates a machine-readable Software Bill of Materials in CycloneDX 1.6 or "
+        "SPDX 2.3 from supported dependency manifests (requirements.txt, package.json / "
+        "package-lock.json, pom.xml). Each generated artifact records the component count and full "
+        "component inventory.",
+        "SBOM generation is logged to the Internal Regulatory Ledger and mapped to Annex I Part II(1), "
+        "supporting the CRA obligation to identify and document the components contained in a product "
+        "with digital elements.",
+    ], None, (A,)),
+
+    ("Article 14 Vulnerability & Incident Reporting", [
+        "The reporting workspace tracks the statutory clocks for actively exploited vulnerabilities "
+        "and severe incidents: the 24-hour early warning, the 72-hour notification and the final "
+        "report. Deadlines are computed from the moment of awareness, and overdue stages are flagged "
+        "in red across Mission Control and the AI Analyst.",
+        "Article 14 reporting obligations apply from 11 September 2026. Obserra prepares and tracks "
+        "the submission package and records each stage against the single reporting platform; it "
+        "does not claim a regulatory submission has been made until an official submission or receipt "
+        "reference is recorded, keeping the timeline honest and audit-defensible.",
+    ], None, ALL),
+
+    ("Labs & Notified Bodies (Conformity Assessment)", [
+        "Maintain a provider-neutral registry of testing labs, CRA notified bodies and certification "
+        "bodies, capturing NANDO identity, country and verification evidence. Class II and Critical "
+        "products — and Class I products without a fully applied harmonised route — require "
+        "third-party conformity assessment.",
+        "Raise external conformity assessment requests against a product and provider, supporting "
+        "Module B + Module C, Module H, EU cybersecurity certification and testing-evidence "
+        "workflows. External assessors record their decision and findings through the secure portal, "
+        "and the outcome flows back into the product's market-readiness gates.",
+    ], None, (A,)),
+
+    ("EU Declaration of Conformity & CE Marking", [
+        "The Declaration & CE workspace evaluates market readiness against live records: an approved "
+        "classification, a complete readiness assessment, a generated SBOM, any required notified-body "
+        "sign-off and an approved EU Declaration of Conformity. Each open gate is shown as an explicit "
+        "blocker or warning.",
+        "A completed assessment does NOT equal a Declaration approved, CE ready, or product placed on "
+        "the market. Approving the EU Declaration of Conformity requires an authorised signatory name "
+        "and title; the approval, signatory and declaration reference are written to the Internal "
+        "Regulatory Ledger before a product is reported as CE ready. General CRA application begins "
+        "11 December 2027.",
+    ], None, ALL),
+
+    ("Internal Regulatory Ledger & Auditor Verification", [
+        "Every regulatory action — product registration, classification proposal and approval, "
+        "assessment, SBOM generation, reporting submission and declaration approval — is appended to "
+        "a private, hash-chained Internal Regulatory Ledger. Each record carries the prior-record "
+        "hash and its own hash, so any tampering is detectable.",
+        "For independent assurance, an admin issues a read-only Auditor Verification link for a "
+        "product from the Regulatory Ledger tab. The auditor or notified body opens the link and sees "
+        "the product's classification, conformity route, CE status, the tamper-evident compliance "
+        "timeline and a live re-computation of hash-chain integrity — without ever exposing the "
+        "private ledger payloads. Links are time-limited and tenant-scoped.",
+    ], None, ALL),
+
+    ("Regulation Map", [
+        "The Regulation Map is the authoritative requirement catalogue: each governance object links "
+        "back to Regulation (EU) 2024/2847 and Commission Implementing Regulation (EU) 2025/2392, "
+        "with the obligation, legal basis and expected evidence types. It is the traceability layer "
+        "that makes every workflow defensible against the source law.",
+    ], None, (A,)),
+
+    ("Executive Brief & Board Reporting", [
+        "One click generates the EU CRA Governance Executive Brief as a branded PDF — product "
+        "posture, classification split, readiness, Article 14 status and CE readiness — suitable for "
+        "leadership and board packs. It is compiled from live records with an explicit note that "
+        "Obserra provides regulatory workflow and traceability, not legal advice.",
     ], None, (A,)),
 
     ("Settings, Branding & Deployment", [
-        "Personal preferences (digest cadence, replay the guided tour) plus admin controls: "
-        "alert recipients, custom branding (company name, logo, accent colour), a 'send me a test "
-        "now' button, and the Deployment & Documentation downloads (on-premise package and these "
-        "guides in PDF and Word).",
+        "Personal preferences (digest cadence, replay the guided tour) plus admin controls: alert "
+        "recipients, custom branding (company name, logo, accent colour), a 'send me a test now' "
+        "button, and the Deployment & Documentation downloads — the on-premise package and these "
+        "guides in PDF and Word.",
     ], "14_settings.jpg", (A,)),
 
-    ("Obserrian Advisor", [
-        "The floating Obserrian Advisor (bottom-right, and via the top-bar ask box) answers AI "
-        "security questions grounded on your LIVE agent telemetry — delegated tools, permissions, "
-        "guardrail coverage, tool-governance violations and the red-team baseline. It can execute "
-        "recommended actions and, for admins, reports its own usage and spend.",
-    ], None, ALL),
-
-    ("Support", [
-        "For assistance contact your Obserra administrator. Risk scores and AI evaluations are "
-        "decision-support estimates and do not constitute legal, financial, regulatory or security "
-        "guarantees.",
+    ("Support & Legal Boundary", [
+        "For assistance contact your Obserra administrator. Classifications are automatically "
+        "PROPOSED and require authorised approval; readiness scores and AI Analyst briefings are "
+        "decision-support outputs and do not constitute legal advice or a guarantee of CRA "
+        "conformity. Placing a product on the EU market remains the manufacturer's responsibility.",
     ], None, ALL),
 ]
 

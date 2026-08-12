@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   BadgeCheck,
   BookOpenCheck,
@@ -13,17 +13,29 @@ import {
   Gauge,
   Globe2,
   Landmark,
+  Lightbulb,
+  Link2,
   Loader2,
   Plus,
   RefreshCw,
   ScrollText,
   ShieldCheck,
+  Sparkles,
+  Trash2,
   TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { useAuth } from "@/context/AuthContext";
 import { useCRAData } from "@/hooks/useCRAData";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import {
   assessmentStats,
   cls,
@@ -96,6 +108,118 @@ function Metric({ label, value, sub, icon: Icon, tone = "primary" }) {
   );
 }
 
+function PromptDialog({ open, onOpenChange, title, description, fields, submitLabel, onSubmit, testid }) {
+  const [values, setValues] = useState({});
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) setValues({});
+  }, [open]);
+  const canSubmit = fields.every((f) => !f.required || (values[f.key] || "").trim());
+  const submit = async () => {
+    setBusy(true);
+    try {
+      await onSubmit(values);
+      onOpenChange(false);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent data-testid={testid || "cra-prompt-dialog"}>
+        <DialogHeader>
+          <DialogTitle className="font-head font-black">{title}</DialogTitle>
+          {description && <DialogDescription>{description}</DialogDescription>}
+        </DialogHeader>
+        <div className="space-y-3 py-1">
+          {fields.map((f) => (
+            <div key={f.key}>
+              <label className="text-[10px] font-mono uppercase text-muted-foreground">{f.label}{f.required ? " *" : ""}</label>
+              {f.textarea ? (
+                <textarea rows={3} value={values[f.key] || ""} onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))} placeholder={f.placeholder} data-testid={`${testid}-${f.key}`} className="mt-1 w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm" />
+              ) : (
+                <input value={values[f.key] || ""} onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))} placeholder={f.placeholder} data-testid={`${testid}-${f.key}`} className="mt-1 w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm" />
+              )}
+            </div>
+          ))}
+        </div>
+        <DialogFooter>
+          <button onClick={() => onOpenChange(false)} className="px-3 py-2 rounded-md border border-border bg-secondary text-xs font-head font-bold">Cancel</button>
+          <button disabled={!canSubmit || busy} onClick={submit} data-testid={`${testid}-submit`} className="px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50 inline-flex items-center gap-1.5">
+            {busy && <Loader2 className="w-3.5 h-3.5 animate-spin" />} {submitLabel}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+const KIND_TONE = { fact: "primary", estimate: "ai", risk: "crit" };
+
+function AIAnalyst() {
+  const [state, setState] = useState({ loading: true, data: null });
+  const load = async () => {
+    setState((s) => ({ ...s, loading: true }));
+    try {
+      const response = await api.get("/cra/insight");
+      setState({ loading: false, data: response.data });
+    } catch {
+      setState({ loading: false, data: null });
+    }
+  };
+  useEffect(() => {
+    load();
+  }, []);
+  const d = state.data;
+  return (
+    <Panel
+      title="CRA AI Analyst"
+      subtitle="A grounded executive briefing computed live from your product, classification, assessment and Article 14 posture."
+      actions={
+        <button onClick={load} disabled={state.loading} data-testid="cra-insight-refresh" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-ai/25 bg-ai/10 text-ai text-xs font-head font-bold disabled:opacity-50">
+          {state.loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Regenerate
+        </button>
+      }
+    >
+      {state.loading && !d ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Analyzing live CRA posture…</div>
+      ) : !d ? (
+        <div className="text-sm text-muted-foreground">CRA AI Analyst is temporarily unavailable. Try Regenerate.</div>
+      ) : (
+        <div className="space-y-4" data-testid="cra-insight">
+          <div className="flex items-start gap-3">
+            <div className="rounded-lg bg-ai/10 border border-ai/25 p-2 shrink-0"><Sparkles className="w-5 h-5 text-ai" /></div>
+            <div>
+              <div className="font-head font-black text-lg leading-snug" data-testid="cra-insight-headline">{d.headline}</div>
+              <div className="text-[10px] font-mono text-muted-foreground mt-1">{d.model} · {d.generated_at ? new Date(d.generated_at).toLocaleString() : ""}</div>
+            </div>
+          </div>
+          <div className="grid md:grid-cols-2 gap-3">
+            {(d.insights || []).map((it, i) => (
+              <div key={i} className="rounded-lg border border-border bg-secondary/20 p-3">
+                <Badge tone={KIND_TONE[it.kind] || "primary"}>{(it.kind || "fact").toUpperCase()}</Badge>
+                <div className="text-sm mt-2">{it.text}</div>
+              </div>
+            ))}
+          </div>
+          {(d.actions || []).length > 0 && (
+            <div>
+              <div className="text-[10px] font-mono uppercase text-muted-foreground mb-2">Recommended actions</div>
+              <div className="space-y-2">
+                {d.actions.map((a, i) => (
+                  <div key={i} className="flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3 text-sm">
+                    <Lightbulb className="w-4 h-4 text-primary mt-0.5 shrink-0" /> {a}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 function MissionControl({ data, openTab }) {
   const d = data.dashboard || {};
   const byClass = d.classifications || {};
@@ -112,6 +236,8 @@ function MissionControl({ data, openTab }) {
         <Metric label="Article 14 Overdue" value={d.reporting_overdue || 0} sub="24h, 72h, and final-report clocks" icon={Clock3} tone={d.reporting_overdue ? "crit" : "low"} />
         <Metric label="CE Ready" value={d.ce_ready || 0} sub={`General application ${d.general_application_date || "2027-12-11"}`} icon={BadgeCheck} tone="low" />
       </div>
+
+      <AIAnalyst />
 
       <div className="grid xl:grid-cols-3 gap-5">
         <Panel title="Product regulatory posture" subtitle="Current product readiness and conformity pathway">
@@ -220,14 +346,14 @@ function ProductClassification({ data, reload, isAdmin }) {
     }
   };
 
-  const approve = async (product) => {
-    const rationale = window.prompt("Regulatory approval rationale:");
-    if (!rationale) return;
+  const [approveTarget, setApproveTarget] = useState(null);
+  const approveSubmit = async (values) => {
+    const product = approveTarget;
     setBusy(product.ref);
     try {
       await api.post(`/cra/products/${product.ref}/classification/approve`, {
         decision: "Approve",
-        rationale,
+        rationale: values.rationale,
       });
       toast.success(`${product.ref} classification approved.`);
       await reload();
@@ -238,14 +364,54 @@ function ProductClassification({ data, reload, isAdmin }) {
     }
   };
 
+  const seedSamples = async () => {
+    setBusy("seed");
+    try {
+      const response = await api.post("/cra/demo/seed");
+      toast.success(response.data.created ? `${response.data.created} sample products loaded.` : response.data.note || "Sample products already present.");
+      await reload();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Unable to load sample products.");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const clearSamples = async () => {
+    setBusy("clear");
+    try {
+      const response = await api.delete("/cra/demo/seed");
+      toast.success(`${response.data.removed} sample products removed.`);
+      await reload();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Unable to clear sample products.");
+    } finally {
+      setBusy("");
+    }
+  };
+
   return (
     <Panel
       title="Product classification engine"
       subtitle="Deterministic category selection plus explainable heuristic matching. Final classification requires authorized regulatory approval."
       actions={
-        <button onClick={() => setShowCreate(!showCreate)} data-testid="cra-register-toggle" className="px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold inline-flex items-center gap-1.5">
-          <Plus className="w-3.5 h-3.5" /> Register Product
-        </button>
+        <div className="flex gap-2">
+          {isAdmin && (
+            <>
+              <button onClick={seedSamples} disabled={busy === "seed"} data-testid="cra-seed-samples" className="px-3 py-2 rounded-md border border-ai/25 bg-ai/10 text-ai text-xs font-head font-bold inline-flex items-center gap-1.5">
+                {busy === "seed" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Boxes className="w-3.5 h-3.5" />} Load Samples
+              </button>
+              {(data.products || []).some((p) => p.sample) && (
+                <button onClick={clearSamples} disabled={busy === "clear"} data-testid="cra-clear-samples" className="px-3 py-2 rounded-md border border-border bg-secondary text-xs font-head font-bold inline-flex items-center gap-1.5">
+                  {busy === "clear" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Clear Samples
+                </button>
+              )}
+            </>
+          )}
+          <button onClick={() => setShowCreate(!showCreate)} data-testid="cra-register-toggle" className="px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold inline-flex items-center gap-1.5">
+            <Plus className="w-3.5 h-3.5" /> Register Product
+          </button>
+        </div>
       }
     >
       {showCreate && (
@@ -311,13 +477,23 @@ function ProductClassification({ data, reload, isAdmin }) {
               <div className="flex gap-2">
                 <button disabled={busy === product.ref} onClick={() => classify(product)} className="px-3 py-2 rounded-md border border-border bg-secondary text-xs font-head font-bold">Reclassify</button>
                 {isAdmin && clsStatus(product) !== "Approved" && (
-                  <button disabled={busy === product.ref} onClick={() => approve(product)} className="px-3 py-2 rounded-md bg-low/15 border border-low/25 text-low text-xs font-head font-bold">Approve</button>
+                  <button disabled={busy === product.ref} onClick={() => setApproveTarget(product)} data-testid={`cra-approve-${product.ref}`} className="px-3 py-2 rounded-md bg-low/15 border border-low/25 text-low text-xs font-head font-bold">Approve</button>
                 )}
               </div>
             </div>
           </div>
         ))}
       </div>
+      <PromptDialog
+        open={!!approveTarget}
+        onOpenChange={(o) => !o && setApproveTarget(null)}
+        title="Approve classification"
+        description={approveTarget ? `Record the authorized regulatory approval for ${approveTarget.ref} · ${approveTarget.name}.` : ""}
+        fields={[{ key: "rationale", label: "Regulatory approval rationale", placeholder: "Basis for approving this classification…", required: true, textarea: true }]}
+        submitLabel="Approve classification"
+        onSubmit={approveSubmit}
+        testid="cra-approve-dialog"
+      />
     </Panel>
   );
 }
@@ -407,9 +583,48 @@ function CertificationPortal({ data, reload, isAdmin }) {
   );
 }
 
-function RegulatoryLedger({ data }) {
+function RegulatoryLedger({ data, isAdmin }) {
+  const [productRef, setProductRef] = useState("");
+  const [link, setLink] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const generate = async () => {
+    if (!productRef) return;
+    setBusy(true);
+    try {
+      const response = await api.post(`/cra/products/${productRef}/verification-link`);
+      const url = `${window.location.origin}${response.data.path}`;
+      setLink({ url, expires_at: response.data.expires_at });
+      try { await navigator.clipboard.writeText(url); } catch {}
+      toast.success("Auditor verification link created and copied to clipboard.");
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Unable to create verification link.");
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
-    <Panel title="Internal Regulatory Ledger" subtitle="Private, append-only, hash-chained regulatory record. No external portal receives ledger access.">
+    <div className="space-y-5">
+      {isAdmin && (
+        <Panel title="Auditor verification link" subtitle="Issue a read-only, tamper-evident link a notified body or auditor can use to independently verify a product's CRA timeline and hash-chain integrity. Private ledger payloads are never exposed.">
+          <div className="flex flex-col md:flex-row gap-2 md:items-center">
+            <select value={productRef} onChange={(e) => setProductRef(e.target.value)} data-testid="cra-verify-product" className="flex-1 bg-secondary/60 rounded-md px-3 py-2.5 text-sm">
+              <option value="">Select product</option>
+              {(data.products || []).map((p) => <option key={p.ref} value={p.ref}>{p.ref} · {p.name}</option>)}
+            </select>
+            <button onClick={generate} disabled={!productRef || busy} data-testid="cra-verify-generate" className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">
+              {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Generate verification link
+            </button>
+          </div>
+          {link && (
+            <div className="mt-3 rounded-lg border border-low/25 bg-low/5 p-3" data-testid="cra-verify-link">
+              <div className="text-[10px] font-mono text-low uppercase">Auditor verification link issued</div>
+              <a href={link.url} target="_blank" rel="noreferrer" className="text-xs break-all mt-2 block underline text-primary">{link.url}</a>
+              <div className="text-[10px] font-mono text-muted-foreground mt-1">Expires {new Date(link.expires_at).toLocaleString()}</div>
+            </div>
+          )}
+        </Panel>
+      )}
+      <Panel title="Internal Regulatory Ledger" subtitle="Private, append-only, hash-chained regulatory record. No external portal receives ledger access.">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1100px] text-xs">
           <thead className="font-mono uppercase text-[9px] text-muted-foreground border-b border-border">
@@ -431,6 +646,7 @@ function RegulatoryLedger({ data }) {
         </table>
       </div>
     </Panel>
+    </div>
   );
 }
 
@@ -509,15 +725,18 @@ function VulnerabilityDashboard({ data, reload }) {
       toast.error(error.response?.data?.detail || "Unable to create CRA vulnerability workflow.");
     }
   };
-  const mark = async (item, stage) => {
-    const receipt = window.prompt("Submission receipt/reference, if available:", "");
+  const [markTarget, setMarkTarget] = useState(null);
+  const markSubmit = async (values) => {
+    const { item, stage } = markTarget;
+    const receipt = (values.receipt || "").trim();
     await api.post(`/cra/vulnerabilities/${item.ref}/submission`, {
       stage,
       state: receipt ? "Receipt Recorded" : "Submitted",
       submitted_at: new Date().toISOString(),
-      receipt_id: receipt || "",
+      receipt_id: receipt,
       comment: "Recorded by authorized Obserra user",
     });
+    toast.success("Reporting stage recorded.");
     await reload();
   };
   return (
@@ -546,7 +765,7 @@ function VulnerabilityDashboard({ data, reload }) {
                   <div><div className="text-[9px] font-mono uppercase text-muted-foreground">Next deadline</div>{next ? <><div className="font-head font-bold mt-1">{next.stage.replaceAll("_"," ")}</div><Badge tone={next.overdue ? "crit" : next.hours_remaining < 24 ? "high" : "low"}>{next.overdue ? "OVERDUE" : `${next.hours_remaining}h`}</Badge></> : <Badge tone="low">No open deadline</Badge>}</div>
                   <div className="flex flex-wrap gap-2 items-center">
                     {(item.clock?.stages || []).map((stage) => (
-                      <button key={stage.stage} disabled={stage.submitted} onClick={() => mark(item, stage.stage)} className="px-3 py-2 rounded-md border border-border bg-secondary text-[10px] font-head font-bold disabled:opacity-50">
+                      <button key={stage.stage} disabled={stage.submitted} onClick={() => setMarkTarget({ item, stage: stage.stage })} data-testid={`cra-report-${item.ref}-${stage.stage}`} className="px-3 py-2 rounded-md border border-border bg-secondary text-[10px] font-head font-bold disabled:opacity-50">
                         {stage.submitted ? <CheckCircle2 className="w-3.5 h-3.5 inline mr-1 text-low" /> : null}{stage.stage.replaceAll("_"," ")}
                       </button>
                     ))}
@@ -557,6 +776,16 @@ function VulnerabilityDashboard({ data, reload }) {
           })}
         </div>
       </Panel>
+      <PromptDialog
+        open={!!markTarget}
+        onOpenChange={(o) => !o && setMarkTarget(null)}
+        title="Record reporting submission"
+        description={markTarget ? `Record the "${markTarget.stage.replaceAll("_", " ")}" submission for ${markTarget.item.ref}. A receipt/reference is optional but strengthens the audit trail.` : ""}
+        fields={[{ key: "receipt", label: "Submission receipt / reference (optional)", placeholder: "e.g. single reporting platform receipt ID", required: false }]}
+        submitLabel="Record submission"
+        onSubmit={markSubmit}
+        testid="cra-report-dialog"
+      />
     </div>
   );
 }
@@ -611,12 +840,9 @@ function DeclarationDashboard({ data, reload, isAdmin }) {
   const [selected, setSelected] = useState("");
   const [result, setResult] = useState(null);
   const check = async () => { if (!selected) return; const response = await api.get(`/cra/products/${selected}/market-readiness`); setResult(response.data); await reload(); };
-  const approve = async () => {
-    const name = window.prompt("Authorized declaration signatory name:");
-    if (!name) return;
-    const title = window.prompt("Signatory title:");
-    if (!title) return;
-    await api.post(`/cra/products/${selected}/declaration/approve`, { signatory_name:name, signatory_title:title, declaration_reference:`EU-DOC-${selected}` });
+  const [approveOpen, setApproveOpen] = useState(false);
+  const approveSubmit = async (values) => {
+    await api.post(`/cra/products/${selected}/declaration/approve`, { signatory_name: values.name, signatory_title: values.title, declaration_reference: `EU-DOC-${selected}` });
     toast.success("EU Declaration approval recorded.");
     await check();
   };
@@ -625,7 +851,7 @@ function DeclarationDashboard({ data, reload, isAdmin }) {
       <Panel title="EU Declaration and CE readiness" subtitle="Assessment complete does not equal Declaration approved, CE ready, or placed on the market.">
         <select value={selected} onChange={(e) => { setSelected(e.target.value); setResult(null); }} className="w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm"><option value="">Select product</option>{(data.products || []).map((p) => <option key={p.ref} value={p.ref}>{p.ref} · {p.name}</option>)}</select>
         <button onClick={check} className="mt-3 w-full px-4 py-3 rounded-md bg-primary text-primary-foreground font-head font-bold">Evaluate Market Readiness</button>
-        {isAdmin && selected && <button onClick={approve} className="mt-2 w-full px-4 py-3 rounded-md border border-low/25 bg-low/10 text-low font-head font-bold">Approve EU Declaration</button>}
+        {isAdmin && selected && <button onClick={() => setApproveOpen(true)} data-testid="cra-declaration-approve" className="mt-2 w-full px-4 py-3 rounded-md border border-low/25 bg-low/10 text-low font-head font-bold">Approve EU Declaration</button>}
       </Panel>
       <Panel title="Market release gates" subtitle="Blockers are based on current Obserra records and CRA workflow state.">
         {result ? (
@@ -639,6 +865,19 @@ function DeclarationDashboard({ data, reload, isAdmin }) {
           </>
         ) : <div className="text-sm text-muted-foreground">Select a product and run the market readiness evaluation.</div>}
       </Panel>
+      <PromptDialog
+        open={approveOpen}
+        onOpenChange={setApproveOpen}
+        title="Approve EU Declaration of Conformity"
+        description="Record the authorized signatory for the EU Declaration of Conformity. This is written to the Internal Regulatory Ledger."
+        fields={[
+          { key: "name", label: "Authorized signatory name", placeholder: "e.g. Jane Doe", required: true },
+          { key: "title", label: "Signatory title", placeholder: "e.g. Chief Compliance Officer", required: true },
+        ]}
+        submitLabel="Record declaration approval"
+        onSubmit={approveSubmit}
+        testid="cra-declaration-dialog"
+      />
     </div>
   );
 }
@@ -711,7 +950,7 @@ export default function CRAGovernance() {
     <div className="rise space-y-6" data-testid="cra-governance-page">
       <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2 flex-wrap"><Landmark className="w-7 h-7 text-primary" /><h1 className="font-head font-black text-3xl tracking-tight">EU CRA Governance</h1><Badge tone="primary">REGULATION (EU) 2024/2847</Badge></div>
+          <div className="flex items-center gap-2 flex-wrap"><Landmark className="w-7 h-7 text-primary" /><h1 className="font-head font-black text-2xl lg:text-3xl tracking-tight" data-testid="cra-page-title">European Union Cyber Resilience Act Governance</h1><Badge tone="primary">REGULATION (EU) 2024/2847</Badge></div>
           <p className="text-sm text-muted-foreground mt-2 max-w-4xl">
             {mode === "executive"
               ? "Multi-tenant EU Cyber Resilience Act product governance, certification readiness, external conformity assessment, SBOM, Article 14 reporting, regulatory ledger, EU declaration and CE readiness."
@@ -737,7 +976,7 @@ export default function CRAGovernance() {
       {active === "mission" && <MissionControl data={data} openTab={openTab} />}
       {active === "products" && <ProductClassification data={data} reload={reload} isAdmin={isAdmin} />}
       {active === "certification" && <CertificationPortal data={data} reload={reload} isAdmin={isAdmin} />}
-      {active === "ledger" && <RegulatoryLedger data={data} />}
+      {active === "ledger" && <RegulatoryLedger data={data} isAdmin={isAdmin} />}
       {active === "sbom" && <SBOMDashboard data={data} reload={reload} />}
       {active === "vulnerability" && <VulnerabilityDashboard data={data} reload={reload} />}
       {active === "conformity" && <ConformityDashboard data={data} reload={reload} isAdmin={isAdmin} />}

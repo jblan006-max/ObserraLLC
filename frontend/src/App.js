@@ -63,6 +63,7 @@ const CrisisSnapshot = lazyWithRetry(() => import("@/pages/CrisisSnapshot"));
 const CIAuditorPortal = lazyWithRetry(() => import("@/pages/CIAuditorPortal"));
 const CRAGovernance = lazyWithRetry(() => import("@/pages/CRAGovernance"));
 const CRACertificationPortal = lazyWithRetry(() => import("@/pages/CRACertificationPortal"));
+const CRAVerify = lazyWithRetry(() => import("@/pages/CRAVerify"));
 
 function PageLoader() {
   return (
@@ -100,6 +101,7 @@ function AppRoutes() {
         <Route path="/crisis-snapshot/:token" element={<CrisisSnapshot />} />
         <Route path="/ci-audit/:token" element={<CIAuditorPortal />} />
         <Route path="/cra-certification/:token" element={<CRACertificationPortal />} />
+        <Route path="/cra-verify/:token" element={<CRAVerify />} />
         <Route path="/payment/success" element={<Gate><PaymentSuccess /></Gate>} />
         <Route path="/app" element={<Gate><AppShell /></Gate>}>
           <Route index element={<AIExecutiveOverview />} />

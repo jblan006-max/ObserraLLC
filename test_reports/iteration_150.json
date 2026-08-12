@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 150 — Full verification of the EU CRA Governance updates (title rename, CRA AI Analyst panel, sample seed/clear, auditor verification link + public verify page, and 3 Shadcn dialogs replacing window.prompt). Backend: created /app/backend/tests/test_iter150_cra_new_endpoints.py — 11/11 pytest cases PASS (seed idempotency, non-admin 401/403, insight shape+auth, verification-link admin/non-admin, public verify happy+invalid path, clear+reseed). Frontend (Chromium, admin jblan2026@gmail.com): logged in, dismissed onboarding tour, opened /app/cra-governance. Verified data-testid='cra-page-title' = 'European Union Cyber Resilience Act Governance'. CRA AI Analyst (cra-insight) rendered a grounded live headline ('EU CRA posture is materially behind readiness: 7 of 7 products are CE-blocked...'), cra-insight-refresh reloaded it. Products & Classification tab: cra-seed-samples worked and cra-clear-samples appeared afterward. Approve flow: clicking cra-approve-CRA-PROD-00012 opened cra-approve-dialog with cra-approve-dialog-rationale; cra-approve-dialog-submit persisted the approval — NO window.prompt. Regulatory Ledger tab: selected product in cra-verify-product, cra-verify-generate produced a cra-verify-link. Opening /cra-verify/<token> in a fresh tab rendered cra-verify-page with cra-verify-integrity ('Hash-chain integrity verified — 45 regulatory records independently re-hashed') and cra-verify-timeline. Vulnerability & ENISA tab: cra-report-CRA-VULN-00001-early_warning opened cra-report-dialog with optional receipt field — NO window.prompt. Declaration & CE tab: selected product, clicked Evaluate Market Readiness, cra-declaration-approve became enabled and opened cra-declaration-dialog with 2 signatory inputs (Name + Title) — NO window.prompt. Backend pytest and frontend flows all pass.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "CRA Governance", "issues": ["Benign React hydration console warning: '<span> cannot be a child of <option>' — carry-over from dev-time visual-editor instrumentation; no functional impact (same as iteration 149)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter150_cra_new_endpoints.py",
+    "/app/test_reports/pytest/iter150.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "CRAGovernance.jsx has grown further with AIAnalyst + PromptDialog + 3 new dialog states — 758+ lines already. Consider splitting per-tab components into individual files (mission/products/ledger/vuln/declaration) to keep <500 LOC.",
+    "cra_governance.py: /insight caches per-org for 120s keyed on counts — good — but the LLM fallback uses `_CRA_INSIGHT_CACHE` (unbounded dict). Add a simple LRU cap to avoid slow memory growth on multi-tenant.",
+    "cra_governance.py verification-link uses issue_portal_token with role='auditor'; public_verify correctly 403s non-auditor tokens. Consider rate-limiting POST /products/{ref}/verification-link (auditor tokens are 30-day so cheap to mint many).",
+    "Frontend PromptDialog: ensure textarea/inputs autofocus and Enter-submits for keyboard flow; also disable submit while pending API call to avoid double-submits.",
+    "cra-verify-link is displayed on-page — good — but should be a copyable <code> or have a 'Copy link' button (small UX polish)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter150_cra_new_endpoints.py"
+  ],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (title, insight, seed/clear, approve dialog, verify link, public verify page, vuln dialog, declaration dialog)"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin) — working",
+  "seed_data_creation": "Called POST /api/cra/demo/seed twice through both backend tests and the UI; 5 sample products (Aegis Identity Broker, Sentinel Web Firewall, HomeGuard Smart Lock, VaultCore Secure Element, NoteFlow Productivity Suite) exist along with 1 assessment + 1 SBOM. Also cleared+re-seeded to validate DELETE. Total 7 products on org after run. Approved classification for CRA-PROD-00012 via UI. Declaration approve flow opened and cancelled without persisting.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 6 approved changes are live and verified end-to-end. Notes: (1) after login the URL goes to /app (no trailing slash) — use wait_for_response on POST /api/auth/login instead of wait_for_url('**/app/**'). (2) An onboarding tour modal appears on first dashboard load — dismiss via `button:has-text(\"Skip\")`. (3) The public verify URL is safest to build from the API path (POST /api/cra/products/{ref}/verification-link returns {path}); don't regex it out of the on-page cra-verify-link text or it collides with the 'Expires:' label. (4) Product select in Ledger and Declaration tabs is a native <select> — use select_option. (5) The declaration approve button only renders + enables AFTER 'Evaluate Market Readiness' has been clicked with a product selected.",
+  "rca of the issue": "No functional issues found. The only anomaly was a self-inflicted test bug where a greedy regex captured the 'Expires' label after the token when scraping the on-screen link — fixed by using the backend-returned path. All approved changes work as specified."
+}
