@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import {
   AlertOctagon,
   AlertTriangle,
@@ -30,6 +30,7 @@ import {
   UserPlus,
   Mail,
   CloudDownload,
+  Send,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -613,6 +614,73 @@ function Defensibility({ data, sourceStatus }) {
   );
 }
 
+function WarRoomChat({ selectedCase, user, live }) {
+  const [msgs, setMsgs] = useState([]);
+  const [text, setText] = useState("");
+  const [busy, setBusy] = useState(false);
+  const ref = selectedCase?.ref;
+  const endRef = useRef(null);
+
+  const load = useCallback(async () => {
+    if (!ref) { setMsgs([]); return; }
+    try { const r = await api.get(`/crisis/cases/${ref}/messages`); setMsgs(r.data || []); } catch { /* keep existing */ }
+  }, [ref]);
+
+  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    if (!ref || !live) return undefined;
+    const id = setInterval(load, 8000);
+    return () => clearInterval(id);
+  }, [ref, live, load]);
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs.length]);
+
+  const send = async (e) => {
+    e.preventDefault();
+    const value = text.trim();
+    if (!value || !ref) return;
+    setBusy(true);
+    try {
+      await api.post(`/crisis/cases/${ref}/messages`, { text: value });
+      setText("");
+      await load();
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Unable to send message.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div data-testid="crisis-war-room-chat">
+      <Panel title="War room chat" subtitle="Shared responder thread — decisions, context and hand-offs in one place, live for everyone in the room.">
+        {!ref ? <EmptyState title="No crisis case selected" text="Select a crisis case to open the war room thread." /> : (
+          <div className="flex flex-col h-[420px]">
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1" data-testid="crisis-chat-thread">
+              {msgs.length === 0 ? <EmptyState title="No messages yet" text="Start the war room conversation below." /> : msgs.map((m) => {
+                const mine = m.author === (user?.name || user?.email);
+                return (
+                  <div key={m.message_id} data-testid={`crisis-chat-msg-${m.message_id}`} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
+                    <div className={`max-w-[80%] rounded-xl px-3 py-2 ${mine ? "bg-primary/15 border border-primary/30" : "bg-secondary/40 border border-border"}`}>
+                      <div className="flex items-center gap-2"><span className="font-head font-bold text-xs">{m.author}</span><span className="text-[9px] font-mono uppercase text-muted-foreground">{m.role}</span></div>
+                      <div className="text-sm mt-1 whitespace-pre-wrap break-words">{m.text}</div>
+                      <div className="text-[9px] text-muted-foreground mt-1">{m.created_at ? new Date(m.created_at).toLocaleTimeString() : ""}</div>
+                    </div>
+                  </div>
+                );
+              })}
+              <div ref={endRef} />
+            </div>
+            <form onSubmit={send} className="mt-3 flex items-center gap-2">
+              <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Message the war room…" data-testid="crisis-chat-input" className="flex-1 bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary" />
+              <button disabled={busy || !text.trim()} data-testid="crisis-chat-send" className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}Send</button>
+            </form>
+          </div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
 function WarRoom({ selectedCase, caseDetail, changed, user, live }) {
   const [busy, setBusy] = useState("");
   const [showAdd, setShowAdd] = useState(false);
@@ -669,7 +737,8 @@ function WarRoom({ selectedCase, caseDetail, changed, user, live }) {
   };
 
   return (
-    <div className="grid xl:grid-cols-[1.3fr_1fr] gap-5" data-testid="crisis-war-room">
+    <div className="space-y-5" data-testid="crisis-war-room">
+      <div className="grid xl:grid-cols-[1.3fr_1fr] gap-5">
       <Panel title="War room roster" subtitle="Leadership and responders coordinating this crisis, by role." actions={selectedCase ? (
         <div className="flex items-center gap-2">
           {live && <span data-testid="crisis-warroom-live" className="inline-flex items-center gap-1 text-[10px] font-mono text-low"><span className="w-1.5 h-1.5 rounded-full bg-low animate-pulse" />LIVE · 8s</span>}
@@ -711,6 +780,8 @@ function WarRoom({ selectedCase, caseDetail, changed, user, live }) {
           ))}</div>
         )}
       </Panel>
+      </div>
+      <WarRoomChat selectedCase={selectedCase} user={user} live={live} />
     </div>
   );
 }
@@ -867,6 +938,12 @@ function RegulatoryLegal({ selectedCase, caseDetail, changed }) {
                         <div className={`font-head font-black text-lg mt-1 ${cd.overdue ? "text-crit" : cd.urgent ? "text-high" : ""}`} data-testid={`crisis-obligation-countdown-${o.obligation_id}`}>{cd.label}</div>
                         <div className="text-[10px] text-muted-foreground mt-1">{o.deadline_at ? new Date(o.deadline_at).toLocaleString() : "-"}</div>
                         <div className="mt-2"><StatusPill value={o.status} /></div>
+                        <div className="mt-2">
+                          <label className="text-[9px] font-mono uppercase text-muted-foreground flex items-center gap-1"><Timer className="w-3 h-3" />Alert threshold</label>
+                          <select value={o.notify_within_hours ?? 24} onChange={(e) => setThreshold(o, e.target.value)} disabled={busy === `${o.obligation_id}-thr`} data-testid={`crisis-obligation-threshold-${o.obligation_id}`} className="mt-1 w-full bg-secondary/60 rounded-md px-2 py-1.5 text-xs">
+                            {[6, 12, 24, 48, 72].map((h) => <option key={h} value={h}>{`${h}h before deadline`}</option>)}
+                          </select>
+                        </div>
                       </div>
                       <div className="flex flex-col gap-1.5">
                         {["Notification Required", "Notified", "Not Applicable"].map((s) => (
@@ -1067,6 +1144,17 @@ export default function CyberCrisisCommander() {
     }
   };
 
+  const setBriefCadence = async (hours) => {
+    if (!selectedCase) return;
+    try {
+      await api.patch(`/crisis/cases/${selectedCase.ref}`, { brief_schedule_hours: Number(hours) });
+      toast.success(Number(hours) > 0 ? `Auto-brief every ${hours}h enabled.` : "Auto-brief disabled.");
+      await changed(selectedCase.ref);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to update auto-brief cadence.");
+    }
+  };
+
   // War Room Live Sync — poll the case detail while the War Room tab is open so
   // the roster and pending decisions update without a manual refresh.
   useEffect(() => {
@@ -1092,7 +1180,7 @@ export default function CyberCrisisCommander() {
           <p className="text-sm text-muted-foreground mt-2 max-w-4xl">{mode === "executive" ? "Command enterprise cyber crises through business impact, financial exposure, executive decisions, containment, recovery, control failures, timeline evidence and board-ready intelligence." : "Coordinate persistent crisis cases, response actions, approvals, control failures, incident evidence, audit records and recovery using the existing Obserra platform services."}</p>
           <div className="text-[10px] font-mono text-muted-foreground mt-2">Current case: {selectedCase?.ref || "none"} · Data refresh {effectiveData?.generatedAt ? new Date(effectiveData.generatedAt).toLocaleString() : "unavailable"}{caseBusy ? " · refreshing case" : ""}</div>
         </div>
-        <div className="flex flex-wrap gap-2">{canOperate && <button onClick={toggleDemo} disabled={demoBusy} data-testid="crisis-demo-toggle" className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-head font-bold disabled:opacity-50 ${demoActive ? "border-ai/40 bg-ai/15 text-ai" : "border-border bg-secondary/40"}`}>{demoBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : demoActive ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}{demoActive ? "Exit Demo" : "Demo Mode"}</button>}{selectedCase?.status === "Closed" && <button onClick={generatePIR} disabled={pirBusy} data-testid="crisis-pir-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{pirBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ClipboardList className="w-3.5 h-3.5" />}Post-Incident Review</button>}{canOperate && <button onClick={ingestServiceNow} disabled={ingestBusy} data-testid="crisis-ingest-servicenow-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{ingestBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CloudDownload className="w-3.5 h-3.5" />}Ingest ServiceNow</button>}{canOperate && selectedCase && <button onClick={emailBrief} disabled={emailBusy} data-testid="crisis-email-brief-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{emailBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}Email Board Brief</button>}<button onClick={() => setTourOpen(true)} data-testid="crisis-walkthrough-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-crit/30 bg-crit/10 text-crit text-xs font-head font-bold"><Siren className="w-3.5 h-3.5" />Walkthrough</button><button onClick={reload} disabled={refreshing} data-testid="crisis-refresh-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Refresh</button><button onClick={() => openTab("briefing")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Download className="w-3.5 h-3.5" />Executive Brief</button></div>
+        <div className="flex flex-wrap gap-2">{canOperate && <button onClick={toggleDemo} disabled={demoBusy} data-testid="crisis-demo-toggle" className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-head font-bold disabled:opacity-50 ${demoActive ? "border-ai/40 bg-ai/15 text-ai" : "border-border bg-secondary/40"}`}>{demoBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : demoActive ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}{demoActive ? "Exit Demo" : "Demo Mode"}</button>}{selectedCase?.status === "Closed" && <button onClick={generatePIR} disabled={pirBusy} data-testid="crisis-pir-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{pirBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ClipboardList className="w-3.5 h-3.5" />}Post-Incident Review</button>}{canOperate && <button onClick={ingestServiceNow} disabled={ingestBusy} data-testid="crisis-ingest-servicenow-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{ingestBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CloudDownload className="w-3.5 h-3.5" />}Ingest ServiceNow</button>}{canOperate && selectedCase && <button onClick={emailBrief} disabled={emailBusy} data-testid="crisis-email-brief-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{emailBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}Email Board Brief</button>}{canOperate && selectedCase && <select value={selectedCase.brief_schedule_hours || 0} onChange={(e) => setBriefCadence(e.target.value)} data-testid="crisis-brief-cadence" title="Auto-email the board brief on a cadence while the crisis is active" className="px-2 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">{[[0, "Auto-brief: Off"], [4, "Auto-brief: 4h"], [12, "Auto-brief: 12h"], [24, "Auto-brief: 24h"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>}<button onClick={() => setTourOpen(true)} data-testid="crisis-walkthrough-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-crit/30 bg-crit/10 text-crit text-xs font-head font-bold"><Siren className="w-3.5 h-3.5" />Walkthrough</button><button onClick={reload} disabled={refreshing} data-testid="crisis-refresh-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Refresh</button><button onClick={() => openTab("briefing")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Download className="w-3.5 h-3.5" />Executive Brief</button></div>
       </div>
 
       {error && <div className="rounded-xl border border-crit/30 bg-crit/5 p-4 flex items-start gap-3" data-testid="crisis-error"><AlertTriangle className="w-5 h-5 text-crit shrink-0 mt-0.5" /><div><div className="font-head font-bold text-sm">Crisis intelligence incomplete</div><div className="text-xs text-muted-foreground mt-1">{error}</div></div></div>}

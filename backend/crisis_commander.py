@@ -104,6 +104,7 @@ class CrisisCaseUpdate(BaseModel):
     business_services: list[str] | None = None
     incident_refs: list[str] | None = None
     risk_refs: list[str] | None = None
+    brief_schedule_hours: int | None = Field(default=None, ge=0, le=168)
 
 
 class CrisisEventCreate(BaseModel):
@@ -1046,11 +1047,8 @@ async def regulatory_scan(user: dict = Depends(get_current_user)):
 _SN_SEVERITY = {"1": "Critical", "2": "High", "3": "Medium", "4": "Low", "5": "Low"}
 
 
-@api.post("/ingest/servicenow")
-async def ingest_servicenow(user: dict = Depends(get_current_user)):
-    _require_operator(user)
+async def _ingest_servicenow(org_id: str, actor: str = "ServiceNow SecOps"):
     import httpx
-    org_id = user["org_id"]
     st = await db.connector_state.find_one({"org_id": org_id, "cid": "servicenow"}, {"_id": 0})
     creds = (st or {}).get("creds") or {}
     base = (creds.get("base") or "").rstrip("/")
@@ -1108,6 +1106,103 @@ async def ingest_servicenow(user: dict = Depends(get_current_user)):
             "occurred_at": now, "created_at": now, "created_by": "ServiceNow SecOps"})
         ingested += 1
         refs.append(ref)
-    await _audit(org_id, _actor(user), "crisis.ingest.servicenow",
+    await _audit(org_id, actor, "crisis.ingest.servicenow",
                  f"{ingested} ingested, {skipped} skipped from {used_table}")
     return {"ingested": ingested, "skipped": skipped, "source_table": used_table, "refs": refs}
+
+
+@api.post("/ingest/servicenow")
+async def ingest_servicenow(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    return await _ingest_servicenow(user["org_id"], _actor(user))
+
+
+async def run_servicenow_auto_ingest(org_id: str | None = None) -> dict:
+    """Cron: auto-open crisis cases from any org with a CONNECTED ServiceNow connector."""
+    query = {"cid": "servicenow", "state": "connected"}
+    if org_id:
+        query["org_id"] = org_id
+    total_orgs, total_ingested = 0, 0
+    async for st in db.connector_state.find(query, {"_id": 0, "org_id": 1}):
+        total_orgs += 1
+        try:
+            res = await _ingest_servicenow(st["org_id"], "ServiceNow Auto-Ingest")
+            total_ingested += res.get("ingested", 0)
+        except Exception:
+            pass
+    return {"orgs": total_orgs, "ingested": total_ingested}
+
+
+# ---------------------------------------------------------------------------
+# Scheduled Board Brief — auto-email the grounded crisis brief on a per-case
+# cadence while the crisis is active. Folded into the hourly platform cron.
+# ---------------------------------------------------------------------------
+async def run_scheduled_briefs(org_id: str | None = None) -> int:
+    from kernel import notifications
+    now = datetime.now(timezone.utc)
+    query: dict = {"status": {"$ne": "Closed"}, "brief_schedule_hours": {"$gt": 0}}
+    if org_id:
+        query["org_id"] = org_id
+    sent_cases = 0
+    async for case in db.crisis_cases.find(query, {"_id": 0}):
+        hours = int(case.get("brief_schedule_hours") or 0)
+        if hours <= 0:
+            continue
+        last = _parse_iso(case.get("brief_last_sent_at"))
+        if last and (now - last).total_seconds() < hours * 3600:
+            continue
+        oid = case["org_id"]
+        recipients = await db.users.find(
+            {"org_id": oid, "role": {"$in": ["admin", "executive", "owner"]}},
+            {"_id": 0, "email": 1}).to_list(200)
+        emails = [r["email"] for r in recipients if r.get("email")]
+        if not emails:
+            continue
+        insight = await _compute_crisis_insight(oid, case["ref"])
+        html = _brief_html(insight, case)
+        for em in emails:
+            try:
+                await notifications.send_email(em, f"Scheduled Crisis Brief — {case['ref']}", html)
+            except Exception:
+                pass
+        await db.crisis_cases.update_one(
+            {"org_id": oid, "ref": case["ref"]}, {"$set": {"brief_last_sent_at": now.isoformat()}})
+        await db.crisis_events.insert_one({
+            "org_id": oid, "case_ref": case["ref"],
+            "event_id": await _next_ref(oid, "crisis_events", "EVT"),
+            "kind": "Communication", "title": f"Scheduled board brief emailed to {len(emails)} recipient(s)",
+            "detail": insight.get("headline", ""), "source": "Scheduled Brief", "severity": "Info",
+            "occurred_at": now.isoformat(), "created_at": now.isoformat(), "created_by": "Obserra Scheduled Brief"})
+        sent_cases += 1
+    return sent_cases
+
+
+# ---------------------------------------------------------------------------
+# War Room Live Chat — an in-room message thread per crisis case.
+# ---------------------------------------------------------------------------
+class CrisisMessage(BaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+
+
+@api.get("/cases/{ref}/messages")
+async def list_messages(ref: str, user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _get_case(org_id, ref)
+    return await db.crisis_messages.find(
+        {"org_id": org_id, "case_ref": ref}, {"_id": 0}).sort("created_at", ASCENDING).to_list(500)
+
+
+@api.post("/cases/{ref}/messages")
+async def post_message(ref: str, body: CrisisMessage, user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    await _get_case(org_id, ref)
+    now = _now()
+    msg = {
+        "org_id": org_id, "case_ref": ref,
+        "message_id": await _next_ref(org_id, "crisis_messages", "MSG"),
+        "author": user.get("name") or user.get("email") or "Responder",
+        "role": user.get("role") or "responder",
+        "text": body.text.strip(),
+        "created_at": now}
+    await db.crisis_messages.insert_one(msg.copy())
+    return msg

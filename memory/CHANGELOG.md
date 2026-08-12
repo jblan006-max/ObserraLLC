@@ -1,5 +1,12 @@
 # Obserra EIOS — CHANGELOG
 
+## 2026-08-12 — Crisis Commander: War Room Chat, Scheduled Briefs, ServiceNow auto-ingest, per-obligation alert thresholds (iteration_135 — backend 14/14, frontend 100%, 0 bugs)
+- **War Room Live Chat:** per-case responder thread — `GET/POST /api/crisis/cases/{ref}/messages` (crisis_messages collection), 8s polling in the War Room tab, any org user can post. UI panel `crisis-war-room-chat` with thread/input/send. No `_id` leakage.
+- **Scheduled Board Brief:** header cadence select (Off/4h/12h/24h) PATCHes `brief_schedule_hours` on the case; `run_scheduled_briefs()` (folded into hourly cron) emails the crisis-grounded brief via Resend to admins/execs while a case is active, writes a 'Scheduled Brief' Communication timeline event, and gates on `brief_last_sent_at` (no double-send — verified).
+- **ServiceNow Auto-Ingest:** `ingest_servicenow` refactored to a reusable `_ingest_servicenow(org_id, actor)` core; `run_servicenow_auto_ingest()` folded into the hourly cron opens crisis cases from any org with a connected ServiceNow connector. Manual button + honest 400 when not connected unchanged. (No new cron — still 5 max.)
+- **Per-obligation notify threshold:** Regulatory & Legal tab now has an 'Alert threshold' select per obligation (`crisis-obligation-threshold-<id>`, 6/12/24/48/72h) → PATCHes `notify_within_hours`; the regulatory scan honours it per-obligation (verified).
+
+
 ## 2026-08-12 — Crisis Commander ops suite: War Room Live Sync, Regulatory Auto-Alerts, ServiceNow ingest, Email Board Brief (iteration_134 — backend 12/12, frontend 100%, 0 blockers)
 - **War Room Live Sync:** War Room tab now polls the case detail every 8s (roster + pending decisions update without refresh), shows a "LIVE · 8s" badge, and a "Join War Room" button adds the current user as a participant. (CyberCrisisCommander.jsx WarRoom + polling useEffect.)
 - **Regulatory Auto-Alerts:** `run_regulatory_clock_alerts()` posts Slack/Teams alerts (self_scan._post_chat_alert) + writes a "Regulatory Timer" timeline event when an obligation's deadline is within `notify_within_hours` (default 24h) or overdue; dedupes via an `alert_state` escalation field. Folded into the existing hourly cron (5-cron platform limit — no new cron). Manual trigger: `POST /api/crisis/regulatory/scan`. Obligations gained `notify_within_hours`; PATCHing `deadline_at` re-arms the alert (verified push-out→reset→pull-in→re-fire).

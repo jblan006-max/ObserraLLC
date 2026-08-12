@@ -458,8 +458,10 @@ async def hourly_overdue_digest(request: Request, background_tasks: BackgroundTa
         raise HTTPException(status_code=401, detail="Unauthorized")
     from deploy import _run_overdue_request_digest
     background_tasks.add_task(_run_overdue_request_digest)
-    from crisis_commander import run_regulatory_clock_alerts
+    from crisis_commander import run_regulatory_clock_alerts, run_scheduled_briefs, run_servicenow_auto_ingest
     background_tasks.add_task(run_regulatory_clock_alerts)
+    background_tasks.add_task(run_scheduled_briefs)
+    background_tasks.add_task(run_servicenow_auto_ingest)
     return {"status": "accepted"}
 
 

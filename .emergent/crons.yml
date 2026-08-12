@@ -28,7 +28,7 @@ crons:
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     enabled: true
   - name: hourly-overdue-digest
-    description: "Hourly: overdue auditor-request digest + SLA escalation (org self-gated), plus Cyber Crisis regulatory-clock Slack/Teams alerts when a notification deadline nears or passes."
+    description: "Hourly: overdue auditor-request digest + SLA escalation (org self-gated), Cyber Crisis regulatory-clock Slack/Teams alerts, scheduled board briefs for active crises, and ServiceNow SecOps auto-ingest into crisis cases."
     cron: "0 * * * *"
     endpoint: "{{BASE_URL}}/api/cron/hourly-overdue-digest"
     method: POST
