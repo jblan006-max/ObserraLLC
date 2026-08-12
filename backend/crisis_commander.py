@@ -2724,6 +2724,8 @@ async def _auto_present_board(org_id: str, ref: str, actor: str) -> dict:
 # ===========================================================================
 class CrisisSettingsBody(BaseModel):
     director_digest: bool | None = None
+    director_digest_weekday: int | None = Field(default=None, ge=0, le=6)
+    director_digest_hour: int | None = Field(default=None, ge=0, le=23)
     connector_quiet: bool | None = None
     connector_quiet_hours: int | None = Field(default=None, ge=1, le=72)
 
@@ -2733,6 +2735,8 @@ async def _crisis_settings(org_id: str) -> dict:
     org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"crisis_settings": 1}) or {}
     s = org.get("crisis_settings") or {}
     return {"director_digest": bool(s.get("director_digest")),
+            "director_digest_weekday": int(s.get("director_digest_weekday") if s.get("director_digest_weekday") is not None else 0),
+            "director_digest_hour": int(s.get("director_digest_hour") if s.get("director_digest_hour") is not None else 8),
             "connector_quiet": bool(s.get("connector_quiet")),
             "connector_quiet_hours": int(s.get("connector_quiet_hours") or 6)}
 
@@ -2751,6 +2755,10 @@ async def set_crisis_settings(body: CrisisSettingsBody, user: dict = Depends(get
     upd = {}
     if body.director_digest is not None:
         upd["crisis_settings.director_digest"] = body.director_digest
+    if body.director_digest_weekday is not None:
+        upd["crisis_settings.director_digest_weekday"] = body.director_digest_weekday
+    if body.director_digest_hour is not None:
+        upd["crisis_settings.director_digest_hour"] = body.director_digest_hour
     if body.connector_quiet is not None:
         upd["crisis_settings.connector_quiet"] = body.connector_quiet
     if body.connector_quiet_hours is not None:

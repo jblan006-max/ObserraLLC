@@ -76,7 +76,7 @@ import {
 } from "@/hooks/useCrisisCommanderData";
 import { APP_VERSION_LABEL } from "@/version";
 import { CrisisTour } from "@/components/crisis/CrisisTour";
-import { NativeConnectors, WarRoomBroadcast, BoardCrisisDashboard, PresentToBoard, SitrepConsole } from "@/components/crisis/CrisisExtensions";
+import { NativeConnectors, WarRoomBroadcast, BoardCrisisDashboard, PresentToBoard, SitrepConsole, ConnectorHealthTile } from "@/components/crisis/CrisisExtensions";
 
 const TABS = [
   ["mission", "Mission Control", Gauge],

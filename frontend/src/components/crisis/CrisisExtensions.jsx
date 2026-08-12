@@ -511,3 +511,115 @@ export function DirectorDigest() {
     </Section>
   );
 }
+
+
+// ---------------------------------------------------------------------------
+// Connector Health tile — compact green/amber status row for Mission Control.
+// ---------------------------------------------------------------------------
+export function ConnectorHealthTile({ openTab }) {
+  const [conns, setConns] = useState([]);
+  const load = useCallback(async () => {
+    try {
+      const [n, q] = await Promise.all([
+        api.get("/crisis/connectors/native"),
+        api.get("/crisis/connectors/quiet-check").catch(() => ({ data: { quiet: [] } })),
+      ]);
+      const quietSet = new Set((q.data.quiet || []).map((x) => x.vendor));
+      setConns((n.data.connectors || []).map((c) => ({ ...c, quiet: quietSet.has(c.vendor) })));
+    } catch { /* operator-only */ }
+  }, []);
+  useEffect(() => { load(); const id = setInterval(load, 60000); return () => clearInterval(id); }, [load]);
+  if (!conns.length) return null;
+  const wired = conns.filter((c) => c.last_received);
+  return (
+    <Section testid="crisis-connector-health-tile" title="Connector Health"
+      subtitle="Live status of your wired security tools — green = flowing, amber = gone quiet."
+      actions={<button onClick={() => openTab?.("command")} data-testid="crisis-health-tile-manage" className="px-2.5 py-1.5 rounded-md border border-border bg-secondary/40 text-[10px] font-mono">Manage</button>}>
+      {wired.length === 0 ? (
+        <div className="text-sm text-muted-foreground" data-testid="crisis-health-tile-empty">No connectors have delivered events yet. Open Incident Command → Native Connectors to wire and test a tool.</div>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {wired.map((c) => (
+            <div key={c.vendor} data-testid={`crisis-health-chip-${c.vendor}`} className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-head font-bold ${c.quiet ? "border-med/40 bg-med/10 text-med" : "border-low/40 bg-low/10 text-low"}`}>
+              <span className={`w-2 h-2 rounded-full ${c.quiet ? "bg-med" : "bg-low animate-pulse"}`} />
+              {c.label}
+              <span className="text-[9px] font-mono text-muted-foreground">{c.quiet ? "quiet" : `${c.count || 0} evt`}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Connector Onboarding Wizard — guided paste URL → send test → turn green.
+// ---------------------------------------------------------------------------
+export function ConnectorWizard() {
+  const [open, setOpen] = useState(false);
+  const [conns, setConns] = useState([]);
+  const [vendor, setVendor] = useState(null);
+  const [testing, setTesting] = useState(false);
+  const load = useCallback(async () => {
+    try { const r = await api.get("/crisis/connectors/native"); setConns(r.data.connectors || []); } catch { /* */ }
+  }, []);
+  useEffect(() => { if (open) load(); }, [open, load]);
+  const sel = conns.find((c) => c.vendor === vendor);
+  const url = sel ? `${BASE}${sel.path}` : "";
+  const done = !!(sel && sel.last_received);
+  const runTest = async () => {
+    if (!vendor) return;
+    setTesting(true);
+    try { await api.post(`/crisis/connectors/${vendor}/test`, {}); toast.success("Test event received — connector is wired."); await load(); }
+    catch (e) { toast.error(e.response?.data?.detail || "Test failed."); }
+    finally { setTesting(false); }
+  };
+  return (
+    <>
+      <button onClick={() => { setOpen(true); setVendor(null); }} data-testid="crisis-wizard-open" className="px-2.5 py-1.5 rounded-md border border-ai/40 bg-ai/10 text-ai text-[10px] font-head font-bold inline-flex items-center gap-1"><Radio className="w-3 h-3" />Setup wizard</button>
+      {open && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4" data-testid="crisis-wizard-modal" onClick={() => setOpen(false)}>
+          <div className="bg-card border border-border rounded-xl w-full max-w-lg p-5" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-head font-black text-lg">Connector Setup Wizard</h3>
+              <button onClick={() => setOpen(false)} data-testid="crisis-wizard-close" className="text-muted-foreground hover:text-foreground text-sm">✕</button>
+            </div>
+            {!vendor ? (
+              <>
+                <div className="text-xs text-muted-foreground mb-3">Step 1 — pick the tool you're wiring:</div>
+                <div className="grid grid-cols-2 gap-2">
+                  {conns.map((c) => (
+                    <button key={c.vendor} onClick={() => setVendor(c.vendor)} data-testid={`crisis-wizard-pick-${c.vendor}`} className="text-left px-3 py-2 rounded-md border border-border bg-secondary/40 hover:bg-secondary text-xs font-head font-bold">{c.label}</button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="space-y-3">
+                <div className="text-sm font-head font-bold">{sel?.label}</div>
+                <div>
+                  <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Step 2 — paste this push URL into the tool's webhook action</div>
+                  <div className="flex items-center gap-2">
+                    <code data-testid="crisis-wizard-url" className="text-[10px] font-mono break-all flex-1 bg-background border border-border rounded-md px-2 py-1.5">{url}</code>
+                    <button onClick={() => { navigator.clipboard?.writeText(url); toast.success("URL copied."); }} data-testid="crisis-wizard-copy" className="shrink-0 p-1.5 rounded-md border border-border hover:bg-secondary"><Copy className="w-3.5 h-3.5" /></button>
+                  </div>
+                  <div className="text-[10px] text-muted-foreground mt-1">{sel?.note}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] font-mono uppercase text-muted-foreground mb-1">Step 3 — send a test event and watch it turn green</div>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <button onClick={runTest} disabled={testing} data-testid="crisis-wizard-test" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">{testing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}Send test event</button>
+                    <span data-testid="crisis-wizard-status" className={`inline-flex items-center gap-1.5 text-xs font-head font-bold ${done ? "text-low" : "text-muted-foreground"}`}><span className={`w-2.5 h-2.5 rounded-full ${done ? "bg-low animate-pulse" : "bg-muted-foreground/40"}`} />{done ? "Connected — event received" : "Waiting for first event"}</span>
+                  </div>
+                </div>
+                <div className="flex justify-between pt-2">
+                  <button onClick={() => setVendor(null)} data-testid="crisis-wizard-back" className="text-xs text-muted-foreground hover:text-foreground">← Pick another</button>
+                  <button onClick={() => setOpen(false)} data-testid="crisis-wizard-done" className="px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">Done</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
