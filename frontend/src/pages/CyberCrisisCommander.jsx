@@ -32,6 +32,7 @@ import {
   CloudDownload,
   Send,
   Bell,
+  ShieldOff,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -443,7 +444,7 @@ function DecisionRoom({ selectedCase, caseDetail, recommendations, decisions, ch
                 <div key={action.action_id} data-testid={`crisis-decision-${action.action_id}`} className="rounded-xl border border-high/25 bg-high/5 p-4">
                   <div className="grid xl:grid-cols-[1.5fr_.7fr_auto] gap-4">
                     <div><div className="font-mono text-[10px] text-ai">{action.action_id}</div><div className="font-head font-bold text-lg mt-1">{action.title}</div><div className="grid md:grid-cols-2 gap-3 mt-3"><div className="rounded-lg bg-card/60 border border-border p-3"><div className="text-[9px] font-mono uppercase text-muted-foreground">Business impact</div><div className="text-xs mt-1">{action.business_impact || "Not documented"}</div></div><div className="rounded-lg bg-card/60 border border-border p-3"><div className="text-[9px] font-mono uppercase text-muted-foreground">Technical impact</div><div className="text-xs mt-1">{action.technical_impact || "Not documented"}</div></div></div></div>
-                    <div><div className="text-[9px] font-mono uppercase text-muted-foreground">Approval owner</div><div className="text-sm font-medium mt-1">{action.decision_owner || "Unassigned"}</div><div className="mt-3"><StatusPill value={action.status} /></div></div>
+                    <div><div className="text-[9px] font-mono uppercase text-muted-foreground">Approval owner</div><div className="text-sm font-medium mt-1">{action.decision_owner || "Unassigned"}</div><div className="mt-3"><StatusPill value={action.status} /></div>{action.status === "Awaiting Approval" && action.decision_due_at && (() => { const cd = obligationCountdown(action.decision_due_at); return <div data-testid={`crisis-decision-sla-${action.action_id}`} className={`mt-2 inline-flex items-center gap-1 text-[10px] font-mono px-2 py-1 rounded-full ${cd.overdue ? "bg-crit/15 text-crit" : cd.urgent ? "bg-med/15 text-med" : "bg-secondary/60 text-muted-foreground"}`}><Timer className="w-3 h-3" />SLA {cd.label}</div>; })()}</div>
                     <div className="flex items-center">{action.status === "Awaiting Approval" ? <button onClick={() => approve(action)} disabled={busy === action.action_id} data-testid={`crisis-approve-${action.action_id}`} className="px-4 py-2.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold inline-flex items-center gap-1.5 disabled:opacity-50">{busy === action.action_id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}Approve</button> : <StatusPill value={action.status} />}</div>
                   </div>
                 </div>
@@ -478,6 +479,70 @@ function BusinessImpact({ data, selectedCase }) {
         <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-sm"><thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border"><tr><th className="text-left py-3 pr-3">Risk</th><th className="text-left py-3 px-3">Rating</th><th className="text-right py-3 px-3">Residual</th><th className="text-right py-3 px-3">Residual ALE</th><th className="text-left py-3 pl-3">Owner</th></tr></thead><tbody>{risks.map((risk) => <tr key={risk.ref} className="border-b border-border/60"><td className="py-3 pr-3"><div className="font-mono text-[10px] text-ai">{risk.ref}</div><div className="font-medium mt-1">{risk.title}</div></td><td className="py-3 px-3"><StatusPill value={risk.rating || "Risk"} /></td><td className="py-3 px-3 text-right font-mono">{risk.residual}</td><td className="py-3 px-3 text-right font-mono">{money(risk.residual_ale)}</td><td className="py-3 pl-3 text-muted-foreground">{risk.owner || "Unassigned"}</td></tr>)}</tbody></table></div>
       </Panel>
       <Panel title="Business service impact" subtitle="Only explicitly linked business services are shown as crisis affected.">{services.length ? <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">{services.map((service) => <div key={service} className="rounded-lg border border-border bg-secondary/20 p-3"><div className="font-head font-bold text-sm">{service}</div></div>)}</div> : <EmptyState title="No business services linked" text="Link business services to the crisis case to support enterprise impact analysis." />}</Panel>
+    </div>
+  );
+}
+
+function EntraContainment({ selectedCase, changed }) {
+  const [q, setQ] = useState("");
+  const [users, setUsers] = useState([]);
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState("");
+  const load = async (query = "") => {
+    setBusy("load"); setStatus("");
+    try {
+      const r = await api.get(`/crisis/entra/users${query ? `?q=${encodeURIComponent(query)}` : ""}`);
+      setUsers(r.data || []);
+    } catch (e) {
+      if (e.response?.status === 400) { setStatus("unconnected"); }
+      else { setStatus("error"); toast.error(e.response?.data?.detail || "Unable to reach Microsoft Entra."); }
+      setUsers([]);
+    } finally { setBusy(""); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  const contain = async (u) => {
+    if (!selectedCase) { toast.error("Select a crisis case first."); return; }
+    if (!window.confirm(`Disable ${u.displayName || u.userPrincipalName} and revoke all their sessions? This is a live Microsoft Entra action.`)) return;
+    setBusy(u.id);
+    try {
+      const { data } = await api.post(`/crisis/cases/${selectedCase.ref}/contain-identity`, { user_id: u.id, upn: u.userPrincipalName || u.mail || "" });
+      toast.success(`${u.displayName || u.userPrincipalName} contained — account disabled${data.sessions_revoked ? ", sessions revoked" : ""}.`);
+      await load(q);
+      await changed?.(selectedCase.ref);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Containment failed.");
+    } finally { setBusy(""); }
+  };
+  return (
+    <div data-testid="crisis-entra-containment">
+      <Panel title="Identity containment — Microsoft Entra" subtitle="Disable a compromised account and revoke its live sessions directly in Microsoft Entra (Graph).">
+        {status === "unconnected" ? (
+          <EmptyState title="Microsoft Entra not connected" text="Connect Microsoft Entra ID in Connector Health → Enterprise Connectors (Tenant ID, Client ID, Client secret) to enable live identity containment." />
+        ) : (
+          <div className="space-y-3">
+            <form onSubmit={(e) => { e.preventDefault(); load(q); }} className="flex items-center gap-2">
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search users by name or UPN…" data-testid="crisis-entra-search" className="flex-1 bg-secondary/60 rounded-md px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-primary" />
+              <button disabled={busy === "load"} data-testid="crisis-entra-search-btn" className="px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">{busy === "load" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : "Search"}</button>
+            </form>
+            {users.length === 0 ? <EmptyState title="No Entra users" text="No users returned. Refine your search or verify the connection in Connector Health." /> : (
+              <div className="space-y-2">
+                {users.map((u) => (
+                  <div key={u.id} data-testid={`crisis-entra-user-${u.id}`} className="flex items-center justify-between gap-3 bg-secondary/40 border border-border rounded-lg px-3 py-2">
+                    <div className="min-w-0">
+                      <div className="font-head font-bold text-sm truncate">{u.displayName || u.userPrincipalName}</div>
+                      <div className="text-[11px] text-muted-foreground truncate">{u.userPrincipalName || u.mail}</div>
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className={`text-[9px] font-mono px-2 py-0.5 rounded-full ${u.accountEnabled === false ? "bg-crit/15 text-crit" : "bg-low/15 text-low"}`}>{u.accountEnabled === false ? "DISABLED" : "ENABLED"}</span>
+                      <button disabled={busy === u.id || u.accountEnabled === false} onClick={() => contain(u)} data-testid={`crisis-entra-contain-${u.id}`} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-crit/10 border border-crit/40 text-crit text-xs font-head font-bold disabled:opacity-40"><ShieldOff className="w-3.5 h-3.5" />Contain</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </Panel>
     </div>
   );
 }
@@ -818,7 +883,7 @@ function WarRoom({ selectedCase, caseDetail, changed, user, live }) {
             <div key={a.action_id} className="rounded-lg border border-high/25 bg-high/5 p-3">
               <div className="font-mono text-[10px] text-ai">{a.action_id}</div>
               <div className="font-head font-bold text-sm mt-1">{a.title}</div>
-              <div className="flex items-center justify-between gap-3 mt-2"><span className="text-xs text-muted-foreground">Owner: {a.decision_owner || "Unassigned"}</span><StatusPill value={a.status} /></div>
+              <div className="flex items-center justify-between gap-3 mt-2"><span className="text-xs text-muted-foreground">Owner: {a.decision_owner || "Unassigned"}</span><div className="flex items-center gap-2">{a.status === "Awaiting Approval" && a.decision_due_at && (() => { const cd = obligationCountdown(a.decision_due_at); return <span data-testid={`crisis-warroom-sla-${a.action_id}`} className={`inline-flex items-center gap-1 text-[9px] font-mono px-2 py-0.5 rounded-full ${cd.overdue ? "bg-crit/15 text-crit" : cd.urgent ? "bg-med/15 text-med" : "bg-secondary/60 text-muted-foreground"}`}><Timer className="w-3 h-3" />{cd.label}</span>; })()}<StatusPill value={a.status} /></div></div>
             </div>
           ))}</div>
         )}
@@ -1019,6 +1084,8 @@ export default function CyberCrisisCommander() {
   const [pirBusy, setPirBusy] = useState(false);
   const [ingestBusy, setIngestBusy] = useState(false);
   const [emailBusy, setEmailBusy] = useState(false);
+  const [packBusy, setPackBusy] = useState(false);
+  const [unreadMentions, setUnreadMentions] = useState(0);
   const canOperate = ["admin", "owner", "executive"].includes(String(user?.role || "").toLowerCase());
 
   const selectedCase = useMemo(() => {
@@ -1160,6 +1227,20 @@ export default function CyberCrisisCommander() {
     }
   };
 
+  const generateReportPack = async () => {
+    if (!selectedCase) return;
+    setPackBusy(true);
+    try {
+      const response = await api.get(`/crisis/cases/${selectedCase.ref}/report-pack.pdf`, { responseType: "blob" });
+      downloadBlob(response.data, `obserra-crisis-report-pack-${selectedCase.ref}.pdf`);
+      toast.success("Post-crisis report pack generated.");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to generate report pack.");
+    } finally {
+      setPackBusy(false);
+    }
+  };
+
   const ingestServiceNow = async () => {
     setIngestBusy(true);
     try {
@@ -1207,6 +1288,31 @@ export default function CyberCrisisCommander() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, selectedCaseRef]);
 
+  // Unread war-room @mentions badge — count messages that mention me since I last
+  // opened the War Room tab; clears while I'm viewing it.
+  useEffect(() => {
+    if (!selectedCaseRef) { setUnreadMentions(0); return undefined; }
+    let active = true;
+    const mine = [user?.name, user?.email].filter(Boolean);
+    const myRole = String(user?.role || "").toLowerCase();
+    const seenKey = `crisis-warroom-seen-${selectedCaseRef}`;
+    const mentionsMe = (m) => Array.isArray(m.mentions) && m.mentions.some((x) => (x.name && mine.includes(x.name)) || (x.role && myRole && x.role.toLowerCase().includes(myRole)));
+    const compute = async () => {
+      if (activeTab === "warroom") { localStorage.setItem(seenKey, String(Date.now())); setUnreadMentions(0); return; }
+      try {
+        const r = await api.get(`/crisis/cases/${selectedCaseRef}/messages`);
+        if (!active) return;
+        const seen = Number(localStorage.getItem(seenKey) || 0);
+        const count = (r.data || []).filter((m) => mentionsMe(m) && m.author && !mine.includes(m.author) && new Date(m.created_at).getTime() > seen).length;
+        setUnreadMentions(count);
+      } catch { /* ignore */ }
+    };
+    compute();
+    const id = setInterval(compute, 15000);
+    return () => { active = false; clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCaseRef, activeTab, user]);
+
   if (loading && !data) {
     return (
       <div className="min-h-[55vh] flex items-center justify-center">
@@ -1223,20 +1329,20 @@ export default function CyberCrisisCommander() {
           <p className="text-sm text-muted-foreground mt-2 max-w-4xl">{mode === "executive" ? "Command enterprise cyber crises through business impact, financial exposure, executive decisions, containment, recovery, control failures, timeline evidence and board-ready intelligence." : "Coordinate persistent crisis cases, response actions, approvals, control failures, incident evidence, audit records and recovery using the existing Obserra platform services."}</p>
           <div className="text-[10px] font-mono text-muted-foreground mt-2">Current case: {selectedCase?.ref || "none"} · Data refresh {effectiveData?.generatedAt ? new Date(effectiveData.generatedAt).toLocaleString() : "unavailable"}{caseBusy ? " · refreshing case" : ""}</div>
         </div>
-        <div className="flex flex-wrap gap-2">{canOperate && <button onClick={toggleDemo} disabled={demoBusy} data-testid="crisis-demo-toggle" className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-head font-bold disabled:opacity-50 ${demoActive ? "border-ai/40 bg-ai/15 text-ai" : "border-border bg-secondary/40"}`}>{demoBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : demoActive ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}{demoActive ? "Exit Demo" : "Demo Mode"}</button>}{selectedCase?.status === "Closed" && <button onClick={generatePIR} disabled={pirBusy} data-testid="crisis-pir-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{pirBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ClipboardList className="w-3.5 h-3.5" />}Post-Incident Review</button>}{canOperate && <button onClick={ingestServiceNow} disabled={ingestBusy} data-testid="crisis-ingest-servicenow-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{ingestBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CloudDownload className="w-3.5 h-3.5" />}Ingest ServiceNow</button>}{canOperate && selectedCase && <button onClick={emailBrief} disabled={emailBusy} data-testid="crisis-email-brief-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{emailBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}Email Board Brief</button>}{canOperate && selectedCase && <select value={selectedCase.brief_schedule_hours || 0} onChange={(e) => setBriefCadence(e.target.value)} data-testid="crisis-brief-cadence" title="Auto-email the board brief on a cadence while the crisis is active" className="px-2 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">{[[0, "Auto-brief: Off"], [4, "Auto-brief: 4h"], [12, "Auto-brief: 12h"], [24, "Auto-brief: 24h"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>}<button onClick={() => setTourOpen(true)} data-testid="crisis-walkthrough-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-crit/30 bg-crit/10 text-crit text-xs font-head font-bold"><Siren className="w-3.5 h-3.5" />Walkthrough</button><button onClick={reload} disabled={refreshing} data-testid="crisis-refresh-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Refresh</button><button onClick={() => openTab("briefing")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Download className="w-3.5 h-3.5" />Executive Brief</button></div>
+        <div className="flex flex-wrap gap-2">{canOperate && <button onClick={toggleDemo} disabled={demoBusy} data-testid="crisis-demo-toggle" className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-head font-bold disabled:opacity-50 ${demoActive ? "border-ai/40 bg-ai/15 text-ai" : "border-border bg-secondary/40"}`}>{demoBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : demoActive ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}{demoActive ? "Exit Demo" : "Demo Mode"}</button>}{selectedCase?.status === "Closed" && <button onClick={generatePIR} disabled={pirBusy} data-testid="crisis-pir-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{pirBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ClipboardList className="w-3.5 h-3.5" />}Post-Incident Review</button>}{selectedCase?.status === "Closed" && <button onClick={generateReportPack} disabled={packBusy} data-testid="crisis-report-pack-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{packBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}Report Pack</button>}{canOperate && <button onClick={ingestServiceNow} disabled={ingestBusy} data-testid="crisis-ingest-servicenow-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{ingestBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CloudDownload className="w-3.5 h-3.5" />}Ingest ServiceNow</button>}{canOperate && selectedCase && <button onClick={emailBrief} disabled={emailBusy} data-testid="crisis-email-brief-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{emailBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}Email Board Brief</button>}{canOperate && selectedCase && <select value={selectedCase.brief_schedule_hours || 0} onChange={(e) => setBriefCadence(e.target.value)} data-testid="crisis-brief-cadence" title="Auto-email the board brief on a cadence while the crisis is active" className="px-2 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">{[[0, "Auto-brief: Off"], [4, "Auto-brief: 4h"], [12, "Auto-brief: 12h"], [24, "Auto-brief: 24h"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>}<button onClick={() => setTourOpen(true)} data-testid="crisis-walkthrough-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-crit/30 bg-crit/10 text-crit text-xs font-head font-bold"><Siren className="w-3.5 h-3.5" />Walkthrough</button><button onClick={reload} disabled={refreshing} data-testid="crisis-refresh-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Refresh</button><button onClick={() => openTab("briefing")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Download className="w-3.5 h-3.5" />Executive Brief</button></div>
       </div>
 
       {error && <div className="rounded-xl border border-crit/30 bg-crit/5 p-4 flex items-start gap-3" data-testid="crisis-error"><AlertTriangle className="w-5 h-5 text-crit shrink-0 mt-0.5" /><div><div className="font-head font-bold text-sm">Crisis intelligence incomplete</div><div className="text-xs text-muted-foreground mt-1">{error}</div></div></div>}
 
       <AIInsight dashboard="Cyber Crisis Commander" endpoint={selectedCase ? `/crisis/insight?ref=${selectedCase.ref}` : "/crisis/insight"} groundingLabel="the live crisis case, decisions, recovery & regulatory clocks" accent="0 84% 60%" auto slug="cyber-crisis-commander" />
 
-      <div className="overflow-x-auto"><div className="inline-flex min-w-max rounded-xl border border-border bg-card p-1">{TABS.map(([id, label, Icon]) => <button key={id} onClick={() => openTab(id)} data-testid={`crisis-tab-${id}`} className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-head font-bold transition-colors ${activeTab === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}`}><Icon className="w-3.5 h-3.5" />{label}</button>)}</div></div>
+      <div className="overflow-x-auto"><div className="inline-flex min-w-max rounded-xl border border-border bg-card p-1">{TABS.map(([id, label, Icon]) => <button key={id} onClick={() => openTab(id)} data-testid={`crisis-tab-${id}`} className={`relative inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-head font-bold transition-colors ${activeTab === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}`}><Icon className="w-3.5 h-3.5" />{label}{id === "warroom" && unreadMentions > 0 && <span data-testid="crisis-warroom-unread" className="ml-1 min-w-[16px] h-4 px-1 rounded-full bg-crit text-white text-[9px] font-mono inline-flex items-center justify-center">{unreadMentions}</span>}</button>)}</div></div>
 
       {activeTab === "mission" && <MissionControl data={effectiveData} selectedCase={selectedCase} caseDetail={caseDetail} openTab={openTab} />}
       {activeTab === "command" && <IncidentCommand data={effectiveData} selectedCase={selectedCase} caseDetail={caseDetail} loadCase={loadCase} changed={changed} created={created} />}
       {activeTab === "decisions" && <DecisionRoom selectedCase={selectedCase} caseDetail={caseDetail} recommendations={effectiveData?.recommendations || []} decisions={effectiveData?.decisions || []} changed={changed} />}
       {activeTab === "impact" && <BusinessImpact data={effectiveData} selectedCase={selectedCase} />}
-      {activeTab === "response" && <ResponseActions selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}
+      {activeTab === "response" && <div className="space-y-5"><ResponseActions selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} /><EntraContainment selectedCase={selectedCase} changed={changed} /></div>}
       {activeTab === "warroom" && <WarRoom selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} user={user} live={activeTab === "warroom"} />}
       {activeTab === "recovery" && <RecoveryCommand selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}
       {activeTab === "regulatory" && <RegulatoryLegal selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}

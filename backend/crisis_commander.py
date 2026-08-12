@@ -339,6 +339,15 @@ async def add_event(
     return event
 
 
+_SLA_HOURS = {"Critical": 1, "High": 2, "Medium": 4, "Low": 8}
+
+
+def _sla_due(priority, base_iso):
+    from datetime import timedelta
+    base = _parse_iso(base_iso) or datetime.now(timezone.utc)
+    return (base + timedelta(hours=_SLA_HOURS.get(priority or "High", 2))).isoformat()
+
+
 @api.post("/cases/{ref}/actions")
 async def add_action(
     ref: str,
@@ -362,6 +371,8 @@ async def add_action(
     }
     if action["decision_required"] and action["status"] == "Open":
         action["status"] = "Awaiting Approval"
+    if action["decision_required"] and not action.get("decision_due_at"):
+        action["decision_due_at"] = _sla_due(action.get("priority"), now)
 
     await db.crisis_actions.insert_one(action.copy())
     await db.crisis_cases.update_one(
@@ -711,6 +722,7 @@ async def demo_seed(user: dict = Depends(get_current_user)):
             "action_id": await _next_ref(org_id, "crisis_actions", "ACT"),
             "title": title, "owner": "", "priority": prio, "status": status,
             "action_type": atype, "due_at": None, "decision_required": dec, "decision_owner": downer,
+            "decision_due_at": _sla_due(prio, now.isoformat()) if (dec and status == "Awaiting Approval") else None,
             "business_impact": bimp, "technical_impact": timp,
             "outcome": "", "approved_by": "", "created_at": now.isoformat(), "updated_at": now.isoformat(), "created_by": actor,
         })
@@ -1273,6 +1285,7 @@ async def message_to_action(ref: str, message_id: str, user: dict = Depends(get_
         "due_at": None,
         "decision_required": True,
         "decision_owner": msg.get("author", ""),
+        "decision_due_at": _sla_due("High", now),
         "business_impact": "", "technical_impact": "",
         "outcome": "", "approved_by": "",
         "source": "War Room Chat", "source_message_id": message_id,
@@ -1291,3 +1304,150 @@ async def message_to_action(ref: str, message_id: str, user: dict = Depends(get_
     await db.crisis_cases.update_one({"org_id": org_id, "ref": ref}, {"$set": {"updated_at": now}})
     await _audit(org_id, _actor(user), "crisis.message.to_action", f"{ref}: {message_id} -> {action['action_id']}")
     return action
+
+
+# ---------------------------------------------------------------------------
+# Post-Crisis Report Pack — one downloadable PDF: timeline, decisions, response
+# actions, recovery, regulatory record, war-room roster and chat log.
+# ---------------------------------------------------------------------------
+@api.get("/cases/{ref}/report-pack.pdf")
+async def crisis_report_pack(ref: str, user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    from studio import ReportExportBody, _report_markdown
+    from reports import _build_pdf
+    from fastapi.responses import StreamingResponse
+    org_id = user["org_id"]
+    case = await _get_case(org_id, ref)
+    events = await db.crisis_events.find({"org_id": org_id, "case_ref": ref}, {"_id": 0}).sort("occurred_at", ASCENDING).to_list(500)
+    actions = await db.crisis_actions.find({"org_id": org_id, "case_ref": ref}, {"_id": 0}).to_list(500)
+    obligations = await db.crisis_obligations.find({"org_id": org_id, "case_ref": ref}, {"_id": 0}).to_list(500)
+    messages = await db.crisis_messages.find({"org_id": org_id, "case_ref": ref}, {"_id": 0}).sort("created_at", ASCENDING).to_list(1000)
+    participants = await db.crisis_participants.find({"org_id": org_id, "case_ref": ref}, {"_id": 0}).to_list(500)
+    recovery = await db.crisis_recovery.find({"org_id": org_id, "case_ref": ref}, {"_id": 0}).to_list(500)
+    decisions = [a for a in actions if a.get("action_type") == "Decision" or a.get("decision_required")]
+    dec_ids = {a["action_id"] for a in decisions}
+    responses = [a for a in actions if a["action_id"] not in dec_ids]
+
+    def _fmt(ts):
+        return str(ts).replace("T", " ")[:19] if ts else "-"
+
+    blocks = [
+        {"heading": f"Crisis Report Pack — {case.get('title', '')}", "lines": [
+            f"Case: {case.get('ref')}",
+            f"Severity: {case.get('severity')} · Status: {case.get('status')} / {case.get('phase')}",
+            f"Incident commander: {case.get('incident_commander') or 'Unassigned'}",
+            f"Executive sponsor: {case.get('executive_sponsor') or 'Unassigned'}",
+            f"Opened: {_fmt(case.get('started_at'))} · Last update: {_fmt(case.get('updated_at'))}",
+            f"Business services: {', '.join(case.get('business_services') or []) or '-'}",
+            f"Summary: {case.get('summary') or '-'}"]},
+        {"heading": f"Incident Timeline ({len(events)} events)", "lines": [
+            f"{_fmt(e.get('occurred_at'))} — [{e.get('kind')}/{e.get('severity')}] {e.get('title')} ({e.get('source') or 'manual'})" for e in events] or ["No timeline events recorded."]},
+        {"heading": f"Executive Decisions ({len(decisions)})", "lines": [
+            f"{d.get('action_id')} — {d.get('title')} — {d.get('status')} — owner {d.get('decision_owner') or d.get('owner') or '-'}" for d in decisions] or ["No executive decisions recorded."]},
+        {"heading": f"Response Actions ({len(responses)})", "lines": [
+            f"{a.get('action_id')} — {a.get('title')} — {a.get('status')} — {a.get('action_type')}" for a in responses] or ["No response actions recorded."]},
+        {"heading": f"Recovery Status ({len(recovery)})", "lines": [
+            f"{r.get('name')} — {r.get('status')} — {r.get('pct', 0)}% ({r.get('category') or '-'})" for r in recovery] or ["No recovery items tracked."]},
+        {"heading": f"Regulatory Record ({len(obligations)})", "lines": [
+            f"{o.get('jurisdiction')} — {o.get('regulation')} — {o.get('status')} — deadline {_fmt(o.get('deadline_at'))}" for o in obligations] or ["No regulatory obligations recorded."]},
+        {"heading": f"War Room Roster ({len(participants)})", "lines": [
+            f"{p.get('role')} — {p.get('name')} ({p.get('status')}) — {p.get('responsibility') or '-'}" for p in participants] or ["No participants recorded."]},
+        {"heading": f"War Room Chat Log ({len(messages)} messages)", "lines": [
+            f"{_fmt(m.get('created_at'))} {m.get('author')} ({m.get('role')}): {m.get('text')}" for m in messages] or ["No chat messages recorded."]},
+    ]
+    title = f"Crisis Report Pack {ref}"
+    body = ReportExportBody(
+        title=title,
+        ai_narrative=(f"Consolidated post-crisis record for {ref}, assembled from the live, audit-logged crisis case: "
+                      f"timeline, executive decisions, response actions, recovery, regulatory obligations, war-room "
+                      f"roster and full chat log."),
+        blocks=blocks)
+    buf = _build_pdf(_report_markdown(body), title)
+    _slug = f"crisis-report-pack-{ref}".lower()
+    fname = "".join(c for c in _slug if c.isascii() and (c.isalnum() or c == "-")) or "crisis-report-pack"
+    await _audit(org_id, _actor(user), "crisis.report_pack", ref)
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename="{fname}.pdf"'})
+
+
+# ---------------------------------------------------------------------------
+# Identity containment via Microsoft Entra (LIVE Microsoft Graph) — list users
+# and disable an account + revoke its sign-in sessions during a crisis.
+# ---------------------------------------------------------------------------
+async def _entra_creds(org_id: str):
+    st = await db.connector_state.find_one(
+        {"org_id": org_id, "cid": "entra", "state": "connected"}, {"_id": 0})
+    return (st or {}).get("creds")
+
+
+@api.get("/entra/users")
+async def entra_users(q: str = "", user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    import httpx
+    from connectors_catalog import _entra_token
+    creds = await _entra_creds(user["org_id"])
+    if not creds:
+        raise HTTPException(status_code=400, detail="Microsoft Entra is not connected. Connect it in Connector Health (Enterprise Connectors) first.")
+    token, err = await _entra_token(creds)
+    if err:
+        raise HTTPException(status_code=502, detail=err[3])
+    params = {"$top": "25", "$select": "id,displayName,userPrincipalName,mail,accountEnabled"}
+    if q:
+        safe = q.replace("'", "''")
+        params["$filter"] = f"startswith(displayName,'{safe}') or startswith(userPrincipalName,'{safe}')"
+    async with httpx.AsyncClient(timeout=20) as c:
+        r = await c.get("https://graph.microsoft.com/v1.0/users", headers={"Authorization": f"Bearer {token}"}, params=params)
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Microsoft Graph returned {r.status_code}: {r.text[:160]}")
+    return (r.json() or {}).get("value", [])
+
+
+class ContainIdentity(BaseModel):
+    user_id: str
+    upn: str = ""
+
+
+@api.post("/cases/{ref}/contain-identity")
+async def contain_identity(ref: str, body: ContainIdentity, user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    import httpx
+    from connectors_catalog import _entra_token
+    org_id = user["org_id"]
+    await _get_case(org_id, ref)
+    creds = await _entra_creds(org_id)
+    if not creds:
+        raise HTTPException(status_code=400, detail="Microsoft Entra is not connected. Connect it in Connector Health first.")
+    token, err = await _entra_token(creds)
+    if err:
+        raise HTTPException(status_code=502, detail=err[3])
+    headers = {"Authorization": f"Bearer {token}"}
+    uid = body.user_id
+    async with httpx.AsyncClient(timeout=20) as c:
+        disable = await c.patch(f"https://graph.microsoft.com/v1.0/users/{uid}",
+                                headers={**headers, "Content-Type": "application/json"}, json={"accountEnabled": False})
+        if disable.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"Disable failed ({disable.status_code}): {disable.text[:160]}")
+        revoke = await c.post(f"https://graph.microsoft.com/v1.0/users/{uid}/revokeSignInSessions", headers=headers)
+    revoked = revoke.status_code in (200, 204)
+    now = _now()
+    label = body.upn or uid
+    await db.crisis_events.insert_one({
+        "org_id": org_id, "case_ref": ref,
+        "event_id": await _next_ref(org_id, "crisis_events", "EVT"),
+        "kind": "Containment", "title": f"Identity contained via Microsoft Entra — {label}",
+        "detail": f"Account disabled{' and sign-in sessions revoked' if revoked else ''} (live Microsoft Graph).",
+        "source": "Microsoft Entra", "severity": "Critical",
+        "occurred_at": now, "created_at": now, "created_by": _actor(user)})
+    await db.crisis_actions.insert_one({
+        "org_id": org_id, "case_ref": ref,
+        "action_id": await _next_ref(org_id, "crisis_actions", "ACT"),
+        "title": f"Contain identity {label} (disable + revoke sessions)", "owner": _actor(user),
+        "priority": "Critical", "status": "Verified", "action_type": "Containment", "due_at": None,
+        "decision_required": False, "decision_owner": "", "business_impact": "",
+        "technical_impact": "Account disabled; sessions revoked",
+        "outcome": "Executed via Microsoft Entra (Graph)", "approved_by": _actor(user),
+        "source": "Microsoft Entra", "created_at": now, "updated_at": now, "created_by": _actor(user)})
+    await db.crisis_cases.update_one({"org_id": org_id, "ref": ref}, {"$set": {"updated_at": now}})
+    await _audit(org_id, _actor(user), "crisis.contain_identity",
+                 f"{ref}: {label} disabled={disable.status_code} revoked={revoked}")
+    return {"user_id": uid, "disabled": True, "sessions_revoked": revoked}

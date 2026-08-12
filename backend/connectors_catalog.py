@@ -40,9 +40,15 @@ CATALOG = [
     {"id": "ping-identity", "name": "Ping Identity", "category": "Identity & Access", "auth": "oauth",
      "capabilities": ["SSO", "MFA", "Directory"], "required_credentials": ["PingOne environment + OAuth client"], "connectable": False,
      "boundary": "Requires a customer PingOne environment and OAuth2 client-credentials app."},
-    {"id": "entra", "name": "Microsoft Entra ID", "category": "Identity & Access", "auth": "oauth",
-     "capabilities": ["Devices", "Users", "Risky users", "Conditional Access"], "required_credentials": ["Azure app (client-credentials)"], "connectable": False,
-     "boundary": "Connect via the Microsoft 365 credential connector (Graph client-credentials)."},
+    {"id": "entra", "name": "Microsoft Entra ID", "category": "Identity & Access", "auth": "oauth", "oauth_flow": "client_credentials",
+     "capabilities": ["Users", "Disable account", "Revoke sessions", "Risky users", "Conditional Access"],
+     "required_credentials": ["Entra Tenant ID", "App (client) ID", "Client secret"],
+     "fields": [
+        {"key": "tenant", "label": "Directory (tenant) ID", "placeholder": "00000000-0000-0000-0000-000000000000"},
+        {"key": "client_id", "label": "Application (client) ID", "placeholder": "00000000-0000-0000-0000-000000000000"},
+        {"key": "client_secret", "label": "Client secret value", "secret": True}],
+     "probe": {"method": "GET", "url": "https://graph.microsoft.com/v1.0/users?$top=1", "ok_note": "Microsoft Entra live — Graph users API reachable."},
+     "boundary": "App-only client-credentials to Microsoft Graph. Requires admin consent for User.Read.All (plus User.EnableDisableAccount.All & User.RevokeSessions.All for containment)."},
     {"id": "active-directory", "name": "Active Directory (device collection)", "category": "Identity & Access", "auth": "agent",
      "capabilities": ["Device inventory", "Group membership"], "required_credentials": ["Obserra endpoint agent / LDAP bridge"], "connectable": False,
      "boundary": "Collected via the Obserra endpoint agent or a domain LDAP bridge."},
@@ -258,11 +264,54 @@ async def _log(org_id, entry):
     return doc["id"]
 
 
+async def _entra_token(creds):
+    """Client-credentials token for Microsoft Graph. Returns (token, error_tuple)."""
+    tenant = creds.get("tenant") or creds.get("tenant_id")
+    client_id = creds.get("client_id")
+    secret = creds.get("client_secret")
+    if not (tenant and client_id and secret):
+        return None, ("credentials_required", None, "entra",
+                      "Provide Tenant ID, Application (client) ID and Client secret from your Entra app registration.", None)
+    token_url = f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            tr = await c.post(token_url, data={"client_id": client_id, "client_secret": secret,
+                                               "scope": "https://graph.microsoft.com/.default",
+                                               "grant_type": "client_credentials"})
+    except Exception as e:
+        return None, ("unreachable", None, f"POST {token_url}", f"Network error: {str(e)[:160]}", "provided")
+    if tr.status_code != 200:
+        return None, ("auth_failed", tr.status_code, f"POST {token_url}",
+                      f"Entra rejected the app credential ({tr.status_code}). Check tenant / client ID / secret and grant admin consent.", "provided")
+    return (tr.json() or {}).get("access_token"), None
+
+
+async def _probe_entra(creds):
+    token, err = await _entra_token(creds)
+    if err:
+        return err
+    ep = "GET https://graph.microsoft.com/v1.0/users?$top=1"
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            gr = await c.get("https://graph.microsoft.com/v1.0/users?$top=1",
+                             headers={"Authorization": f"Bearer {token}"})
+    except Exception as e:
+        return ("unreachable", None, ep, f"Microsoft Graph unreachable: {str(e)[:160]}", "provided")
+    if gr.status_code == 200:
+        return ("connected", 200, ep, "Microsoft Entra live — Graph users API reachable.", "provided")
+    if gr.status_code in (401, 403):
+        return ("auth_failed", gr.status_code, ep,
+                f"Token issued but Graph denied ({gr.status_code}) — grant admin consent for User.Read.All.", "provided")
+    return ("error", gr.status_code, ep, f"Graph returned {gr.status_code}: {gr.text[:140]}", "provided")
+
+
 async def _probe(entry, creds=None):
     """Perform a REAL connectivity probe. Returns (state, http_status, endpoint, detail, source)."""
     creds = creds or {}
     auth = entry.get("auth")
     probe = entry.get("probe")
+    if auth == "oauth" and entry.get("oauth_flow") == "client_credentials":
+        return await _probe_entra(creds)
     if entry.get("connectable") is False or not probe:
         needs = ", ".join(entry.get("required_credentials", ["provider-side setup"]))
         return ("credentials_required", None, entry.get("id"),

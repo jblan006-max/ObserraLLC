@@ -1,0 +1,23 @@
+{
+  "summary": "Iteration 138 (Entra connector + Crisis Identity Containment): 8/8 backend pytest passed. Entra catalog entry is connectable:true with fields tenant/client_id/client_secret; catalog returns 40 connectors. POST /api/connectors/entra/connect with dummy creds performs a REAL client-credentials call to login.microsoftonline.com and honestly returns state=auth_failed (http_status 400, detail 'Entra rejected the app credential...'); missing creds -> credentials_required. Never reports 'connected' for fake creds. GET /api/crisis/entra/users and POST /api/crisis/cases/{ref}/contain-identity both return HTTP 400 'not connected' as expected. Regression: /api/connectors/discover still 200, Stripe test still returns a valid state (not 500), catalog count unchanged (~40). Frontend: crisis-tab-response renders crisis-entra-containment panel with 'Microsoft Entra not connected' empty state; ResponseActions still shown above. /app/systems (Connector Health) lists Microsoft Entra ID card (data-testid=catalog-connector-entra) with Connect button; modal exposes Directory (tenant) ID, Application (client) ID, Client secret value fields and 'Save & connect (live probe)' CTA.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter138_entra_containment.py",
+    "/app/test_reports/pytest/iter138.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "connectors_catalog.py _probe() OAuth branch routes client_credentials to _probe_entra before generic gating - regression tests confirm no impact on bearer/basic connectors.",
+    "Entra probe is a genuine outbound HTTPS call (verified via honest auth_failed with real Microsoft 400 response and endpoint URL echoed back).",
+    "All data-testids requested (crisis-entra-containment, catalog-connector-entra, crisis-tab-response) are present and wired correctly."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter138_entra_containment.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin) — from /app/memory/test_credentials.md",
+  "seed_data_creation": "None. No Entra tenant available so LIVE-connected paths not exercised (per instructions).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend Entra connector is real (no mock) — probing dummy creds hits Microsoft and returns auth_failed. Live-connected paths (Graph users list + PATCH accountEnabled/false + POST revokeSignInSessions + Containment timeline+Verified action) cannot be exercised without a real tenant. Regression test file test_iter138_entra_containment.py covers catalog shape, connect probe honesty, crisis 400 not-connected paths, discover, stripe test, and catalog count.",
+  "rca of the issue": "N/A - no defects found."
+}
