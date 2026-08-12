@@ -112,6 +112,10 @@ export function NativeConnectors() {
                 <span className="font-head font-bold text-sm">{c.label}</span>
               </div>
               <p className="text-[11px] text-muted-foreground mt-1 leading-snug">{c.note}</p>
+              <div className="flex items-center gap-1.5 mt-1.5" data-testid={`crisis-native-health-${c.vendor}`}>
+                <span className={`w-2 h-2 rounded-full ${c.last_received ? "bg-low animate-pulse" : "bg-muted-foreground/40"}`} />
+                <span className="text-[9px] font-mono text-muted-foreground">{c.last_received ? `Live · last received ${new Date(c.last_received).toLocaleString()} · ${c.count || 0} event(s)` : "No events received yet"}</span>
+              </div>
               <div className="flex items-center gap-2 mt-2">
                 <code data-testid={`crisis-native-url-${c.vendor}`} className="text-[10px] font-mono break-all flex-1 bg-background border border-border rounded-md px-2 py-1.5">{mask(url)}</code>
                 <button

@@ -50,6 +50,10 @@ async def _ensure_indexes() -> None:
         [("org_id", ASCENDING), ("case_ref", ASCENDING), ("status", ASCENDING)],
         name="crisis_action_case_status",
     )
+    await db.crisis_connector_health.create_index(
+        [("org_id", ASCENDING), ("vendor", ASCENDING)],
+        name="crisis_connector_health_unique", unique=True,
+    )
     _indexes_ready = True
 
 
@@ -105,6 +109,7 @@ class CrisisCaseUpdate(BaseModel):
     incident_refs: list[str] | None = None
     risk_refs: list[str] | None = None
     brief_schedule_hours: int | None = Field(default=None, ge=0, le=168)
+    sitrep_schedule_hours: int | None = Field(default=None, ge=0, le=168)
 
 
 class CrisisEventCreate(BaseModel):
@@ -300,6 +305,12 @@ async def update_case(
             "detail": f"{ref} escalated to Critical; leadership will now receive the crisis brief every 4 hours.",
             "source": "Auto-Escalation", "severity": "High",
             "occurred_at": now, "created_at": now, "created_by": "Obserra Auto-Escalation"})
+    if changes.get("status") == "Closed" and existing.get("status") != "Closed" and not existing.get("demo"):
+        try:
+            await _auto_present_board(org_id, ref, _actor(user))
+        except Exception as exc:
+            import logging
+            logging.getLogger("crisis").exception("Board auto-present failed for %s: %s", ref, exc)
     await _audit(org_id, _actor(user), "crisis.case.update", f"{ref}: {changes}")
     return await db.crisis_cases.find_one(
         {"org_id": org_id, "ref": ref},
@@ -1826,6 +1837,7 @@ async def ingest_webhook(body: WebhookIngest):
             "created_at": now, "created_by": "Inbound Webhook"})
         ingested += 1
     await db.crisis_cases.update_one({"org_id": org_id, "ref": ref}, {"$set": {"updated_at": now}})
+    await _record_connector_health(org_id, body.format or "generic", raw_events[0].get("title") if raw_events else "")
     return {"ok": True, "case_ref": ref, "ingested": ingested}
 
 
@@ -2335,11 +2347,15 @@ def _extract_native_payloads(body):
 @api.get("/connectors/native")
 async def native_connectors(user: dict = Depends(get_current_user)):
     _require_operator(user)
-    secret = await _webhook_secret(user["org_id"], create=True)
+    org_id = user["org_id"]
+    secret = await _webhook_secret(org_id, create=True)
+    health = await _connector_health_map(org_id)
     out = [{
         "vendor": vend, "label": meta["label"], "note": meta["note"],
         "path": f"/api/crisis/ingest/native/{vend}?secret={secret}",
         "header": "X-Obserra-Secret",
+        "last_received": (health.get(vend) or {}).get("last_received"),
+        "count": (health.get(vend) or {}).get("count", 0),
     } for vend, meta in _NATIVE_VENDORS.items()]
     return {"secret": secret, "connectors": out}
 
@@ -2395,6 +2411,7 @@ async def ingest_native(vendor: str, request: _Request, secret: str = ""):
             "created_at": now, "created_by": f"{fmt} connector"})
         ingested += 1
     await db.crisis_cases.update_one({"org_id": org_id, "ref": ref}, {"$set": {"updated_at": now}})
+    await _record_connector_health(org_id, fmt, raw_events[0].get("title") if raw_events else "")
     return {"ok": True, "vendor": fmt, "case_ref": ref, "ingested": ingested}
 
 
@@ -2559,3 +2576,147 @@ async def board_onepager_pdf(ref: str, user: dict = Depends(get_current_user)):
     await _audit(org_id, _actor(user), "crisis.board_onepager", ref)
     return StreamingResponse(buf, media_type="application/pdf",
                              headers={"Content-Disposition": f'attachment; filename="{fname}.pdf"'})
+
+
+
+# ===========================================================================
+# Connector health — record the last time each SIEM/EDR connector delivered an
+# event so teams can confirm a tool is actually wired (live "last received").
+# ===========================================================================
+async def _record_connector_health(org_id: str, vendor: str, title: str = ""):
+    now = _now()
+    await db.crisis_connector_health.update_one(
+        {"org_id": org_id, "vendor": vendor},
+        {"$set": {"last_received": now, "last_title": (title or "")[:160]}, "$inc": {"count": 1}},
+        upsert=True)
+
+
+async def _connector_health_map(org_id: str) -> dict:
+    rows = await db.crisis_connector_health.find({"org_id": org_id}, {"_id": 0}).to_list(50)
+    return {r["vendor"]: {"last_received": r.get("last_received"), "count": r.get("count", 0),
+                          "last_title": r.get("last_title", "")} for r in rows}
+
+
+@api.get("/connectors/health")
+async def connectors_health(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    return {"health": await _connector_health_map(user["org_id"])}
+
+
+# ===========================================================================
+# Auto-SITREP — while a crisis is active, post a fresh containment SITREP to the
+# org's Teams/Slack channels on a per-case cadence. Folded into the hourly cron.
+# ===========================================================================
+async def run_scheduled_sitreps(org_id: str | None = None) -> int:
+    from self_scan import _post_chat_alert
+    now = datetime.now(timezone.utc)
+    query: dict = {"status": {"$ne": "Closed"}, "sitrep_schedule_hours": {"$gt": 0}}
+    if org_id:
+        query["org_id"] = org_id
+    sent_cases = 0
+    async for case in db.crisis_cases.find(query, {"_id": 0}):
+        hours = int(case.get("sitrep_schedule_hours") or 0)
+        if hours <= 0:
+            continue
+        last = _parse_iso(case.get("sitrep_last_sent_at"))
+        if last and (now - last).total_seconds() < hours * 3600:
+            continue
+        oid = case["org_id"]
+        channels = await _chat_channels(oid)
+        if not (channels["teams"] or channels["slack"]):
+            continue
+        ref = case["ref"]
+        snap = await _build_snapshot({"org_id": oid, "case_ref": ref, "expires_at": None})
+        title = f"🚨 Auto-SITREP — {(case.get('title') or '')[:70]} ({ref})"
+        text = "\n".join([
+            f"Severity {case.get('severity')} · Phase {case.get('phase')} · Status {case.get('status')}",
+            f"Contained ~{snap['contained_pct']}% · {snap['counts']['pending_decisions']} decision(s) pending · {snap['counts']['open_actions']} open action(s)",
+            f"Incident commander: {case.get('incident_commander') or 'Unassigned'}",
+        ])
+        posted = True
+        try:
+            await _post_chat_alert(oid, title, text)
+        except Exception:
+            posted = False
+        if not posted:
+            continue
+        await db.crisis_cases.update_one(
+            {"org_id": oid, "ref": ref}, {"$set": {"sitrep_last_sent_at": now.isoformat()}})
+        await db.crisis_events.insert_one({
+            "org_id": oid, "case_ref": ref,
+            "event_id": await _next_ref(oid, "crisis_events", "EVT"),
+            "kind": "Communication", "title": f"Auto-SITREP posted to leadership chat (every {hours}h)",
+            "detail": f"Containment ~{snap['contained_pct']}% · {snap['counts']['pending_decisions']} decision(s) pending.",
+            "source": "Auto-SITREP", "severity": "Info",
+            "occurred_at": now.isoformat(), "created_at": now.isoformat(), "created_by": "Obserra Auto-SITREP"})
+        sent_cases += 1
+    return sent_cases
+
+
+# ===========================================================================
+# Board Auto-Present — when a real (non-demo) crisis is closed, prepare a board
+# snapshot link and email the directors so leadership gets the final picture.
+# ===========================================================================
+async def _auto_present_board(org_id: str, ref: str, actor: str) -> dict:
+    import os
+    from datetime import timedelta
+    import secrets as _s
+    now_dt = datetime.now(timezone.utc)
+    existing = await db.crisis_snapshots.find_one(
+        {"org_id": org_id, "case_ref": ref, "revoked": False}, {"_id": 0})
+    valid = False
+    if existing:
+        exp = _parse_iso(existing.get("expires_at"))
+        valid = (not exp) or now_dt <= exp
+    if valid:
+        token, expires_at = existing["token"], existing["expires_at"]
+    else:
+        token = _s.token_urlsafe(18)
+        expires_at = (now_dt + timedelta(days=30)).isoformat()
+        await db.crisis_snapshots.update_many(
+            {"org_id": org_id, "case_ref": ref, "revoked": False}, {"$set": {"revoked": True}})
+        await db.crisis_snapshots.insert_one({
+            "token": token, "org_id": org_id, "case_ref": ref, "created_by": actor,
+            "created_at": now_dt.isoformat(), "expires_at": expires_at, "revoked": False})
+    base = (os.environ.get("FRONTEND_URL") or "").rstrip("/")
+    link_path = f"/crisis-snapshot/{token}"
+    link = f"{base}{link_path}" if base else link_path
+    case = await db.crisis_cases.find_one({"org_id": org_id, "ref": ref}, {"_id": 0}) or {}
+    recipients = await db.users.find(
+        {"org_id": org_id, "role": {"$in": ["admin", "executive", "owner"]}},
+        {"_id": 0, "email": 1}).to_list(200)
+    emails = [r["email"] for r in recipients if r.get("email")]
+    sent = 0
+    if emails:
+        from kernel import notifications
+        html = (
+            f'<div style="font-family:Arial,Helvetica,sans-serif;max-width:640px;margin:auto;color:#0f172a">'
+            f'<div style="background:#0b1220;color:#fff;padding:18px 22px;border-radius:12px 12px 0 0">'
+            f'<div style="font-size:11px;letter-spacing:2px;color:#f87171">OBSERRA · CYBER CRISIS COMMANDER</div>'
+            f'<div style="font-size:20px;font-weight:800;margin-top:4px">Crisis Closed — Board Snapshot Ready</div>'
+            f'<div style="font-size:12px;color:#94a3b8;margin-top:4px">{case.get("title", "")} · {ref} · '
+            f'{case.get("severity", "")} / {case.get("phase", "")}</div></div>'
+            f'<div style="border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;padding:20px 22px">'
+            f'<p style="font-size:14px;line-height:1.5">This crisis has been closed. A live, read-only board '
+            f'snapshot has been prepared for your review.</p>'
+            f'<p style="margin:18px 0"><a href="{link}" style="background:#0ea5e9;color:#fff;text-decoration:none;'
+            f'padding:11px 20px;border-radius:8px;font-weight:700">Open the board snapshot</a></p>'
+            f'<p style="font-size:12px;color:#64748b;word-break:break-all">{link}</p>'
+            f'<p style="font-size:11px;color:#94a3b8;margin-top:16px">A one-page board PDF is also available inside '
+            f'the Board View. Link expires {str(expires_at)[:10]}.</p></div></div>')
+        for em in emails:
+            try:
+                await notifications.send_email(em, f"Crisis Closed — Board Snapshot for {ref}", html)
+                sent += 1
+            except Exception:
+                pass
+    now = _now()
+    await db.crisis_events.insert_one({
+        "org_id": org_id, "case_ref": ref,
+        "event_id": await _next_ref(org_id, "crisis_events", "EVT"),
+        "kind": "Communication", "title": f"Board snapshot auto-prepared on close; emailed to {sent} director(s)",
+        "detail": f"Read-only board snapshot link generated automatically when {ref} was closed.",
+        "source": "Auto-Present", "severity": "Info",
+        "occurred_at": now, "created_at": now, "created_by": actor})
+    await _audit(org_id, actor, "crisis.auto_present", f"{ref} -> {sent}/{len(emails)} directors")
+    return {"token": token, "snapshot_path": link_path, "emailed": sent}
