@@ -36,11 +36,11 @@ def _build_date(build_date=None):
 
 
 def build_info(build_date=None):
-    return f"name=Obserra Control Intelligence\nversion={read_version()}\nbuilt={_build_date(build_date)}\n"
+    return f"name=Obserra Cyber Crisis Commander\nversion={read_version()}\nbuilt={_build_date(build_date)}\n"
 
 
 def zip_name(build_date=None):
-    return f"Obserra-Control-Intelligence-OnPrem-v{read_version()}-{_build_date(build_date)}.zip"
+    return f"Obserra-Cyber-Crisis-Commander-OnPrem-v{read_version()}-{_build_date(build_date)}.zip"
 
 
 def _walk(src_root, arc_prefix, skip_rel_prefixes=()):

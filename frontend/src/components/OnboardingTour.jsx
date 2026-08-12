@@ -4,24 +4,24 @@ import { ArrowRight, ArrowLeft } from "lucide-react";
 
 const EXEC_STEPS = [
   { title: "Welcome to Obserra Cyber Crisis Commander",
-    body: "Your continuous view of control effectiveness and assurance across the enterprise. Every number — control health, framework coverage, evidence freshness, remediation priority — recomputes live from your control feed. Switch altitude anytime from the toggle in the top bar." },
+    body: "Your command center for enterprise cyber crises. The moment an incident hits, every number — business impact, financial exposure, decision SLAs, containment and recovery — recomputes live from your feeds. Switch altitude anytime from the toggle in the top bar." },
   { title: "Executive Mode", spotlight: true,
-    body: "The boardroom view — highlighted above. Control posture framed for leadership: how effective your controls are, where coverage is thin and what needs executive action, without the noise." },
+    body: "The boardroom view — highlighted above. The crisis framed for leadership: what it's costing per hour, which decisions need an executive owner right now, and how contained you are — without the noise." },
   { title: "Operational Mode", spotlight: true,
-    body: "Flip the same toggle to Operational for the working view — control-by-control effectiveness, evidence status, framework gaps and the remediation queue — so your team can act on specifics." },
-  { title: "Start at Control Posture", spotlight: true, target: "nav-control-posture",
-    body: "Highlighted in the sidebar — Control Posture is where you explore Mission Control, framework readiness, evidence assurance, remediation and defensibility. Come back here anytime." },
+    body: "Flip the same toggle to Operational for the responder view — the live incident timeline, containment actions, war-room chat and recovery tracking your team works minute to minute." },
+  { title: "Start at Cyber Crisis Commander", spotlight: true, target: "nav-cyber-crisis-commander",
+    body: "Highlighted in the sidebar — Cyber Crisis Commander is your incident command: mission control, the executive decision room, containment, war room, recovery and regulatory timers. Come back here anytime." },
 ];
 
 const OPS_STEPS = [
   { title: "Welcome to Obserra Cyber Crisis Commander",
-    body: "This is your operational cockpit for continuous control assurance. Every metric is grounded in your live control feed and carries its data class, so you always know exactly what you're acting on." },
+    body: "This is your operational cockpit for a live cyber crisis. Every action — containment, war-room updates, recovery status — is grounded in your live incident feed, so you always know exactly what's real." },
   { title: "Operational Mode", spotlight: true,
-    body: "The toggle above keeps you in Operational view — control effectiveness, evidence freshness, framework gaps, remediation priority and drift. This is your day-to-day working surface." },
+    body: "The toggle above keeps you in Operational view — incident timeline, containment actions, war-room chat, decision SLAs and recovery tracking. This is your working surface during an incident." },
   { title: "Where you'll work",
-    body: "Jump into Obserra Control Posture from the sidebar to review Mission Control, close framework gaps and work the remediation queue. The Obserrian Advisor can help you triage too." },
-  { title: "Start at Control Posture", spotlight: true, target: "nav-control-posture",
-    body: "Highlighted in the sidebar — Control Posture is your triage home base: control health, evidence assurance and remediation priority, with the Obserrian Advisor one click away." },
+    body: "Jump into Cyber Crisis Commander from the sidebar to drive the timeline, run containment playbooks and work the recovery queue. The Obserrian Advisor can help you triage too." },
+  { title: "Start at Cyber Crisis Commander", spotlight: true, target: "nav-cyber-crisis-commander",
+    body: "Highlighted in the sidebar — Cyber Crisis Commander is your incident home base: live timeline, containment, war room and executive decisions, with the Obserrian Advisor one click away." },
 ];
 
 export const OnboardingTour = () => {

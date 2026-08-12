@@ -2,9 +2,9 @@
 """Generate the Obserra SAP UAC guides as PDF and Word (.docx).
 
 Produces three role-targeted guides from ONE set of sections + screenshots:
-  - Install & User Guide  (full)      -> Obserra-Control-Intelligence-Install-and-User-Guide.{pdf,docx}
-  - Executive Guide       (short)     -> Obserra-Control-Intelligence-Executive-Guide.{pdf,docx}
-  - Admin & Operator Guide(deep)      -> Obserra-Control-Intelligence-Admin-Operator-Guide.{pdf,docx}
+  - Install & User Guide  (full)      -> Obserra-Cyber-Crisis-Commander-Install-and-User-Guide.{pdf,docx}
+  - Executive Guide       (short)     -> Obserra-Cyber-Crisis-Commander-Executive-Guide.{pdf,docx}
+  - Admin & Operator Guide(deep)      -> Obserra-Cyber-Crisis-Commander-Admin-Operator-Guide.{pdf,docx}
 
 Every guide opens with a branded cover (logo) + a numbered Contents page. Screenshots
 are read from /app/scripts/shots and embedded.
@@ -20,16 +20,16 @@ os.makedirs(OUT, exist_ok=True)
 
 NAVY = "#0f1e3d"
 AI = "#12b4d6"
-BRAND = "Obserra Control Intelligence"
-TAGLINE = "Control Intelligence — continuous control effectiveness, evidence assurance & framework coverage"
+BRAND = "Obserra Cyber Crisis Commander"
+TAGLINE = "Enterprise cyber incident command & executive decision intelligence"
 
 E, A = "exec", "admin"      # audience tags
 ALL = (E, A)
 
 # (heading, [paragraphs], screenshot_or_None, audiences)
 SECTIONS = [
-    ("About Obserra Control Intelligence", [
-        "Obserra Control Intelligence lets you discover, understand, govern, "
+    ("About Obserra Cyber Crisis Commander", [
+        "Obserra Cyber Crisis Commander lets you discover, understand, govern, "
         "constrain and respond to the AI agents and models operating across your enterprise — before "
         "delegated machine authority becomes enterprise risk. It gives security, GRC and executive "
         "teams a single live view of which agents exist, what tools and permissions they hold, how "
@@ -102,7 +102,7 @@ SECTIONS = [
         "email the executive brief on demand or on a cadence from here.",
     ], "02_exec_overview.jpg", ALL),
 
-    ("Control Intelligence", [
+    ("Cyber Crisis Commander", [
         "The dedicated seven-tab workspace: Mission Control, Agent Inventory, Authority & Tools "
         "(with the Tool Toxicity Map), Guardrails & Red Team, Shadow AI, Incidents and "
         "Defensibility. Mission Control summarises the estate; every tile is clickable and drills "
@@ -158,7 +158,7 @@ SECTIONS = [
     ], None, ALL),
 
     ("Board Brief Scheduler", [
-        "A one-click control (admin) that emails the Control Intelligence Executive Brief — modelled agent "
+        "A one-click control (admin) that emails the Cyber Crisis Commander Executive Brief — modelled agent "
         "risk, autonomous agents, toxic combinations, shadow AI and open incidents — via the "
         "managed email pipeline. Choose a weekly or monthly cadence, or send it immediately.",
     ], None, (A,)),
@@ -321,11 +321,11 @@ def generate_all():
     """Regenerate all role guides. Keeps pdf/docx/pdf_size/docx_size = the full guide."""
     exec_secs = [s for s in SECTIONS if E in s[3]]
     full_pdf, full_docx = _build(SECTIONS, "Install & User Guide",
-                                 "Obserra-Control-Intelligence-Install-and-User-Guide.pdf", "Obserra-Control-Intelligence-Install-and-User-Guide.docx")
+                                 "Obserra-Cyber-Crisis-Commander-Install-and-User-Guide.pdf", "Obserra-Cyber-Crisis-Commander-Install-and-User-Guide.docx")
     exec_pdf, exec_docx = _build(exec_secs, "Executive Guide",
-                                 "Obserra-Control-Intelligence-Executive-Guide.pdf", "Obserra-Control-Intelligence-Executive-Guide.docx")
+                                 "Obserra-Cyber-Crisis-Commander-Executive-Guide.pdf", "Obserra-Cyber-Crisis-Commander-Executive-Guide.docx")
     admin_pdf, admin_docx = _build(SECTIONS, "Admin & Operator Guide",
-                                   "Obserra-Control-Intelligence-Admin-Operator-Guide.pdf", "Obserra-Control-Intelligence-Admin-Operator-Guide.docx")
+                                   "Obserra-Cyber-Crisis-Commander-Admin-Operator-Guide.pdf", "Obserra-Cyber-Crisis-Commander-Admin-Operator-Guide.docx")
     return {"pdf": full_pdf, "docx": full_docx,
             "pdf_size": os.path.getsize(full_pdf), "docx_size": os.path.getsize(full_docx),
             "exec_pdf": exec_pdf, "exec_docx": exec_docx,
