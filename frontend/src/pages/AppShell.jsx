@@ -16,12 +16,13 @@ import { APP_VERSION_LABEL, CURRENT_CHANGELOG } from "@/version";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import {
   LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
-  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Gauge, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp, ToggleRight, Activity, AlertTriangle, CheckCircle2,
+  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Gauge, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp, ToggleRight, Activity, AlertTriangle, CheckCircle2, Siren,
 } from "lucide-react";
 import { api } from "@/lib/api";
 
 // Per-route accent so each dashboard has its own colour identity.
 const ROUTE_ACCENT = [
+  ["/app/cyber-crisis-commander", "0 84% 60%"],
   ["/app/analytics", "210 92% 62%"],
   ["/app/sod", "0 84% 60%"],
   ["/app/privileged", "35 90% 55%"],
@@ -71,6 +72,7 @@ const NAV_SECTIONS = [
   { section: null, items: [
     { to: "/app", label: "Executive Overview", icon: LayoutDashboard, end: true },
     { to: "/app/control-intelligence", label: "Control Intelligence", icon: Layers },
+    { to: "/app/cyber-crisis-commander", label: "Cyber Crisis Commander", icon: Siren },
   ]},
   { section: "Assurance", cat: true, color: "ai", items: [
     { to: "/app/control-assurance", label: "Control Assurance", icon: Gauge },

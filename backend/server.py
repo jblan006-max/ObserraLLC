@@ -72,6 +72,10 @@ app.include_router(connectors_router)
 app.include_router(risk_engine_router)
 app.include_router(sap_router)
 
+# Obserra Cyber Crisis Commander domain
+from crisis_commander import api as crisis_commander_api
+app.include_router(crisis_commander_api)
+
 _cors = os.environ.get("CORS_ORIGINS", "*").strip()
 _cors_kwargs = {"allow_origin_regex": ".*"} if _cors == "*" else {"allow_origins": [o.strip() for o in _cors.split(",") if o.strip()]}
 app.add_middleware(

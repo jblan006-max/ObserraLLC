@@ -46,6 +46,7 @@ const AgenticAISecurity = lazyWithRetry(() => import("@/pages/AgenticAISecurity"
 const AIGroundingMonitor = lazyWithRetry(() => import("@/pages/AIGroundingMonitor"));
 const ControlAssurance = lazyWithRetry(() => import("@/pages/ControlAssurance"));
 const ControlIntelligence = lazyWithRetry(() => import("@/pages/ControlIntelligence"));
+const CyberCrisisCommander = lazyWithRetry(() => import("@/pages/CyberCrisisCommander"));
 const AIExecutiveOverview = lazyWithRetry(() => import("@/pages/AIExecutiveOverview"));
 // Reused platform pages (identical to Obserra).
 const AuditLog = lazyWithRetry(() => import("@/pages/AuditLog"));
@@ -113,6 +114,7 @@ function AppRoutes() {
           <Route path="agentic-ai-security" element={<AgenticAISecurity />} />
           <Route path="control-assurance" element={<ControlAssurance />} />
           <Route path="control-intelligence" element={<ControlIntelligence />} />
+          <Route path="cyber-crisis-commander" element={<CyberCrisisCommander />} />
         <Route path="ai-grounding" element={<AIGroundingMonitor />} />
           <Route path="system-health" element={<SystemHealth />} />
           <Route path="audit" element={<AuditLog />} />

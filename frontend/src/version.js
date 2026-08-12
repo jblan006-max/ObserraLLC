@@ -14,6 +14,7 @@ export const APP_CHANGELOG = {
     "Control-owner readiness nudges and drift tracking",
     "AI Grounding monitor — hallucination checks on every AI answer",
     "Toggleable Demo Mode with a guided prospect walkthrough",
+    "Cyber Crisis Commander — executive incident command: Mission Control, Decision Room, Business Impact, Containment & Recovery, Timeline evidence and a board-ready crisis brief",
   ],
 };
 
