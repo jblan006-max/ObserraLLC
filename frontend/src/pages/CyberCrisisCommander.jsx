@@ -33,6 +33,12 @@ import {
   Send,
   Bell,
   ShieldOff,
+  Share2,
+  Copy,
+  Pause,
+  SkipForward,
+  Rss,
+  Link2,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -289,6 +295,59 @@ function MissionControl({ data, selectedCase, caseDetail, openTab }) {
         </div>
       </Panel>
     </div>
+  );
+}
+
+function WebhookFeed() {
+  const [cfg, setCfg] = useState(null);
+  const [busy, setBusy] = useState("");
+  const [reveal, setReveal] = useState(false);
+  const base = process.env.REACT_APP_BACKEND_URL || "";
+  const load = async () => {
+    setBusy("load");
+    try { const { data } = await api.get("/crisis/webhook/config"); setCfg(data); }
+    catch (e) { toast.error(e.response?.data?.detail || "Unable to load webhook config."); }
+    finally { setBusy(""); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  const rotate = async () => {
+    if (!window.confirm("Rotate the webhook secret? Tools using the old secret will stop posting until updated.")) return;
+    setBusy("rotate");
+    try { const { data } = await api.post("/crisis/webhook/rotate"); setCfg((c) => ({ ...c, secret: data.secret })); setReveal(true); toast.success("Webhook secret rotated."); }
+    catch (e) { toast.error(e.response?.data?.detail || "Rotate failed."); }
+    finally { setBusy(""); }
+  };
+  const url = `${base}${cfg?.path || "/api/crisis/ingest/webhook"}`;
+  const copy = (text, label) => { navigator.clipboard?.writeText(text); toast.success(`${label} copied.`); };
+  return (
+    <Panel testid="crisis-webhook-feed" title="Live Incident Feed — inbound webhook" subtitle="Point any SIEM / EDR / SOAR / ServiceNow at this endpoint to stream incidents and containment steps straight onto the crisis timeline in real time." actions={<button onClick={load} disabled={busy === "load"} data-testid="crisis-webhook-refresh" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{busy === "load" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Refresh</button>}>
+      <div className="space-y-4">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="bg-secondary/40 border border-border rounded-lg p-3">
+            <div className="text-[9px] font-mono uppercase tracking-widest text-muted-foreground mb-1">POST endpoint</div>
+            <div className="flex items-center gap-2"><code data-testid="crisis-webhook-url" className="text-xs font-mono break-all flex-1">{url}</code><button onClick={() => copy(url, "URL")} data-testid="crisis-webhook-copy-url" className="shrink-0 p-1.5 rounded-md border border-border hover:bg-secondary"><Copy className="w-3.5 h-3.5" /></button></div>
+          </div>
+          <div className="bg-secondary/40 border border-border rounded-lg p-3">
+            <div className="text-[9px] font-mono uppercase tracking-widest text-muted-foreground mb-1">Secret (JSON field "secret")</div>
+            <div className="flex items-center gap-2"><code data-testid="crisis-webhook-secret" className="text-xs font-mono break-all flex-1">{cfg?.secret ? (reveal ? cfg.secret : "•".repeat(18)) : "—"}</code><button onClick={() => setReveal((v) => !v)} className="shrink-0 px-2 py-1.5 rounded-md border border-border hover:bg-secondary text-[10px] font-mono">{reveal ? "Hide" : "Show"}</button><button onClick={() => copy(cfg?.secret || "", "Secret")} data-testid="crisis-webhook-copy-secret" className="shrink-0 p-1.5 rounded-md border border-border hover:bg-secondary"><Copy className="w-3.5 h-3.5" /></button><button onClick={rotate} disabled={busy === "rotate"} data-testid="crisis-webhook-rotate" className="shrink-0 px-2 py-1.5 rounded-md border border-crit/40 bg-crit/10 text-crit text-[10px] font-mono disabled:opacity-50">{busy === "rotate" ? <Loader2 className="w-3 h-3 animate-spin" /> : "Rotate"}</button></div>
+          </div>
+        </div>
+        <div className="text-[11px] text-muted-foreground font-mono bg-secondary/30 border border-border rounded-lg p-3 overflow-x-auto">{`curl -X POST ${url} -H 'Content-Type: application/json' -d '{"secret":"<secret>","open_case":true,"events":[{"kind":"Detection","title":"EDR: ransomware behavior","source":"CrowdStrike","severity":"Critical"}]}'`}</div>
+        <div>
+          <div className="text-[9px] font-mono uppercase tracking-widest text-muted-foreground mb-2">Recently received ({cfg?.count || 0})</div>
+          {(cfg?.recent || []).length === 0 ? (
+            <EmptyState title="No events received yet" text="Once your tool posts to this endpoint, incoming incidents and containment steps appear here and on the crisis timeline in real time." />
+          ) : (
+            <div className="space-y-1.5">{cfg.recent.map((e) => (
+              <div key={e.event_id} data-testid={`crisis-webhook-event-${e.event_id}`} className="flex items-center justify-between gap-3 bg-secondary/40 border border-border rounded-md px-3 py-1.5">
+                <div className="min-w-0"><div className="text-xs font-medium truncate">{e.title}</div><div className="text-[10px] font-mono text-muted-foreground">{e.kind} · {e.source} · {e.case_ref}</div></div>
+                <span className="shrink-0 text-[9px] font-mono text-muted-foreground">{e.created_at ? new Date(e.created_at).toLocaleTimeString() : ""}</span>
+              </div>
+            ))}</div>
+          )}
+        </div>
+      </div>
+    </Panel>
   );
 }
 
@@ -1172,6 +1231,11 @@ export default function CyberCrisisCommander() {
   const [emailBusy, setEmailBusy] = useState(false);
   const [packBusy, setPackBusy] = useState(false);
   const [unreadMentions, setUnreadMentions] = useState(0);
+  const [scenario, setScenario] = useState({ active: false, step: 0, total: 0, done: false, ref: "" });
+  const [scenarioBusy, setScenarioBusy] = useState(false);
+  const [scenarioPlaying, setScenarioPlaying] = useState(false);
+  const [snapshotLink, setSnapshotLink] = useState(null);
+  const [snapshotBusy, setSnapshotBusy] = useState(false);
   const canOperate = ["admin", "owner", "executive"].includes(String(user?.role || "").toLowerCase());
 
   const selectedCase = useMemo(() => {
@@ -1229,6 +1293,69 @@ export default function CyberCrisisCommander() {
   const changed = async (ref) => {
     await Promise.all([reload(), loadCase(ref)]);
   };
+
+  const startScenario = async () => {
+    setScenarioBusy(true);
+    try {
+      const { data: res } = await api.post("/crisis/scenario/start");
+      setScenario({ active: true, step: res.step, total: res.total, done: false, ref: res.ref });
+      setDemoActive(true);
+      setScenarioPlaying(true);
+      await changed(res.ref);
+      openTab("timeline");
+      toast.success("Sample breach started — playing live.");
+    } catch (e) { toast.error(e.response?.data?.detail || "Unable to start sample breach."); }
+    finally { setScenarioBusy(false); }
+  };
+  const advanceScenario = async () => {
+    try {
+      const { data: res } = await api.post("/crisis/scenario/advance");
+      setScenario((s) => ({ ...s, step: res.step, total: res.total, done: res.done }));
+      if (res.done) { setScenarioPlaying(false); toast.success("Sample breach complete — incident resolved."); }
+      await changed(scenario.ref);
+    } catch (e) { setScenarioPlaying(false); toast.error(e.response?.data?.detail || "Unable to advance scenario."); }
+  };
+  const stopScenario = async () => {
+    setScenarioBusy(true); setScenarioPlaying(false);
+    try {
+      await api.post("/crisis/scenario/stop");
+      setScenario({ active: false, step: 0, total: 0, done: false, ref: "" });
+      setDemoActive(false);
+      await reload();
+      toast.success("Sample breach cleared.");
+    } catch (e) { toast.error(e.response?.data?.detail || "Unable to stop scenario."); }
+    finally { setScenarioBusy(false); }
+  };
+  const shareSnapshot = async () => {
+    if (!selectedCase) { toast.error("Select a crisis case first."); return; }
+    setSnapshotBusy(true);
+    try {
+      const { data: res } = await api.post(`/crisis/cases/${selectedCase.ref}/snapshot`, { expires_days: 7 });
+      const url = `${window.location.origin}${res.path}`;
+      setSnapshotLink({ url, expires_at: res.expires_at });
+      try { await navigator.clipboard?.writeText(url); } catch (_) { /* clipboard blocked */ }
+      toast.success("Board snapshot link created & copied — expires in 7 days.");
+    } catch (e) { toast.error(e.response?.data?.detail || "Unable to create snapshot link."); }
+    finally { setSnapshotBusy(false); }
+  };
+  const revokeSnapshot = async () => {
+    if (!selectedCase) return;
+    try { await api.post(`/crisis/cases/${selectedCase.ref}/snapshot/revoke`); setSnapshotLink(null); toast.success("Snapshot link revoked."); }
+    catch (e) { toast.error(e.response?.data?.detail || "Unable to revoke snapshot."); }
+  };
+
+  useEffect(() => {
+    api.get("/crisis/scenario/status").then((r) => {
+      if (r.data?.active) setScenario({ active: true, step: r.data.step, total: r.data.total, done: r.data.done, ref: r.data.ref });
+    }).catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!scenarioPlaying || !scenario.active || scenario.done) return;
+    const id = setTimeout(() => { advanceScenario(); }, 4000);
+    return () => clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scenarioPlaying, scenario.active, scenario.done, scenario.step]);
 
   const created = async (createdCase) => {
     await reload();
@@ -1415,8 +1542,27 @@ export default function CyberCrisisCommander() {
           <p className="text-sm text-muted-foreground mt-2 max-w-4xl">{mode === "executive" ? "Command enterprise cyber crises through business impact, financial exposure, executive decisions, containment, recovery, control failures, timeline evidence and board-ready intelligence." : "Coordinate persistent crisis cases, response actions, approvals, control failures, incident evidence, audit records and recovery using the existing Obserra platform services."}</p>
           <div className="text-[10px] font-mono text-muted-foreground mt-2">Current case: {selectedCase?.ref || "none"} · Data refresh {effectiveData?.generatedAt ? new Date(effectiveData.generatedAt).toLocaleString() : "unavailable"}{caseBusy ? " · refreshing case" : ""}</div>
         </div>
-        <div className="flex flex-wrap gap-2">{canOperate && <button onClick={toggleDemo} disabled={demoBusy} data-testid="crisis-demo-toggle" className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-head font-bold disabled:opacity-50 ${demoActive ? "border-ai/40 bg-ai/15 text-ai" : "border-border bg-secondary/40"}`}>{demoBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : demoActive ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}{demoActive ? "Exit Demo" : "Demo Mode"}</button>}{selectedCase?.status === "Closed" && <button onClick={generatePIR} disabled={pirBusy} data-testid="crisis-pir-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{pirBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ClipboardList className="w-3.5 h-3.5" />}Post-Incident Review</button>}{selectedCase?.status === "Closed" && <button onClick={generateReportPack} disabled={packBusy} data-testid="crisis-report-pack-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{packBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}Report Pack</button>}{canOperate && <button onClick={ingestServiceNow} disabled={ingestBusy} data-testid="crisis-ingest-servicenow-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{ingestBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CloudDownload className="w-3.5 h-3.5" />}Ingest ServiceNow</button>}{canOperate && selectedCase && <button onClick={emailBrief} disabled={emailBusy} data-testid="crisis-email-brief-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{emailBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}Email Board Brief</button>}{canOperate && selectedCase && <select value={selectedCase.brief_schedule_hours || 0} onChange={(e) => setBriefCadence(e.target.value)} data-testid="crisis-brief-cadence" title="Auto-email the board brief on a cadence while the crisis is active" className="px-2 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">{[[0, "Auto-brief: Off"], [4, "Auto-brief: 4h"], [12, "Auto-brief: 12h"], [24, "Auto-brief: 24h"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>}<button onClick={() => setTourOpen(true)} data-testid="crisis-walkthrough-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-crit/30 bg-crit/10 text-crit text-xs font-head font-bold"><Siren className="w-3.5 h-3.5" />Walkthrough</button><button onClick={reload} disabled={refreshing} data-testid="crisis-refresh-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Refresh</button><button onClick={() => openTab("briefing")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Download className="w-3.5 h-3.5" />Executive Brief</button></div>
+        <div className="flex flex-wrap gap-2">{canOperate && <button onClick={toggleDemo} disabled={demoBusy} data-testid="crisis-demo-toggle" className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-head font-bold disabled:opacity-50 ${demoActive ? "border-ai/40 bg-ai/15 text-ai" : "border-border bg-secondary/40"}`}>{demoBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : demoActive ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}{demoActive ? "Exit Demo" : "Demo Mode"}</button>}{canOperate && (scenario.active ? (
+          <div className="inline-flex items-center gap-1 rounded-md border border-ai/40 bg-ai/10 px-1.5 py-1" data-testid="crisis-scenario-controls">
+            <button onClick={() => setScenarioPlaying((v) => !v)} disabled={scenario.done} data-testid="crisis-scenario-play" title={scenarioPlaying ? "Pause" : "Play"} className="p-1.5 rounded text-ai hover:bg-ai/15 disabled:opacity-40">{scenarioPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}</button>
+            <button onClick={advanceScenario} disabled={scenario.done} data-testid="crisis-scenario-step" title="Next step" className="p-1.5 rounded text-ai hover:bg-ai/15 disabled:opacity-40"><SkipForward className="w-3.5 h-3.5" /></button>
+            <span data-testid="crisis-scenario-progress" className="px-1.5 text-[10px] font-mono text-ai">{scenario.done ? "Resolved" : `Step ${scenario.step}/${scenario.total}`}</span>
+            <button onClick={stopScenario} disabled={scenarioBusy} data-testid="crisis-scenario-stop" title="Stop & clear" className="p-1.5 rounded text-crit hover:bg-crit/15 disabled:opacity-40"><Square className="w-3.5 h-3.5" /></button>
+          </div>
+        ) : <button onClick={startScenario} disabled={scenarioBusy} data-testid="crisis-scenario-start" title="Play a scripted sample breach — detection through recovery" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-ai/40 bg-ai/10 text-ai text-xs font-head font-bold disabled:opacity-50">{scenarioBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Rss className="w-3.5 h-3.5" />}Sample Breach</button>)}{canOperate && selectedCase && <button onClick={shareSnapshot} disabled={snapshotBusy} data-testid="crisis-share-snapshot-btn" title="Create a public, mobile-friendly board snapshot link" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{snapshotBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Share2 className="w-3.5 h-3.5" />}Share Snapshot</button>}{selectedCase?.status === "Closed" && <button onClick={generatePIR} disabled={pirBusy} data-testid="crisis-pir-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{pirBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ClipboardList className="w-3.5 h-3.5" />}Post-Incident Review</button>}{selectedCase?.status === "Closed" && <button onClick={generateReportPack} disabled={packBusy} data-testid="crisis-report-pack-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{packBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}Report Pack</button>}{canOperate && <button onClick={ingestServiceNow} disabled={ingestBusy} data-testid="crisis-ingest-servicenow-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{ingestBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CloudDownload className="w-3.5 h-3.5" />}Ingest ServiceNow</button>}{canOperate && selectedCase && <button onClick={emailBrief} disabled={emailBusy} data-testid="crisis-email-brief-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{emailBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}Email Board Brief</button>}{canOperate && selectedCase && <select value={selectedCase.brief_schedule_hours || 0} onChange={(e) => setBriefCadence(e.target.value)} data-testid="crisis-brief-cadence" title="Auto-email the board brief on a cadence while the crisis is active" className="px-2 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">{[[0, "Auto-brief: Off"], [4, "Auto-brief: 4h"], [12, "Auto-brief: 12h"], [24, "Auto-brief: 24h"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>}<button onClick={() => setTourOpen(true)} data-testid="crisis-walkthrough-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-crit/30 bg-crit/10 text-crit text-xs font-head font-bold"><Siren className="w-3.5 h-3.5" />Walkthrough</button><button onClick={reload} disabled={refreshing} data-testid="crisis-refresh-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Refresh</button><button onClick={() => openTab("briefing")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Download className="w-3.5 h-3.5" />Executive Brief</button></div>
       </div>
+
+      {snapshotLink && (
+        <div className="rounded-xl border border-ai/30 bg-ai/5 p-3 flex flex-wrap items-center gap-3" data-testid="crisis-snapshot-bar">
+          <Link2 className="w-4 h-4 text-ai shrink-0" />
+          <span className="text-xs font-head font-bold shrink-0">Board snapshot link</span>
+          <input readOnly value={snapshotLink.url} data-testid="crisis-snapshot-url" onFocus={(e) => e.target.select()} className="flex-1 min-w-[200px] bg-secondary/60 rounded-md px-3 py-1.5 text-xs font-mono" />
+          <button onClick={() => { navigator.clipboard?.writeText(snapshotLink.url); toast.success("Link copied."); }} data-testid="crisis-snapshot-copy" className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold"><Copy className="w-3.5 h-3.5" />Copy</button>
+          <a href={snapshotLink.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">Open</a>
+          <button onClick={revokeSnapshot} data-testid="crisis-snapshot-revoke" className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-crit/40 bg-crit/10 text-crit text-xs font-head font-bold">Revoke</button>
+          <span className="text-[10px] font-mono text-muted-foreground">expires {snapshotLink.expires_at ? new Date(snapshotLink.expires_at).toLocaleDateString() : "—"}</span>
+        </div>
+      )}
 
       {error && <div className="rounded-xl border border-crit/30 bg-crit/5 p-4 flex items-start gap-3" data-testid="crisis-error"><AlertTriangle className="w-5 h-5 text-crit shrink-0 mt-0.5" /><div><div className="font-head font-bold text-sm">Crisis intelligence incomplete</div><div className="text-xs text-muted-foreground mt-1">{error}</div></div></div>}
 
@@ -1425,7 +1571,7 @@ export default function CyberCrisisCommander() {
       <div className="overflow-x-auto"><div className="inline-flex min-w-max rounded-xl border border-border bg-card p-1">{TABS.map(([id, label, Icon]) => <button key={id} onClick={() => openTab(id)} data-testid={`crisis-tab-${id}`} className={`relative inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-head font-bold transition-colors ${activeTab === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}`}><Icon className="w-3.5 h-3.5" />{label}{id === "warroom" && unreadMentions > 0 && <span data-testid="crisis-warroom-unread" className="ml-1 min-w-[16px] h-4 px-1 rounded-full bg-crit text-white text-[9px] font-mono inline-flex items-center justify-center">{unreadMentions}</span>}</button>)}</div></div>
 
       {activeTab === "mission" && <MissionControl data={effectiveData} selectedCase={selectedCase} caseDetail={caseDetail} openTab={openTab} />}
-      {activeTab === "command" && <IncidentCommand data={effectiveData} selectedCase={selectedCase} caseDetail={caseDetail} loadCase={loadCase} changed={changed} created={created} />}
+      {activeTab === "command" && <div className="space-y-5"><IncidentCommand data={effectiveData} selectedCase={selectedCase} caseDetail={caseDetail} loadCase={loadCase} changed={changed} created={created} />{canOperate && <WebhookFeed />}</div>}
       {activeTab === "decisions" && <DecisionRoom selectedCase={selectedCase} caseDetail={caseDetail} recommendations={effectiveData?.recommendations || []} decisions={effectiveData?.decisions || []} changed={changed} />}
       {activeTab === "impact" && <BusinessImpact data={effectiveData} selectedCase={selectedCase} />}
       {activeTab === "response" && <div className="space-y-5"><ResponseActions selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} /><EntraContainment selectedCase={selectedCase} changed={changed} /></div>}

@@ -1,5 +1,12 @@
 # Obserra EIOS — CHANGELOG
 
+## 2026-08-12 — Live Incident Feed (webhook) + Board Snapshot Link + scripted Sample Breach (iteration 141, 100%)
+- **Live Incident Feed (inbound webhook):** `GET /api/crisis/webhook/config`, `POST /api/crisis/webhook/rotate`, and PUBLIC `POST /api/crisis/ingest/webhook` (per-org secret) so any SIEM/EDR/SOAR/ServiceNow can PUSH incidents + containment steps onto the live timeline. Attaches to the latest open case or opens one (`open_case:true`); invalid secret → 401. UI: "Live Incident Feed — inbound webhook" panel in Incident Command (`crisis-webhook-feed`) with copyable URL, masked secret + Show/Rotate, and recent-events list (honest "no events yet").
+- **Board Snapshot Link:** `POST /cases/{ref}/snapshot` (7-day expiry), `GET` current link, `POST /snapshot/revoke`, and PUBLIC `GET /public/snapshot/{token}` → read-only board summary (severity/phase, contained %, pending decisions w/ SLA, live timeline, regulatory timers). Public mobile page at `/crisis-snapshot/:token` (`CrisisSnapshot.jsx`), no login; revoked/invalid → error. Header "Share Snapshot" button (`crisis-share-snapshot-btn`) + link bar (copy/open/revoke).
+- **Scripted Sample Breach:** `POST /scenario/start|advance|stop`, `GET /scenario/status` — a 9-beat detection→recovery script that reveals timeline events + executive decisions live. Header controls: Play/Pause (4s auto-advance), Step, "Step X/9" progress, Stop. Uses the demo flag (DEMO ribbon) and one-click clear.
+- Verified end-to-end (curl + Playwright + 9/9 pytest). Public endpoints confirmed working without an auth cookie.
+
+
 ## 2026-08-12 — Rebrand polish: crisis-first login hero, crisis welcome tour, regenerated guide PDFs
 - **Login hero (Auth.jsx):** tagline "Detect · Command · Decide · Contain · Recover"; badge "v1 · Enterprise Cyber Incident Command"; pitch rewritten to the crisis-command story; chips → Incident Command / Executive Decisions / Regulatory Timers.
 - **Onboarding welcome tour (OnboardingTour.jsx):** EXEC + OPS steps rewritten to read like a live incident (business impact, decision SLAs, containment, war room, recovery, regulatory timers); spotlight step retargeted to `nav-cyber-crisis-commander` ("Start at Cyber Crisis Commander").

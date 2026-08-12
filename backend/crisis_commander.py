@@ -631,6 +631,7 @@ async def update_obligation(ref: str, obligation_id: str, body: CrisisObligation
 # Demo Mode (staged ransomware scenario, clearly flagged, one-click clear)
 # ---------------------------------------------------------------------------
 async def _demo_clear(org_id: str) -> dict:
+    await db.crisis_scenario.delete_many({"org_id": org_id})
     return {
         "cases": (await db.crisis_cases.delete_many({"org_id": org_id, "demo": True})).deleted_count,
         "actions": (await db.crisis_actions.delete_many({"org_id": org_id, "demo": True})).deleted_count,
@@ -1604,3 +1605,374 @@ async def contain_playbook(ref: str, body: ContainPlaybook, user: dict = Depends
     await _audit(org_id, actor, "crisis.contain_playbook",
                  f"{ref}: {label} disabled={disable.status_code} revoked={revoked} notified={notified}")
     return {"user_id": uid, "disabled": True, "sessions_revoked": revoked, "notified": notified, "steps": steps}
+
+
+# ===========================================================================
+# Live Incident Feed — generic inbound webhook. Any SIEM/EDR/SOAR/ServiceNow
+# can PUSH incidents + containment steps onto the live timeline in real time,
+# authenticated solely by a rotatable per-org secret.
+# ===========================================================================
+async def _webhook_secret(org_id: str, create: bool = False):
+    from bson import ObjectId
+    import secrets as _s
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"crisis_webhook_secret": 1}) or {}
+    sec = org.get("crisis_webhook_secret")
+    if not sec and create:
+        sec = "whk_" + _s.token_urlsafe(24)
+        await db.organizations.update_one({"_id": ObjectId(org_id)}, {"$set": {"crisis_webhook_secret": sec}})
+    return sec
+
+
+@api.get("/webhook/config")
+async def webhook_config(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    org_id = user["org_id"]
+    secret = await _webhook_secret(org_id, create=True)
+    recent = await db.crisis_events.find(
+        {"org_id": org_id, "via": "webhook"}, {"_id": 0}
+    ).sort("created_at", DESCENDING).to_list(15)
+    total = await db.crisis_events.count_documents({"org_id": org_id, "via": "webhook"})
+    return {"secret": secret, "path": "/api/crisis/ingest/webhook", "recent": recent, "count": total}
+
+
+@api.post("/webhook/rotate")
+async def webhook_rotate(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    from bson import ObjectId
+    import secrets as _s
+    sec = "whk_" + _s.token_urlsafe(24)
+    await db.organizations.update_one({"_id": ObjectId(user["org_id"])}, {"$set": {"crisis_webhook_secret": sec}})
+    await _audit(user["org_id"], _actor(user), "crisis.webhook.rotate", "rotated")
+    return {"secret": sec}
+
+
+class WebhookEvent(BaseModel):
+    kind: str = "Detection"
+    title: str
+    detail: str = ""
+    source: str = "External"
+    severity: str = "High"
+    occurred_at: str | None = None
+
+
+class WebhookIngest(BaseModel):
+    secret: str
+    case_ref: str | None = None
+    open_case: bool = False
+    case_title: str | None = None
+    severity: str | None = None
+    events: list[WebhookEvent] = []
+
+
+@api.post("/ingest/webhook")
+async def ingest_webhook(body: WebhookIngest):
+    """PUBLIC endpoint — authenticated solely by the per-org webhook secret."""
+    if not body.secret:
+        raise HTTPException(status_code=401, detail="Missing webhook secret.")
+    org = await db.organizations.find_one({"crisis_webhook_secret": body.secret}, {"_id": 1})
+    if not org:
+        raise HTTPException(status_code=401, detail="Invalid webhook secret.")
+    org_id = str(org["_id"])
+    if not body.events:
+        raise HTTPException(status_code=400, detail="No events provided.")
+    if len(body.events) > 50:
+        raise HTTPException(status_code=413, detail="Too many events in one call (max 50).")
+    now = _now()
+    ref = body.case_ref
+    if ref:
+        case = await db.crisis_cases.find_one({"org_id": org_id, "ref": ref}, {"_id": 0, "ref": 1})
+        if not case:
+            raise HTTPException(status_code=404, detail=f"Case {ref} not found.")
+    else:
+        case = await db.crisis_cases.find_one(
+            {"org_id": org_id, "status": {"$ne": "Closed"}}, {"_id": 0, "ref": 1},
+            sort=[("updated_at", DESCENDING)])
+        if case:
+            ref = case["ref"]
+        elif body.open_case or body.case_title:
+            ref = await _next_ref(org_id, "crisis_cases", "CRISIS")
+            await db.crisis_cases.insert_one({
+                "ref": ref, "org_id": org_id, "via": "webhook",
+                "title": body.case_title or "Incident opened from inbound webhook",
+                "severity": body.severity or "High",
+                "summary": "Opened automatically from an inbound security webhook.",
+                "incident_refs": [], "risk_refs": [], "business_services": [],
+                "incident_commander": "", "executive_sponsor": "",
+                "status": "Active", "phase": "Detection",
+                "started_at": now, "updated_at": now, "next_update_at": None,
+                "created_by": "Inbound Webhook"})
+        else:
+            raise HTTPException(status_code=409,
+                detail="No open crisis case to attach events to. Provide case_ref or set open_case=true.")
+    ingested = 0
+    for ev in body.events:
+        await db.crisis_events.insert_one({
+            "org_id": org_id, "case_ref": ref, "via": "webhook",
+            "event_id": await _next_ref(org_id, "crisis_events", "EVT"),
+            "kind": ev.kind or "Detection", "title": (ev.title or "Security event")[:200],
+            "detail": (ev.detail or "")[:1000], "source": ev.source or "External",
+            "severity": ev.severity or "High", "occurred_at": ev.occurred_at or now,
+            "created_at": now, "created_by": "Inbound Webhook"})
+        ingested += 1
+    await db.crisis_cases.update_one({"org_id": org_id, "ref": ref}, {"$set": {"updated_at": now}})
+    return {"ok": True, "case_ref": ref, "ingested": ingested}
+
+
+# ===========================================================================
+# Board Snapshot Link — one-tap, mobile-friendly, public read-only crisis
+# snapshot behind an unguessable token, auto-expiring and revocable.
+# ===========================================================================
+class SnapshotCreate(BaseModel):
+    expires_days: int = 7
+
+
+@api.post("/cases/{ref}/snapshot")
+async def create_snapshot(ref: str, body: SnapshotCreate, user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    from datetime import timedelta
+    import secrets as _s
+    org_id = user["org_id"]
+    await _get_case(org_id, ref)
+    days = max(1, min(90, body.expires_days or 7))
+    now_dt = datetime.now(timezone.utc)
+    token = _s.token_urlsafe(18)
+    doc = {"token": token, "org_id": org_id, "case_ref": ref, "created_by": _actor(user),
+           "created_at": now_dt.isoformat(), "expires_at": (now_dt + timedelta(days=days)).isoformat(),
+           "revoked": False}
+    await db.crisis_snapshots.update_many(
+        {"org_id": org_id, "case_ref": ref, "revoked": False}, {"$set": {"revoked": True}})
+    await db.crisis_snapshots.insert_one(doc.copy())
+    await _audit(org_id, _actor(user), "crisis.snapshot.create", f"{ref} exp {days}d")
+    return {"token": token, "path": f"/crisis-snapshot/{token}", "expires_at": doc["expires_at"]}
+
+
+@api.get("/cases/{ref}/snapshot")
+async def get_snapshot_link(ref: str, user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    doc = await db.crisis_snapshots.find_one(
+        {"org_id": user["org_id"], "case_ref": ref, "revoked": False}, {"_id": 0})
+    if not doc:
+        return {"active": False}
+    return {"active": True, "token": doc["token"], "path": f"/crisis-snapshot/{doc['token']}",
+            "expires_at": doc["expires_at"]}
+
+
+@api.post("/cases/{ref}/snapshot/revoke")
+async def revoke_snapshot(ref: str, user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    res = await db.crisis_snapshots.update_many(
+        {"org_id": user["org_id"], "case_ref": ref, "revoked": False}, {"$set": {"revoked": True}})
+    await _audit(user["org_id"], _actor(user), "crisis.snapshot.revoke", ref)
+    return {"revoked": res.modified_count}
+
+
+@api.get("/public/snapshot/{token}")
+async def public_snapshot(token: str):
+    """PUBLIC — read-only board snapshot resolved by share token."""
+    from bson import ObjectId
+    doc = await db.crisis_snapshots.find_one({"token": token}, {"_id": 0})
+    if not doc or doc.get("revoked"):
+        raise HTTPException(status_code=404, detail="This snapshot link is invalid or has been revoked.")
+    exp = _parse_iso(doc.get("expires_at"))
+    if exp and datetime.now(timezone.utc) > exp:
+        raise HTTPException(status_code=410, detail="This snapshot link has expired.")
+    org_id, ref = doc["org_id"], doc["case_ref"]
+    case = await db.crisis_cases.find_one({"org_id": org_id, "ref": ref}, {"_id": 0})
+    if not case:
+        raise HTTPException(status_code=404, detail="This crisis case is no longer available.")
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1}) or {}
+    actions = await db.crisis_actions.find({"org_id": org_id, "case_ref": ref}, {"_id": 0}).to_list(500)
+    events = await db.crisis_events.find(
+        {"org_id": org_id, "case_ref": ref}, {"_id": 0}).sort("occurred_at", DESCENDING).to_list(12)
+    obligations = await db.crisis_obligations.find({"org_id": org_id, "case_ref": ref}, {"_id": 0}).to_list(50)
+    _done = ("Verified", "Executed", "Complete", "Closed", "Resolved")
+    pending = [a for a in actions if a.get("decision_required") and a.get("status") == "Awaiting Approval"]
+    cont = [a for a in actions if a.get("action_type") == "Containment"]
+    contained = round(sum(1 for a in cont if a.get("status") in _done) / len(cont) * 100) if cont else 0
+    return {
+        "org_name": org.get("name") or "Organization",
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "expires_at": doc.get("expires_at"),
+        "case": {"ref": case.get("ref"), "title": case.get("title"), "severity": case.get("severity"),
+                 "status": case.get("status"), "phase": case.get("phase"),
+                 "started_at": case.get("started_at"), "updated_at": case.get("updated_at"),
+                 "incident_commander": case.get("incident_commander"),
+                 "executive_sponsor": case.get("executive_sponsor"), "summary": case.get("summary"),
+                 "business_services": case.get("business_services", []),
+                 "financial_exposure": case.get("financial_exposure")},
+        "contained_pct": contained,
+        "counts": {"open_actions": sum(1 for a in actions if a.get("status") not in _done),
+                   "pending_decisions": len(pending)},
+        "pending_decisions": [{"title": a.get("title"), "owner": a.get("decision_owner"),
+                               "priority": a.get("priority"), "due_at": a.get("decision_due_at"),
+                               "business_impact": a.get("business_impact")} for a in pending],
+        "timeline": [{"kind": e.get("kind"), "title": e.get("title"), "source": e.get("source"),
+                      "severity": e.get("severity"), "occurred_at": e.get("occurred_at")} for e in events],
+        "regulatory": [{"jurisdiction": o.get("jurisdiction"), "regulation": o.get("regulation"),
+                        "deadline_at": o.get("deadline_at"), "status": o.get("status")} for o in obligations],
+    }
+
+
+# ===========================================================================
+# Sample-Breach scenario — a scripted, auto-advancing walkthrough that surfaces
+# timeline events + executive decisions in sequence (detection -> recovery),
+# so prospect demos play like a real incident with zero setup. Uses the demo
+# flag so the DEMO ribbon shows and one-click clear removes everything.
+# ===========================================================================
+_SCENARIO_BEATS = [
+    {"phase": "Triage", "severity": "Critical",
+     "events": [("Threat", "EDR confirms credential-theft malware on 3 endpoints",
+                 "Malicious binary matches a known ransomware loader.", "CrowdStrike EDR", "Critical")],
+     "participants": [("Incident Commander", "A. Rivera", "SecOps", "Engaged"),
+                      ("CISO", "Executive Sponsor", "Security leadership", "Engaged")]},
+    {"events": [("Threat", "Privileged account used to reach SAP production",
+                 "A compromised admin session pivoted to the ERP estate.", "Microsoft Entra", "Critical")],
+     "actions": [("Isolate SAP order-processing segment?", "Decision", "Critical", "Awaiting Approval",
+                  True, "CIO", "$1.8M/hr revenue impact", "Halts NA order processing")]},
+    {"phase": "Containment",
+     "events": [("Containment", "7 endpoints isolated via EDR",
+                 "Automated network containment applied to affected hosts.", "CrowdStrike EDR", "High")],
+     "actions": [("Revoke 3 compromised privileged identities", "Containment", "Critical", "Executing",
+                  False, "", "Stops lateral movement", "Locks out 3 admins pending re-issue")]},
+    {"events": [("Business Impact", "North American order fulfillment degraded",
+                 "Order-intake queue is backing up across NA.", "ServiceNow", "High")],
+     "actions": [("Engage cyber insurer and outside counsel", "Decision", "High", "Awaiting Approval",
+                  True, "General Counsel", "Preserves coverage & privilege", "None")]},
+    {"events": [("Communication", "CISO briefs executive team; holding statement drafted",
+                 "Board notified; customer comms staged for approval.", "Obserra", "Medium")],
+     "obligations": [("EU (GDPR)", "GDPR Art. 33 personal data breach", "Possible EU customer PII exposure",
+                      66, "General Counsel", "Assessing", "Scope of affected EU records")]},
+    {"status": "Recovering",
+     "events": [("Containment", "Attacker persistence removed; domain admin credentials rotated",
+                 "Golden-ticket risk mitigated across the domain.", "Microsoft Entra", "High")]},
+    {"phase": "Recovery",
+     "events": [("Recovery", "Order management restored from validated backup",
+                 "Clean restore verified against a known-good snapshot.", "Obserra", "High")],
+     "recovery": [("Order Management System", "System", "Validated"),
+                  ("SAP ERP Production", "System", "Restoring")]},
+    {"phase": "Post-Incident", "status": "Closed",
+     "events": [("Recovery", "All services verified; heightened monitoring in place",
+                 "Incident closed; post-incident review scheduled.", "Obserra", "Medium")]},
+]
+
+
+async def _apply_beat(org_id: str, ref: str, beat: dict, now_iso: str, actor: str) -> list:
+    from datetime import timedelta
+    revealed = []
+    cupd = {k: beat[k] for k in ("phase", "severity", "status") if beat.get(k)}
+    cupd["updated_at"] = now_iso
+    if beat.get("status") == "Closed":
+        cupd["closed_at"] = now_iso
+    await db.crisis_cases.update_one({"org_id": org_id, "ref": ref}, {"$set": cupd})
+    for kind, title, detail, source, sev in beat.get("events", []):
+        await db.crisis_events.insert_one({
+            "org_id": org_id, "case_ref": ref, "demo": True,
+            "event_id": await _next_ref(org_id, "crisis_events", "EVT"),
+            "kind": kind, "title": title, "detail": detail, "source": source, "severity": sev,
+            "occurred_at": now_iso, "created_at": now_iso, "created_by": actor})
+        revealed.append(title)
+    for title, atype, prio, status, dec, downer, bimp, timp in beat.get("actions", []):
+        await db.crisis_actions.insert_one({
+            "org_id": org_id, "case_ref": ref, "demo": True,
+            "action_id": await _next_ref(org_id, "crisis_actions", "ACT"),
+            "title": title, "owner": "", "priority": prio, "status": status,
+            "action_type": atype, "due_at": None, "decision_required": dec, "decision_owner": downer,
+            "decision_due_at": _sla_due(prio, now_iso) if (dec and status == "Awaiting Approval") else None,
+            "business_impact": bimp, "technical_impact": timp, "outcome": "", "approved_by": "",
+            "created_at": now_iso, "updated_at": now_iso, "created_by": actor})
+        revealed.append(title)
+    for role, name, resp, pstatus in beat.get("participants", []):
+        await db.crisis_participants.insert_one({
+            "org_id": org_id, "case_ref": ref, "demo": True,
+            "participant_id": await _next_ref(org_id, "crisis_participants", "WAR"),
+            "role": role, "name": name, "contact": "", "responsibility": resp, "status": pstatus,
+            "created_at": now_iso, "created_by": actor})
+    for name, cat, rstatus in beat.get("recovery", []):
+        await db.crisis_recovery.insert_one({
+            "org_id": org_id, "case_ref": ref, "demo": True,
+            "recovery_id": await _next_ref(org_id, "crisis_recovery", "REC"),
+            "name": name, "category": cat, "status": rstatus, "owner": "", "note": "",
+            "pct": _RECOVERY_PCT.get(rstatus, 0),
+            "created_at": now_iso, "updated_at": now_iso, "created_by": actor})
+    for jur, reg, trig, hours, resp, ostatus, evid in beat.get("obligations", []):
+        await db.crisis_obligations.insert_one({
+            "org_id": org_id, "case_ref": ref, "demo": True,
+            "obligation_id": await _next_ref(org_id, "crisis_obligations", "REG"),
+            "jurisdiction": jur, "regulation": reg, "trigger": trig,
+            "deadline_at": (datetime.now(timezone.utc) + timedelta(hours=hours)).isoformat(),
+            "responsible": resp, "evidence_required": evid, "status": ostatus,
+            "notification_decision": "", "created_at": now_iso, "updated_at": now_iso, "created_by": actor})
+    return revealed
+
+
+@api.post("/scenario/start")
+async def scenario_start(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    await _ensure_indexes()
+    org_id = user["org_id"]
+    actor = _actor(user)
+    await _demo_clear(org_id)
+    await db.crisis_scenario.delete_many({"org_id": org_id})
+    now_iso = datetime.now(timezone.utc).isoformat()
+    ref = await _next_ref(org_id, "crisis_cases", "CRISIS")
+    await db.crisis_cases.insert_one({
+        "ref": ref, "org_id": org_id, "demo": True,
+        "title": "Ransomware — North American Order Fulfillment (Sample Breach)",
+        "severity": "High",
+        "summary": "Live sample-breach walkthrough. Events and executive decisions surface in sequence, "
+                   "from first detection through containment and recovery.",
+        "incident_refs": [], "risk_refs": [],
+        "business_services": ["Order Management", "North American Sales", "Customer Fulfillment", "Payment Processing"],
+        "incident_commander": "A. Rivera (SecOps Lead)", "executive_sponsor": "CISO",
+        "status": "Active", "phase": "Detection",
+        "started_at": now_iso, "updated_at": now_iso, "next_update_at": None, "created_by": actor})
+    await db.crisis_events.insert_one({
+        "org_id": org_id, "case_ref": ref, "demo": True,
+        "event_id": await _next_ref(org_id, "crisis_events", "EVT"),
+        "kind": "Detection", "title": "SIEM flags anomalous authentication spike on VPN concentrator",
+        "detail": "Impossible-travel + brute-force pattern from a single source ASN.",
+        "source": "Splunk SIEM", "severity": "High",
+        "occurred_at": now_iso, "created_at": now_iso, "created_by": actor})
+    total = len(_SCENARIO_BEATS) + 1
+    await db.crisis_scenario.insert_one({"org_id": org_id, "ref": ref, "cursor": 0, "total": total,
+                                         "created_at": now_iso})
+    await _audit(org_id, actor, "crisis.scenario.start", ref)
+    return {"ref": ref, "step": 1, "total": total, "done": False}
+
+
+@api.post("/scenario/advance")
+async def scenario_advance(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    org_id = user["org_id"]
+    actor = _actor(user)
+    state = await db.crisis_scenario.find_one({"org_id": org_id})
+    if not state:
+        raise HTTPException(status_code=409, detail="No sample-breach scenario is running. Start it first.")
+    cursor = state.get("cursor", 0)
+    total = state.get("total", len(_SCENARIO_BEATS) + 1)
+    if cursor >= len(_SCENARIO_BEATS):
+        return {"step": total, "total": total, "done": True, "revealed": []}
+    now_iso = datetime.now(timezone.utc).isoformat()
+    revealed = await _apply_beat(org_id, state["ref"], _SCENARIO_BEATS[cursor], now_iso, actor)
+    cursor += 1
+    await db.crisis_scenario.update_one({"org_id": org_id}, {"$set": {"cursor": cursor}})
+    return {"step": cursor + 1, "total": total, "done": cursor >= len(_SCENARIO_BEATS), "revealed": revealed}
+
+
+@api.get("/scenario/status")
+async def scenario_status(user: dict = Depends(get_current_user)):
+    state = await db.crisis_scenario.find_one({"org_id": user["org_id"]}, {"_id": 0})
+    if not state:
+        return {"active": False}
+    return {"active": True, "ref": state["ref"], "step": state.get("cursor", 0) + 1,
+            "total": state.get("total", 0), "done": state.get("cursor", 0) >= len(_SCENARIO_BEATS)}
+
+
+@api.post("/scenario/stop")
+async def scenario_stop(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    org_id = user["org_id"]
+    counts = await _demo_clear(org_id)
+    await db.crisis_scenario.delete_many({"org_id": org_id})
+    await _audit(org_id, _actor(user), "crisis.scenario.stop", str(counts))
+    return {"stopped": True, **counts}
