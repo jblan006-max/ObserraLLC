@@ -416,6 +416,8 @@ function GovernanceSettingsCard() {
         alert_channel_webhook: alertWebhook.trim(),
         audit_digest_enabled: !!s.audit_digest_enabled,
         audit_digest_recipients: auditRecips.split(",").map((x) => x.trim()).filter(Boolean),
+        audit_digest_day: Number(s.audit_digest_day) || 0,
+        audit_digest_cadence: s.audit_digest_cadence || "weekly",
       });
       hydrate(data); toast.success("Governance settings saved");
     } catch (e) { toast.error(e.response?.data?.detail || "Save failed."); }
@@ -499,6 +501,19 @@ function GovernanceSettingsCard() {
         </div>
         <label className="flex items-start gap-2 md:col-span-2 cursor-pointer"><input data-testid="gov-audit-digest-enabled" type="checkbox" checked={!!s.audit_digest_enabled} onChange={(e) => setS({ ...s, audit_digest_enabled: e.target.checked })} className="accent-ai w-4 h-4 mt-0.5" /><span className="text-sm">Weekly control-change digest — email the board a Monday rollup of who relaxed controls (trusted-rule edits, snoozes, governance changes) with the sealed audit PDF attached</span></label>
         <label className="block md:col-span-2"><span className={lbl}>Control-change digest recipients (comma-separated — blank = board digest recipients or admins &amp; execs)</span><input data-testid="gov-audit-digest-recipients" value={auditRecips} onChange={(e) => setAuditRecips(e.target.value)} placeholder="board@company.com, audit-committee@company.com" className={fld} /><span className="block text-[11px] text-muted-foreground mt-1"><button type="button" data-testid="gov-audit-digest-send" onClick={sendAuditDigest} className="text-ai hover:underline">Send now</button> to email this week's digest immediately.</span></label>
+        <label className="block md:col-span-2"><span className={lbl}>Digest schedule</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <select data-testid="gov-audit-digest-cadence" value={s.audit_digest_cadence || "weekly"} onChange={(e) => setS({ ...s, audit_digest_cadence: e.target.value })} className={fld + " w-auto"}>
+              <option value="weekly">Weekly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+            <span className="text-sm text-muted-foreground">on</span>
+            <select data-testid="gov-audit-digest-day" value={Number(s.audit_digest_day) || 0} onChange={(e) => setS({ ...s, audit_digest_day: Number(e.target.value) })} className={fld + " w-auto"}>
+              {["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"].map((d, i) => (<option key={i} value={i}>{d}</option>))}
+            </select>
+            <span className="text-[11px] text-muted-foreground">{s.audit_digest_cadence === "monthly" ? "(first of the month at 08:00 UTC)" : "(each week at 08:00 UTC)"}</span>
+          </div>
+        </label>
         <div className="md:col-span-2" data-testid="gov-audit-digest-preview-wrap">
           <button type="button" data-testid="gov-audit-digest-preview" onClick={loadPreview} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-secondary text-foreground text-xs font-head font-bold border border-border">{previewOpen ? "Hide preview" : "Preview this week's digest"}</button>
           {previewOpen && (

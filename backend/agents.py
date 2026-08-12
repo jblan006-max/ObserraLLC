@@ -2547,6 +2547,8 @@ class GovSettingsBody(BaseModel):
     alert_channel_webhook: str | None = None
     audit_digest_enabled: bool | None = None
     audit_digest_recipients: list[str] | None = None
+    audit_digest_day: int | None = None
+    audit_digest_cadence: str | None = None
 
 
 @agents_router.get("/runtime/governance-settings")
@@ -2582,7 +2584,9 @@ async def get_governance_settings(admin: dict = Depends(require_roles("admin")))
             "snooze_window_end": org.get("snooze_window_end") or "",
             "snooze_window_reason": org.get("snooze_window_reason") or "",
             "audit_digest_enabled": bool(org.get("audit_digest_enabled", False)),
-            "audit_digest_recipients": org.get("audit_digest_recipients") or []}
+            "audit_digest_recipients": org.get("audit_digest_recipients") or [],
+            "audit_digest_day": int(org.get("audit_digest_day") or 0),
+            "audit_digest_cadence": org.get("audit_digest_cadence") or "weekly"}
 
 
 @agents_router.put("/runtime/governance-settings")
@@ -2679,6 +2683,10 @@ async def set_governance_settings(body: GovSettingsBody, admin: dict = Depends(r
         upd["audit_digest_enabled"] = bool(body.audit_digest_enabled)
     if body.audit_digest_recipients is not None:
         upd["audit_digest_recipients"] = [e.strip() for e in body.audit_digest_recipients if e and "@" in e][:50]
+    if body.audit_digest_day is not None:
+        upd["audit_digest_day"] = max(0, min(6, int(body.audit_digest_day)))
+    if body.audit_digest_cadence is not None:
+        upd["audit_digest_cadence"] = body.audit_digest_cadence if body.audit_digest_cadence in ("weekly", "monthly") else "weekly"
     _prev = await db.organizations.find_one({"_id": ObjectId(admin["org_id"])},
                                             {"trusted_countries": 1, "trusted_ip_ranges": 1, "trusted_auditors": 1}) or {}
     if upd:
@@ -2686,6 +2694,7 @@ async def set_governance_settings(body: GovSettingsBody, admin: dict = Depends(r
     await _log_audit(admin["org_id"], admin["email"], "agent.governance_settings", "Updated AI governance settings")
     try:
         changes = []
+        meta_changes = []
         for _lbl, _key in (("countries", "trusted_countries"), ("networks", "trusted_ip_ranges"), ("auditors", "trusted_auditors")):
             if _key not in upd:
                 continue
@@ -2698,9 +2707,11 @@ async def set_governance_settings(body: GovSettingsBody, admin: dict = Depends(r
                 if _removed:
                     _seg += f" -[{', '.join(_removed)}]"
                 changes.append(_seg)
+                meta_changes.append({"resource": _key, "added": _added, "removed": _removed})
         if changes:
             await _log_audit(admin["org_id"], admin["email"], "agent.trusted_rules_changed",
-                             "Trusted access rules changed \u2014 " + "; ".join(changes))
+                             "Trusted access rules changed \u2014 " + "; ".join(changes),
+                             meta={"actor": admin["email"], "changes": meta_changes})
     except Exception:
         pass
     return await get_governance_settings(admin)
@@ -2723,7 +2734,8 @@ async def snooze_instant_alerts(body: SnoozeBody, admin: dict = Depends(require_
         await db.organizations.update_one({"_id": ObjectId(admin["org_id"])},
                                           {"$unset": {"snooze_alerts_until": "", "snooze_reason": ""}})
         await _log_audit(admin["org_id"], admin["email"], "agent.alerts_snooze_cleared",
-                         "Resumed instant suspicious-access alerts")
+                         "Resumed instant suspicious-access alerts",
+                         meta={"actor": admin["email"], "kind": "immediate", "resumed": True})
         return {"ok": True, "snooze_alerts_until": "", "snooze_reason": ""}
     if not reason:
         raise HTTPException(400, "A reason is required to mute alerts \u2014 it's written to the audit trail.")
@@ -2733,7 +2745,8 @@ async def snooze_instant_alerts(body: SnoozeBody, admin: dict = Depends(require_
                                       {"$set": {"snooze_alerts_until": iso, "snooze_reason": reason}})
     await _log_audit(admin["org_id"], admin["email"], "agent.alerts_snoozed",
                      f"Muted instant suspicious-access alerts for {hours}h \u2014 until {iso[:19].replace('T', ' ')} UTC"
-                     + (f" \u2014 reason: {reason}" if reason else ""))
+                     + (f" \u2014 reason: {reason}" if reason else ""),
+                     meta={"actor": admin["email"], "kind": "immediate", "hours": hours, "until": iso, "reason": reason})
     return {"ok": True, "snooze_alerts_until": iso, "hours": hours, "snooze_reason": reason}
 
 
@@ -2845,7 +2858,8 @@ async def schedule_snooze_window(body: SnoozeScheduleBody, admin: dict = Depends
         await db.organizations.update_one({"_id": ObjectId(admin["org_id"])},
                                           {"$unset": {"snooze_window_start": "", "snooze_window_end": "", "snooze_window_reason": ""}})
         await _log_audit(admin["org_id"], admin["email"], "agent.alerts_snooze_schedule_cleared",
-                         "Cleared the scheduled alert-mute window")
+                         "Cleared the scheduled alert-mute window",
+                         meta={"actor": admin["email"], "kind": "scheduled", "cleared": True})
         return {"ok": True, "snooze_window_start": "", "snooze_window_end": "", "snooze_window_reason": ""}
     if not reason:
         raise HTTPException(400, "A reason is required to schedule a mute window \u2014 it's written to the audit trail.")
@@ -2866,7 +2880,8 @@ async def schedule_snooze_window(body: SnoozeScheduleBody, admin: dict = Depends
                                       {"$set": {"snooze_window_start": si, "snooze_window_end": ei, "snooze_window_reason": reason}})
     await _log_audit(admin["org_id"], admin["email"], "agent.alerts_snooze_scheduled",
                      f"Scheduled an alert-mute window {si[:16].replace('T', ' ')} \u2192 {ei[:16].replace('T', ' ')} UTC"
-                     + (f" \u2014 reason: {reason}" if reason else ""))
+                     + (f" \u2014 reason: {reason}" if reason else ""),
+                     meta={"actor": admin["email"], "kind": "scheduled", "start": si, "end": ei, "reason": reason})
     return {"ok": True, "snooze_window_start": si, "snooze_window_end": ei, "snooze_window_reason": reason}
 
 
@@ -2960,6 +2975,7 @@ async def alerts_mute_status(user: dict = Depends(get_current_user)):
 
 _AUDIT_RELAX_ACTIONS = ("trusted_rules_changed", "alerts_snoozed", "alerts_snooze_cleared",
                         "alerts_snooze_scheduled", "alerts_snooze_schedule_cleared",
+                        "alerts_auto_resumed",
                         "governance_settings", "alerts_test", "audit_digest")
 
 
@@ -3052,7 +3068,8 @@ async def _run_audit_digest(org_id=None, on_demand=False):
         orgs = [o] if o else []
     else:
         orgs = await db.organizations.find({"audit_digest_enabled": True},
-                                           {"name": 1, "audit_digest_recipients": 1, "board_digest_recipients": 1}).to_list(1000)
+                                           {"name": 1, "audit_digest_recipients": 1, "board_digest_recipients": 1,
+                                            "audit_digest_day": 1, "audit_digest_cadence": 1}).to_list(1000)
     sent = 0
     changes = 0
     for org in orgs:
@@ -3060,6 +3077,11 @@ async def _run_audit_digest(org_id=None, on_demand=False):
             oid = str(org["_id"])
             if not on_demand and not org.get("audit_digest_enabled"):
                 continue
+            if not on_demand:
+                if now.weekday() != int(org.get("audit_digest_day") or 0):
+                    continue
+                if (org.get("audit_digest_cadence") or "weekly") == "monthly" and now.day > 7:
+                    continue
             rows = await db.audit_logs.find(
                 {"org_id": oid, "ts": {"$gte": since}, "action": {"$regex": "|".join(RELAX)}},
                 {"_id": 0}).sort("ts", -1).to_list(2000)
@@ -3113,6 +3135,62 @@ async def send_audit_digest(admin: dict = Depends(require_roles("admin"))):
     await _log_audit(admin["org_id"], admin["email"], "agent.audit_digest",
                      f"Control-change digest emailed ({res.get('sent', 0)} recipient(s), {res.get('changes', 0)} change(s))")
     return res
+
+
+async def _run_alerts_auto_resume_all():
+    """Daily: when a scheduled alert-mute window has ended, email admins/execs a one-time
+    'instant alerts have resumed' notice and log it. Idempotent per window via a per-org latch."""
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+
+    def _p(s):
+        try:
+            d = datetime.fromisoformat(str(s).replace("Z", "+00:00"))
+            return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+    orgs = await db.organizations.find(
+        {"snooze_window_end": {"$exists": True, "$ne": ""}},
+        {"name": 1, "snooze_window_end": 1, "snooze_window_reason": 1, "snooze_window_resume_notified": 1}).to_list(1000)
+    for org in orgs:
+        try:
+            end = _p(org.get("snooze_window_end"))
+            if not end or end > now:
+                continue
+            if org.get("snooze_window_resume_notified") == org.get("snooze_window_end"):
+                continue
+            oid = str(org["_id"])
+            urows = await db.users.find({"org_id": oid, "role": {"$in": ["admin", "executive"]}},
+                                        {"_id": 0, "email": 1}).to_list(200)
+            recips = [r["email"] for r in urows if r.get("email")]
+            oname = org.get("name") or "your organization"
+            ended = str(org.get("snooze_window_end"))[:16].replace("T", " ")
+            reason = org.get("snooze_window_reason") or ""
+            html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:620px;margin:auto'>"
+                    f"<h2 style='color:#0f1e3d'>Instant suspicious-access alerts have resumed</h2>"
+                    f"<p>The scheduled alert-mute window for <strong>{oname}</strong> ended at "
+                    f"<strong>{ended} UTC</strong>. Instant suspicious-access alerting is active again.</p>"
+                    + (f"<p style='color:#6b7280'>Window reason: {reason}</p>" if reason else "")
+                    + f"<p style='font-size:11px;color:#9ca3af'>Obserra \u2014 Control Intelligence</p></div>")
+            for em in recips:
+                try:
+                    await notifications.send_email(em, f"Alerts resumed \u2014 {oname}", html)
+                except Exception:
+                    pass
+            try:
+                await notifications.create(oid, "system", "Instant alerts resumed",
+                                           f"The scheduled alert-mute window ended at {ended} UTC \u2014 alerting is active again.",
+                                           ref="agentic-ai-security",
+                                           dedupe_key=f"alerts-auto-resume:{oid}:{org.get('snooze_window_end')}")
+            except Exception:
+                pass
+            await _log_audit(oid, "system", "agent.alerts_auto_resumed",
+                             f"Scheduled alert-mute window ended at {ended} UTC \u2014 alerting resumed",
+                             meta={"kind": "scheduled", "window_end": org.get("snooze_window_end"), "auto": True})
+            await db.organizations.update_one(
+                {"_id": org["_id"]}, {"$set": {"snooze_window_resume_notified": org.get("snooze_window_end")}})
+        except Exception:
+            pass
 
 
 @agents_router.get("/runtime/board-evidence-digest/preview")

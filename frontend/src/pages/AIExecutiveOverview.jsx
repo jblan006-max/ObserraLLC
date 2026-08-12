@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { APP_VERSION_LABEL } from "@/version";
+import { Tooltip as UITooltip, TooltipTrigger as UITooltipTrigger, TooltipContent as UITooltipContent, TooltipProvider as UITooltipProvider } from "@/components/ui/tooltip";
 import {
   AlertOctagon, ArrowRight, Bot, EyeOff, Gauge, ShieldAlert, ShieldCheck, Wrench, Zap,
 } from "lucide-react";
@@ -50,12 +51,26 @@ function MuteBadge() {
   const tone = "35 90% 55%";
   const reason = m.reason ? ` · ${m.reason}` : " · no reason given";
   return (
-    <button data-testid="exec-mute-badge" onClick={() => navigate("/app/agentic-ai-security")}
-      title={`Instant suspicious-access alerts are currently muted (${m.source})${m.until ? ` until ${new Date(m.until).toLocaleString()}` : ""}`}
-      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-mono font-bold transition-transform hover:scale-[1.03]"
-      style={{ borderColor: `hsl(${tone} / 0.45)`, background: `hsl(${tone} / 0.12)`, color: `hsl(${tone})` }}>
-      <EyeOff className="w-3 h-3" />ALERTS MUTED{reason}
-    </button>
+    <UITooltipProvider delayDuration={100}>
+      <UITooltip>
+        <UITooltipTrigger asChild>
+          <button data-testid="exec-mute-badge" onClick={() => navigate("/app/agentic-ai-security")}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[10px] font-mono font-bold transition-transform hover:scale-[1.03]"
+            style={{ borderColor: `hsl(${tone} / 0.45)`, background: `hsl(${tone} / 0.12)`, color: `hsl(${tone})` }}>
+            <EyeOff className="w-3 h-3" />ALERTS MUTED{reason}
+          </button>
+        </UITooltipTrigger>
+        <UITooltipContent data-testid="exec-mute-tooltip" className="max-w-xs">
+          <div className="space-y-1 text-xs">
+            <div className="font-bold">Instant suspicious-access alerts are muted</div>
+            <div><span className="text-muted-foreground">Reason:</span> {m.reason || "no reason given"}</div>
+            <div><span className="text-muted-foreground">Muted via:</span> {m.source === "immediate" ? "manual snooze" : m.source === "scheduled" ? "scheduled window" : m.source || "—"}</div>
+            <div><span className="text-muted-foreground">Until:</span> {m.until ? new Date(m.until).toLocaleString() : "—"}</div>
+            <div className="text-muted-foreground pt-0.5">Click to manage in Agent Governance.</div>
+          </div>
+        </UITooltipContent>
+      </UITooltip>
+    </UITooltipProvider>
   );
 }
 

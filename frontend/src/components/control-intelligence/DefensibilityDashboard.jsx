@@ -92,6 +92,9 @@ function BriefSettingsCard() {
   const [counts, setCounts] = useState(null);
   const [accessLog, setAccessLog] = useState([]);
   const [analytics, setAnalytics] = useState(null);
+  const [versionEng, setVersionEng] = useState([]);
+  const [cmpA, setCmpA] = useState("");
+  const [cmpB, setCmpB] = useState("");
   const [dropDays, setDropDays] = useState(2);
   const [askName, setAskName] = useState(false);
   const [recap, setRecap] = useState(null);
@@ -159,8 +162,15 @@ function BriefSettingsCard() {
     api.get("/control-intelligence/brief/recipients").then((r) => setCounts(r.data)).catch(() => {});
   const refreshAccess = () =>
     api.get("/control-intelligence/auditor-link/access?limit=12").then((r) => setAccessLog(r.data.events || [])).catch(() => {});
-  const refreshAnalytics = () =>
+  const refreshAnalytics = () => {
     api.get("/control-intelligence/auditor-link/analytics").then((r) => setAnalytics(r.data)).catch(() => {});
+    api.get("/control-intelligence/auditor-link/version-engagement").then((r) => {
+      const vs = r.data.versions || [];
+      setVersionEng(vs);
+      setCmpA((a) => a || (vs[0] && vs[0].version) || "");
+      setCmpB((b) => b || (vs[1] && vs[1].version) || "");
+    }).catch(() => {});
+  };
   const refreshTimeline = (ver = timelineVersion) =>
     api.get(`/control-intelligence/auditor-link/timeline${ver ? `?version=${encodeURIComponent(ver)}` : ""}`)
       .then((r) => { setTimeline(r.data.people || []); setTimelineVersions(r.data.versions || []); })
@@ -866,6 +876,41 @@ function BriefSettingsCard() {
               </div>
             )}
 
+            {versionEng.length > 0 && (
+              <div className="mt-4 border-t border-border pt-3" data-testid="ci-version-compare">
+                <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Assurance by release version</div>
+                <div className="flex items-center gap-2 mb-3">
+                  <select data-testid="ci-version-compare-a" value={cmpA} onChange={(e) => setCmpA(e.target.value)} className="bg-secondary/40 border border-border rounded-md px-1.5 py-1 text-[11px] font-mono outline-none">
+                    {versionEng.map((v) => (<option key={v.version} value={v.version}>{v.version}</option>))}
+                  </select>
+                  <span className="text-[10px] font-mono text-muted-foreground">vs</span>
+                  <select data-testid="ci-version-compare-b" value={cmpB} onChange={(e) => setCmpB(e.target.value)} className="bg-secondary/40 border border-border rounded-md px-1.5 py-1 text-[11px] font-mono outline-none">
+                    <option value="">—</option>
+                    {versionEng.map((v) => (<option key={v.version} value={v.version}>{v.version}</option>))}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  {[cmpA, cmpB].map((sel, idx) => {
+                    const v = versionEng.find((x) => x.version === sel);
+                    return (
+                      <div key={idx} data-testid={`ci-version-compare-col-${idx}`} className="rounded-lg border border-border bg-secondary/20 p-2">
+                        <div className="font-head font-bold text-[12px] mb-1">{sel || "—"}</div>
+                        {v ? (
+                          <div className="space-y-0.5 text-[11px] font-mono text-muted-foreground">
+                            <div data-testid={`ci-version-compare-views-${idx}`}>{v.views} view(s)</div>
+                            <div data-testid={`ci-version-compare-downloads-${idx}`}>{v.downloads} download(s)</div>
+                            <div data-testid={`ci-version-compare-reviewers-${idx}`}>{v.reviewer_count} named reviewer(s)</div>
+                          </div>
+                        ) : (
+                          <div className="text-[11px] font-mono text-muted-foreground">No activity</div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             <div className="mt-4 border-t border-border pt-3" data-testid="ci-recap-panel">
               <div className="flex items-center justify-between mb-2">
                 <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
@@ -1092,6 +1137,11 @@ function BriefSettingsCard() {
                             <span data-testid={`ci-timeline-stalled-${i}`} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full border border-red-400/40 bg-red-400/10 text-red-400 text-[9px] font-mono">
                               STALLED · {p.views} views, no download
                             </span>
+                          )}
+                          {p.stalled && p.token && (
+                            <button onClick={() => followUp(p.token)} data-testid={`ci-timeline-chase-${i}`} className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md border border-ai/40 bg-ai/10 text-ai text-[9px] font-head font-bold hover:bg-ai/20">
+                              <Send className="w-2.5 h-2.5" /> Chase
+                            </button>
                           )}
                         </span>
                         {p.review_seconds != null ? (

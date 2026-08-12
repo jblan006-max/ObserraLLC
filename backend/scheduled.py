@@ -325,10 +325,9 @@ async def weekly_drift_digest(request: Request, background_tasks: BackgroundTask
     background_tasks.add_task(_run_ai_board_brief, "weekly")
     from agents import _run_auditor_room_weekly_digest
     background_tasks.add_task(_run_auditor_room_weekly_digest)
-    from agents import _run_card_engagement_weekly_digest, _run_unusual_access_watchlist, _run_audit_digest
+    from agents import _run_card_engagement_weekly_digest, _run_unusual_access_watchlist
     background_tasks.add_task(_run_card_engagement_weekly_digest)
     background_tasks.add_task(_run_unusual_access_watchlist)
-    background_tasks.add_task(_run_audit_digest)
     return {"status": "accepted"}
 
 
@@ -438,6 +437,9 @@ async def daily_drift_digest(request: Request, background_tasks: BackgroundTasks
     background_tasks.add_task(_run_board_evidence_digest, None, False, True)
     background_tasks.add_task(_run_scheduled_fire_drills)
     background_tasks.add_task(_run_control_assurance_sla_check)
+    from agents import _run_audit_digest, _run_alerts_auto_resume_all
+    background_tasks.add_task(_run_audit_digest)
+    background_tasks.add_task(_run_alerts_auto_resume_all)
     from control_intelligence import _run_ci_effectiveness_snapshot, _run_ci_owner_nudges_all, _run_ci_brief_email_all
     from ci_recap import _run_ci_engagement_nudges_all, _run_ci_weekly_assurance_recap_all, _run_ci_assurance_digest_all
     background_tasks.add_task(_run_ci_effectiveness_snapshot)

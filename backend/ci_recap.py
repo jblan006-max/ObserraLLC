@@ -7,6 +7,7 @@ module so its routes register on ci_router; scheduled.py imports the _run_* cron
 import logging
 import os
 import base64
+import app_meta
 from datetime import datetime, timezone
 
 from bson import ObjectId
@@ -368,12 +369,14 @@ async def _auditor_timeline_data(org_id, version=None):
     if version:
         q["app_version"] = version
     rows = await db.ci_auditor_access.find(
-        q, {"_id": 0, "kind": 1, "who": 1, "at": 1, "app_version": 1}).sort("at", 1).to_list(5000)
+        q, {"_id": 0, "kind": 1, "who": 1, "at": 1, "app_version": 1, "token": 1}).sort("at", 1).to_list(5000)
     people = {}
     for r in rows:
         who = (r.get("who") or "").strip() or "Anonymous"
         p = people.setdefault(who, {"who": who, "events": [], "first_view": None, "first_download": None,
-                                    "views": 0, "downloads": 0})
+                                    "views": 0, "downloads": 0, "token": None})
+        if r.get("token"):
+            p["token"] = r.get("token")
         p["events"].append({"kind": r.get("kind"), "at": r.get("at"), "version": r.get("app_version")})
         if r.get("kind") == "view":
             p["views"] += 1
@@ -411,6 +414,36 @@ async def auditor_timeline(version: str = "", admin: dict = Depends(require_role
     org_id = admin["org_id"]
     return {"people": await _auditor_timeline_data(org_id, version or None),
             "versions": await _auditor_versions(org_id)}
+
+
+async def _version_engagement(org_id):
+    rows = await db.ci_auditor_access.find(
+        {"org_id": org_id}, {"_id": 0, "kind": 1, "who": 1, "app_version": 1}).to_list(5000)
+    by = {}
+    for r in rows:
+        v = r.get("app_version")
+        if not v:
+            continue
+        b = by.setdefault(v, {"version": v, "views": 0, "downloads": 0, "reviewers": set()})
+        if r.get("kind") == "view":
+            b["views"] += 1
+        elif r.get("kind") == "download":
+            b["downloads"] += 1
+            who = (r.get("who") or "").strip()
+            if who:
+                b["reviewers"].add(who)
+    out = []
+    for b in by.values():
+        b["reviewers"] = sorted(b["reviewers"])
+        b["reviewer_count"] = len(b["reviewers"])
+        out.append(b)
+    out.sort(key=lambda x: x["version"], reverse=True)
+    return out
+
+
+@ci_router.get("/auditor-link/version-engagement")
+async def auditor_version_engagement(admin: dict = Depends(require_roles("admin"))):
+    return {"versions": await _version_engagement(admin["org_id"])}
 
 
 def _fmt_secs(s):
@@ -538,6 +571,10 @@ def _assurance_digest_html(org_name, p):
         return (f"<tr><td style='padding:3px 14px 3px 0;color:#6b7280'>{k}</td>"
                 f"<td style='padding:3px 0'><strong>{v}</strong></td></tr>")
 
+    wn = app_meta.current_changelog()
+    wn_html = (f"<h3 style='color:#0f1e3d;margin:14px 0 4px'>What's new in {app_meta.APP_VERSION_LABEL}</h3>"
+               f"<ul>{''.join('<li>' + i + '</li>' for i in wn)}</ul>") if wn else ""
+
     return (f"<div style='font:400 14px Arial;color:#1f2937;max-width:640px;margin:auto'>"
             f"<h2 style='color:#0f1e3d'>Monthly Assurance Digest \u2014 {org_name}</h2>"
             f"<p style='color:#6b7280'>A board-ready rollup of the last {p['days']} days of control "
@@ -553,7 +590,8 @@ def _assurance_digest_html(org_name, p):
             f"<h3 style='color:#0f1e3d;margin:14px 0 4px'>Framework readiness</h3><ul>{fw}</ul>"
             f"<h3 style='color:#0f1e3d;margin:14px 0 4px'>Highest-priority control gaps</h3><ul>{weak}</ul>"
             f"<h3 style='color:#0f1e3d;margin:14px 0 4px'>External assurance activity ({p['days']}d)</h3><p>{eng_line}</p>"
-            f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence \u2014 monthly assurance digest.</p></div>")
+            + wn_html
+            + f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence \u2014 monthly assurance digest.</p></div>")
 
 
 def _assurance_digest_markdown(org_name, p):
@@ -590,6 +628,11 @@ def _assurance_digest_markdown(org_name, p):
               + (f" by {len(rv)} named reviewer(s)" if rv else "")]
     if rv:
         lines.append(f"- Named reviewers: {', '.join(rv)}")
+    wn = app_meta.current_changelog()
+    if wn:
+        lines += ["", f"## What's New in {app_meta.APP_VERSION_LABEL}"]
+        for i in wn:
+            lines.append(f"- {i}")
     lines += ["", "## Defensibility",
               "- Control status, effectiveness, maturity and framework coverage are FACT values from the live control feed.",
               "- Health, coverage and trend roll-ups are MODELLED calculations."]
