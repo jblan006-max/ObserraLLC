@@ -31,6 +31,7 @@ import {
   Mail,
   CloudDownload,
   Send,
+  Bell,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -614,12 +615,15 @@ function Defensibility({ data, sourceStatus }) {
   );
 }
 
-function WarRoomChat({ selectedCase, user, live }) {
+function WarRoomChat({ selectedCase, caseDetail, user, live, changed }) {
   const [msgs, setMsgs] = useState([]);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
   const ref = selectedCase?.ref;
   const endRef = useRef(null);
+  const inputRef = useRef(null);
+  const canOperate = ["admin", "executive", "owner"].includes(user?.role);
+  const roles = [...new Set((caseDetail?.participants || []).map((p) => p.role).filter(Boolean))];
 
   const load = useCallback(async () => {
     if (!ref) { setMsgs([]); return; }
@@ -633,6 +637,11 @@ function WarRoomChat({ selectedCase, user, live }) {
     return () => clearInterval(id);
   }, [ref, live, load]);
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [msgs.length]);
+
+  const insertMention = (role) => {
+    setText((t) => `${t}${t && !t.endsWith(" ") ? " " : ""}@${role} `);
+    inputRef.current?.focus();
+  };
 
   const send = async (e) => {
     e.preventDefault();
@@ -650,11 +659,28 @@ function WarRoomChat({ selectedCase, user, live }) {
     }
   };
 
+  const convert = async (m) => {
+    setBusy(true);
+    try {
+      const { data } = await api.post(`/crisis/cases/${ref}/messages/${m.message_id}/to-action`);
+      toast.success(`Tracked as decision ${data.action_id} — awaiting approval in the Decision Room.`);
+      await load();
+      await changed?.(ref);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Unable to convert message.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const renderText = (t) => (t || "").split(/(@\S+)/g).map((part, i) =>
+    part.startsWith("@") ? <span key={i} className="text-ai font-bold">{part}</span> : <span key={i}>{part}</span>);
+
   return (
     <div data-testid="crisis-war-room-chat">
-      <Panel title="War room chat" subtitle="Shared responder thread — decisions, context and hand-offs in one place, live for everyone in the room.">
+      <Panel title="War room chat" subtitle="Shared responder thread — @mention a role to ping them on Teams/Slack, and turn any message into a tracked decision.">
         {!ref ? <EmptyState title="No crisis case selected" text="Select a crisis case to open the war room thread." /> : (
-          <div className="flex flex-col h-[420px]">
+          <div className="flex flex-col h-[460px]">
             <div className="flex-1 overflow-y-auto space-y-3 pr-1" data-testid="crisis-chat-thread">
               {msgs.length === 0 ? <EmptyState title="No messages yet" text="Start the war room conversation below." /> : msgs.map((m) => {
                 const mine = m.author === (user?.name || user?.email);
@@ -662,16 +688,33 @@ function WarRoomChat({ selectedCase, user, live }) {
                   <div key={m.message_id} data-testid={`crisis-chat-msg-${m.message_id}`} className={`flex ${mine ? "justify-end" : "justify-start"}`}>
                     <div className={`max-w-[80%] rounded-xl px-3 py-2 ${mine ? "bg-primary/15 border border-primary/30" : "bg-secondary/40 border border-border"}`}>
                       <div className="flex items-center gap-2"><span className="font-head font-bold text-xs">{m.author}</span><span className="text-[9px] font-mono uppercase text-muted-foreground">{m.role}</span></div>
-                      <div className="text-sm mt-1 whitespace-pre-wrap break-words">{m.text}</div>
-                      <div className="text-[9px] text-muted-foreground mt-1">{m.created_at ? new Date(m.created_at).toLocaleTimeString() : ""}</div>
+                      <div className="text-sm mt-1 whitespace-pre-wrap break-words">{renderText(m.text)}</div>
+                      {Array.isArray(m.mentions) && m.mentions.length > 0 && (
+                        <div className="text-[9px] font-mono text-ai mt-1 flex items-center gap-1"><Bell className="w-3 h-3" />pinged {m.mentions.map((x) => x.role).join(", ")}</div>
+                      )}
+                      <div className="flex items-center justify-between gap-3 mt-1">
+                        <span className="text-[9px] text-muted-foreground">{m.created_at ? new Date(m.created_at).toLocaleTimeString() : ""}</span>
+                        {canOperate && (m.converted_action_id ? (
+                          <span data-testid={`crisis-chat-tracked-${m.message_id}`} className="text-[9px] font-mono text-low inline-flex items-center gap-1"><Gavel className="w-3 h-3" />{m.converted_action_id}</span>
+                        ) : (
+                          <button onClick={() => convert(m)} disabled={busy} data-testid={`crisis-chat-to-action-${m.message_id}`} className="text-[9px] font-mono text-primary hover:underline inline-flex items-center gap-1 disabled:opacity-50"><Gavel className="w-3 h-3" />Turn into decision</button>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 );
               })}
               <div ref={endRef} />
             </div>
-            <form onSubmit={send} className="mt-3 flex items-center gap-2">
-              <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Message the war room…" data-testid="crisis-chat-input" className="flex-1 bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary" />
+            {roles.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mt-3" data-testid="crisis-chat-mentions">
+                {roles.map((r) => (
+                  <button key={r} type="button" onClick={() => insertMention(r)} data-testid={`crisis-chat-mention-${r.replace(/[^a-zA-Z0-9]/g, "-")}`} className="text-[10px] px-2 py-1 rounded-full bg-ai/10 border border-ai/30 text-ai hover:bg-ai/20">@{r}</button>
+                ))}
+              </div>
+            )}
+            <form onSubmit={send} className="mt-2 flex items-center gap-2">
+              <input ref={inputRef} value={text} onChange={(e) => setText(e.target.value)} placeholder="Message the war room… use @Role to ping" data-testid="crisis-chat-input" className="flex-1 bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary" />
               <button disabled={busy || !text.trim()} data-testid="crisis-chat-send" className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}Send</button>
             </form>
           </div>
@@ -781,7 +824,7 @@ function WarRoom({ selectedCase, caseDetail, changed, user, live }) {
         )}
       </Panel>
       </div>
-      <WarRoomChat selectedCase={selectedCase} user={user} live={live} />
+      <WarRoomChat selectedCase={selectedCase} caseDetail={caseDetail} user={user} live={live} changed={changed} />
     </div>
   );
 }

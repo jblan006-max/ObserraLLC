@@ -1,5 +1,11 @@
 # Obserra EIOS — CHANGELOG
 
+## 2026-08-12 — Crisis Commander: chat @mention alerts, message→decision, auto-escalate brief (iteration_136 — backend 12/12, frontend 100%, 0 bugs)
+- **Chat Mentions & Alerts:** war-room chat now renders mention chips from the live roster (`crisis-chat-mention-<role>`); posting a message with `@<role>` resolves against `crisis_participants`, stores `mentions[]`, highlights @tokens, shows a "pinged <roles>" line, and fires a Teams/Slack ping via `_post_chat_alert` (safe no-op without a webhook).
+- **Turn message into decision:** each chat message has a "Turn into decision" action (operators) → `POST /api/crisis/cases/{ref}/messages/{id}/to-action` creates an Awaiting-Approval Decision action (source "War Room Chat"), marks the message converted (tracked badge), writes a Decision timeline event; re-convert returns 400. The action then flows through the existing Decision Room approval.
+- **Auto-Escalate Brief:** `update_case` auto-sets `brief_schedule_hours=4` + logs an Auto-Escalation event when severity transitions to Critical (only on transition; never overrides a user-set cadence).
+
+
 ## 2026-08-12 — Crisis Commander: War Room Chat, Scheduled Briefs, ServiceNow auto-ingest, per-obligation alert thresholds (iteration_135 — backend 14/14, frontend 100%, 0 bugs)
 - **War Room Live Chat:** per-case responder thread — `GET/POST /api/crisis/cases/{ref}/messages` (crisis_messages collection), 8s polling in the War Room tab, any org user can post. UI panel `crisis-war-room-chat` with thread/input/send. No `_id` leakage.
 - **Scheduled Board Brief:** header cadence select (Off/4h/12h/24h) PATCHes `brief_schedule_hours` on the case; `run_scheduled_briefs()` (folded into hourly cron) emails the crisis-grounded brief via Resend to admins/execs while a case is active, writes a 'Scheduled Brief' Communication timeline event, and gates on `brief_last_sent_at` (no double-send — verified).

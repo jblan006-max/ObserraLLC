@@ -274,16 +274,32 @@ async def update_case(
 ):
     _require_operator(user)
     org_id = user["org_id"]
-    await _get_case(org_id, ref)
+    existing = await _get_case(org_id, ref)
     changes = {key: value for key, value in body.model_dump().items() if value is not None}
     if not changes:
         raise HTTPException(status_code=400, detail="No changes")
 
-    changes["updated_at"] = _now()
+    now = _now()
+    escalated = False
+    if changes.get("severity") == "Critical" and existing.get("severity") != "Critical":
+        current_cadence = int(existing.get("brief_schedule_hours") or 0)
+        if "brief_schedule_hours" not in changes and (current_cadence == 0 or current_cadence > 4):
+            changes["brief_schedule_hours"] = 4
+            escalated = True
+    changes["updated_at"] = now
     await db.crisis_cases.update_one(
         {"org_id": org_id, "ref": ref},
         {"$set": changes},
     )
+    if escalated:
+        await db.crisis_events.insert_one({
+            "org_id": org_id, "case_ref": ref,
+            "event_id": await _next_ref(org_id, "crisis_events", "EVT"),
+            "kind": "Communication",
+            "title": "Board-brief cadence auto-escalated to every 4h (severity → Critical)",
+            "detail": f"{ref} escalated to Critical; leadership will now receive the crisis brief every 4 hours.",
+            "source": "Auto-Escalation", "severity": "High",
+            "occurred_at": now, "created_at": now, "created_by": "Obserra Auto-Escalation"})
     await _audit(org_id, _actor(user), "crisis.case.update", f"{ref}: {changes}")
     return await db.crisis_cases.find_one(
         {"org_id": org_id, "ref": ref},
@@ -1194,15 +1210,84 @@ async def list_messages(ref: str, user: dict = Depends(get_current_user)):
 
 @api.post("/cases/{ref}/messages")
 async def post_message(ref: str, body: CrisisMessage, user: dict = Depends(get_current_user)):
+    from self_scan import _post_chat_alert
     org_id = user["org_id"]
-    await _get_case(org_id, ref)
+    case = await _get_case(org_id, ref)
     now = _now()
+    text = body.text.strip()
+    author = user.get("name") or user.get("email") or "Responder"
+    participants = await db.crisis_participants.find(
+        {"org_id": org_id, "case_ref": ref}, {"_id": 0}).to_list(300)
+    lowered = text.lower()
+    mentions, seen = [], set()
+    for p in participants:
+        for token in (p.get("role"), p.get("name")):
+            if token and f"@{token.lower()}" in lowered:
+                key = (p.get("name"), p.get("role"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                mentions.append({"name": p.get("name"), "role": p.get("role"), "contact": p.get("contact")})
+                break
     msg = {
         "org_id": org_id, "case_ref": ref,
         "message_id": await _next_ref(org_id, "crisis_messages", "MSG"),
-        "author": user.get("name") or user.get("email") or "Responder",
+        "author": author,
         "role": user.get("role") or "responder",
-        "text": body.text.strip(),
+        "text": text,
+        "mentions": mentions,
         "created_at": now}
     await db.crisis_messages.insert_one(msg.copy())
+    if mentions:
+        who = ", ".join(f"{m['role']} ({m['name']})" for m in mentions)
+        try:
+            await _post_chat_alert(
+                org_id,
+                f"🔔 War room mention — {case.get('ref')} ({(case.get('title') or '')[:60]})",
+                f"{author} mentioned {who} in the war room:\n\"{text}\"")
+        except Exception:
+            pass
     return msg
+
+
+@api.post("/cases/{ref}/messages/{message_id}/to-action")
+async def message_to_action(ref: str, message_id: str, user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    org_id = user["org_id"]
+    await _get_case(org_id, ref)
+    msg = await db.crisis_messages.find_one(
+        {"org_id": org_id, "case_ref": ref, "message_id": message_id}, {"_id": 0})
+    if not msg:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if msg.get("converted_action_id"):
+        raise HTTPException(status_code=400, detail=f"Already tracked as {msg['converted_action_id']}")
+    now = _now()
+    action = {
+        "org_id": org_id, "case_ref": ref,
+        "action_id": await _next_ref(org_id, "crisis_actions", "ACT"),
+        "title": (msg.get("text") or "War room decision")[:220],
+        "owner": msg.get("author", ""),
+        "priority": "High",
+        "status": "Awaiting Approval",
+        "action_type": "Decision",
+        "due_at": None,
+        "decision_required": True,
+        "decision_owner": msg.get("author", ""),
+        "business_impact": "", "technical_impact": "",
+        "outcome": "", "approved_by": "",
+        "source": "War Room Chat", "source_message_id": message_id,
+        "created_at": now, "updated_at": now, "created_by": _actor(user)}
+    await db.crisis_actions.insert_one(action.copy())
+    await db.crisis_messages.update_one(
+        {"org_id": org_id, "case_ref": ref, "message_id": message_id},
+        {"$set": {"converted_action_id": action["action_id"]}})
+    await db.crisis_events.insert_one({
+        "org_id": org_id, "case_ref": ref,
+        "event_id": await _next_ref(org_id, "crisis_events", "EVT"),
+        "kind": "Decision",
+        "title": f"War room message escalated to decision {action['action_id']}",
+        "detail": action["title"], "source": "War Room Chat", "severity": "High",
+        "occurred_at": now, "created_at": now, "created_by": _actor(user)})
+    await db.crisis_cases.update_one({"org_id": org_id, "ref": ref}, {"$set": {"updated_at": now}})
+    await _audit(org_id, _actor(user), "crisis.message.to_action", f"{ref}: {message_id} -> {action['action_id']}")
+    return action
