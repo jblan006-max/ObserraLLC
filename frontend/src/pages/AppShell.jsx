@@ -16,7 +16,7 @@ import { APP_VERSION_LABEL, CURRENT_CHANGELOG } from "@/version";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import {
   LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
-  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Gauge, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp, ToggleRight, Activity, AlertTriangle, CheckCircle2, Siren,
+  Wrench, Globe, Radar, Boxes, FileBarChart, Store, Lock, Loader2, Clock, Network, ShieldCheck, Users, Layers, Settings, Bot, Gauge, Building2, Building, BarChart3, ShieldAlert, Sparkles, Wallet, Plug, Menu, X, Smartphone, ChevronDown, ChevronRight, ChevronUp, ToggleRight, Activity, AlertTriangle, CheckCircle2, Siren, Landmark,
 } from "lucide-react";
 import { api } from "@/lib/api";
 
@@ -73,6 +73,7 @@ const NAV_SECTIONS = [
     { to: "/app", label: "Executive Overview", icon: LayoutDashboard, end: true },
     { to: "/app/control-intelligence", label: "Control Posture", icon: Layers },
     { to: "/app/cyber-crisis-commander", label: "Cyber Crisis Commander", icon: Siren },
+    { to: "/app/cra-governance", label: "EU CRA Governance", icon: Landmark },
   ]},
   { section: "Assurance", cat: true, color: "ai", items: [
     { to: "/app/control-assurance", label: "Control Assurance", icon: Gauge },

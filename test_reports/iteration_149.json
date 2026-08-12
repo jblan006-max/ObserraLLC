@@ -1,0 +1,29 @@
+{
+  "summary": "Frontend validation of the new 'EU CRA Governance' module (Obserra). Logged in as admin, navigated via sidebar 'EU CRA Governance' to /app/cra-governance, verified header + REGULATION (EU) 2024/2847 badge and all 9 tabs (mission/products/certification/ledger/sbom/vulnerability/conformity/declaration/regulation) via data-testids. Verified 6 KPI cards and CRA-PROD-00001 'Acme VPN Gateway' pre-seeded. Registered a new product 'Test Firewall' via cra-register-toggle + cra-register-submit -> received 'CRA product registered and proposed classification generated' toast; product appeared as Class II Proposed. Reclassify worked. Admin Approve with window.prompt rationale accepted -> 'CRA-PROD-00002 classification approved' toast and status flipped to Approved. Certification Portal: initialized a vendor assessment ('CRA readiness assessment initialized' toast) and created a Secure Portal Link ('Secure Certification Portal link created' toast) with visible portal URL. SBOM: pasted requirements.txt manifest -> 'CRA-SBOM-00002 generated with 3 components' toast + CycloneDX JSON preview. Vulnerability: created Article 14 clock -> 'CRA reporting clock created' toast, register shows Next deadline + stage buttons. Conformity: registered 'Test NB Ltd' notified body -> 'Conformity assessment provider registered' toast, provider appears in registry (CRA-CAB-00001). Declaration: 'Evaluate Market Readiness' rendered blockers panel. Ledger: 7 columns and 14 hash-chained rows. Regulation Map: 18 requirement rows. Executive Brief button triggered a PDF download (obserra-eu-cra-governance-executive-brief.pdf). Refresh button reloaded. Public /cra-certification/<token> portal (no auth): shows product header 'Test Firewall', Classification/Assessment/Provider/Legal-basis cards, 18 requirement rows each with status dropdown + evidence textarea, Save persisted (score updated to 75%). Private 'Internal Regulatory Ledger' NOT exposed (only mentioned once, inside the safety disclaimer literally stating it is never exposed). Regression: /app/cyber-crisis-commander still loads correctly with no white screen. All flows in the request PASSED.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "CRA Governance", "issues": ["Console hydration warning: '<span> cannot be a child of <option>' — appears to originate from the dev-time visual-editor instrumentation wrapping <option> children in a <span> (x-file-name / x-component). No functional impact, but noisy in console."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "CRAGovernance.jsx is 758 lines with 8 sub-components — consider splitting each tab section into its own file for maintainability.",
+    "CertificationPortal.issue() (line 342): the productAssessments filter runs on outer render but role can be 'external_assessor'; if a user switches role after selecting a vendor assessment, the stale assessment_ref may still be POSTed. Minor UX/consistency issue; no functional break observed.",
+    "CRAGovernance.jsx line 754 accesses sourceStatus with Object.entries — if reload fails and sourceStatus becomes undefined the page will crash. Consider defaulting to {} in useCRAData.",
+    "Sonner toast used everywhere — good; but window.prompt is used for approvals/signatory/receipts (approvals: line 224/615/513). This blocks testing tools and is not ideal UX; consider a modal dialog instead.",
+    "Public portal (CRACertificationPortal.jsx) correctly avoids exposing ledger data — verified. Good separation.",
+    "Toast library uses `.error/.success` only; no `try/catch` around initAssessment (line 334) — a failed init would surface as an unhandled promise. Add a try/catch + toast.error."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin) — worked",
+  "seed_data_creation": "Created CRA-PROD-00002 (Test Firewall, Class II, Approved), CRA-ASMT-00002 (vendor), CRA-SBOM-00002 (3 components), 1 CRA vulnerability clock, CRA-CAB-00001 (Test NB Ltd notified body), and a vendor portal token (visible in Certification Portal panel).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "CRA Governance module fully functional end-to-end from the UI. Admin credentials jblan2026@gmail.com / Obserra2026!. When testing tabs, use data-testid='cra-tab-<id>'. Tab strip is horizontally scrollable — use scroll_into_view_if_needed + click(force=True). For window.prompt (approvals, signatory, submission receipt) attach page.once('dialog', lambda d: asyncio.create_task(d.accept('text'))) BEFORE the click. Public portal token can be captured from the 'PORTAL LINK ISSUED' box after clicking 'Create Secure Portal Link'. Private ledger is intentionally not shown on public portal — the phrase 'Internal Regulatory Ledger' appears once only inside the disclaimer footer.",
+  "rca of the issue": "No blocking issues. Only a benign React hydration console warning (span child of option) that originates from the source-instrumentation wrappers and does not affect functionality."
+}

@@ -76,6 +76,11 @@ app.include_router(sap_router)
 from crisis_commander import api as crisis_commander_api
 app.include_router(crisis_commander_api)
 
+# Obserra EU Cyber Resilience Act (CRA) Governance domain
+from cra_governance import cra_router, cra_public_router, ensure_cra_indexes
+app.include_router(cra_router)
+app.include_router(cra_public_router)
+
 _cors = os.environ.get("CORS_ORIGINS", "*").strip()
 _cors_kwargs = {"allow_origin_regex": ".*"} if _cors == "*" else {"allow_origins": [o.strip() for o in _cors.split(",") if o.strip()]}
 app.add_middleware(
@@ -176,6 +181,11 @@ async def startup():
     await db.notifications.create_index([("org_id", 1), ("created_at", -1)])
     await db.notifications.create_index([("org_id", 1), ("dedupe_key", 1)])
     await seed_admin()
+    try:
+        await ensure_cra_indexes()
+        logger.info("EU CRA governance indexes ready")
+    except Exception as e:
+        logger.warning(f"CRA index setup skipped: {e}")
     try:
         orgs = await db.organizations.find({}, {"_id": 1}).to_list(1000)
         for o in orgs:

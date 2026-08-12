@@ -61,6 +61,8 @@ const AuditRoom = lazyWithRetry(() => import("@/pages/AuditRoom"));
 const CardShare = lazyWithRetry(() => import("@/pages/CardShare"));
 const CrisisSnapshot = lazyWithRetry(() => import("@/pages/CrisisSnapshot"));
 const CIAuditorPortal = lazyWithRetry(() => import("@/pages/CIAuditorPortal"));
+const CRAGovernance = lazyWithRetry(() => import("@/pages/CRAGovernance"));
+const CRACertificationPortal = lazyWithRetry(() => import("@/pages/CRACertificationPortal"));
 
 function PageLoader() {
   return (
@@ -97,6 +99,7 @@ function AppRoutes() {
         <Route path="/card/:token" element={<CardShare />} />
         <Route path="/crisis-snapshot/:token" element={<CrisisSnapshot />} />
         <Route path="/ci-audit/:token" element={<CIAuditorPortal />} />
+        <Route path="/cra-certification/:token" element={<CRACertificationPortal />} />
         <Route path="/payment/success" element={<Gate><PaymentSuccess /></Gate>} />
         <Route path="/app" element={<Gate><AppShell /></Gate>}>
           <Route index element={<AIExecutiveOverview />} />
@@ -117,6 +120,7 @@ function AppRoutes() {
           <Route path="control-assurance" element={<ControlAssurance />} />
           <Route path="control-intelligence" element={<ControlIntelligence />} />
           <Route path="cyber-crisis-commander" element={<CyberCrisisCommander />} />
+          <Route path="cra-governance" element={<CRAGovernance />} />
         <Route path="ai-grounding" element={<AIGroundingMonitor />} />
           <Route path="system-health" element={<SystemHealth />} />
           <Route path="audit" element={<AuditLog />} />
