@@ -1682,8 +1682,8 @@ export default function CyberCrisisCommander() {
       {activeTab === "board" && <BoardCrisisDashboard selectedCase={selectedCase} />}
       {activeTab === "aincident" && <AIIncidentIntelligence data={effectiveData} />}
       {activeTab === "identity" && <div className="space-y-5"><IdentityCrisisIntelligence data={effectiveData} caseDetail={caseDetail} selectedCase={selectedCase} />{canOperate && <RiskyUsers selectedCase={selectedCase} changed={changed} />}{canOperate && <EntraContainment selectedCase={selectedCase} changed={changed} />}</div>}
-      {activeTab === "comms" && <ExecutiveCommsCenter data={effectiveData} selectedCase={selectedCase} />}
-      {activeTab === "resilience" && <ResilienceIntelligence data={effectiveData} caseDetail={caseDetail} />}
+      {activeTab === "comms" && <ExecutiveCommsCenter data={effectiveData} selectedCase={selectedCase} canOperate={canOperate} reload={reload} changed={changed} />}
+      {activeTab === "resilience" && <ResilienceIntelligence data={effectiveData} caseDetail={caseDetail} selectedCase={selectedCase} changed={changed} />}
       {activeTab === "pir" && <PostIncidentReview data={effectiveData} selectedCase={selectedCase} caseDetail={caseDetail} generatePIR={generatePIR} pirBusy={pirBusy} />}
       {activeTab === "defensibility" && <Defensibility data={effectiveData} sourceStatus={sourceStatus} />}
 

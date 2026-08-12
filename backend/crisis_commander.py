@@ -518,12 +518,16 @@ class CrisisRecoveryCreate(BaseModel):
     status: Literal["Down", "Restoring", "Validated", "Operational"] = "Down"
     owner: str = Field(default="", max_length=160)
     note: str = Field(default="", max_length=1000)
+    rto_minutes: int | None = Field(default=None, ge=0, le=1000000)
+    rpo_minutes: int | None = Field(default=None, ge=0, le=1000000)
 
 
 class CrisisRecoveryUpdate(BaseModel):
     status: Literal["Down", "Restoring", "Validated", "Operational"] | None = None
     owner: str | None = Field(default=None, max_length=160)
     note: str | None = Field(default=None, max_length=1000)
+    rto_minutes: int | None = Field(default=None, ge=0, le=1000000)
+    rpo_minutes: int | None = Field(default=None, ge=0, le=1000000)
 
 
 @api.post("/cases/{ref}/recovery")
@@ -3076,3 +3080,152 @@ async def director_digest_preview(user: dict = Depends(get_current_user)):
     _require_operator(user)
     html, n = await _build_director_digest(user["org_id"])
     return {"html": html or "", "crises": n}
+
+
+# ===========================================================================
+# Executive Communications — reusable stakeholder message templates (regulator,
+# customer, employee, board, ...), one-tap dispatch (logged + optional chat
+# broadcast) and a per-crisis notification-coverage scorecard that flags
+# stakeholder groups who have not been updated recently.
+# ===========================================================================
+_COMMS_GROUPS = ["regulator", "customer", "employee", "board", "media", "partner"]
+
+_DEFAULT_COMMS_TEMPLATES = [
+    {"id": "reg-holding", "group": "regulator", "label": "Regulator notification (holding)",
+     "subject": "Security incident — preliminary notification",
+     "text": "We are notifying you of a security incident currently under investigation. We are assessing scope and impact and will provide a further update within the applicable statutory window. A dedicated point of contact has been assigned."},
+    {"id": "cust-holding", "group": "customer", "label": "Customer holding statement",
+     "subject": "Service update",
+     "text": "We are aware of an issue affecting some of our services and our team is actively working to resolve it. Protecting your data is our priority and we will share a further update as soon as we have verified information."},
+    {"id": "emp-advisory", "group": "employee", "label": "Employee advisory",
+     "subject": "Important security advisory",
+     "text": "We are responding to a security incident. Please remain vigilant, do not discuss details externally, and route all media or customer enquiries to Communications. Follow instructions from the incident response team only."},
+    {"id": "board-update", "group": "board", "label": "Board update",
+     "subject": "Cyber crisis — board update",
+     "text": "This is a scheduled update on the active cyber crisis. Current severity, containment status, executive decisions pending and regulatory clocks are summarised in the board view. The next update will follow per the agreed cadence."},
+]
+
+
+async def _org_comms_templates(org_id: str) -> list:
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"crisis_comms_templates": 1}) or {}
+    t = org.get("crisis_comms_templates")
+    return list(_DEFAULT_COMMS_TEMPLATES) if t is None else t
+
+
+@api.get("/comms/templates")
+async def comms_templates(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    return {"templates": await _org_comms_templates(user["org_id"]), "groups": _COMMS_GROUPS}
+
+
+class CommsTemplateBody(BaseModel):
+    group: Literal["regulator", "customer", "employee", "board", "media", "partner"] = "customer"
+    label: str = Field(min_length=1, max_length=80)
+    subject: str = Field(default="", max_length=160)
+    text: str = Field(min_length=1, max_length=2000)
+
+
+@api.post("/comms/templates")
+async def add_comms_template(body: CommsTemplateBody, user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    import secrets as _s
+    _require_operator(user)
+    org_id = user["org_id"]
+    templates = [t for t in await _org_comms_templates(org_id)
+                 if t.get("label", "").strip().lower() != body.label.strip().lower()]
+    templates.append({"id": _s.token_hex(4), "group": body.group,
+                      "label": body.label.strip(), "subject": body.subject.strip(),
+                      "text": body.text.strip()})
+    await db.organizations.update_one({"_id": ObjectId(org_id)}, {"$set": {"crisis_comms_templates": templates}})
+    await _audit(org_id, _actor(user), "crisis.comms_template_add", body.label.strip())
+    return {"templates": templates}
+
+
+@api.delete("/comms/templates/{tid}")
+async def delete_comms_template(tid: str, user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    _require_operator(user)
+    org_id = user["org_id"]
+    templates = [t for t in await _org_comms_templates(org_id) if t.get("id") != tid]
+    await db.organizations.update_one({"_id": ObjectId(org_id)}, {"$set": {"crisis_comms_templates": templates}})
+    await _audit(org_id, _actor(user), "crisis.comms_template_delete", tid)
+    return {"templates": templates}
+
+
+class CommsDispatchBody(BaseModel):
+    group: Literal["regulator", "customer", "employee", "board", "media", "partner"]
+    label: str = Field(default="", max_length=120)
+    message: str = Field(default="", max_length=4000)
+    broadcast: bool = False
+
+
+@api.post("/cases/{ref}/comms/dispatch")
+async def dispatch_comms(ref: str, body: CommsDispatchBody, user: dict = Depends(get_current_user)):
+    """Record a stakeholder communication for a crisis case. Logs the dispatch
+    (feeding the comms log + coverage scorecard) and, when requested and a chat
+    channel is wired, broadcasts the message to the war-room channel. No external
+    email/SMS delivery is claimed unless a connected channel actually delivers it."""
+    from self_scan import _post_chat_alert
+    _require_operator(user)
+    org_id = user["org_id"]
+    await _get_case(org_id, ref)
+    now = _now()
+    actor = _actor(user)
+    msg = (body.message or "").strip()
+    channels = await _chat_channels(org_id)
+    posted = False
+    if body.broadcast and (channels["teams"] or channels["slack"]) and msg:
+        try:
+            await _post_chat_alert(org_id, f"\U0001F4E3 {body.group.title()} communication \u2014 {ref}", msg)
+            posted = True
+        except Exception:
+            posted = False
+    await db.crisis_comms.insert_one({
+        "org_id": org_id, "case_ref": ref, "group": body.group,
+        "label": body.label.strip(), "message": msg[:4000],
+        "posted": posted, "by": actor, "at": now})
+    await db.crisis_events.insert_one({
+        "org_id": org_id, "case_ref": ref,
+        "event_id": await _next_ref(org_id, "crisis_events", "EVT"),
+        "kind": "Communication", "title": f"{body.group.title()} communication dispatched",
+        "detail": (body.label or msg or f"{body.group} notified")[:1000],
+        "source": "Comms Center", "severity": "Info",
+        "occurred_at": now, "created_at": now, "created_by": actor})
+    await db.crisis_cases.update_one({"org_id": org_id, "ref": ref}, {"$set": {"updated_at": now}})
+    await _audit(org_id, actor, "crisis.comms.dispatch",
+                 f"{ref} group={body.group} label={body.label} posted={posted}")
+    return {"ok": True, "posted": posted, "group": body.group, "at": now}
+
+
+@api.get("/cases/{ref}/comms/coverage")
+async def comms_coverage(ref: str, user: dict = Depends(get_current_user)):
+    """Per-crisis notification coverage: for each stakeholder group, the last time
+    they were updated and whether that update is now stale (a board trust signal)."""
+    from datetime import datetime as _dt
+    _require_operator(user)
+    org_id = user["org_id"]
+    await _get_case(org_id, ref)
+    threshold_hours = 4
+    rows = await db.crisis_comms.find(
+        {"org_id": org_id, "case_ref": ref}, {"_id": 0}
+    ).sort("at", DESCENDING).to_list(1000)
+    now_dt = datetime.now(timezone.utc)
+    groups = []
+    stale_count = 0
+    for g in _COMMS_GROUPS:
+        gr = [r for r in rows if r.get("group") == g]
+        last_at = gr[0]["at"] if gr else None
+        hours_since = None
+        if last_at:
+            try:
+                hours_since = round((now_dt - _dt.fromisoformat(last_at)).total_seconds() / 3600, 1)
+            except Exception:
+                hours_since = None
+        stale = (last_at is None) or (hours_since is not None and hours_since > threshold_hours)
+        if stale:
+            stale_count += 1
+        groups.append({"group": g, "last_at": last_at, "count": len(gr),
+                       "hours_since": hours_since, "stale": stale})
+    return {"groups": groups, "threshold_hours": threshold_hours,
+            "stale_count": stale_count, "total_dispatched": len(rows)}

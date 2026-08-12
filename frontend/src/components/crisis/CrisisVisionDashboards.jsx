@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState, useEffect, useCallback } from "react";
 import {
   KeyRound,
   ShieldOff,
@@ -15,13 +15,17 @@ import {
   Activity,
   HeartPulse,
   Workflow,
-  Gauge,
   Clock3,
   CheckCircle2,
-  Users,
   Download,
   Loader2,
   ClipboardList,
+  Send,
+  Plus,
+  Trash2,
+  Save,
+  Timer,
+  Target,
 } from "lucide-react";
 import {
   Bar,
@@ -32,8 +36,9 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { toast } from "sonner";
+import { api } from "@/lib/api";
 import {
-  money,
   activeIncidents,
   actionSummary,
   controlFailureSummary,
@@ -66,13 +71,13 @@ function StatusPill({ value }) {
   const text = String(value || "Unknown");
   const lower = text.toLowerCase();
   const style =
-    lower.includes("critical") || lower.includes("failing") || lower.includes("failed") || lower.includes("down") || lower.includes("high")
+    lower.includes("critical") || lower.includes("failing") || lower.includes("failed") || lower.includes("down") || lower.includes("high") || lower.includes("breach")
       ? "bg-crit/10 text-crit border-crit/25"
-      : lower.includes("drift") || lower.includes("investigating") || lower.includes("medium") || lower.includes("restoring")
+      : lower.includes("drift") || lower.includes("investigating") || lower.includes("medium") || lower.includes("restoring") || lower.includes("at risk")
       ? "bg-high/10 text-high border-high/25"
       : lower.includes("stale") || lower.includes("monitor") || lower.includes("validated")
       ? "bg-med/10 text-med border-med/25"
-      : lower.includes("passing") || lower.includes("resolved") || lower.includes("contained") || lower.includes("operational") || lower.includes("closed") || lower.includes("low")
+      : lower.includes("passing") || lower.includes("resolved") || lower.includes("contained") || lower.includes("operational") || lower.includes("closed") || lower.includes("low") || lower.includes("met") || lower.includes("on track")
       ? "bg-low/10 text-low border-low/25"
       : "bg-secondary text-muted-foreground border-border";
   return <span className={`inline-flex px-2 py-0.5 rounded-full border text-[10px] font-mono font-bold ${style}`}>{text}</span>;
@@ -141,6 +146,14 @@ function ageLabel(hours) {
   if (hours < 1) return `${Math.round(hours * 60)}m`;
   if (hours < 48) return `${Math.round(hours)}h`;
   return `${Math.round(hours / 24)}d`;
+}
+
+function fmtMins(m) {
+  if (m == null || m === "" || Number.isNaN(Number(m))) return "—";
+  const n = Number(m);
+  if (n < 60) return `${n}m`;
+  if (n < 1440) return `${Math.round((n / 60) * 10) / 10}h`.replace(".0", "");
+  return `${Math.round((n / 1440) * 10) / 10}d`.replace(".0", "");
 }
 
 // ---------------------------------------------------------------------------
@@ -219,7 +232,6 @@ export function IdentityCrisisIntelligence({ data = {}, caseDetail, selectedCase
 // 2) AI Incident Intelligence
 // ---------------------------------------------------------------------------
 const SEV_ORDER = ["Critical", "High", "Medium", "Low", "Info"];
-const SEV_COLOR = { Critical: "0 84% 60%", High: "15 80% 55%", Medium: "35 90% 55%", Low: "142 60% 45%", Info: "210 12% 60%" };
 
 export function AIIncidentIntelligence({ data = {} }) {
   const incidents = useMemo(() => data.incidents || [], [data.incidents]);
@@ -241,9 +253,8 @@ export function AIIncidentIntelligence({ data = {} }) {
     const map = {};
     for (const i of active) {
       const key = i.system || "Unknown system";
-      map[key] = map[key] || { system: key, count: 0, worst: 0 };
+      map[key] = map[key] || { system: key, count: 0 };
       map[key].count += 1;
-      map[key].worst = Math.max(map[key].worst, SEV_ORDER.length - SEV_ORDER.indexOf(i.severity || "Info"));
     }
     return Object.values(map).sort((a, b) => b.count - a.count).slice(0, 8);
   }, [active]);
@@ -338,6 +349,7 @@ export function AIIncidentIntelligence({ data = {} }) {
 // 3) Executive Communications Center
 // ---------------------------------------------------------------------------
 const COMMS_ACTIONS = {
+  "crisis.comms.dispatch": { label: "Stakeholder communication", channel: "Stakeholder", Icon: Megaphone },
   "crisis.brief.email": { label: "Board brief emailed", channel: "Email", Icon: Mail },
   "crisis.auto_present": { label: "Auto board present emailed", channel: "Email", Icon: Presentation },
   "crisis.director_digest_now": { label: "Director digest sent", channel: "Email", Icon: Mail },
@@ -347,10 +359,23 @@ const COMMS_ACTIONS = {
   "crisis.snapshot.revoke": { label: "Board snapshot revoked", channel: "Snapshot", Icon: Share2 },
   "crisis.present_board": { label: "Presented to board", channel: "Snapshot + PDF", Icon: Presentation },
 };
-const COMMS_FALLBACK_RE = /brief|broadcast|snapshot|present|sitrep|digest|notif|email/i;
+const COMMS_FALLBACK_RE = /brief|broadcast|snapshot|present|sitrep|digest|notif|email|comms|dispatch/i;
+const GROUP_LABEL = { regulator: "Regulator", customer: "Customer", employee: "Employee", board: "Board", media: "Media", partner: "Partner" };
 
-export function ExecutiveCommsCenter({ data = {}, selectedCase }) {
+export function ExecutiveCommsCenter({ data = {}, selectedCase, canOperate = false, reload, changed }) {
   const audit = useMemo(() => data.audit || [], [data.audit]);
+  const ref = selectedCase?.ref || "";
+
+  const [templates, setTemplates] = useState([]);
+  const [coverage, setCoverage] = useState(null);
+  const [group, setGroup] = useState("customer");
+  const [templateId, setTemplateId] = useState("");
+  const [message, setMessage] = useState("");
+  const [broadcast, setBroadcast] = useState(false);
+  const [busy, setBusy] = useState("");
+  const [showManage, setShowManage] = useState(false);
+  const [newTpl, setNewTpl] = useState({ group: "customer", label: "", text: "" });
+
   const events = useMemo(() => {
     return audit
       .filter((a) => COMMS_ACTIONS[a.action] || COMMS_FALLBACK_RE.test(a.action || ""))
@@ -372,6 +397,73 @@ export function ExecutiveCommsCenter({ data = {}, selectedCase }) {
   const broadcasts = events.filter((e) => e.action === "crisis.broadcast").length;
   const snapshots = events.filter((e) => e.action === "crisis.snapshot.create" || e.action === "crisis.present_board").length;
 
+  const loadTemplates = useCallback(async () => {
+    if (!canOperate) return;
+    try {
+      const r = await api.get("/crisis/comms/templates");
+      setTemplates(r.data.templates || []);
+    } catch { /* honest empty */ }
+  }, [canOperate]);
+
+  const loadCoverage = useCallback(async () => {
+    if (!canOperate || !ref) { setCoverage(null); return; }
+    try {
+      const r = await api.get(`/crisis/cases/${ref}/comms/coverage`);
+      setCoverage(r.data);
+    } catch { setCoverage(null); }
+  }, [canOperate, ref]);
+
+  useEffect(() => { loadTemplates(); }, [loadTemplates]);
+  useEffect(() => { loadCoverage(); }, [loadCoverage]);
+
+  const pickTemplate = (id) => {
+    setTemplateId(id);
+    const t = templates.find((x) => x.id === id);
+    if (t) { setGroup(t.group); setMessage(t.text); }
+  };
+
+  const dispatch = async () => {
+    if (!ref) { toast.error("Select a crisis case first."); return; }
+    setBusy("dispatch");
+    try {
+      const label = templates.find((x) => x.id === templateId)?.label || `${GROUP_LABEL[group]} update`;
+      const { data: res } = await api.post(`/crisis/cases/${ref}/comms/dispatch`, { group, label, message, broadcast });
+      toast.success(`${GROUP_LABEL[group]} notified${res.posted ? " · broadcast to chat" : ""}.`);
+      setMessage(""); setTemplateId("");
+      await loadCoverage();
+      await (changed ? changed(ref) : reload?.());
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to dispatch communication.");
+    } finally { setBusy(""); }
+  };
+
+  const addTemplate = async () => {
+    if (!newTpl.label.trim() || !newTpl.text.trim()) { toast.error("Label and message are required."); return; }
+    setBusy("add-tpl");
+    try {
+      const { data: res } = await api.post("/crisis/comms/templates", { group: newTpl.group, label: newTpl.label, subject: "", text: newTpl.text });
+      setTemplates(res.templates || []);
+      setNewTpl({ group: "customer", label: "", text: "" });
+      toast.success("Template saved.");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to save template.");
+    } finally { setBusy(""); }
+  };
+
+  const deleteTemplate = async (id) => {
+    setBusy(`del-${id}`);
+    try {
+      const { data: res } = await api.delete(`/crisis/comms/templates/${id}`);
+      setTemplates(res.templates || []);
+      if (templateId === id) { setTemplateId(""); }
+      toast.success("Template removed.");
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to remove template.");
+    } finally { setBusy(""); }
+  };
+
+  const groupTemplates = templates.filter((t) => t.group === group);
+
   return (
     <div className="space-y-5" data-testid="crisis-comms-center">
       <div className="grid grid-cols-2 xl:grid-cols-5 gap-4">
@@ -382,10 +474,102 @@ export function ExecutiveCommsCenter({ data = {}, selectedCase }) {
         <MetricCard testid="crisis-comms-kpi-snapshots" label="Board snapshots" value={snapshots} sub="Shareable links + present" icon={Share2} accent="142 70% 45%" />
       </div>
 
+      {canOperate && (
+        <div className="grid xl:grid-cols-2 gap-5">
+          <Panel
+            testid="crisis-comms-coverage"
+            title="Notification Coverage"
+            subtitle={coverage ? `${coverage.stale_count} of ${coverage.groups.length} stakeholder groups need an update (stale after ${coverage.threshold_hours}h).` : "Which stakeholder groups have been kept informed — a board trust signal."}
+            actions={<button onClick={loadCoverage} data-testid="crisis-comms-coverage-refresh" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold"><Clock3 className="w-3.5 h-3.5" />Refresh</button>}
+          >
+            {!ref ? (
+              <EmptyState title="No crisis case selected" text="Select a crisis case to track which stakeholder groups have been updated." />
+            ) : !coverage ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Loading coverage…</div>
+            ) : (
+              <div className="space-y-2">
+                {coverage.groups.map((g) => (
+                  <div key={g.group} data-testid={`crisis-comms-coverage-${g.group}`} className={`rounded-lg border p-3 flex items-center justify-between gap-3 ${g.stale ? "border-crit/25 bg-crit/5" : "border-low/25 bg-low/5"}`}>
+                    <div className="min-w-0">
+                      <div className="font-head font-bold text-sm">{GROUP_LABEL[g.group] || g.group}</div>
+                      <div className="text-[10px] text-muted-foreground mt-0.5">
+                        {g.last_at ? `Last updated ${ageLabel(g.hours_since)} ago · ${g.count} update(s)` : "Not yet updated in this crisis"}
+                      </div>
+                    </div>
+                    <span data-testid={`crisis-comms-coverage-flag-${g.group}`} className={`text-[9px] font-mono px-2 py-0.5 rounded-full shrink-0 ${g.stale ? "bg-crit/15 text-crit" : "bg-low/15 text-low"}`}>
+                      {g.stale ? (g.last_at ? "STALE" : "NOT UPDATED") : "CURRENT"}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </Panel>
+
+          <Panel
+            testid="crisis-comms-dispatch"
+            title="One-Tap Stakeholder Dispatch"
+            subtitle="Pick a template, choose the audience and send. Every dispatch is logged and feeds the coverage scorecard."
+            actions={<button onClick={() => setShowManage((v) => !v)} data-testid="crisis-comms-manage-toggle" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold"><ClipboardList className="w-3.5 h-3.5" />Templates</button>}
+          >
+            {!ref ? (
+              <EmptyState title="No crisis case selected" text="Select a crisis case before dispatching stakeholder communications." />
+            ) : (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[9px] font-mono uppercase text-muted-foreground">Audience</label>
+                    <select value={group} onChange={(e) => { setGroup(e.target.value); setTemplateId(""); }} data-testid="crisis-comms-group" className="mt-1 w-full bg-secondary/60 rounded-md px-3 py-2 text-sm">
+                      {Object.keys(GROUP_LABEL).map((g) => <option key={g} value={g}>{GROUP_LABEL[g]}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[9px] font-mono uppercase text-muted-foreground">Template</label>
+                    <select value={templateId} onChange={(e) => pickTemplate(e.target.value)} data-testid="crisis-comms-template" className="mt-1 w-full bg-secondary/60 rounded-md px-3 py-2 text-sm">
+                      <option value="">— Choose a template —</option>
+                      {groupTemplates.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <textarea rows={5} value={message} onChange={(e) => setMessage(e.target.value)} placeholder="Message to this stakeholder group…" data-testid="crisis-comms-message" className="w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm" />
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <label className="inline-flex items-center gap-2 text-xs text-muted-foreground cursor-pointer">
+                    <input type="checkbox" checked={broadcast} onChange={(e) => setBroadcast(e.target.checked)} data-testid="crisis-comms-broadcast" className="accent-primary" />
+                    Also broadcast to war-room chat (Teams / Slack)
+                  </label>
+                  <button onClick={dispatch} disabled={busy === "dispatch"} data-testid="crisis-comms-dispatch-btn" className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">
+                    {busy === "dispatch" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}Dispatch
+                  </button>
+                </div>
+
+                {showManage && (
+                  <div className="rounded-lg border border-border bg-secondary/15 p-3 space-y-2" data-testid="crisis-comms-manage">
+                    <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Reusable templates</div>
+                    <div className="space-y-1.5 max-h-40 overflow-y-auto">
+                      {templates.map((t) => (
+                        <div key={t.id} data-testid={`crisis-comms-tpl-${t.id}`} className="flex items-center justify-between gap-2 rounded-md border border-border bg-card px-2.5 py-1.5">
+                          <div className="min-w-0"><span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-secondary/70 text-muted-foreground uppercase mr-2">{t.group}</span><span className="text-xs font-head font-bold">{t.label}</span></div>
+                          <button onClick={() => deleteTemplate(t.id)} disabled={busy === `del-${t.id}`} data-testid={`crisis-comms-tpl-del-${t.id}`} className="text-muted-foreground hover:text-crit shrink-0"><Trash2 className="w-3.5 h-3.5" /></button>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-[1fr_1.4fr] gap-2 pt-1">
+                      <select value={newTpl.group} onChange={(e) => setNewTpl({ ...newTpl, group: e.target.value })} data-testid="crisis-comms-newtpl-group" className="bg-secondary/60 rounded-md px-2 py-2 text-xs">{Object.keys(GROUP_LABEL).map((g) => <option key={g} value={g}>{GROUP_LABEL[g]}</option>)}</select>
+                      <input value={newTpl.label} onChange={(e) => setNewTpl({ ...newTpl, label: e.target.value })} placeholder="Template label" data-testid="crisis-comms-newtpl-label" className="bg-secondary/60 rounded-md px-2 py-2 text-xs" />
+                    </div>
+                    <textarea rows={2} value={newTpl.text} onChange={(e) => setNewTpl({ ...newTpl, text: e.target.value })} placeholder="Template message…" data-testid="crisis-comms-newtpl-text" className="w-full bg-secondary/60 rounded-md px-2 py-2 text-xs" />
+                    <button onClick={addTemplate} disabled={busy === "add-tpl"} data-testid="crisis-comms-newtpl-save" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">{busy === "add-tpl" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}Save template</button>
+                  </div>
+                )}
+              </div>
+            )}
+          </Panel>
+        </div>
+      )}
+
       <div className="grid xl:grid-cols-[1.5fr_1fr] gap-5">
-        <Panel testid="crisis-comms-log" title="Communication Log" subtitle="Every board brief, SITREP, broadcast, digest and snapshot recorded in the audit stream.">
+        <Panel testid="crisis-comms-log" title="Communication Log" subtitle="Every stakeholder dispatch, board brief, SITREP, broadcast, digest and snapshot recorded in the audit stream.">
           {events.length === 0 ? (
-            <EmptyState title="No communications yet" text="Board briefs, SITREPs, war-room broadcasts, director digests and board snapshots will appear here once dispatched from the crisis workspace." />
+            <EmptyState title="No communications yet" text="Stakeholder dispatches, board briefs, SITREPs, war-room broadcasts, director digests and board snapshots will appear here once sent." />
           ) : (
             <div className="space-y-2">
               {events.map((e, idx) => (
@@ -416,9 +600,6 @@ export function ExecutiveCommsCenter({ data = {}, selectedCase }) {
                   <ProgressBar value={Math.min(100, (c.count / Math.max(1, events.length)) * 100)} accent="266 85% 66%" />
                 </div>
               ))}
-              <div className="rounded-lg border border-border bg-secondary/10 p-3 text-[11px] text-muted-foreground">
-                {selectedCase ? `Comms for ${selectedCase.ref} and the wider crisis audit stream are consolidated here.` : "Select a crisis case to focus dispatch tracking on a single incident."}
-              </div>
             </div>
           )}
         </Panel>
@@ -430,7 +611,60 @@ export function ExecutiveCommsCenter({ data = {}, selectedCase }) {
 // ---------------------------------------------------------------------------
 // 4) Resilience Intelligence
 // ---------------------------------------------------------------------------
-export function ResilienceIntelligence({ data = {}, caseDetail }) {
+function rtoStatus(item, elapsedMin) {
+  if (item.status === "Operational") return { label: "Met", tone: "low" };
+  const rto = item.rto_minutes;
+  if (rto == null) return { label: "No target", tone: "muted" };
+  if (elapsedMin == null) return { label: `Target ${fmtMins(rto)}`, tone: "muted" };
+  if (elapsedMin > rto) return { label: `Breached +${fmtMins(Math.round(elapsedMin - rto))}`, tone: "crit" };
+  if (elapsedMin > rto * 0.75) return { label: `At risk · ${fmtMins(Math.round(rto - elapsedMin))} left`, tone: "high" };
+  return { label: `On track · ${fmtMins(Math.round(rto - elapsedMin))} left`, tone: "low" };
+}
+
+const TONE = { crit: "bg-crit/15 text-crit", high: "bg-high/15 text-high", low: "bg-low/15 text-low", muted: "bg-secondary/70 text-muted-foreground" };
+
+function RtoRow({ item, caseRef, elapsedMin, onSaved }) {
+  const [rto, setRto] = useState(item.rto_minutes ?? "");
+  const [rpo, setRpo] = useState(item.rpo_minutes ?? "");
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    if (rto === "" && rpo === "") { toast.error("Enter an RTO or RPO target (minutes)."); return; }
+    setBusy(true);
+    try {
+      const body = {};
+      if (rto !== "") body.rto_minutes = Number(rto);
+      if (rpo !== "") body.rpo_minutes = Number(rpo);
+      await api.patch(`/crisis/cases/${caseRef}/recovery/${item.recovery_id}`, body);
+      toast.success(`Objectives saved for ${item.name}.`);
+      await onSaved?.();
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to save objectives.");
+    } finally { setBusy(false); }
+  };
+
+  const st = rtoStatus(item, elapsedMin);
+  return (
+    <div data-testid={`crisis-rto-row-${item.recovery_id}`} className="rounded-lg border border-border bg-secondary/20 p-3 grid xl:grid-cols-[1.3fr_auto_auto_auto_auto] gap-3 items-center">
+      <div className="min-w-0"><div className="font-head font-bold text-sm truncate">{item.name}</div><div className="text-[10px] text-muted-foreground mt-0.5">{item.category} · <StatusPill value={item.status} /></div></div>
+      <div>
+        <label className="text-[9px] font-mono uppercase text-muted-foreground">RTO (min)</label>
+        <input type="number" min="0" value={rto} onChange={(e) => setRto(e.target.value)} data-testid={`crisis-rto-input-${item.recovery_id}`} className="mt-1 w-24 bg-secondary/60 rounded-md px-2 py-1.5 text-xs" />
+      </div>
+      <div>
+        <label className="text-[9px] font-mono uppercase text-muted-foreground">RPO (min)</label>
+        <input type="number" min="0" value={rpo} onChange={(e) => setRpo(e.target.value)} data-testid={`crisis-rpo-input-${item.recovery_id}`} className="mt-1 w-24 bg-secondary/60 rounded-md px-2 py-1.5 text-xs" />
+      </div>
+      <div className="text-center">
+        <label className="text-[9px] font-mono uppercase text-muted-foreground block">RTO status</label>
+        <span data-testid={`crisis-rto-status-${item.recovery_id}`} className={`inline-flex mt-1 text-[9px] font-mono px-2 py-0.5 rounded-full ${TONE[st.tone]}`}>{st.label}</span>
+      </div>
+      <button onClick={save} disabled={busy} data-testid={`crisis-rto-save-${item.recovery_id}`} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50 self-end">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}Save</button>
+    </div>
+  );
+}
+
+export function ResilienceIntelligence({ data = {}, caseDetail, selectedCase, changed }) {
   const recovery = caseDetail?.recovery || [];
   const overall = recoveryOverall(recovery);
   const byCat = recoveryByCategory(recovery);
@@ -448,10 +682,15 @@ export function ResilienceIntelligence({ data = {}, caseDetail }) {
   const workflowReadiness = workflows.length ? Math.round((activeWorkflows / workflows.length) * 100) : 0;
 
   const openActions = actionSummary(caseDetail?.actions || []).open;
-  const resilienceScore = Math.round(
-    overall * 0.4 + controlHealth * 0.35 + workflowReadiness * 0.25 - Math.min(20, openActions * 3)
-  );
+  const resilienceScore = Math.round(overall * 0.4 + controlHealth * 0.35 + workflowReadiness * 0.25 - Math.min(20, openActions * 3));
   const score = Math.max(0, Math.min(100, resilienceScore));
+
+  const caseStart = selectedCase?.started_at || selectedCase?.created_at || null;
+  const elapsedMin = caseStart ? Math.max(0, (Date.now() - new Date(caseStart).getTime()) / 60000) : null;
+  const withTargets = recovery.filter((r) => r.rto_minutes != null);
+  const breaches = recovery.filter((r) => r.status !== "Operational" && r.rto_minutes != null && elapsedMin != null && elapsedMin > r.rto_minutes).length;
+
+  const reloadCase = () => (changed && selectedCase ? changed(selectedCase.ref) : undefined);
 
   return (
     <div className="space-y-5" data-testid="crisis-resilience-intelligence">
@@ -459,10 +698,22 @@ export function ResilienceIntelligence({ data = {}, caseDetail }) {
         <MetricCard testid="crisis-resilience-kpi-score" label="Resilience score" value={`${score}/100`} sub="Recovery, control health & automation" kind="MODELLED" icon={Activity} accent="142 70% 45%" />
         <MetricCard testid="crisis-resilience-kpi-recovery" label="Recovery readiness" value={`${overall}%`} sub={`${recovery.filter((i) => i.status === "Operational").length}/${recovery.length} operational`} kind="MODELLED" icon={HeartPulse} accent="35 90% 55%" />
         <MetricCard testid="crisis-resilience-kpi-controls" label="Control resilience" value={`${controlHealth}%`} sub={`${cf.failing} failing · ${cf.drifting} drifting`} icon={ShieldCheck} accent="266 85% 66%" />
-        <MetricCard testid="crisis-resilience-kpi-workflows" label="Automation readiness" value={workflows.length ? `${workflowReadiness}%` : "—"} sub={`${activeWorkflows}/${workflows.length} response workflows active`} icon={Workflow} accent="200 90% 55%" />
+        <MetricCard testid="crisis-resilience-kpi-rto" label="RTO breaches" value={breaches} sub={`${withTargets.length} item(s) carry a time objective`} kind="MODELLED" icon={Timer} accent="0 84% 60%" />
       </div>
 
-      <Panel testid="crisis-resilience-recovery" title="Recovery Readiness by Category" subtitle="Restoration posture across systems, applications and business services. Derived from the live crisis recovery record — no recovery-time targets are invented.">
+      <Panel testid="crisis-resilience-rto" title="Recovery Time Objectives (RTO / RPO)" subtitle={caseStart ? `Elapsed since crisis start: ${fmtMins(Math.round(elapsedMin))}. RTO status compares elapsed time to each item's target — no times are invented.` : "Set a recovery-time (RTO) and recovery-point (RPO) objective per item to track readiness against real targets."}>
+        {recovery.length === 0 ? (
+          <EmptyState title="No recovery items tracked" text="Add recovery items under the Recovery tab, then set an RTO/RPO target for each here." />
+        ) : (
+          <div className="space-y-2">
+            {recovery.map((item) => (
+              <RtoRow key={item.recovery_id} item={item} caseRef={selectedCase?.ref} elapsedMin={elapsedMin} onSaved={reloadCase} />
+            ))}
+          </div>
+        )}
+      </Panel>
+
+      <Panel testid="crisis-resilience-recovery" title="Recovery Readiness by Category" subtitle="Restoration posture across systems, applications and business services. Derived from the live crisis recovery record.">
         {byCat.length === 0 ? (
           <EmptyState title="No recovery items tracked" text="Add recovery items under Recovery to model restoration readiness and resilience by category." />
         ) : (

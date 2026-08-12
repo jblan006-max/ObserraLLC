@@ -1,5 +1,14 @@
 # Obserra EIOS — PRD
 
+## Round 25 (Jun 2026) — Resilience Targets + Comms Templates + Notification Coverage (iteration_148, frontend 100%, backend curl-verified, zero bugs)
+Three approved enhancements to the P2 vision dashboards (backend in `crisis_commander.py`, frontend in `CrisisVisionDashboards.jsx`):
+1. **Resilience Targets (RTO/RPO)** — `CrisisRecoveryCreate`/`CrisisRecoveryUpdate` now carry `rto_minutes`/`rpo_minutes`. The Resilience dashboard gained a "Recovery Time Objectives" panel with an inline per-item RTO/RPO editor (`RtoRow` → PATCHes `/crisis/cases/{ref}/recovery/{id}`), a modelled RTO-status badge (Met / On track / At risk / Breached vs elapsed since crisis start) and a new "RTO breaches" KPI. No recovery-time minutes are invented — targets are user-entered.
+2. **Comms Templates** — new org-scoped reusable stakeholder templates (regulator/customer/employee/board/media/partner), seeded with 4 defaults. Endpoints: `GET/POST/DELETE /api/crisis/comms/templates`. UI: template picker auto-fills the dispatch message + inline template add/delete manager in the Communications Center.
+3. **One-Tap Dispatch + Notification Coverage Scorecard** — `POST /api/crisis/cases/{ref}/comms/dispatch` logs a stakeholder communication (new `crisis_comms` collection + Communication timeline event + audit), optionally broadcasting to the wired Teams/Slack channel (honest `posted=false` when none wired). `GET /api/crisis/cases/{ref}/comms/coverage` returns per-group last-updated + stale flag (stale after 4h) — surfaced as a board-facing coverage scorecard that flips NOT UPDATED→CURRENT on dispatch.
+Verified: backend curl (templates 4/groups 6; coverage stale_count 6→5 after a customer dispatch; recovery RTO/RPO persist on create+PATCH) and testing_agent iteration_148 (all flows pass, all 18 tabs switch cleanly).
+Known non-blocking (pre-existing, NOT from this round): (a) cosmetic dev-console hydration warning `<span>` inside `<option>` from visual-editor injected wrappers; (b) background HTTP 400 on the Director-Digest schedule PATCH observed while cycling tabs — worth confirming payload shape next.
+
+
 ## Round 24 (Jun 2026) — P2 Vision Dashboards: 5 new Cyber Crisis Commander tabs (iteration_147, frontend 100%, zero bugs)
 Shipped the remaining P2 "19-dashboard vision" screens for Cyber Crisis Commander, all live-data / no-mock / honest-empty-state, as a new self-contained module `frontend/src/components/crisis/CrisisVisionDashboards.jsx` (no backend changes — every view derives from feeds already fetched by `useCrisisCommanderData` + crisis case detail):
 1. **AI Incident Intelligence** (`crisis-tab-aincident`) — severity mix + status funnel charts, most-affected systems, modelled mean-age/resolution-rate KPIs, top active incidents over `/ai-incidents`.
