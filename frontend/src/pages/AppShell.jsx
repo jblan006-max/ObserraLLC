@@ -12,7 +12,7 @@ import { Footer } from "@/components/Footer";
 import { DeepDiveProvider } from "@/context/DeepDiveContext";
 import { InstallButton } from "@/components/InstallButton";
 import { DemoRibbon } from "@/components/DemoRibbon";
-import { APP_VERSION_LABEL, APP_CHANGELOG } from "@/version";
+import { APP_VERSION_LABEL, CURRENT_CHANGELOG } from "@/version";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import {
   LayoutDashboard, ListChecks, Cpu, GitBranch, ScrollText, CreditCard, LogOut, Presentation,
@@ -40,6 +40,7 @@ const ROUTE_ACCENT = [
   ["/app/audit", "35 90% 55%"],
   ["/app/team", "200 85% 56%"],
   ["/app/system-health", "160 84% 45%"],
+  ["/app/ai-grounding", "280 80% 62%"],
   ["/app/settings", "220 15% 60%"],
   ["/app/billing", "150 60% 50%"],
   ["/app/marketplace", "265 80% 66%"],
@@ -82,6 +83,7 @@ const NAV_SECTIONS = [
     { to: "/app/team", label: "Team", icon: Building2 },
     { to: "/app/settings", label: "Settings", icon: Settings },
     { to: "/app/system-health", label: "System Health", icon: Activity },
+    { to: "/app/ai-grounding", label: "AI Grounding", icon: ShieldCheck },
     { to: "/app/billing", label: "Billing", icon: CreditCard },
     { to: "/app/marketplace", label: "Marketplace", icon: Store },
   ]},
@@ -335,7 +337,7 @@ export default function AppShell() {
                   <h4 className="font-head font-bold text-sm">What's new in {APP_VERSION_LABEL}</h4>
                 </div>
                 <ul className="text-xs text-muted-foreground space-y-1.5 list-disc pl-4">
-                  {APP_CHANGELOG.map((c, i) => (
+                  {CURRENT_CHANGELOG.map((c, i) => (
                     <li key={i} data-testid={`whats-new-item-${i}`}>{c}</li>
                   ))}
                 </ul>

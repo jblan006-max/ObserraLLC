@@ -118,6 +118,11 @@ export default function CIAuditorPortal() {
           <p className="text-sm text-white/60">
             Generated {fmtDT(data.generated_at)} · link expires {fmtDT(data.expires_at)}
           </p>
+          {data.app_version && (
+            <span data-testid="ci-auditor-pdf-version" className="inline-flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider text-white/40">
+              <FileText className="w-3 h-3" /> Signed PDF produced by Obserra {data.app_version}
+            </span>
+          )}
           <div className="flex flex-wrap items-center gap-2 pt-2">
             <input
               data-testid="ci-auditor-dl-name"

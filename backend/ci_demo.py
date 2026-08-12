@@ -54,7 +54,7 @@ async def auditor_demo_seed(admin: dict = Depends(require_roles("admin"))):
 
     def _acc(token, kind, who, dt):
         return {"token": token, "org_id": org_id, "kind": kind, "who": who,
-                "at": dt.isoformat(), "demo": True}
+                "at": dt.isoformat(), "demo": True, "app_version": "v1.0.0"}
 
     rows = [
         _acc(link_a["token"], "view", "Priya Nair \u2014 KPMG", now - timedelta(days=3, hours=5)),

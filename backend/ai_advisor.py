@@ -352,6 +352,14 @@ async def advisor_chat(body: AdvisorQuery, user: dict = Depends(require_active_s
             {"org_id": org_id, "user": user["email"], "prompt": body.message},
             {"$set": {"response": resp_text, "usage": usage}}, upsert=False)
         yield f"data: {json.dumps({'done': True, 'model': f'{provider}/{model}', 'usage': usage})}\n\n"
+        try:
+            from hallucination import ground_answer, record_grounding
+            grounding = await ground_answer(resp_text, context)
+            await record_grounding(org_id, "advisor_chat", body.message, resp_text, grounding,
+                                   model=f"{provider}/{model}", user=user["email"])
+            yield f"data: {json.dumps({'grounding': grounding})}\n\n"
+        except Exception:
+            pass
         await _check_budget(org_id)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream",

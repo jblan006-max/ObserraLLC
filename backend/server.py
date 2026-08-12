@@ -12,6 +12,7 @@ from db import db, client
 from auth import auth_router, seed_admin
 from routes import api as domain_api
 from ai_advisor import advisor_router
+from hallucination import hallucination_router
 from payments import payments_router, setup_catalog
 from reports import reports_router
 from kernel.routes import kernel_router
@@ -47,6 +48,7 @@ app = FastAPI(title="Obserra EIOS")
 app.include_router(auth_router)
 app.include_router(domain_api)
 app.include_router(advisor_router)
+app.include_router(hallucination_router)
 app.include_router(payments_router)
 app.include_router(reports_router)
 app.include_router(kernel_router)

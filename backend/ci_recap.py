@@ -363,15 +363,18 @@ async def auditor_activity(days: int = 30, user: dict = Depends(require_roles("a
             "reviewers": len(rec["reviewers"]), "days": days}
 
 
-async def _auditor_timeline_data(org_id):
+async def _auditor_timeline_data(org_id, version=None):
+    q = {"org_id": org_id}
+    if version:
+        q["app_version"] = version
     rows = await db.ci_auditor_access.find(
-        {"org_id": org_id}, {"_id": 0, "kind": 1, "who": 1, "at": 1}).sort("at", 1).to_list(5000)
+        q, {"_id": 0, "kind": 1, "who": 1, "at": 1, "app_version": 1}).sort("at", 1).to_list(5000)
     people = {}
     for r in rows:
         who = (r.get("who") or "").strip() or "Anonymous"
         p = people.setdefault(who, {"who": who, "events": [], "first_view": None, "first_download": None,
                                     "views": 0, "downloads": 0})
-        p["events"].append({"kind": r.get("kind"), "at": r.get("at")})
+        p["events"].append({"kind": r.get("kind"), "at": r.get("at"), "version": r.get("app_version")})
         if r.get("kind") == "view":
             p["views"] += 1
             if not p["first_view"]:
@@ -398,9 +401,16 @@ async def _auditor_timeline_data(org_id):
     return out
 
 
+async def _auditor_versions(org_id):
+    vs = await db.ci_auditor_access.distinct("app_version", {"org_id": org_id})
+    return sorted([v for v in vs if v], reverse=True)
+
+
 @ci_router.get("/auditor-link/timeline")
-async def auditor_timeline(admin: dict = Depends(require_roles("admin"))):
-    return {"people": await _auditor_timeline_data(admin["org_id"])}
+async def auditor_timeline(version: str = "", admin: dict = Depends(require_roles("admin"))):
+    org_id = admin["org_id"]
+    return {"people": await _auditor_timeline_data(org_id, version or None),
+            "versions": await _auditor_versions(org_id)}
 
 
 def _fmt_secs(s):
@@ -433,15 +443,18 @@ async def auditor_recap_history(limit: int = 20, admin: dict = Depends(require_r
 
 
 @ci_router.get("/auditor-link/timeline.pdf")
-async def auditor_timeline_pdf(admin: dict = Depends(require_roles("admin"))):
+async def auditor_timeline_pdf(version: str = "", admin: dict = Depends(require_roles("admin"))):
     from fastapi.responses import StreamingResponse
     import io
     org_id = admin["org_id"]
-    people = await _auditor_timeline_data(org_id)
+    people = await _auditor_timeline_data(org_id, version or None)
     org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1, "report_branding": 1})
     org_name = (org or {}).get("name") or "Organization"
     lines = ["# Reviewer Access Timeline", "",
              "Chain-of-custody record of external auditor access to the sealed assurance evidence.", ""]
+    if version:
+        lines.append(f"_Filtered to evidence produced by app version {version}._")
+        lines.append("")
     if not people:
         lines.append("- No auditor access recorded yet.")
     for p in people:
@@ -451,10 +464,12 @@ async def auditor_timeline_pdf(admin: dict = Depends(require_roles("admin"))):
         lines.append(f"## {p['who']}{flag}")
         lines.append(f"- {p['views']} view(s), {p['downloads']} download(s) \u2014 {dur}")
         for ev in p["events"]:
-            lines.append(f"- {(ev['kind'] or '').upper()} \u2014 {ev['at']}")
+            vtag = f" \u00b7 {ev['version']}" if ev.get("version") else ""
+            lines.append(f"- {(ev['kind'] or '').upper()} \u2014 {ev['at']}{vtag}")
         lines.append("")
     md = "\n".join(lines)
-    pdf = _build_pdf(md, "Reviewer Access Timeline", cover=True, org_name=org_name, brand=_resolve_brand(org))
+    pdf = _build_pdf(md, "Reviewer Access Timeline", cover=True, org_name=org_name, brand=_resolve_brand(org),
+                     version=_app_version_label())
     return StreamingResponse(io.BytesIO(pdf.getvalue()), media_type="application/pdf",
                              headers={"Content-Disposition": 'attachment; filename="obserra-reviewer-timeline.pdf"'})
 

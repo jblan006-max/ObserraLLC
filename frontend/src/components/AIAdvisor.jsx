@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { X, Send, Loader2, Zap, Brain, Download, Cpu, ChevronDown, Check } from "lucide-react";
 import { API, api } from "@/lib/api";
+import { GroundingBadge } from "@/components/GroundingBadge";
 import { useAuth } from "@/context/AuthContext";
 import { toast } from "sonner";
 
@@ -163,6 +164,7 @@ export function AIAdvisor() {
           if (p.delta) setMessages((m) => { const c = [...m]; c[c.length - 1] = { ...c[c.length - 1], role: "ai", text: c[c.length - 1].text + p.delta }; return c; });
           if (p.model) setModelTag(p.model);
           if (p.usage) setMessages((m) => { const c = [...m]; c[c.length - 1] = { ...c[c.length - 1], usage: p.usage }; return c; });
+          if (p.grounding) setMessages((m) => { const c = [...m]; c[c.length - 1] = { ...c[c.length - 1], grounding: p.grounding }; return c; });
         }
       }
       if (isAdmin) api.get("/advisor/usage").then((r) => setSpend(r.data)).catch(() => {});
@@ -503,6 +505,7 @@ export function AIAdvisor() {
                     {m.role === "ai" && m.usage && isAdmin && (
                       <div data-testid="advisor-msg-cost" className="mt-1.5 text-[10px] font-mono text-muted-foreground">~{m.usage.total_tokens?.toLocaleString()} tok · ${m.usage.cost_usd?.toFixed(4)}</div>
                     )}
+                    {m.role === "ai" && m.grounding && <GroundingBadge grounding={m.grounding} />}
                     {parsed.actions.map((a) => (
                       <button key={a.id} data-testid={`exec-${a.id}`} disabled={!!working} onClick={() => execute(a.id, a.label)}
                         className="mt-2 flex items-center gap-1.5 text-xs font-head font-bold px-3 py-1.5 rounded-md bg-ai text-background hover:opacity-90 transition-opacity disabled:opacity-50">

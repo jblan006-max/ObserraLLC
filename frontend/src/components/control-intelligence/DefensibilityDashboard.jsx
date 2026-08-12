@@ -100,6 +100,8 @@ function BriefSettingsCard() {
   const [recapEnabled, setRecapEnabled] = useState(false);
   const [recapWeekday, setRecapWeekday] = useState(0);
   const [timeline, setTimeline] = useState(null);
+  const [timelineVersions, setTimelineVersions] = useState([]);
+  const [timelineVersion, setTimelineVersion] = useState("");
   const [recapHistory, setRecapHistory] = useState(null);
   const [demoActive, setDemoActive] = useState(false);
   const [demoBusy, setDemoBusy] = useState(false);
@@ -159,8 +161,10 @@ function BriefSettingsCard() {
     api.get("/control-intelligence/auditor-link/access?limit=12").then((r) => setAccessLog(r.data.events || [])).catch(() => {});
   const refreshAnalytics = () =>
     api.get("/control-intelligence/auditor-link/analytics").then((r) => setAnalytics(r.data)).catch(() => {});
-  const refreshTimeline = () =>
-    api.get("/control-intelligence/auditor-link/timeline").then((r) => setTimeline(r.data.people || [])).catch(() => {});
+  const refreshTimeline = (ver = timelineVersion) =>
+    api.get(`/control-intelligence/auditor-link/timeline${ver ? `?version=${encodeURIComponent(ver)}` : ""}`)
+      .then((r) => { setTimeline(r.data.people || []); setTimelineVersions(r.data.versions || []); })
+      .catch(() => {});
 
   useEffect(() => {
     (async () => {
@@ -420,7 +424,7 @@ function BriefSettingsCard() {
   };
 
   const exportTimeline = () =>
-    window.open(`${process.env.REACT_APP_BACKEND_URL}/api/control-intelligence/auditor-link/timeline.pdf`, "_blank");
+    window.open(`${process.env.REACT_APP_BACKEND_URL}/api/control-intelligence/auditor-link/timeline.pdf${timelineVersion ? `?version=${encodeURIComponent(timelineVersion)}` : ""}`, "_blank");
 
   const copyLink = async () => {
     if (!auditorLink?.url) return;
@@ -1049,14 +1053,35 @@ function BriefSettingsCard() {
               )}
             </div>
 
-            {timeline && timeline.length > 0 && (
+            {timeline && (timeline.length > 0 || timelineVersion) && (
               <div className="mt-4 border-t border-border pt-3" data-testid="ci-reviewer-timeline">
-                <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center justify-between mb-2 gap-2">
                   <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Reviewer timeline</div>
-                  <button onClick={exportTimeline} data-testid="ci-timeline-export" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-border text-[10px] font-head font-bold text-muted-foreground hover:text-foreground">
-                    <FileText className="w-2.5 h-2.5" /> Export PDF
-                  </button>
+                  <div className="flex items-center gap-1.5">
+                    {timelineVersions.length > 0 && (
+                      <select
+                        data-testid="ci-timeline-version"
+                        value={timelineVersion}
+                        onChange={(e) => { setTimelineVersion(e.target.value); refreshTimeline(e.target.value); }}
+                        title="Filter by the app version that produced each PDF"
+                        className="bg-secondary/40 border border-border rounded-md px-1.5 py-0.5 text-[10px] font-mono text-muted-foreground outline-none"
+                      >
+                        <option value="">All versions</option>
+                        {timelineVersions.map((v) => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
+                    )}
+                    <button onClick={exportTimeline} data-testid="ci-timeline-export" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-border text-[10px] font-head font-bold text-muted-foreground hover:text-foreground">
+                      <FileText className="w-2.5 h-2.5" /> Export PDF
+                    </button>
+                  </div>
                 </div>
+                {timeline.length === 0 ? (
+                  <div data-testid="ci-timeline-empty" className="text-[11px] text-muted-foreground py-2">
+                    No reviewer events for {timelineVersion}.
+                  </div>
+                ) : (
                 <div className="space-y-2">
                   {timeline.map((p, i) => (
                     <div key={p.who} data-testid={`ci-timeline-person-${i}`} className="rounded-lg border border-border bg-secondary/20 p-2">
@@ -1086,12 +1111,14 @@ function BriefSettingsCard() {
                           <span key={j} className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-mono ${ev.kind === "download" ? "bg-ai/10 text-ai" : "bg-secondary/60 text-muted-foreground"}`}>
                             {ev.kind === "download" ? <Download className="w-2.5 h-2.5" /> : <Eye className="w-2.5 h-2.5" />}
                             {new Date(ev.at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
+                            {ev.version ? ` · ${ev.version}` : ""}
                           </span>
                         ))}
                       </div>
                     </div>
                   ))}
                 </div>
+                )}
               </div>
             )}
           </div>

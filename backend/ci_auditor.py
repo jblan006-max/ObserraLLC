@@ -30,6 +30,16 @@ from control_intelligence import (
 logger = logging.getLogger(__name__)
 
 
+def _app_version_label():
+    """Release version stamped onto auditor evidence (matches the sealed-PDF footer)."""
+    try:
+        import onprem_pack
+        v = str(onprem_pack.read_version() or "").lstrip("v")
+        return f"v{v}" if v else "v1.0.0"
+    except Exception:
+        return "v1.0.0"
+
+
 class AuditorLinkBody(BaseModel):
     days: Optional[int] = None
     reissue: Optional[bool] = None
@@ -72,15 +82,16 @@ async def public_auditor_link(token: str, who: str = ""):
     org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1})
     weak = sorted(a["statuses"], key=lambda c: c["effectiveness"])[:8]
     viewer = (who or "").strip()[:120]
+    ver = _app_version_label()
     try:
         await db.ci_auditor_access.insert_one({"token": token, "org_id": org_id, "kind": "view",
-                                               "who": viewer, "at": now.isoformat()})
+                                               "who": viewer, "at": now.isoformat(), "app_version": ver})
         await _maybe_alert_auditor_access(doc, "view", viewer)
     except Exception:
         pass
     return {
         "org_name": (org or {}).get("name") or "Organization",
-        "generated_at": now.isoformat(), "expires_at": doc["expires_at"],
+        "generated_at": now.isoformat(), "expires_at": doc["expires_at"], "app_version": ver,
         "health": a["health"], "coverage": a["coverage"], "total": a["total"],
         "passing": a["passing"], "avg_eff": a["avg_eff"], "avg_maturity": a["avg_maturity"],
         "frameworks": sorted(a["frameworks"], key=lambda x: -x["coverage"]),
@@ -175,7 +186,8 @@ async def public_auditor_brief_pdf(token: str, who: str = ""):
             {"token": token}, {"$inc": {"downloads": 1},
                                "$set": {"last_downloaded_at": now.isoformat(), "last_downloaded_by": auditor}})
         await db.ci_auditor_access.insert_one({"token": token, "org_id": org_id, "kind": "download",
-                                               "who": auditor, "at": now.isoformat()})
+                                               "who": auditor, "at": now.isoformat(),
+                                               "app_version": _app_version_label()})
         await _maybe_alert_auditor_access(doc, "download", auditor)
     except Exception:
         pass
