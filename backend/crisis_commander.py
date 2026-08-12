@@ -543,6 +543,7 @@ class CrisisObligationCreate(BaseModel):
     evidence_required: str = Field(default="", max_length=1000)
     status: Literal["Assessing", "Notification Required", "Not Applicable", "Notified", "On Hold"] = "Assessing"
     notification_decision: str = Field(default="", max_length=1000)
+    notify_within_hours: int = Field(default=24, ge=1, le=720)
 
 
 class CrisisObligationUpdate(BaseModel):
@@ -550,6 +551,7 @@ class CrisisObligationUpdate(BaseModel):
     responsible: str | None = Field(default=None, max_length=160)
     notification_decision: str | None = Field(default=None, max_length=1000)
     deadline_at: str | None = None
+    notify_within_hours: int | None = Field(default=None, ge=1, le=720)
 
 
 @api.post("/cases/{ref}/obligations")
@@ -563,6 +565,7 @@ async def add_obligation(ref: str, body: CrisisObligationCreate, user: dict = De
         "case_ref": ref,
         "obligation_id": await _next_ref(org_id, "crisis_obligations", "REG"),
         **body.model_dump(),
+        "alert_state": "",
         "created_at": now,
         "updated_at": now,
         "created_by": _actor(user),
@@ -584,6 +587,8 @@ async def update_obligation(ref: str, obligation_id: str, body: CrisisObligation
     changes = {key: value for key, value in body.model_dump().items() if value is not None}
     if not changes:
         raise HTTPException(status_code=400, detail="No changes")
+    if "deadline_at" in changes and changes.get("deadline_at") != existing.get("deadline_at"):
+        changes["alert_state"] = ""  # deadline moved — re-arm the regulatory-clock alert
     changes["updated_at"] = _now()
     await db.crisis_obligations.update_one(
         {"org_id": org_id, "case_ref": ref, "obligation_id": obligation_id}, {"$set": changes}
@@ -860,12 +865,10 @@ def _crisis_insight_fallback(ctx: dict) -> dict:
             "model": "obserra/crisis-grounded", "generated_at": datetime.now(timezone.utc).isoformat()}
 
 
-@api.get("/insight")
-async def crisis_insight(ref: str | None = None, user: dict = Depends(get_current_user)):
+async def _compute_crisis_insight(org_id: str, ref: str | None = None):
     """Board-grade AI briefing grounded ONLY in the live crisis case (case, events, actions,
     decisions, recovery, regulatory obligations). Cached 120s per org+case."""
     import os, json, asyncio, re
-    org_id = user["org_id"]
     ctx = await _crisis_insight_context(org_id, ref)
     if not ctx:
         return {"headline": "No active crisis case", "insights": [
@@ -914,3 +917,197 @@ async def crisis_insight(ref: str | None = None, user: dict = Depends(get_curren
         data = _crisis_insight_fallback(ctx)
     _CRISIS_INSIGHT_CACHE[ck] = {"ts": datetime.now(timezone.utc), "data": data}
     return data
+
+
+@api.get("/insight")
+async def crisis_insight(ref: str | None = None, user: dict = Depends(get_current_user)):
+    return await _compute_crisis_insight(user["org_id"], ref)
+
+
+# ---------------------------------------------------------------------------
+# Email the grounded crisis brief to the board (Resend via kernel.notifications)
+# ---------------------------------------------------------------------------
+def _brief_html(insight: dict, case: dict) -> str:
+    kind_color = {"fact": "#0ea5e9", "estimate": "#f59e0b", "risk": "#ef4444"}
+    items = "".join(
+        f'<li style="margin:6px 0"><span style="font:11px monospace;text-transform:uppercase;'
+        f'color:{kind_color.get(i.get("kind"), "#64748b")}">{i.get("kind", "")}</span><br/>{i.get("text", "")}</li>'
+        for i in insight.get("insights", []))
+    actions = "".join(f"<li style='margin:4px 0'>{a}</li>" for a in insight.get("actions", []))
+    return (
+        f'<div style="font-family:Arial,Helvetica,sans-serif;max-width:640px;margin:auto;color:#0f172a">'
+        f'<div style="background:#0b1220;color:#fff;padding:18px 22px;border-radius:12px 12px 0 0">'
+        f'<div style="font-size:11px;letter-spacing:2px;color:#f87171">OBSERRA · CYBER CRISIS COMMANDER</div>'
+        f'<div style="font-size:20px;font-weight:800;margin-top:4px">Executive Crisis Brief — {case.get("ref", "")}</div>'
+        f'<div style="font-size:12px;color:#94a3b8;margin-top:4px">{case.get("title", "")} · {case.get("severity", "")} · '
+        f'{case.get("status", "")} / {case.get("phase", "")}</div></div>'
+        f'<div style="border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;padding:20px 22px">'
+        f'<p style="font-size:15px;font-weight:700;line-height:1.4">{insight.get("headline", "")}</p>'
+        f'<ul style="padding-left:18px;font-size:13px;line-height:1.5">{items}</ul>'
+        f'<div style="font-size:12px;font-weight:700;text-transform:uppercase;color:#64748b;margin-top:14px">Recommended actions</div>'
+        f'<ol style="padding-left:18px;font-size:13px;line-height:1.5">{actions}</ol>'
+        f'<p style="font-size:11px;color:#94a3b8;margin-top:16px">Grounded in the live crisis case, decisions, recovery and '
+        f'regulatory clocks. Generated by Obserra Cyber Crisis Commander · {insight.get("model", "")} · {insight.get("generated_at", "")}.</p>'
+        f'</div></div>')
+
+
+@api.post("/cases/{ref}/email-brief")
+async def email_crisis_brief(ref: str, user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    org_id = user["org_id"]
+    case = await _get_case(org_id, ref)
+    insight = await _compute_crisis_insight(org_id, ref)
+    html = _brief_html(insight, case)
+    recipients = await db.users.find(
+        {"org_id": org_id, "role": {"$in": ["admin", "executive", "owner"]}},
+        {"_id": 0, "email": 1}).to_list(200)
+    emails = [r["email"] for r in recipients if r.get("email")]
+    if not emails:
+        raise HTTPException(status_code=400, detail="No admin/executive recipients found for this organisation.")
+    from kernel import notifications
+    sent = 0
+    for em in emails:
+        try:
+            await notifications.send_email(em, f"Executive Crisis Brief — {ref}", html)
+            sent += 1
+        except Exception:
+            pass
+    await _audit(org_id, _actor(user), "crisis.brief.email", f"{ref} -> {sent}/{len(emails)} recipients")
+    return {"sent": sent, "recipients": emails}
+
+
+# ---------------------------------------------------------------------------
+# Regulatory clock auto-alerts — Slack/Teams ping when a notification deadline
+# nears or passes. Runs hourly (folded into the platform hourly cron) and can
+# be triggered on demand. Dedupes per obligation via alert_state escalation.
+# ---------------------------------------------------------------------------
+async def run_regulatory_clock_alerts(org_id: str | None = None) -> int:
+    from self_scan import _post_chat_alert
+    now = datetime.now(timezone.utc)
+    active = {"Assessing", "Notification Required", "On Hold"}
+    query: dict = {"status": {"$in": list(active)}}
+    if org_id:
+        query["org_id"] = org_id
+    sent = 0
+    async for o in db.crisis_obligations.find(query):
+        dl = _parse_iso(o.get("deadline_at"))
+        if not dl:
+            continue
+        hrs = (dl - now).total_seconds() / 3600
+        within = int(o.get("notify_within_hours") or 24)
+        if hrs <= 0:
+            new_state = "overdue"
+        elif hrs <= within:
+            new_state = "approaching"
+        else:
+            continue
+        prev = o.get("alert_state") or ""
+        if prev == new_state or (prev == "overdue" and new_state == "approaching"):
+            continue
+        overdue = new_state == "overdue"
+        title = (f"{'🔴 OVERDUE' if overdue else '⚠️ Approaching'} regulatory deadline — "
+                 f"{o.get('regulation')} ({o.get('jurisdiction')})")
+        text = (f"Crisis {o.get('case_ref')}: {o.get('regulation')} in {o.get('jurisdiction')} is "
+                + (f"OVERDUE by {round(abs(hrs), 1)}h" if overdue else f"{round(hrs, 1)}h from its notification deadline")
+                + f". Status: {o.get('status')}. Responsible: {o.get('responsible') or 'unassigned'}. "
+                  f"Evidence-only — legal confirms obligation.")
+        try:
+            await _post_chat_alert(o["org_id"], title, text)
+        except Exception:
+            pass
+        await db.crisis_obligations.update_one(
+            {"org_id": o["org_id"], "case_ref": o["case_ref"], "obligation_id": o["obligation_id"]},
+            {"$set": {"alert_state": new_state, "alert_sent_at": now.isoformat()}})
+        try:
+            await db.crisis_events.insert_one({
+                "org_id": o["org_id"], "case_ref": o["case_ref"],
+                "event_id": await _next_ref(o["org_id"], "crisis_events", "EVT"),
+                "kind": "Legal", "title": title, "detail": text, "source": "Regulatory Timer",
+                "severity": "Critical" if overdue else "High",
+                "occurred_at": now.isoformat(), "created_at": now.isoformat(),
+                "created_by": "Obserra Regulatory Timer"})
+        except Exception:
+            pass
+        sent += 1
+    return sent
+
+
+@api.post("/regulatory/scan")
+async def regulatory_scan(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    sent = await run_regulatory_clock_alerts(org_id=user["org_id"])
+    return {"alerts_sent": sent}
+
+
+# ---------------------------------------------------------------------------
+# ServiceNow SecOps ingestion — pull live security incidents from a CONNECTED
+# ServiceNow instance and open crisis cases from them (deduped by external ref).
+# ---------------------------------------------------------------------------
+_SN_SEVERITY = {"1": "Critical", "2": "High", "3": "Medium", "4": "Low", "5": "Low"}
+
+
+@api.post("/ingest/servicenow")
+async def ingest_servicenow(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    import httpx
+    org_id = user["org_id"]
+    st = await db.connector_state.find_one({"org_id": org_id, "cid": "servicenow"}, {"_id": 0})
+    creds = (st or {}).get("creds") or {}
+    base = (creds.get("base") or "").rstrip("/")
+    token = creds.get("token")
+    if not base or not token:
+        raise HTTPException(
+            status_code=400,
+            detail="ServiceNow is not connected. Connect it in Connector Health (Enterprise Connectors) first.")
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/json"}
+    params = {"sysparm_limit": "25", "sysparm_display_value": "true",
+              "sysparm_query": "active=true^ORDERBYDESCsys_created_on"}
+    used_table = "sn_si_incident"
+    async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
+        try:
+            r = await c.get(f"{base}/api/now/table/sn_si_incident", headers=headers, params=params)
+            if r.status_code == 404:
+                used_table = "incident"
+                r = await c.get(f"{base}/api/now/table/incident", headers=headers, params=params)
+        except Exception as e:
+            raise HTTPException(status_code=502, detail=f"ServiceNow unreachable: {str(e)[:160]}")
+    if r.status_code in (401, 403):
+        raise HTTPException(status_code=502,
+                            detail=f"ServiceNow rejected the credential ({r.status_code}). Re-connect it in Connector Health.")
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"ServiceNow returned {r.status_code}.")
+    records = (r.json() or {}).get("result", [])
+    ingested, skipped, refs = 0, 0, []
+    now = _now()
+    for rec in records:
+        sys_id = rec.get("sys_id") or rec.get("number")
+        if not sys_id:
+            continue
+        external_ref = f"servicenow:{sys_id}"
+        if await db.crisis_cases.find_one({"org_id": org_id, "external_ref": external_ref}, {"_id": 1}):
+            skipped += 1
+            continue
+        sev = _SN_SEVERITY.get(str(rec.get("severity") or rec.get("priority") or "3").strip()[:1], "High")
+        title = (rec.get("short_description") or rec.get("number") or "ServiceNow security incident")[:180]
+        ref = await _next_ref(org_id, "crisis_cases", "CRISIS")
+        record = {
+            "ref": ref, "org_id": org_id, "title": title, "severity": sev,
+            "summary": (rec.get("description") or "")[:5000],
+            "incident_refs": [rec.get("number")] if rec.get("number") else [],
+            "risk_refs": [], "business_services": [],
+            "incident_commander": "", "executive_sponsor": "",
+            "status": "Open", "phase": "Triage", "started_at": now, "updated_at": now,
+            "next_update_at": None, "created_by": "ServiceNow SecOps",
+            "source": "ServiceNow SecOps", "external_ref": external_ref}
+        await db.crisis_cases.insert_one(record.copy())
+        await db.crisis_events.insert_one({
+            "org_id": org_id, "case_ref": ref,
+            "event_id": await _next_ref(org_id, "crisis_events", "EVT"),
+            "kind": "Detection", "title": f"Ingested from ServiceNow ({rec.get('number', '')})",
+            "detail": title, "source": "ServiceNow SecOps", "severity": sev,
+            "occurred_at": now, "created_at": now, "created_by": "ServiceNow SecOps"})
+        ingested += 1
+        refs.append(ref)
+    await _audit(org_id, _actor(user), "crisis.ingest.servicenow",
+                 f"{ingested} ingested, {skipped} skipped from {used_table}")
+    return {"ingested": ingested, "skipped": skipped, "source_table": used_table, "refs": refs}

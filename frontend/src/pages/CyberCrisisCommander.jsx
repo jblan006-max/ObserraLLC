@@ -27,6 +27,9 @@ import {
   Square,
   Timer,
   ClipboardList,
+  UserPlus,
+  Mail,
+  CloudDownload,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -610,7 +613,7 @@ function Defensibility({ data, sourceStatus }) {
   );
 }
 
-function WarRoom({ selectedCase, caseDetail, changed }) {
+function WarRoom({ selectedCase, caseDetail, changed, user, live }) {
   const [busy, setBusy] = useState("");
   const [showAdd, setShowAdd] = useState(false);
   const [form, setForm] = useState({ role: "", name: "", contact: "", responsibility: "", status: "Engaged" });
@@ -633,6 +636,26 @@ function WarRoom({ selectedCase, caseDetail, changed }) {
     }
   };
 
+  const join = async () => {
+    if (!selectedCase || !user) return;
+    setBusy("join");
+    try {
+      await api.post(`/crisis/cases/${selectedCase.ref}/participants`, {
+        role: user.role ? user.role.charAt(0).toUpperCase() + user.role.slice(1) : "Responder",
+        name: user.name || user.email || "Responder",
+        contact: user.email || "",
+        responsibility: "Joined the war room",
+        status: "Engaged",
+      });
+      toast.success("You joined the war room.");
+      await changed(selectedCase.ref);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Unable to join the war room.");
+    } finally {
+      setBusy("");
+    }
+  };
+
   const remove = async (pid) => {
     setBusy(pid);
     try {
@@ -647,7 +670,13 @@ function WarRoom({ selectedCase, caseDetail, changed }) {
 
   return (
     <div className="grid xl:grid-cols-[1.3fr_1fr] gap-5" data-testid="crisis-war-room">
-      <Panel title="War room roster" subtitle="Leadership and responders coordinating this crisis, by role." actions={selectedCase ? <button onClick={() => setShowAdd((v) => !v)} data-testid="crisis-add-participant-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />Add Participant</button> : null}>
+      <Panel title="War room roster" subtitle="Leadership and responders coordinating this crisis, by role." actions={selectedCase ? (
+        <div className="flex items-center gap-2">
+          {live && <span data-testid="crisis-warroom-live" className="inline-flex items-center gap-1 text-[10px] font-mono text-low"><span className="w-1.5 h-1.5 rounded-full bg-low animate-pulse" />LIVE · 8s</span>}
+          <button onClick={join} disabled={busy === "join"} data-testid="crisis-join-warroom-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-ai/40 bg-ai/10 text-ai text-xs font-head font-bold disabled:opacity-50"><UserPlus className="w-3.5 h-3.5" />Join War Room</button>
+          <button onClick={() => setShowAdd((v) => !v)} data-testid="crisis-add-participant-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />Add Participant</button>
+        </div>
+      ) : null}>
         {!selectedCase ? <EmptyState title="No crisis case selected" text="Select a crisis case to convene the war room." /> : (
           <>
             {showAdd && (
@@ -868,6 +897,8 @@ export default function CyberCrisisCommander() {
   const [demoActive, setDemoActive] = useState(false);
   const [demoBusy, setDemoBusy] = useState(false);
   const [pirBusy, setPirBusy] = useState(false);
+  const [ingestBusy, setIngestBusy] = useState(false);
+  const [emailBusy, setEmailBusy] = useState(false);
   const canOperate = ["admin", "owner", "executive"].includes(String(user?.role || "").toLowerCase());
 
   const selectedCase = useMemo(() => {
@@ -1009,6 +1040,42 @@ export default function CyberCrisisCommander() {
     }
   };
 
+  const ingestServiceNow = async () => {
+    setIngestBusy(true);
+    try {
+      const { data: res } = await api.post("/crisis/ingest/servicenow");
+      toast.success(`ServiceNow: ${res.ingested} new case(s) opened, ${res.skipped} already tracked.`);
+      await reload();
+      if (res.refs?.[0]) loadCase(res.refs[0]);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "ServiceNow ingestion failed.");
+    } finally {
+      setIngestBusy(false);
+    }
+  };
+
+  const emailBrief = async () => {
+    if (!selectedCase) { toast.error("Select a crisis case first."); return; }
+    setEmailBusy(true);
+    try {
+      const { data: res } = await api.post(`/crisis/cases/${selectedCase.ref}/email-brief`);
+      toast.success(`Board brief emailed to ${res.sent} recipient(s).`);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to email the board brief.");
+    } finally {
+      setEmailBusy(false);
+    }
+  };
+
+  // War Room Live Sync — poll the case detail while the War Room tab is open so
+  // the roster and pending decisions update without a manual refresh.
+  useEffect(() => {
+    if (activeTab !== "warroom" || !selectedCaseRef) return undefined;
+    const id = setInterval(() => { loadCase(selectedCaseRef); }, 8000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, selectedCaseRef]);
+
   if (loading && !data) {
     return (
       <div className="min-h-[55vh] flex items-center justify-center">
@@ -1025,7 +1092,7 @@ export default function CyberCrisisCommander() {
           <p className="text-sm text-muted-foreground mt-2 max-w-4xl">{mode === "executive" ? "Command enterprise cyber crises through business impact, financial exposure, executive decisions, containment, recovery, control failures, timeline evidence and board-ready intelligence." : "Coordinate persistent crisis cases, response actions, approvals, control failures, incident evidence, audit records and recovery using the existing Obserra platform services."}</p>
           <div className="text-[10px] font-mono text-muted-foreground mt-2">Current case: {selectedCase?.ref || "none"} · Data refresh {effectiveData?.generatedAt ? new Date(effectiveData.generatedAt).toLocaleString() : "unavailable"}{caseBusy ? " · refreshing case" : ""}</div>
         </div>
-        <div className="flex flex-wrap gap-2">{canOperate && <button onClick={toggleDemo} disabled={demoBusy} data-testid="crisis-demo-toggle" className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-head font-bold disabled:opacity-50 ${demoActive ? "border-ai/40 bg-ai/15 text-ai" : "border-border bg-secondary/40"}`}>{demoBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : demoActive ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}{demoActive ? "Exit Demo" : "Demo Mode"}</button>}{selectedCase?.status === "Closed" && <button onClick={generatePIR} disabled={pirBusy} data-testid="crisis-pir-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{pirBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ClipboardList className="w-3.5 h-3.5" />}Post-Incident Review</button>}<button onClick={() => setTourOpen(true)} data-testid="crisis-walkthrough-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-crit/30 bg-crit/10 text-crit text-xs font-head font-bold"><Siren className="w-3.5 h-3.5" />Walkthrough</button><button onClick={reload} disabled={refreshing} data-testid="crisis-refresh-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Refresh</button><button onClick={() => openTab("briefing")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Download className="w-3.5 h-3.5" />Executive Brief</button></div>
+        <div className="flex flex-wrap gap-2">{canOperate && <button onClick={toggleDemo} disabled={demoBusy} data-testid="crisis-demo-toggle" className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-head font-bold disabled:opacity-50 ${demoActive ? "border-ai/40 bg-ai/15 text-ai" : "border-border bg-secondary/40"}`}>{demoBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : demoActive ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}{demoActive ? "Exit Demo" : "Demo Mode"}</button>}{selectedCase?.status === "Closed" && <button onClick={generatePIR} disabled={pirBusy} data-testid="crisis-pir-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{pirBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ClipboardList className="w-3.5 h-3.5" />}Post-Incident Review</button>}{canOperate && <button onClick={ingestServiceNow} disabled={ingestBusy} data-testid="crisis-ingest-servicenow-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{ingestBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CloudDownload className="w-3.5 h-3.5" />}Ingest ServiceNow</button>}{canOperate && selectedCase && <button onClick={emailBrief} disabled={emailBusy} data-testid="crisis-email-brief-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{emailBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}Email Board Brief</button>}<button onClick={() => setTourOpen(true)} data-testid="crisis-walkthrough-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-crit/30 bg-crit/10 text-crit text-xs font-head font-bold"><Siren className="w-3.5 h-3.5" />Walkthrough</button><button onClick={reload} disabled={refreshing} data-testid="crisis-refresh-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Refresh</button><button onClick={() => openTab("briefing")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Download className="w-3.5 h-3.5" />Executive Brief</button></div>
       </div>
 
       {error && <div className="rounded-xl border border-crit/30 bg-crit/5 p-4 flex items-start gap-3" data-testid="crisis-error"><AlertTriangle className="w-5 h-5 text-crit shrink-0 mt-0.5" /><div><div className="font-head font-bold text-sm">Crisis intelligence incomplete</div><div className="text-xs text-muted-foreground mt-1">{error}</div></div></div>}
@@ -1039,7 +1106,7 @@ export default function CyberCrisisCommander() {
       {activeTab === "decisions" && <DecisionRoom selectedCase={selectedCase} caseDetail={caseDetail} recommendations={effectiveData?.recommendations || []} decisions={effectiveData?.decisions || []} changed={changed} />}
       {activeTab === "impact" && <BusinessImpact data={effectiveData} selectedCase={selectedCase} />}
       {activeTab === "response" && <ResponseActions selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}
-      {activeTab === "warroom" && <WarRoom selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}
+      {activeTab === "warroom" && <WarRoom selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} user={user} live={activeTab === "warroom"} />}
       {activeTab === "recovery" && <RecoveryCommand selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}
       {activeTab === "regulatory" && <RegulatoryLegal selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}
       {activeTab === "controls" && <ControlFailures data={effectiveData} />}

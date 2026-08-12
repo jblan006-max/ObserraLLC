@@ -28,7 +28,7 @@ crons:
     # Cron endpoints must ack 2xx immediately; enqueue/background the actual work.
     enabled: true
   - name: hourly-overdue-digest
-    description: "Hourly: sends the overdue auditor-request digest + SLA escalation; each org self-gates to its configured UTC hour and days. (Monthly Studio report is folded into monthly-board-report.)"
+    description: "Hourly: overdue auditor-request digest + SLA escalation (org self-gated), plus Cyber Crisis regulatory-clock Slack/Teams alerts when a notification deadline nears or passes."
     cron: "0 * * * *"
     endpoint: "{{BASE_URL}}/api/cron/hourly-overdue-digest"
     method: POST

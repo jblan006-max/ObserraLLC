@@ -1,5 +1,13 @@
 # Obserra EIOS — CHANGELOG
 
+## 2026-08-12 — Crisis Commander ops suite: War Room Live Sync, Regulatory Auto-Alerts, ServiceNow ingest, Email Board Brief (iteration_134 — backend 12/12, frontend 100%, 0 blockers)
+- **War Room Live Sync:** War Room tab now polls the case detail every 8s (roster + pending decisions update without refresh), shows a "LIVE · 8s" badge, and a "Join War Room" button adds the current user as a participant. (CyberCrisisCommander.jsx WarRoom + polling useEffect.)
+- **Regulatory Auto-Alerts:** `run_regulatory_clock_alerts()` posts Slack/Teams alerts (self_scan._post_chat_alert) + writes a "Regulatory Timer" timeline event when an obligation's deadline is within `notify_within_hours` (default 24h) or overdue; dedupes via an `alert_state` escalation field. Folded into the existing hourly cron (5-cron platform limit — no new cron). Manual trigger: `POST /api/crisis/regulatory/scan`. Obligations gained `notify_within_hours`; PATCHing `deadline_at` re-arms the alert (verified push-out→reset→pull-in→re-fire).
+- **ServiceNow SecOps ingestion:** `POST /api/crisis/ingest/servicenow` reads the connected ServiceNow connector creds and pulls `sn_si_incident` (falls back to `incident`), opening deduped crisis cases (external_ref `servicenow:<sys_id>`) + Detection events. Honest 400 when not connected; 502 now surfaces the redacted upstream reason.
+- **Email Board Brief:** header one-tap `POST /api/crisis/cases/{ref}/email-brief` renders the crisis-grounded insight to HTML and sends via Resend (kernel.notifications) to org admins/executives (verified live send).
+- **Code-review fix:** regulatory dedupe `alert_state` now resets on deadline change so a re-approaching clock re-alerts.
+
+
 ## 2026-08-12 — Crisis Commander: live crisis feeds, no old SAP/Obserra content (iteration_133 — backend 10/10, frontend 100%)
 User directive: all AI, connectors & data feeds must be live and populate Cyber Crisis Commander, not old-app SAP/Control-Intelligence data.
 - **Root cause fixed:** the crisis page's top "AI Analyst" used the shared `AIInsight` hardcoded to `GET /api/sap/insight` (SAP access posture / SoD conflicts). Added new backend `GET /api/crisis/insight` (crisis_commander.py) grounded ONLY on the live crisis case + its events/actions/decisions/recovery/obligations/participants (LLM openai gpt-5.4 + deterministic fallback, 120s cache). Wired the crisis page AI Analyst to it via new `AIInsight` props `endpoint` + `groundingLabel` (defaults preserve `/sap/insight` for all other pages).
