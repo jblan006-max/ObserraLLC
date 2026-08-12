@@ -1314,10 +1314,12 @@ async def message_to_action(ref: str, message_id: str, user: dict = Depends(get_
 async def crisis_report_pack(ref: str, user: dict = Depends(get_current_user)):
     _require_operator(user)
     from studio import ReportExportBody, _report_markdown
-    from reports import _build_pdf
+    from reports import _build_pdf, _resolve_brand
     from fastapi.responses import StreamingResponse
+    from bson import ObjectId
     org_id = user["org_id"]
     case = await _get_case(org_id, ref)
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
     events = await db.crisis_events.find({"org_id": org_id, "case_ref": ref}, {"_id": 0}).sort("occurred_at", ASCENDING).to_list(500)
     actions = await db.crisis_actions.find({"org_id": org_id, "case_ref": ref}, {"_id": 0}).to_list(500)
     obligations = await db.crisis_obligations.find({"org_id": org_id, "case_ref": ref}, {"_id": 0}).to_list(500)
@@ -1362,7 +1364,8 @@ async def crisis_report_pack(ref: str, user: dict = Depends(get_current_user)):
                       f"timeline, executive decisions, response actions, recovery, regulatory obligations, war-room "
                       f"roster and full chat log."),
         blocks=blocks)
-    buf = _build_pdf(_report_markdown(body), title)
+    buf = _build_pdf(_report_markdown(body), title, cover=True,
+                     org_name=(org.get("name") or None), brand=_resolve_brand(org))
     _slug = f"crisis-report-pack-{ref}".lower()
     fname = "".join(c for c in _slug if c.isascii() and (c.isalnum() or c == "-")) or "crisis-report-pack"
     await _audit(org_id, _actor(user), "crisis.report_pack", ref)
@@ -1451,3 +1454,153 @@ async def contain_identity(ref: str, body: ContainIdentity, user: dict = Depends
     await _audit(org_id, _actor(user), "crisis.contain_identity",
                  f"{ref}: {label} disabled={disable.status_code} revoked={revoked}")
     return {"user_id": uid, "disabled": True, "sessions_revoked": revoked}
+
+
+# ---------------------------------------------------------------------------
+# Entra Risky Users — live Identity Protection signals surfaced into the crisis.
+# ---------------------------------------------------------------------------
+@api.get("/entra/risky-users")
+async def entra_risky_users(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    import httpx
+    from connectors_catalog import _entra_token
+    creds = await _entra_creds(user["org_id"])
+    if not creds:
+        raise HTTPException(status_code=400, detail="Microsoft Entra is not connected. Connect it in Connector Health first.")
+    token, err = await _entra_token(creds)
+    if err:
+        raise HTTPException(status_code=502, detail=err[3])
+    ep = "https://graph.microsoft.com/v1.0/identityProtection/riskyUsers"
+    params = {"$top": "25",
+              "$filter": "riskState ne 'dismissed' and riskState ne 'remediated'",
+              "$orderby": "riskLastUpdatedDateTime desc"}
+    async with httpx.AsyncClient(timeout=20) as c:
+        r = await c.get(ep, headers={"Authorization": f"Bearer {token}"}, params=params)
+    if r.status_code in (401, 403):
+        raise HTTPException(status_code=502, detail=f"Microsoft Graph denied risky-users ({r.status_code}). Grant IdentityRiskyUser.Read.All (needs Entra ID P2) + admin consent.")
+    if r.status_code >= 400:
+        raise HTTPException(status_code=502, detail=f"Microsoft Graph returned {r.status_code}: {r.text[:160]}")
+    return [{"id": u.get("id"), "userPrincipalName": u.get("userPrincipalName"),
+             "displayName": u.get("userDisplayName"), "riskLevel": u.get("riskLevel"),
+             "riskState": u.get("riskState"), "riskDetail": u.get("riskDetail"),
+             "lastUpdated": u.get("riskLastUpdatedDateTime")} for u in (r.json() or {}).get("value", [])]
+
+
+# ---------------------------------------------------------------------------
+# Decision SLA breach alerts — ping Teams/Slack when a pending decision blows
+# its approval SLA. Runs hourly (folded into the platform cron) + on demand.
+# ---------------------------------------------------------------------------
+async def run_decision_sla_alerts(org_id: str | None = None) -> int:
+    from self_scan import _post_chat_alert
+    now = datetime.now(timezone.utc)
+    query: dict = {"status": "Awaiting Approval", "decision_due_at": {"$ne": None}, "sla_alerted": {"$ne": True}}
+    if org_id:
+        query["org_id"] = org_id
+    sent = 0
+    async for a in db.crisis_actions.find(query):
+        due = _parse_iso(a.get("decision_due_at"))
+        if not due or due > now:
+            continue
+        overdue_h = round((now - due).total_seconds() / 3600, 1)
+        title = f"⏰ Decision SLA breached — {a.get('case_ref')} {a.get('action_id')}"
+        text = (f"'{a.get('title')}' has blown its approval SLA by {overdue_h}h "
+                f"(owner: {a.get('decision_owner') or 'unassigned'}, priority {a.get('priority')}). "
+                f"Approve or escalate in the Decision Room.")
+        try:
+            await _post_chat_alert(a["org_id"], title, text)
+        except Exception:
+            pass
+        await db.crisis_actions.update_one(
+            {"org_id": a["org_id"], "case_ref": a["case_ref"], "action_id": a["action_id"]},
+            {"$set": {"sla_alerted": True}})
+        await db.crisis_events.insert_one({
+            "org_id": a["org_id"], "case_ref": a["case_ref"],
+            "event_id": await _next_ref(a["org_id"], "crisis_events", "EVT"),
+            "kind": "Decision", "title": title, "detail": text, "source": "SLA Monitor", "severity": "High",
+            "occurred_at": now.isoformat(), "created_at": now.isoformat(), "created_by": "Obserra SLA Monitor"})
+        sent += 1
+    return sent
+
+
+@api.post("/decisions/sla-scan")
+async def decisions_sla_scan(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    sent = await run_decision_sla_alerts(org_id=user["org_id"])
+    return {"alerts_sent": sent}
+
+
+# ---------------------------------------------------------------------------
+# Containment Playbook — one-click bundle: disable the account, revoke all its
+# sign-in sessions, and notify the war room + Teams/Slack in a single action.
+# ---------------------------------------------------------------------------
+class ContainPlaybook(BaseModel):
+    user_id: str
+    upn: str = ""
+    notify: bool = True
+
+
+@api.post("/cases/{ref}/contain-playbook")
+async def contain_playbook(ref: str, body: ContainPlaybook, user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    import httpx
+    from connectors_catalog import _entra_token
+    from self_scan import _post_chat_alert
+    org_id = user["org_id"]
+    case = await _get_case(org_id, ref)
+    creds = await _entra_creds(org_id)
+    if not creds:
+        raise HTTPException(status_code=400, detail="Microsoft Entra is not connected. Connect it in Connector Health first.")
+    token, err = await _entra_token(creds)
+    if err:
+        raise HTTPException(status_code=502, detail=err[3])
+    headers = {"Authorization": f"Bearer {token}"}
+    uid = body.user_id
+    label = body.upn or uid
+    async with httpx.AsyncClient(timeout=20) as c:
+        disable = await c.patch(f"https://graph.microsoft.com/v1.0/users/{uid}",
+                                headers={**headers, "Content-Type": "application/json"}, json={"accountEnabled": False})
+        if disable.status_code >= 400:
+            raise HTTPException(status_code=502, detail=f"Disable failed ({disable.status_code}): {disable.text[:160]}")
+        revoke = await c.post(f"https://graph.microsoft.com/v1.0/users/{uid}/revokeSignInSessions", headers=headers)
+    revoked = revoke.status_code in (200, 204)
+    now = _now()
+    actor = _actor(user)
+    steps = ["Account disabled", "Sign-in sessions revoked" if revoked else "Session revoke not confirmed"]
+    detail = f"Containment playbook executed for {label}: {', '.join(steps)} (live Microsoft Graph)."
+    await db.crisis_events.insert_one({
+        "org_id": org_id, "case_ref": ref,
+        "event_id": await _next_ref(org_id, "crisis_events", "EVT"),
+        "kind": "Containment", "title": f"Containment playbook — {label}",
+        "detail": detail, "source": "Microsoft Entra", "severity": "Critical",
+        "occurred_at": now, "created_at": now, "created_by": actor})
+    await db.crisis_actions.insert_one({
+        "org_id": org_id, "case_ref": ref,
+        "action_id": await _next_ref(org_id, "crisis_actions", "ACT"),
+        "title": f"Containment playbook: {label} (disable + revoke + notify)", "owner": actor,
+        "priority": "Critical", "status": "Verified", "action_type": "Containment", "due_at": None,
+        "decision_required": False, "decision_owner": "", "business_impact": "",
+        "technical_impact": ", ".join(steps),
+        "outcome": "Executed via Microsoft Entra (Graph)", "approved_by": actor,
+        "source": "Containment Playbook", "created_at": now, "updated_at": now, "created_by": actor})
+    notified = False
+    if body.notify:
+        chat_text = f"🛡️ Containment playbook executed by {actor} on {label}: {', '.join(steps)}."
+        try:
+            await db.crisis_messages.insert_one({
+                "org_id": org_id, "case_ref": ref,
+                "message_id": await _next_ref(org_id, "crisis_messages", "MSG"),
+                "author": "Obserra Containment Playbook", "role": "system",
+                "text": chat_text, "mentions": [], "created_at": now})
+        except Exception:
+            pass
+        try:
+            await _post_chat_alert(org_id,
+                                   f"🛡️ Containment playbook — {case.get('ref')} {(case.get('title') or '')[:60]}",
+                                   chat_text)
+            notified = True
+        except Exception:
+            pass
+    await db.crisis_cases.update_one({"org_id": org_id, "ref": ref}, {"$set": {"updated_at": now}})
+    await _audit(org_id, actor, "crisis.contain_playbook",
+                 f"{ref}: {label} disabled={disable.status_code} revoked={revoked} notified={notified}")
+    return {"user_id": uid, "disabled": True, "sessions_revoked": revoked, "notified": notified, "steps": steps}

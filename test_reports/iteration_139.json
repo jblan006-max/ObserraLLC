@@ -1,0 +1,21 @@
+{
+  "summary": "Iteration 139 — validated all 4 new Cyber Crisis Commander enhancements. Backend: 4/4 pytest cases pass — GET /api/crisis/entra/risky-users returns honest HTTP 400 'Microsoft Entra is not connected' (Entra unconfigured, expected PASS); POST /api/crisis/decisions/sla-scan returns 200 with {alerts_sent:int}; POST /api/crisis/cases/{ref}/contain-playbook returns honest 400 with valid case ref; GET /api/crisis/cases/{ref}/report-pack.pdf returns application/pdf with %PDF magic and pdfminer-extracted text confirms branded cover contains 'Obserra', 'Crisis Report Pack', and 'Confidential'. Frontend: on /app/cyber-crisis-commander — War Room shows the new [data-testid=crisis-risky-users] Identity Protection panel with [data-testid=crisis-risky-refresh] button and honest 'Microsoft Entra not connected' empty state (no crash); Response tab shows [data-testid=crisis-entra-containment] with same honest empty state; Decisions tab shows [data-testid=crisis-sla-scan-btn] and clicking it fires toast 'No decisions have breached their approval SLA.'; after PATCHing a seeded case to Closed, [data-testid=crisis-report-pack-btn] renders in the header as expected. Demo case seeded and cleaned up via /api/crisis/demo/seed and /api/crisis/demo/clear.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_crisis_iteration139.py",
+    "/app/test_reports/pytest/iteration_139.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "crisis_commander.py is now ~1607 lines — approaching the 700-line guideline threshold by a wide margin. Consider splitting into logical modules (entra_ops, sla_alerts, report_pack, cases_crud) to keep future one-search_replace-per-batch edits safe.",
+    "The auth login page has TWO buttons with type='submit' inside the same form (data-testid=auth-tab-login is type=submit and data-testid=auth-submit is type=submit). Pressing Enter in the password field triggers the first button (the tab switcher) instead of the actual login submit — that is why the hint note says 'clicking data-testid=auth-submit can be overlay-intercepted'. Fix: change auth-tab-login/auth-tab-register to type='button' so Enter submits the correct button. (Not part of this review's feature scope but is a real UX bug.)"
+  ],
+  "updated_files": ["/app/backend/tests/test_crisis_iteration139.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin) — verified working via /api/auth/login (200).",
+  "seed_data_creation": "Used POST /api/crisis/demo/seed inside tests + UI flow; cleaned up via POST /api/crisis/demo/clear. Also PATCHed the seeded case to status:'Closed' during UI test to reveal report-pack button; the case is deleted by demo/clear afterwards.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All four Iteration-139 enhancements verified end-to-end (backend + UI). Entra risky-users and contain-playbook return honest 400 because Entra is not connected — this is the intended pass condition, not a bug. The branded report-pack PDF is verified using pdfminer.six (needed because ReportLab compresses text streams — a bytes-in-file search will not find 'Obserra'). If re-running, note the auth page has a form-submit gotcha: use fetch('/api/auth/login') from the browser to reliably obtain the httpOnly session cookie (button click and Enter both fail because auth-tab-login/register are also type=submit). See critical_code_review_comments."
+}

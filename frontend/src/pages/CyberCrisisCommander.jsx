@@ -424,9 +424,22 @@ function DecisionRoom({ selectedCase, caseDetail, recommendations, decisions, ch
     }
   };
 
+  const scanSla = async () => {
+    setBusy("sla");
+    try {
+      const { data } = await api.post("/crisis/decisions/sla-scan");
+      toast.success(data.alerts_sent > 0 ? `${data.alerts_sent} SLA breach alert(s) sent to Teams/Slack.` : "No decisions have breached their approval SLA.");
+      if (selectedCase) await changed(selectedCase.ref);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Unable to scan decision SLAs.");
+    } finally {
+      setBusy("");
+    }
+  };
+
   return (
     <div className="space-y-5" data-testid="crisis-decision-room">
-      <Panel title="Executive approval queue" subtitle="Persistent crisis decisions with business and technical impact context." actions={selectedCase ? <button onClick={() => setShowAdd((v) => !v)} data-testid="crisis-add-decision-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />Add Decision</button> : null}>
+      <Panel title="Executive approval queue" subtitle="Persistent crisis decisions with business and technical impact context." actions={selectedCase ? (<div className="flex items-center gap-2"><button onClick={scanSla} disabled={busy === "sla"} data-testid="crisis-sla-scan-btn" title="Ping Teams/Slack for any decision that has blown its approval SLA" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-med/40 bg-med/10 text-med text-xs font-head font-bold disabled:opacity-50">{busy === "sla" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Timer className="w-3.5 h-3.5" />}Scan SLAs</button><button onClick={() => setShowAdd((v) => !v)} data-testid="crisis-add-decision-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />Add Decision</button></div>) : null}>
         {!selectedCase ? <EmptyState title="No crisis case selected" text="Select a crisis case before creating executive decision requirements." /> : (
           <>
             {showAdd && (
@@ -513,6 +526,19 @@ function EntraContainment({ selectedCase, changed }) {
       toast.error(e.response?.data?.detail || "Containment failed.");
     } finally { setBusy(""); }
   };
+  const playbook = async (u) => {
+    if (!selectedCase) { toast.error("Select a crisis case first."); return; }
+    if (!window.confirm(`Run the containment playbook on ${u.displayName || u.userPrincipalName}? This disables the account, revokes all sessions and notifies the war room + Teams/Slack. Live Microsoft Entra action.`)) return;
+    setBusy(`pb-${u.id}`);
+    try {
+      const { data } = await api.post(`/crisis/cases/${selectedCase.ref}/contain-playbook`, { user_id: u.id, upn: u.userPrincipalName || u.mail || "" });
+      toast.success(`Playbook executed on ${u.displayName || u.userPrincipalName} — ${(data.steps || []).join(", ")}${data.notified ? " · war room notified" : ""}.`);
+      await load(q);
+      await changed?.(selectedCase.ref);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Playbook failed.");
+    } finally { setBusy(""); }
+  };
   return (
     <div data-testid="crisis-entra-containment">
       <Panel title="Identity containment — Microsoft Entra" subtitle="Disable a compromised account and revoke its live sessions directly in Microsoft Entra (Graph).">
@@ -534,6 +560,7 @@ function EntraContainment({ selectedCase, changed }) {
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
                       <span className={`text-[9px] font-mono px-2 py-0.5 rounded-full ${u.accountEnabled === false ? "bg-crit/15 text-crit" : "bg-low/15 text-low"}`}>{u.accountEnabled === false ? "DISABLED" : "ENABLED"}</span>
+                      <button disabled={busy === `pb-${u.id}` || u.accountEnabled === false} onClick={() => playbook(u)} data-testid={`crisis-entra-playbook-${u.id}`} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary/10 border border-primary/40 text-primary text-xs font-head font-bold disabled:opacity-40">{busy === `pb-${u.id}` ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}Playbook</button>
                       <button disabled={busy === u.id || u.accountEnabled === false} onClick={() => contain(u)} data-testid={`crisis-entra-contain-${u.id}`} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-crit/10 border border-crit/40 text-crit text-xs font-head font-bold disabled:opacity-40"><ShieldOff className="w-3.5 h-3.5" />Contain</button>
                     </div>
                   </div>
@@ -789,6 +816,64 @@ function WarRoomChat({ selectedCase, caseDetail, user, live, changed }) {
   );
 }
 
+function RiskyUsers({ selectedCase, changed }) {
+  const [rows, setRows] = useState([]);
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState("");
+  const load = async () => {
+    setBusy("load"); setStatus("");
+    try {
+      const r = await api.get("/crisis/entra/risky-users");
+      setRows(r.data || []);
+    } catch (e) {
+      if (e.response?.status === 400) { setStatus("unconnected"); }
+      else { setStatus("error"); toast.error(e.response?.data?.detail || "Unable to load risky users."); }
+      setRows([]);
+    } finally { setBusy(""); }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+  const contain = async (u) => {
+    if (!selectedCase) { toast.error("Select a crisis case first."); return; }
+    if (!window.confirm(`Run the containment playbook on ${u.displayName || u.userPrincipalName}? This disables the account, revokes all sessions and notifies the war room. Live Microsoft Entra action.`)) return;
+    setBusy(u.id);
+    try {
+      const { data } = await api.post(`/crisis/cases/${selectedCase.ref}/contain-playbook`, { user_id: u.id, upn: u.userPrincipalName || "" });
+      toast.success(`${u.displayName || u.userPrincipalName} contained — ${(data.steps || []).join(", ")}${data.notified ? " · war room notified" : ""}.`);
+      await load();
+      await changed?.(selectedCase.ref);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Containment failed.");
+    } finally { setBusy(""); }
+  };
+  const riskColor = (lvl) => {
+    const l = String(lvl || "").toLowerCase();
+    return l === "high" ? "bg-crit/15 text-crit" : l === "medium" ? "bg-high/15 text-high" : l === "low" ? "bg-med/15 text-med" : "bg-secondary/60 text-muted-foreground";
+  };
+  return (
+    <Panel testid="crisis-risky-users" title="Identity Protection — risky users (live Microsoft Entra)" subtitle="Users flagged by Microsoft Entra ID Protection. Contain a compromised account in one click." actions={<button onClick={load} disabled={busy === "load"} data-testid="crisis-risky-refresh" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{busy === "load" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Refresh</button>}>
+      {status === "unconnected" ? (
+        <EmptyState title="Microsoft Entra not connected" text="Connect Microsoft Entra ID in Connector Health → Enterprise Connectors to surface live risky-user signals. Identity Protection requires Entra ID P2." />
+      ) : rows.length === 0 ? (
+        <EmptyState title="No risky users" text="Microsoft Entra ID Protection reports no active at-risk users." />
+      ) : (
+        <div className="space-y-2">{rows.map((u) => (
+          <div key={u.id} data-testid={`crisis-risky-user-${u.id}`} className="flex items-center justify-between gap-3 bg-secondary/40 border border-border rounded-lg px-3 py-2">
+            <div className="min-w-0">
+              <div className="font-head font-bold text-sm truncate">{u.displayName || u.userPrincipalName}</div>
+              <div className="text-[11px] text-muted-foreground truncate">{u.userPrincipalName}{u.riskDetail ? ` · ${u.riskDetail}` : ""}{u.lastUpdated ? ` · ${new Date(u.lastUpdated).toLocaleString()}` : ""}</div>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <span className={`text-[9px] font-mono px-2 py-0.5 rounded-full uppercase ${riskColor(u.riskLevel)}`}>{u.riskLevel || "unknown"} risk</span>
+              <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-secondary/60 text-muted-foreground uppercase">{u.riskState || "-"}</span>
+              <button disabled={busy === u.id} onClick={() => contain(u)} data-testid={`crisis-risky-contain-${u.id}`} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-crit/10 border border-crit/40 text-crit text-xs font-head font-bold disabled:opacity-40">{busy === u.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldOff className="w-3.5 h-3.5" />}Contain</button>
+            </div>
+          </div>
+        ))}</div>
+      )}
+    </Panel>
+  );
+}
+
 function WarRoom({ selectedCase, caseDetail, changed, user, live }) {
   const [busy, setBusy] = useState("");
   const [showAdd, setShowAdd] = useState(false);
@@ -890,6 +975,7 @@ function WarRoom({ selectedCase, caseDetail, changed, user, live }) {
       </Panel>
       </div>
       <WarRoomChat selectedCase={selectedCase} caseDetail={caseDetail} user={user} live={live} changed={changed} />
+      <RiskyUsers selectedCase={selectedCase} changed={changed} />
     </div>
   );
 }
