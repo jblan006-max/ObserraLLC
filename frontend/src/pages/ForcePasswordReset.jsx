@@ -21,7 +21,7 @@ export default function ForcePasswordReset() {
       await api.post("/auth/change-password", { current_password: current, new_password: next });
       const { data } = await api.get("/auth/me");
       setUser(data);
-      toast.success("Password updated — welcome to Obserra EIOS");
+      toast.success("Password updated — welcome to Obserra EU CRA Governance");
     } catch (e2) { setErr(formatApiErrorDetail(e2.response?.data?.detail) || e2.message); }
     setBusy(false);
   };

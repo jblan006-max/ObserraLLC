@@ -3,25 +3,25 @@ import { useAuth } from "@/context/AuthContext";
 import { ArrowRight, ArrowLeft } from "lucide-react";
 
 const EXEC_STEPS = [
-  { title: "Welcome to Obserra Cyber Crisis Commander",
-    body: "Your command center for enterprise cyber crises. The moment an incident hits, every number — business impact, financial exposure, decision SLAs, containment and recovery — recomputes live from your feeds. Switch altitude anytime from the toggle in the top bar." },
+  { title: "Welcome to Obserra EU CRA Governance",
+    body: "Your command center for EU Cyber Resilience Act (Regulation (EU) 2024/2847) product compliance. Classification, conformity readiness, SBOMs, Article 14 reporting clocks and CE declarations recompute live from your product records — every fact traceable to a tamper-evident regulatory ledger. Switch altitude anytime from the toggle in the top bar." },
   { title: "Executive Mode", spotlight: true,
-    body: "The boardroom view — highlighted above. The crisis framed for leadership: what it's costing per hour, which decisions need an executive owner right now, and how contained you are — without the noise." },
+    body: "The boardroom view — highlighted above. CRA posture framed for leadership: how many products are classified and market-ready, which Article 14 clocks are running, and where CE declarations are blocked — without the noise." },
   { title: "Operational Mode", spotlight: true,
-    body: "Flip the same toggle to Operational for the responder view — the live incident timeline, containment actions, war-room chat and recovery tracking your team works minute to minute." },
-  { title: "Start at Cyber Crisis Commander", spotlight: true, target: "nav-cyber-crisis-commander",
-    body: "Highlighted in the sidebar — Cyber Crisis Commander is your incident command: mission control, the executive decision room, containment, war room, recovery and regulatory timers. Come back here anytime." },
+    body: "Flip the same toggle to Operational for the working view — register and classify products, run regulation-mapped assessments, generate SBOMs and drive the certification and reporting workflows your team owns day to day." },
+  { title: "Start at EU CRA Governance", spotlight: true, target: "nav-eu-cra-governance",
+    body: "Highlighted in the sidebar — EU CRA Governance is your product-compliance home: classification, certification portal, SBOM, Article 14 reporting, notified-body sign-off, CE declaration and the regulatory ledger. Come back here anytime." },
 ];
 
 const OPS_STEPS = [
-  { title: "Welcome to Obserra Cyber Crisis Commander",
-    body: "This is your operational cockpit for a live cyber crisis. Every action — containment, war-room updates, recovery status — is grounded in your live incident feed, so you always know exactly what's real." },
+  { title: "Welcome to Obserra EU CRA Governance",
+    body: "This is your operational cockpit for EU Cyber Resilience Act compliance. Every step — classification, assessment, SBOM, vulnerability reporting and CE declaration — is grounded in your live product records and written to a tamper-evident ledger, so you always know exactly what's real." },
   { title: "Operational Mode", spotlight: true,
-    body: "The toggle above keeps you in Operational view — incident timeline, containment actions, war-room chat, decision SLAs and recovery tracking. This is your working surface during an incident." },
+    body: "The toggle above keeps you in Operational view — register products, run regulation-mapped readiness assessments, generate SBOMs, start Article 14 reporting clocks and manage notified-body sign-off. This is your working surface." },
   { title: "Where you'll work",
-    body: "Jump into Cyber Crisis Commander from the sidebar to drive the timeline, run containment playbooks and work the recovery queue. The Obserrian Advisor can help you triage too." },
-  { title: "Start at Cyber Crisis Commander", spotlight: true, target: "nav-cyber-crisis-commander",
-    body: "Highlighted in the sidebar — Cyber Crisis Commander is your incident home base: live timeline, containment, war room and executive decisions, with the Obserrian Advisor one click away." },
+    body: "Jump into EU CRA Governance from the sidebar to classify products, issue secure certification-portal links and drive the CE declaration. The Obserrian Advisor can help you interpret the regulation too." },
+  { title: "Start at EU CRA Governance", spotlight: true, target: "nav-eu-cra-governance",
+    body: "Highlighted in the sidebar — EU CRA Governance is your compliance home base: classification, certification portal, SBOM, reporting clocks and CE declaration, with the Obserrian Advisor one click away." },
 ];
 
 export const OnboardingTour = () => {

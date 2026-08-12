@@ -1,5 +1,17 @@
 # Obserra EIOS — PRD
 
+## Round 27 (Jun 2026) — Product rebrand to "Obserra EU CRA Governance" (platform-wide, verified via screenshots)
+Per user request, rebranded the whole shell to present as the standalone product **"Obserra EU CRA Governance"**, keeping the company legal name "Executive Protection & Intelligence LLC" and the "Obserrian Advisor" branding.
+- **Login (`Auth.jsx`)**: app-name heading → "Obserra EU CRA Governance.", tagline → "Classify · Assess · Certify · Report · Attest", version badge → "v1 · EU Cyber Resilience Act Governance", positioning copy + feature chips (Product Classification / Conformity Assessment / CE Declaration), wordmark alt texts.
+- **Shell (`AppShell.jsx`)**: top-bar fallback → "Obserra EU CRA Governance"; sidebar top section re-themed to EU CRA dashboards and reordered EU CRA first: "EU CRA Governance", "CRA Executive Overview" (/app), "CRA Control Posture" (/app/control-intelligence), "CRA Incident Command" (/app/cyber-crisis-commander), "CRA Control Assurance", "CRA Data Sources"; added route accent for /app/cra-governance. (Routes unchanged — labels only.)
+- **Walkthrough (`OnboardingTour.jsx`)**: EXEC + OPS tours fully rewritten to EU CRA content, spotlight target → `nav-eu-cra-governance`.
+- **Meta**: `index.html` title + description + apple title, `manifest.json` name/short_name/description, `version.js` changelog headline, `ForcePasswordReset` + `Splash` copy.
+- **Setup guides**: `gen_docs.py` BRAND/TAGLINE/cover + "About" intro rewritten to EU CRA; guide download filenames renamed to `Obserra-EU-CRA-Governance-*` (both `gen_docs.py` and `deploy.py`); stale old-named files removed; guides regenerate cleanly at startup.
+- Verified: `brand-app-name`="Obserra EU CRA Governance.", `document.title`="Obserra EU CRA Governance", onboarding shows "Welcome to Obserra EU CRA Governance", all rebranded nav testids resolve.
+- **Honest caveat**: the downloadable guide BODY sections (`gen_docs.py` SECTIONS) still contain legacy crisis/AI-agent step-by-step content — only the guide identity/cover/filenames were rebranded. Full guide re-authoring for the 9 CRA tabs is a recommended follow-up.
+- **Still paused (approved earlier, to resume)**: CRA-grounded AI Analyst, Sample Products seeding, Approval Modals (replace window.prompt), public Auditor verification link.
+
+
 ## Round 26 (Jun 2026) — NEW APP: Obserra EU CRA Governance (iteration_149, frontend 100%, backend curl-verified, zero bugs)
 Integrated a brand-new app into the Obserra platform from a user-provided source bundle: **EU Cyber Resilience Act (Regulation (EU) 2024/2847) product-governance**. Reuses the existing Obserra backend (cookie-JWT auth, multi-tenant Mongo). No new 3rd-party integration required.
 - **Backend** `/app/backend/cra_governance.py` — routers `cra_router` (`/api/cra`) + `cra_public_router` (`/api/cra-public`), registered in `server.py` with `ensure_cra_indexes()` at startup. Endpoints: regulation map (18 requirements; 19 Class-I / 4 Class-II / 3 Critical categories), product register + deterministic/heuristic **classification** (Default/Important I/Important II/Critical) with conformity **pathway**, regulation-mapped **readiness assessment**, **SBOM** generation (CycloneDX), **Article 14** vulnerability reporting clocks (24h/72h/14d), **notified-body / lab** providers + external conformity assessments, **EU Declaration of Conformity + CE market-readiness gates**, hash-chained **Regulatory Ledger**, and **token-based vendor/assessor portal** (public, no auth, ledger never exposed).

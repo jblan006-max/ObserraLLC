@@ -22,6 +22,7 @@ import { api } from "@/lib/api";
 
 // Per-route accent so each dashboard has its own colour identity.
 const ROUTE_ACCENT = [
+  ["/app/cra-governance", "42 92% 52%"],
   ["/app/cyber-crisis-commander", "0 84% 60%"],
   ["/app/analytics", "210 92% 62%"],
   ["/app/sod", "0 84% 60%"],
@@ -70,16 +71,16 @@ function DualModeToggle() {
 
 const NAV_SECTIONS = [
   { section: null, items: [
-    { to: "/app", label: "Executive Overview", icon: LayoutDashboard, end: true },
-    { to: "/app/control-intelligence", label: "Control Posture", icon: Layers },
-    { to: "/app/cyber-crisis-commander", label: "Cyber Crisis Commander", icon: Siren },
     { to: "/app/cra-governance", label: "EU CRA Governance", icon: Landmark },
+    { to: "/app", label: "CRA Executive Overview", icon: LayoutDashboard, end: true },
+    { to: "/app/control-intelligence", label: "CRA Control Posture", icon: Layers },
+    { to: "/app/cyber-crisis-commander", label: "CRA Incident Command", icon: Siren },
   ]},
   { section: "Assurance", cat: true, color: "ai", items: [
-    { to: "/app/control-assurance", label: "Control Assurance", icon: Gauge },
+    { to: "/app/control-assurance", label: "CRA Control Assurance", icon: Gauge },
   ]},
   { section: "Sources", cat: true, color: "primary", items: [
-    { to: "/app/systems", label: "Connector Health", icon: Plug },
+    { to: "/app/systems", label: "CRA Data Sources", icon: Plug },
   ]},
   { section: "Admin", admin: true, items: [
     { to: "/app/audit", label: "Audit Log", icon: ScrollText },
@@ -326,7 +327,7 @@ export default function AppShell() {
             </button>
             <img src="/brand-lockup.png" alt="Obserra" className="h-6 w-auto object-contain md:hidden" />
             <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest truncate hidden lg:block">
-              {sub?.org_name || "Obserra — Cyber Crisis Commander"}
+              {sub?.org_name || "Obserra EU CRA Governance"}
             </div>
             <Popover>
               <PopoverTrigger asChild>

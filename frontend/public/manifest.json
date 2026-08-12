@@ -1,8 +1,8 @@
 {
   "id": "/app",
-  "short_name": "Obserra",
-  "name": "Obserra — Cyber Crisis Commander",
-  "description": "Discover, govern and constrain enterprise AI agents — modelled risk, guardrails, heuristic red-team and defensibility.",
+  "short_name": "Obserra CRA",
+  "name": "Obserra EU CRA Governance",
+  "description": "EU Cyber Resilience Act (Regulation (EU) 2024/2847) product governance — classification, conformity assessments, SBOM, Article 14 reporting, CE declaration and a tamper-evident regulatory ledger.",
   "start_url": "/app",
   "scope": "/",
   "display": "standalone",

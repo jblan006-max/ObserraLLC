@@ -54,23 +54,23 @@ export default function Auth() {
         <NetworkBackground className="absolute inset-0 w-full h-full opacity-70" />
         <div className="relative flex flex-col items-center text-center gap-6">
           <img src="/brand-mark.png" alt="Obserra mark" className="h-40 xl:h-52 w-auto object-contain logo-pulse drop-shadow-[0_8px_30px_rgba(86,184,233,0.25)]" />
-          <img src="/brand-wordmark.png" alt="OBSERRA — Executive Protection & Intelligence LLC" className="h-16 xl:h-20 w-auto object-contain" />
-          <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-ai/80" data-testid="wordmark-tagline">Detect · Command · Decide · Contain · Recover</p>
+          <img src="/brand-wordmark.png" alt="Obserra EU CRA Governance — Executive Protection & Intelligence LLC" className="h-16 xl:h-20 w-auto object-contain" />
+          <p className="font-mono text-[11px] uppercase tracking-[0.25em] text-ai/80" data-testid="wordmark-tagline">Classify · Assess · Certify · Report · Attest</p>
         </div>
         <div className="relative space-y-6">
           <h1 data-testid="brand-app-name" className="font-head font-black text-5xl leading-[1.05] tracking-tight">
-            Obserra <span className="text-ai">Cyber Crisis Commander.</span>
+            Obserra <span className="text-ai">EU CRA Governance.</span>
           </h1>
           <div>
-            <span data-testid="brand-version-badge" className="inline-flex items-center px-2 py-1 rounded-sm ai-border text-ai text-[10px] font-mono font-bold uppercase tracking-[0.2em]">v1 · Enterprise Cyber Incident Command</span>
+            <span data-testid="brand-version-badge" className="inline-flex items-center px-2 py-1 rounded-sm ai-border text-ai text-[10px] font-mono font-bold uppercase tracking-[0.2em]">v1 · EU Cyber Resilience Act Governance</span>
           </div>
           <p className="text-muted-foreground max-w-md text-base leading-relaxed">
-            <span className="text-foreground font-semibold">Continuous control effectiveness &amp; assurance.</span> Continuously measure control effectiveness, evidence freshness, framework coverage and drift — turning live control telemetry into board-ready assurance. Every metric carries its source, freshness and confidence.
+            <span className="text-foreground font-semibold">EU Cyber Resilience Act product governance.</span> Classify products with digital elements, run regulation-mapped conformity assessments, generate SBOMs, drive Article 14 reporting clocks and CE declarations — every record grounded in a tamper-evident regulatory ledger.
           </p>
           <div className="flex gap-3 text-[10px] font-mono uppercase tracking-widest text-muted-foreground">
-            <span className="px-2 py-1 rounded-sm border border-border">Incident Command</span>
-            <span className="px-2 py-1 rounded-sm border border-border">Executive Decisions</span>
-            <span className="px-2 py-1 rounded-sm ai-border text-ai">Regulatory Timers</span>
+            <span className="px-2 py-1 rounded-sm border border-border">Product Classification</span>
+            <span className="px-2 py-1 rounded-sm border border-border">Conformity Assessment</span>
+            <span className="px-2 py-1 rounded-sm ai-border text-ai">CE Declaration</span>
           </div>
         </div>
         <div className="relative flex items-center gap-3 text-xs font-mono text-muted-foreground">
@@ -93,10 +93,10 @@ export default function Auth() {
           )}
           <div className="lg:hidden mb-8 flex flex-col items-center text-center gap-4">
             <img src="/brand-mark.png" alt="Obserra mark" className="h-24 w-auto object-contain drop-shadow-[0_6px_20px_rgba(86,184,233,0.25)]" />
-            <img src="/brand-wordmark.png" alt="OBSERRA — Executive Protection & Intelligence LLC" className="h-14 w-auto object-contain" />
+            <img src="/brand-wordmark.png" alt="Obserra EU CRA Governance — Executive Protection & Intelligence LLC" className="h-14 w-auto object-contain" />
           </div>
           <p className="text-center text-xs text-muted-foreground mb-5 leading-relaxed" data-testid="auth-positioning">
-            Continuous control effectiveness, evidence assurance and framework coverage — every metric carries its source and freshness.
+            EU Cyber Resilience Act product governance — classification, conformity assessments, SBOM, Article 14 reporting and CE declaration, every record on a tamper-evident ledger.
           </p>
           <div className="flex gap-1 p-1 bg-secondary/50 rounded-lg mb-6 text-sm">
             {["login", "register"].map((t) => (

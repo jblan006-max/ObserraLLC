@@ -2,9 +2,9 @@
 """Generate the Obserra SAP UAC guides as PDF and Word (.docx).
 
 Produces three role-targeted guides from ONE set of sections + screenshots:
-  - Install & User Guide  (full)      -> Obserra-Cyber-Crisis-Commander-Install-and-User-Guide.{pdf,docx}
-  - Executive Guide       (short)     -> Obserra-Cyber-Crisis-Commander-Executive-Guide.{pdf,docx}
-  - Admin & Operator Guide(deep)      -> Obserra-Cyber-Crisis-Commander-Admin-Operator-Guide.{pdf,docx}
+  - Install & User Guide  (full)      -> Obserra-EU-CRA-Governance-Install-and-User-Guide.{pdf,docx}
+  - Executive Guide       (short)     -> Obserra-EU-CRA-Governance-Executive-Guide.{pdf,docx}
+  - Admin & Operator Guide(deep)      -> Obserra-EU-CRA-Governance-Admin-Operator-Guide.{pdf,docx}
 
 Every guide opens with a branded cover (logo) + a numbered Contents page. Screenshots
 are read from /app/scripts/shots and embedded.
@@ -20,26 +20,25 @@ os.makedirs(OUT, exist_ok=True)
 
 NAVY = "#0f1e3d"
 AI = "#12b4d6"
-BRAND = "Obserra Cyber Crisis Commander"
-TAGLINE = "Enterprise cyber incident command & executive decision intelligence"
+BRAND = "Obserra EU CRA Governance"
+TAGLINE = "EU Cyber Resilience Act (Regulation (EU) 2024/2847) product governance"
 
 E, A = "exec", "admin"      # audience tags
 ALL = (E, A)
 
 # (heading, [paragraphs], screenshot_or_None, audiences)
 SECTIONS = [
-    ("About Obserra Cyber Crisis Commander", [
-        "Obserra Cyber Crisis Commander lets you discover, understand, govern, "
-        "constrain and respond to the AI agents and models operating across your enterprise — before "
-        "delegated machine authority becomes enterprise risk. It gives security, GRC and executive "
-        "teams a single live view of which agents exist, what tools and permissions they hold, how "
-        "much autonomy they have, and where their capabilities combine into dangerous — 'toxic' — patterns.",
-        "Every number is computed LIVE from the underlying agent records on each request (No-Mock): "
-        "delegated authority tiers, modelled agent risk scores, guardrail coverage and the heuristic "
-        "red-team baseline are all derived from real telemetry. Governance actions (sanction, "
-        "restrict, suspend, kill) are written to the Defensibility Ledger so every decision is "
-        "audit-defensible, and the runtime enforcement connector can push those decisions to an "
-        "external agent runtime.",
+    ("About Obserra EU CRA Governance", [
+        "Obserra EU CRA Governance helps manufacturers, importers and distributors bring products "
+        "with digital elements into conformity with the EU Cyber Resilience Act (Regulation (EU) "
+        "2024/2847). It gives compliance, security and executive teams a single live view of product "
+        "classification, regulation-mapped readiness, SBOMs, Article 14 vulnerability reporting clocks, "
+        "notified-body sign-off and CE Declaration of Conformity.",
+        "Every fact is computed LIVE from the underlying product records (No-Mock): proposed Class I / "
+        "Class II / Critical classification, conformity pathway, assessment scores and market-readiness "
+        "gates are all derived from real records. Every regulatory action is written to a tamper-evident, "
+        "hash-chained Internal Regulatory Ledger so the compliance timeline is audit-defensible, and "
+        "secure vendor / notified-body portals never expose that private ledger.",
     ], None, ALL),
 
     ("Installing the App (One-Click PWA)", [
@@ -321,11 +320,11 @@ def generate_all():
     """Regenerate all role guides. Keeps pdf/docx/pdf_size/docx_size = the full guide."""
     exec_secs = [s for s in SECTIONS if E in s[3]]
     full_pdf, full_docx = _build(SECTIONS, "Install & User Guide",
-                                 "Obserra-Cyber-Crisis-Commander-Install-and-User-Guide.pdf", "Obserra-Cyber-Crisis-Commander-Install-and-User-Guide.docx")
+                                 "Obserra-EU-CRA-Governance-Install-and-User-Guide.pdf", "Obserra-EU-CRA-Governance-Install-and-User-Guide.docx")
     exec_pdf, exec_docx = _build(exec_secs, "Executive Guide",
-                                 "Obserra-Cyber-Crisis-Commander-Executive-Guide.pdf", "Obserra-Cyber-Crisis-Commander-Executive-Guide.docx")
+                                 "Obserra-EU-CRA-Governance-Executive-Guide.pdf", "Obserra-EU-CRA-Governance-Executive-Guide.docx")
     admin_pdf, admin_docx = _build(SECTIONS, "Admin & Operator Guide",
-                                   "Obserra-Cyber-Crisis-Commander-Admin-Operator-Guide.pdf", "Obserra-Cyber-Crisis-Commander-Admin-Operator-Guide.docx")
+                                   "Obserra-EU-CRA-Governance-Admin-Operator-Guide.pdf", "Obserra-EU-CRA-Governance-Admin-Operator-Guide.docx")
     return {"pdf": full_pdf, "docx": full_docx,
             "pdf_size": os.path.getsize(full_pdf), "docx_size": os.path.getsize(full_docx),
             "exec_pdf": exec_pdf, "exec_docx": exec_docx,

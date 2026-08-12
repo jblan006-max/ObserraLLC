@@ -8,6 +8,7 @@ export const APP_VERSION_LABEL = `v${APP_VERSION}`;
 // Add a new key (e.g. "1.1.0") when you cut a release and bump APP_VERSION.
 export const APP_CHANGELOG = {
   "1.0.0": [
+    "Obserra EU CRA Governance — EU Cyber Resilience Act (Regulation (EU) 2024/2847) product governance: classification, conformity assessments, SBOM, Article 14 reporting, CE declaration and a tamper-evident regulatory ledger",
     "Continuous Control Effectiveness & Assurance dashboards — Mission Control through Defensibility",
     "Weekly Assurance Recap & Monthly Assurance Digest with auto-send, cadence and branded sealed-PDF board copies",
     "Auditor access portal, reviewer timeline and engagement analytics",

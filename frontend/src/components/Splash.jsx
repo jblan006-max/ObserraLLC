@@ -34,7 +34,7 @@ export const Splash = () => {
         alt="Obserra"
         className="h-44 md:h-56 w-auto object-contain logo-pulse drop-shadow-[0_8px_40px_rgba(86,184,233,0.35)]"
       />
-      <img src="/brand-wordmark.png" alt="OBSERRA — Executive Protection & Intelligence LLC" className="mt-8 h-16 md:h-20 w-auto object-contain" />
+      <img src="/brand-wordmark.png" alt="Obserra EU CRA Governance — Executive Protection & Intelligence LLC" className="mt-8 h-16 md:h-20 w-auto object-contain" />
     </div>
   );
 };
