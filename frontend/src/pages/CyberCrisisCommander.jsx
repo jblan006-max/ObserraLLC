@@ -75,6 +75,7 @@ import {
 } from "@/hooks/useCrisisCommanderData";
 import { APP_VERSION_LABEL } from "@/version";
 import { CrisisTour } from "@/components/crisis/CrisisTour";
+import { NativeConnectors, WarRoomBroadcast, BoardCrisisDashboard, PresentToBoard } from "@/components/crisis/CrisisExtensions";
 
 const TABS = [
   ["mission", "Mission Control", Gauge],
@@ -88,6 +89,7 @@ const TABS = [
   ["controls", "Control Failures", ShieldAlert],
   ["timeline", "Timeline & Evidence", GitCommitVertical],
   ["briefing", "Executive Briefing", FileText],
+  ["board", "Board View", Landmark],
   ["defensibility", "Defensibility", ShieldCheck],
 ];
 
@@ -1634,6 +1636,8 @@ export default function CyberCrisisCommander() {
         </div>
       )}
 
+      {scenario.done && selectedCase && canOperate && <PresentToBoard selectedCase={selectedCase} variant="banner" />}
+
       {error && <div className="rounded-xl border border-crit/30 bg-crit/5 p-4 flex items-start gap-3" data-testid="crisis-error"><AlertTriangle className="w-5 h-5 text-crit shrink-0 mt-0.5" /><div><div className="font-head font-bold text-sm">Crisis intelligence incomplete</div><div className="text-xs text-muted-foreground mt-1">{error}</div></div></div>}
 
       <AIInsight dashboard="Cyber Crisis Commander" endpoint={selectedCase ? `/crisis/insight?ref=${selectedCase.ref}` : "/crisis/insight"} groundingLabel="the live crisis case, decisions, recovery & regulatory clocks" accent="0 84% 60%" auto slug="cyber-crisis-commander" />
@@ -1641,16 +1645,17 @@ export default function CyberCrisisCommander() {
       <div className="overflow-x-auto"><div className="inline-flex min-w-max rounded-xl border border-border bg-card p-1">{TABS.map(([id, label, Icon]) => <button key={id} onClick={() => openTab(id)} data-testid={`crisis-tab-${id}`} className={`relative inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-head font-bold transition-colors ${activeTab === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}`}><Icon className="w-3.5 h-3.5" />{label}{id === "warroom" && unreadMentions > 0 && <span data-testid="crisis-warroom-unread" className="ml-1 min-w-[16px] h-4 px-1 rounded-full bg-crit text-white text-[9px] font-mono inline-flex items-center justify-center">{unreadMentions}</span>}</button>)}</div></div>
 
       {activeTab === "mission" && <MissionControl data={effectiveData} selectedCase={selectedCase} caseDetail={caseDetail} openTab={openTab} />}
-      {activeTab === "command" && <div className="space-y-5"><IncidentCommand data={effectiveData} selectedCase={selectedCase} caseDetail={caseDetail} loadCase={loadCase} changed={changed} created={created} />{canOperate && <WebhookFeed />}</div>}
+      {activeTab === "command" && <div className="space-y-5"><IncidentCommand data={effectiveData} selectedCase={selectedCase} caseDetail={caseDetail} loadCase={loadCase} changed={changed} created={created} />{canOperate && <WebhookFeed />}{canOperate && <NativeConnectors />}</div>}
       {activeTab === "decisions" && <DecisionRoom selectedCase={selectedCase} caseDetail={caseDetail} recommendations={effectiveData?.recommendations || []} decisions={effectiveData?.decisions || []} changed={changed} />}
       {activeTab === "impact" && <BusinessImpact data={effectiveData} selectedCase={selectedCase} />}
       {activeTab === "response" && <div className="space-y-5"><ResponseActions selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} /><EntraContainment selectedCase={selectedCase} changed={changed} /></div>}
-      {activeTab === "warroom" && <WarRoom selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} user={user} live={activeTab === "warroom"} />}
+      {activeTab === "warroom" && <div className="space-y-5">{canOperate && <WarRoomBroadcast selectedCase={selectedCase} changed={changed} />}<WarRoom selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} user={user} live={activeTab === "warroom"} /></div>}
       {activeTab === "recovery" && <RecoveryCommand selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}
       {activeTab === "regulatory" && <RegulatoryLegal selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}
       {activeTab === "controls" && <ControlFailures data={effectiveData} />}
       {activeTab === "timeline" && <TimelineEvidence selectedCase={selectedCase} caseDetail={caseDetail} data={effectiveData} changed={changed} />}
       {activeTab === "briefing" && <ExecutiveBriefing data={effectiveData} selectedCase={selectedCase} caseDetail={caseDetail} reportBusy={reportBusy} generateReport={generateReport} />}
+      {activeTab === "board" && <BoardCrisisDashboard selectedCase={selectedCase} />}
       {activeTab === "defensibility" && <Defensibility data={effectiveData} sourceStatus={sourceStatus} />}
 
       <CrisisTour open={tourOpen} onClose={() => setTourOpen(false)} openTab={openTab} />

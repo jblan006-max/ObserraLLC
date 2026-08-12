@@ -1,0 +1,31 @@
+{
+  "summary": "Iter143 — Full backend + frontend verification of the 4 new Cyber Crisis Commander extensions (Native SIEM Connectors, Digital War Room Broadcast, Board Crisis Dashboard, Present to Board). Backend: created /app/backend/tests/test_iter143_crisis_extensions.py — 10/10 PASS covering (a) GET /crisis/connectors/native returning {secret, 5 connectors with secret-embedded push paths for crowdstrike/splunk/sentinel/servicenow/generic}, (b) POST /crisis/ingest/native/crowdstrike with real secret → {ok:true,ingested>=1}, (c) 401 on missing secret, 401 on wrong secret, 400/422 on empty body, 200 with X-Obserra-Secret header on splunk vendor, (d) GET /crisis/broadcast/status returning {teams:true,slack:true}, (e) GET /crisis/cases/CRISIS-0002/board returning full snapshot shape + recovery_overall/recovery_items, (f) POST /crisis/cases/CRISIS-0002/present-board returning snapshot_path, and GET /crisis/cases/CRISIS-0002/board-onepager.pdf returning a valid 142KB %PDF-1.4. Frontend: logged in as jblan2026 (Enter on password), dismissed onboarding tour, /app/cyber-crisis-commander renders (data-testid=cyber-crisis-commander-page) — all 13 tabs present including new 'board' tab, all switch cleanly with no white screen and no JS console errors (only two unrelated 400s from a background poller). FEATURE 1: crisis-native-connectors panel in command tab shows all 5 vendor cards, url spans, copy buttons; crisis-native-reveal toggle correctly masks (•••) and reveals the secret-embedded URL. FEATURE 2: warroom tab shows crisis-warroom-broadcast panel with teams/slack pills, message textarea, send button — sending a single labelled TEST_ITER143 broadcast wrote a 'SITREP broadcast' event to Timeline & Evidence. FEATURE 3: crisis-tab-board renders crisis-board-dashboard with readonly banner, all 5 KPI tiles (severity/contained/decisions/exposure/regulatory), decisions/regulatory/timeline sections. FEATURE 4: crisis-present-panel shows Prepare-board-pack — clicking it created a snapshot link (crisis-present-link) with Copy/Open/One-page PDF buttons and toast 'Board pack ready — snapshot link copied.' Storyline flow: Sample Breach → pick ransomware → click Step (crisis-scenario-step) 8×  → progress goes Step 2/9…Step 8/9…Resolved; the green 'Storyline complete — present it to the board' banner (crisis-present-banner) appears at top with an embedded crisis-present-board-btn. BONUS: previous iter142 DEMO ribbon bug is now FIXED — the global demo-mode-ribbon lights up during a scripted scenario ('DEMO MODE ACTIVE — SHOWCASE DATA IS DISPLAYED' band visible in banner screenshot). Cleanup: scenario/stop called, no real cases altered.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Cyber Crisis Commander header",
+        "issues": ["When a scenario is running, the header wraps to two lines and the Sample-Breach dropdown is replaced by 'Exit Demo / Resolved / Share Snapshot / Post-Incident Review / Report Pack / Ingest ServiceNow / Email Board Brief / Auto-brief / Walkthrough / Refresh / Executive Brief' — 11 header buttons on one row is very cramped at 1920px and forces wrap. Consider grouping into a kebab overflow menu."]
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter143_crisis_extensions.py",
+    "/app/test_reports/pytest/iter143.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "CyberCrisisCommander.jsx L1639 gates crisis-present-banner on scenario.done && selectedCase && canOperate. If a user advances via the backend directly (or the scenario status is refreshed from server) the React scenario.done flag never flips — the banner only appears when the user clicks the in-app Step button. Consider driving scenario state from a poller (/crisis/scenario/status) so the banner still appears in edge cases where advance is triggered by another operator/tab.",
+    "CrisisExtensions.jsx / native connector cards: reveal toggle masks the secret in the visible span but a right-click / view-source on the DOM likely still shows the raw URL if it is stored in a data-* attribute or in Copy handler — verify the raw secret is not leaked via clipboard when Copy is pressed while masked (should copy the actual URL, but element inspection should not reveal the plain secret when masked)."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter143_crisis_extensions.py"],
+  "success_rate": { "backend": "100% (10/10)", "frontend": "100% (all 4 features + regression 13/13 tabs + demo ribbon fix confirmed)" },
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin) — submit via Enter on password field.",
+  "seed_data_creation": "1 TEST_ITER143 CrowdStrike native ingest + 1 TEST_ITER143 Splunk native ingest attached to open case; 1 War-Room broadcast to Teams+Slack (single, clearly labelled 'TEST_ITER143 broadcast — automated regression, please ignore'); 1 board-snapshot created via Present-to-Board (revoked); 1 ransomware scripted scenario played to completion and stopped. Cleanup completed: snapshot revoked, /crisis/scenario/stop called (stopped:true), real CRISIS-0002 preserved.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 4 iter143 features are green end-to-end. Native connectors expose their push URL under key `path` (not `url`) — includes ?secret=whk_… and a header alt X-Obserra-Secret. Board endpoint returns recovery_overall + recovery_items. present-board returns snapshot_path (revoke via /cases/{ref}/snapshot/revoke). One-page PDF is ~142KB %PDF-1.4. Broadcast is LIVE — keep to a single labelled test message. Prior iter142 DEMO-ribbon bug was independently fixed in this build (demo state now flips on scenario start).",
+  "rca of the issue": "N/A — no failing feature."
+}

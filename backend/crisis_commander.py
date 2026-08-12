@@ -2295,3 +2295,267 @@ async def scenario_stop(user: dict = Depends(get_current_user)):
     await db.crisis_scenario.delete_many({"org_id": org_id})
     await _audit(org_id, _actor(user), "crisis.scenario.stop", str(counts))
     return {"stopped": True, **counts}
+
+
+
+# ===========================================================================
+# Native SIEM/EDR/SOAR connectors — first-class per-vendor push endpoints so
+# onboarding a tool is one paste (the URL embeds the vendor format + per-org
+# secret). The tool's RAW native JSON is mapped onto the crisis timeline via
+# _map_vendor_event — zero pre-formatting required on the customer side.
+# ===========================================================================
+from fastapi import Request as _Request
+
+_NATIVE_VENDORS = {
+    "crowdstrike": {"label": "CrowdStrike Falcon", "note": "Falcon Fusion SOAR → add a 'Send to webhook' action and POST the detection object here."},
+    "splunk": {"label": "Splunk Enterprise Security", "note": "Alert action → Webhook; point it at this URL (posts the alert result payload)."},
+    "sentinel": {"label": "Microsoft Sentinel", "note": "Analytics rule → Automation → Logic App / Playbook with an HTTP action posting the alert JSON."},
+    "servicenow": {"label": "ServiceNow SecOps", "note": "Flow Designer / Business Rule REST step posting the security incident record."},
+    "generic": {"label": "Generic HTTP (any tool)", "note": "POST the tool's native JSON; common fields are auto-detected."},
+}
+
+
+def _extract_native_payloads(body):
+    """Pull one or many event dicts out of a vendor's native webhook body."""
+    if body is None:
+        return []
+    if isinstance(body, list):
+        return [x for x in body if isinstance(x, dict)]
+    if isinstance(body, dict):
+        for key in ("events", "alerts", "records", "resources", "data", "result", "results", "incidents"):
+            v = body.get(key)
+            if isinstance(v, list) and v:
+                return [x for x in v if isinstance(x, dict)]
+            if isinstance(v, dict):
+                return [v]
+        return [body]
+    return []
+
+
+@api.get("/connectors/native")
+async def native_connectors(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    secret = await _webhook_secret(user["org_id"], create=True)
+    out = [{
+        "vendor": vend, "label": meta["label"], "note": meta["note"],
+        "path": f"/api/crisis/ingest/native/{vend}?secret={secret}",
+        "header": "X-Obserra-Secret",
+    } for vend, meta in _NATIVE_VENDORS.items()]
+    return {"secret": secret, "connectors": out}
+
+
+@api.post("/ingest/native/{vendor}")
+async def ingest_native(vendor: str, request: _Request, secret: str = ""):
+    """PUBLIC per-vendor push endpoint. Accepts the tool's RAW native JSON and
+    maps it onto the live crisis timeline. Authenticated by the per-org secret
+    (query ?secret= or an X-Obserra-Secret header)."""
+    sec = secret or request.headers.get("x-obserra-secret") or ""
+    if not sec:
+        raise HTTPException(status_code=401, detail="Missing webhook secret.")
+    org = await db.organizations.find_one({"crisis_webhook_secret": sec}, {"_id": 1})
+    if not org:
+        raise HTTPException(status_code=401, detail="Invalid webhook secret.")
+    org_id = str(org["_id"])
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Request body must be valid JSON.")
+    fmt = vendor if vendor in _VENDOR_MAPS else "generic"
+    raw_events = [_map_vendor_event(fmt, p) for p in _extract_native_payloads(payload)]
+    if not raw_events:
+        raise HTTPException(status_code=400, detail="No event object found in the payload.")
+    raw_events = raw_events[:50]
+    now = _now()
+    case = await db.crisis_cases.find_one(
+        {"org_id": org_id, "status": {"$ne": "Closed"}}, {"_id": 0, "ref": 1},
+        sort=[("updated_at", DESCENDING)])
+    if case:
+        ref = case["ref"]
+    else:
+        ref = await _next_ref(org_id, "crisis_cases", "CRISIS")
+        top = raw_events[0]
+        await db.crisis_cases.insert_one({
+            "ref": ref, "org_id": org_id, "via": "webhook",
+            "title": f"{_NATIVE_VENDORS.get(fmt, {}).get('label', 'Security tool')}: {top.get('title')}"[:200],
+            "severity": top.get("severity") or "High",
+            "summary": f"Opened automatically from an inbound {fmt} security webhook.",
+            "incident_refs": [], "risk_refs": [], "business_services": [],
+            "incident_commander": "", "executive_sponsor": "",
+            "status": "Active", "phase": "Detection",
+            "started_at": now, "updated_at": now, "next_update_at": None,
+            "created_by": f"{fmt} connector"})
+    ingested = 0
+    for ev in raw_events:
+        await db.crisis_events.insert_one({
+            "org_id": org_id, "case_ref": ref, "via": "webhook",
+            "event_id": await _next_ref(org_id, "crisis_events", "EVT"),
+            "kind": ev.get("kind") or "Detection", "title": (ev.get("title") or "Security event")[:200],
+            "detail": (ev.get("detail") or "")[:1000], "source": ev.get("source") or "External",
+            "severity": ev.get("severity") or "High", "occurred_at": ev.get("occurred_at") or now,
+            "created_at": now, "created_by": f"{fmt} connector"})
+        ingested += 1
+    await db.crisis_cases.update_one({"org_id": org_id, "ref": ref}, {"$set": {"updated_at": now}})
+    return {"ok": True, "vendor": fmt, "case_ref": ref, "ingested": ingested}
+
+
+# ===========================================================================
+# Digital War Room — broadcast a situation report (SITREP) to the org's Teams
+# and/or Slack channels, and report which channels are wired so leadership
+# knows the blast radius. Always writes a Communication timeline event.
+# ===========================================================================
+async def _chat_channels(org_id: str) -> dict:
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    alerts = org.get("scan_alerts") or {}
+    teams = bool(alerts.get("teams_url") or (org.get("live_teams") or {}).get("webhook_url"))
+    slack = bool(alerts.get("slack_url"))
+    return {"teams": teams, "slack": slack}
+
+
+@api.get("/broadcast/status")
+async def broadcast_status(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    return await _chat_channels(user["org_id"])
+
+
+class BroadcastBody(BaseModel):
+    message: str = ""
+
+
+@api.post("/cases/{ref}/broadcast")
+async def broadcast_sitrep(ref: str, body: BroadcastBody, user: dict = Depends(get_current_user)):
+    from self_scan import _post_chat_alert
+    _require_operator(user)
+    org_id = user["org_id"]
+    case = await _get_case(org_id, ref)
+    channels = await _chat_channels(org_id)
+    snap = await _build_snapshot({"org_id": org_id, "case_ref": ref, "expires_at": None})
+    now = _now()
+    actor = _actor(user)
+    custom = (body.message or "").strip()
+    title = f"SITREP — {(case.get('title') or '')[:70]} ({ref})"
+    lines = [
+        f"Severity {case.get('severity')} · Phase {case.get('phase')} · Status {case.get('status')}",
+        f"Contained ~{snap['contained_pct']}% · {snap['counts']['pending_decisions']} executive decision(s) pending · {snap['counts']['open_actions']} open action(s)",
+        f"Incident commander: {case.get('incident_commander') or 'Unassigned'}",
+    ]
+    if custom:
+        lines.append(f"Update from {actor}: {custom}")
+    text = "\n".join(lines)
+    posted = False
+    if channels["teams"] or channels["slack"]:
+        try:
+            await _post_chat_alert(org_id, f"🚨 {title}", text)
+            posted = True
+        except Exception:
+            posted = False
+    await db.crisis_events.insert_one({
+        "org_id": org_id, "case_ref": ref,
+        "event_id": await _next_ref(org_id, "crisis_events", "EVT"),
+        "kind": "Communication", "title": "War room SITREP broadcast",
+        "detail": (custom or "Situation report issued to leadership chat.")[:1000],
+        "source": "War Room", "severity": "Info",
+        "occurred_at": now, "created_at": now, "created_by": actor})
+    await db.crisis_cases.update_one({"org_id": org_id, "ref": ref}, {"$set": {"updated_at": now}})
+    await _audit(org_id, actor, "crisis.broadcast",
+                 f"{ref} teams={channels['teams']} slack={channels['slack']} posted={posted}")
+    return {"posted": posted, **channels}
+
+
+# ===========================================================================
+# Board Crisis Dashboard — a director-focused, read-only crisis view (exposure,
+# decisions pending, regulatory clocks, containment) reusing the snapshot data.
+# ===========================================================================
+@api.get("/cases/{ref}/board")
+async def board_view(ref: str, user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    org_id = user["org_id"]
+    await _get_case(org_id, ref)
+    snap = await _build_snapshot({"org_id": org_id, "case_ref": ref, "expires_at": None})
+    recovery = await db.crisis_recovery.find({"org_id": org_id, "case_ref": ref}, {"_id": 0}).to_list(500)
+    _rmap = {"Down": 0, "Restoring": 50, "Validated": 80, "Operational": 100}
+    vals = [r["pct"] if isinstance(r.get("pct"), (int, float)) else _rmap.get(r.get("status"), 0) for r in recovery]
+    snap["recovery_overall"] = round(sum(vals) / len(vals)) if vals else 0
+    snap["recovery_items"] = len(recovery)
+    return snap
+
+
+# ===========================================================================
+# Present to Board — one tap prepares a shareable board snapshot link (reused
+# if still valid) plus a one-page, board-ready PDF of the current crisis.
+# ===========================================================================
+@api.post("/cases/{ref}/present-board")
+async def present_board(ref: str, body: SnapshotCreate = SnapshotCreate(), user: dict = Depends(get_current_user)):
+    from datetime import timedelta
+    import secrets as _s
+    _require_operator(user)
+    org_id = user["org_id"]
+    await _get_case(org_id, ref)
+    now_dt = datetime.now(timezone.utc)
+    existing = await db.crisis_snapshots.find_one(
+        {"org_id": org_id, "case_ref": ref, "revoked": False}, {"_id": 0})
+    valid = False
+    if existing:
+        exp = _parse_iso(existing.get("expires_at"))
+        valid = (not exp) or now_dt <= exp
+    if valid:
+        token, expires_at = existing["token"], existing["expires_at"]
+    else:
+        days = max(1, min(90, body.expires_days or 7))
+        token = _s.token_urlsafe(18)
+        expires_at = (now_dt + timedelta(days=days)).isoformat()
+        await db.crisis_snapshots.update_many(
+            {"org_id": org_id, "case_ref": ref, "revoked": False}, {"$set": {"revoked": True}})
+        await db.crisis_snapshots.insert_one({
+            "token": token, "org_id": org_id, "case_ref": ref, "created_by": _actor(user),
+            "created_at": now_dt.isoformat(), "expires_at": expires_at, "revoked": False})
+        await _audit(org_id, _actor(user), "crisis.present_board", f"{ref} exp {days}d")
+    return {"token": token, "snapshot_path": f"/crisis-snapshot/{token}",
+            "onepager_path": f"/api/crisis/cases/{ref}/board-onepager.pdf", "expires_at": expires_at}
+
+
+@api.get("/cases/{ref}/board-onepager.pdf")
+async def board_onepager_pdf(ref: str, user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    from studio import ReportExportBody, _report_markdown
+    from reports import _build_pdf, _resolve_brand
+    from fastapi.responses import StreamingResponse
+    from bson import ObjectId
+    org_id = user["org_id"]
+    case = await _get_case(org_id, ref)
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}) or {}
+    snap = await _build_snapshot({"org_id": org_id, "case_ref": ref, "expires_at": None})
+
+    def _fmt(ts):
+        return str(ts).replace("T", " ")[:16] if ts else "-"
+
+    fin = case.get("financial_exposure")
+    pend = snap.get("pending_decisions", [])[:5]
+    regs = snap.get("regulatory", [])[:5]
+    tl = snap.get("timeline", [])[:6]
+    blocks = [
+        {"heading": f"{case.get('title', 'Crisis')} — Board Snapshot", "lines": [
+            f"Case {case.get('ref')} · Severity {case.get('severity')} · Phase {case.get('phase')} · Status {case.get('status')}",
+            f"Contained ~{snap.get('contained_pct', 0)}%  ·  {snap['counts']['pending_decisions']} decision(s) pending  ·  {snap['counts']['open_actions']} open action(s)",
+            f"Financial exposure: {('$' + format(int(fin), ',')) if isinstance(fin, (int, float)) else 'Not quantified'}",
+            f"Incident commander: {case.get('incident_commander') or 'Unassigned'} · Executive sponsor: {case.get('executive_sponsor') or 'Unassigned'}",
+            f"Business services: {', '.join(case.get('business_services') or []) or '-'}"]},
+        {"heading": "Decisions awaiting the board", "lines": [
+            f"{d.get('title')} — owner {d.get('owner') or '-'} · due {_fmt(d.get('due_at'))}" for d in pend] or ["No executive decisions pending."]},
+        {"heading": "Regulatory clocks", "lines": [
+            f"{o.get('jurisdiction')} — {o.get('regulation')} — {o.get('status')} — deadline {_fmt(o.get('deadline_at'))}" for o in regs] or ["No regulatory obligations tracked."]},
+        {"heading": "Latest timeline", "lines": [
+            f"{_fmt(e.get('occurred_at'))} — [{e.get('severity')}] {e.get('title')}" for e in tl] or ["No timeline events."]},
+    ]
+    title = f"Board Snapshot {ref}"
+    export = ReportExportBody(
+        title=title,
+        ai_narrative=(f"One-page board snapshot for {ref} — severity, containment, decisions pending, "
+                      f"regulatory clocks and the latest timeline, drawn from the live crisis record."),
+        blocks=blocks)
+    buf = _build_pdf(_report_markdown(export), title, cover=False,
+                     org_name=(org.get("name") or None), brand=_resolve_brand(org))
+    fname = "".join(c for c in f"board-snapshot-{ref}".lower() if c.isascii() and (c.isalnum() or c == "-")) or "board-snapshot"
+    await _audit(org_id, _actor(user), "crisis.board_onepager", ref)
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename="{fname}.pdf"'})
