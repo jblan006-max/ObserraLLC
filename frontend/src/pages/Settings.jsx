@@ -13,6 +13,78 @@ const OPTIONS = [
   { value: "off", label: "Off", desc: "No digest emails" },
 ];
 
+const DOW = [["0", "Monday"], ["1", "Tuesday"], ["2", "Wednesday"], ["3", "Thursday"], ["4", "Friday"], ["5", "Saturday"], ["6", "Sunday"]];
+
+function CraDigestCard({ isAdmin }) {
+  const [cfg, setCfg] = useState(null);
+  const [optin, setOptin] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
+  const load = async () => {
+    try {
+      const { data } = await api.get("/cra/digest/settings");
+      setCfg(data.schedule);
+      setOptin(!!data.optin);
+    } catch { /* noop */ }
+  };
+  useEffect(() => { load(); }, []);
+  const saveSchedule = async () => {
+    setBusy(true);
+    try { await api.put("/cra/digest/settings", cfg); toast.success("CRA briefing schedule saved."); }
+    catch (e) { toast.error(e.response?.data?.detail || "Could not save schedule."); }
+    finally { setBusy(false); }
+  };
+  const toggleOptin = async (val) => {
+    setOptin(val);
+    try { await api.put("/cra/digest/optin", { optin: val }); toast.success(val ? "You'll receive the weekly CRA briefing." : "Weekly CRA briefing turned off for you."); }
+    catch { setOptin(!val); toast.error("Could not update your preference."); }
+  };
+  const sendNow = async () => {
+    setSending(true);
+    try { const { data } = await api.post("/cra/digest/send-now"); toast.success(`Preview briefing sent to ${data.sent_to}.`); }
+    catch (e) { toast.error(e.response?.data?.detail || "Could not send preview."); }
+    finally { setSending(false); }
+  };
+  if (!cfg) return null;
+  return (
+    <div className="bg-card fact-border rounded-xl p-6 space-y-4" data-testid="cra-digest-settings">
+      <div className="flex items-center gap-2"><Mail className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">CRA AI Analyst Weekly Briefing</h2></div>
+      <p className="text-sm text-muted-foreground">A grounded EU CRA executive briefing (with the one-page PDF attached) emailed to your team each week.</p>
+      <label className="flex items-center gap-3 cursor-pointer">
+        <input type="checkbox" checked={optin} onChange={(e) => toggleOptin(e.target.checked)} data-testid="cra-digest-optin" className="w-4 h-4 accent-primary" />
+        <span className="text-sm font-head font-bold">Email me the weekly CRA briefing</span>
+      </label>
+      {isAdmin && (
+        <div className="border-t border-border pt-4 space-y-3">
+          <div className="text-[10px] font-mono uppercase text-muted-foreground">Organisation schedule (admin)</div>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input type="checkbox" checked={cfg.enabled} onChange={(e) => setCfg({ ...cfg, enabled: e.target.checked })} data-testid="cra-digest-enabled" className="w-4 h-4 accent-primary" />
+            <span className="text-sm">Send the weekly briefing to your organisation</span>
+          </label>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-mono uppercase text-muted-foreground">Day (UTC)</label>
+              <select value={String(cfg.day_of_week)} onChange={(e) => setCfg({ ...cfg, day_of_week: Number(e.target.value) })} data-testid="cra-digest-day" className="mt-1 w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm">
+                {DOW.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-[10px] font-mono uppercase text-muted-foreground">Hour (UTC)</label>
+              <select value={String(cfg.hour_utc)} onChange={(e) => setCfg({ ...cfg, hour_utc: Number(e.target.value) })} data-testid="cra-digest-hour" className="mt-1 w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm">
+                {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
+              </select>
+            </div>
+          </div>
+          <button onClick={saveSchedule} disabled={busy} data-testid="cra-digest-save" className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm inline-flex items-center gap-2 disabled:opacity-50">{busy && <Loader2 className="w-4 h-4 animate-spin" />} Save schedule</button>
+        </div>
+      )}
+      <div className="border-t border-border pt-4">
+        <button onClick={sendNow} disabled={sending} data-testid="cra-digest-send-now" className="px-5 py-2.5 rounded-md border border-primary/40 text-foreground hover:bg-primary/10 font-head font-bold text-sm inline-flex items-center gap-2 disabled:opacity-50">{sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4 text-primary" />} Send me one now</button>
+      </div>
+    </div>
+  );
+}
+
 function ChatAlertsCard() {
   const [st, setSt] = useState(null);
   const [teams, setTeams] = useState("");
@@ -320,6 +392,8 @@ export default function Settings() {
           {busy && <Loader2 className="w-4 h-4 animate-spin" />} Save preferences
         </button>
       </div>
+
+      <CraDigestCard isAdmin={isAdmin} />
 
       <div className="bg-card fact-border rounded-xl p-6 space-y-4" data-testid="guided-tour-settings">
         <div className="flex items-center gap-2"><Compass className="w-4 h-4 text-ai" /><h2 className="font-head font-bold text-lg">Guided Tour</h2></div>

@@ -328,8 +328,6 @@ async def weekly_drift_digest(request: Request, background_tasks: BackgroundTask
     from agents import _run_card_engagement_weekly_digest, _run_unusual_access_watchlist
     background_tasks.add_task(_run_card_engagement_weekly_digest)
     background_tasks.add_task(_run_unusual_access_watchlist)
-    from cra_governance import _run_cra_analyst_weekly_digest
-    background_tasks.add_task(_run_cra_analyst_weekly_digest)
     return {"status": "accepted"}
 
 
@@ -468,6 +466,8 @@ async def hourly_overdue_digest(request: Request, background_tasks: BackgroundTa
     background_tasks.add_task(run_scheduled_sitreps)
     background_tasks.add_task(run_connector_quiet_alerts)
     background_tasks.add_task(run_weekly_director_digest)
+    from cra_governance import _run_cra_analyst_digest_tick
+    background_tasks.add_task(_run_cra_analyst_digest_tick)
     return {"status": "accepted"}
 
 

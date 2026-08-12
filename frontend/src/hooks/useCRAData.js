@@ -9,6 +9,7 @@ const SOURCES = [
   ["externalAssessments", "/cra/external-assessments", []],
   ["vulnerabilities", "/cra/vulnerabilities", []],
   ["regulation", "/cra/regulation", { requirements: [], categories: {} }],
+  ["controls", "/cra/controls", { overall: {}, controls: [] }],
   ["ledger", "/cra/ledger?limit=300", []],
 ];
 

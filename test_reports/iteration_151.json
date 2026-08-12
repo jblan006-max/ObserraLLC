@@ -1,0 +1,33 @@
+{
+  "summary": "Iteration 151 — Independent re-verification of the 6 EU CRA Governance enhancements. Backend pytest /app/backend/tests/test_iter151_cra_controls_digest.py — 10/10 PASS: (1) GET /api/cra/controls shape (overall.percentage 82%, requirements_total=18, controls[] with status in {Implemented,Partial,Gap,Not Started} and risk in {Low,Medium,High,Unknown}; compliance_rate null when assessed==0); (2) GET /api/cra/dashboard.next_deadline={2026-09-11, 'Article 14 vulnerability & incident reporting obligations apply', 30}; (3) GET /api/cra/insight headline opens with '…30 days…' and includes next_deadline; (4) GET /api/cra/digest/settings returns schedule+optin+is_admin+last_sent_week (admin=True); PUT /digest/settings persists (day_of_week=3, hour_utc=14); PUT /digest/optin toggles user field; POST /digest/send-now returns {ok:true,sent_to:'jblan2026@gmail.com'} (200); (5) non-admin PUT /digest/settings → 403; non-admin (fresh org, no products) POST /digest/send-now → 400 with helpful message; (6) auditor access-log round-trip: POST /products/{ref}/verification-link → GET /api/cra-public/verify/{token} → GET /api/cra/products shows last_verification_view_at + verification_view_count incremented by exactly 1. Frontend Playwright (admin jblan2026@gmail.com, Chromium 1920x1080): logged in, dismissed onboarding tour. Mission Control cra-deadline-chip renders '30 days to next CRA deadline · Article 14 vulnerability & incident reporting obligations apply (2026-09-11)' and clicking activates the Vulnerability & ENISA tab. Control Dashboard tab (data-testid cra-tab-controls) renders cra-controls-overall='82%' and cra-controls-table with 18 rows. Regulatory Ledger tab: selecting a product renders cra-verify-access with human-readable last view + count ('Auditor last opened this product\\'s link 8/12/2026, 11:51:52 PM · 2 views'); generating a link, opening /cra-verify/<token> in a fresh tab, and reloading updated the count (2 → 4 views across two opens). Settings /app/settings shows CRA digest card (cra-digest-settings) with all 6 controls (optin/enabled/day/hour/save/send-now); saving schedule returned 200 and 'Send me one now' returned 200 with success toast 'Preview briefing sent to jblan2026@gmail.com.'",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "CRA Governance", "issues": ["Benign hydration console warning: '<span> cannot be a child of <option>' inside product <select>s — carry-over from dev-time visual-editor instrumentation; no functional impact."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter151_cra_controls_digest.py",
+    "/app/test_reports/pytest/iter151.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "CRAGovernance.jsx has grown to 1126 lines — split ControlDashboard / RegulatoryLedger / VulnerabilityDashboard / DeclarationCard into individual files (<500 LOC each) to keep the page maintainable.",
+    "cra_governance.py is 1346 lines — extract digest (settings/optin/send-now + _send_cra_digest + PDF) into its own module cra_digest.py; likewise controls_dashboard is a natural candidate for cra_controls.py.",
+    "_send_cra_digest currently ignores email send failures at call-sites of send-now (returns ok:true even if delivery raised). Consider surfacing partial-failure counts to the API response so admins can see when Resend rejects a recipient.",
+    "POST /cra/products/{ref}/verification-link has no rate-limit; a compromised admin cookie could mint many 30-day auditor tokens. Add an org-level throttle or link-cap per product.",
+    "cra-verify-access shows a raw locale timestamp ('8/12/2026, 11:51:52 PM'); consider relative time ('2 minutes ago') for better auditor UX and add a tooltip with the exact UTC time."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter151_cra_controls_digest.py"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% (chip+navigate, control dashboard, ledger access-log round-trip, settings save+send-now)"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin) — working. Fresh non-admin users created via /api/auth/register with 20+ char passwords.",
+  "seed_data_creation": "Reused existing 7 CRA products on the admin org (from iter150 seeding). Created two disposable non-admin accounts (nonadmin_iter151_<hex>@example.com) in fresh trial orgs — used only for negative-path tests (403 PUT /digest/settings, 400 POST /digest/send-now with zero products). Auditor verification link opened twice against product CRA-PROD-00012, incrementing verification_view_count from 2 to 4.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Regulatory Ledger tab id is 'ledger' (not 'regulation'); Regulation Map is 'regulation'. Auth register requires 15+ char passwords with uppercase/lowercase/number/symbol. Onboarding tour reappears after page.reload() on /app/cra-governance and /app/settings — always re-dismiss via role=button name='Skip'. Send-now goes through live Resend to the admin address; safe to trigger but not free. Public verify URL is /cra-verify/<token>; the API returns {token, expires_at, path} — use the returned path directly instead of scraping the rendered link.",
+  "rca of the issue": "No functional issues. One transient test-script bug: initially used the wrong tab id ('regulation' vs 'ledger') for the auditor access-log check — corrected by reading the tabs array in CRAGovernance.jsx and rerunning. All 6 approved changes work end-to-end."
+}

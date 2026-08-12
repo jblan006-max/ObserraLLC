@@ -56,6 +56,7 @@ const TABS = [
   ["conformity", "Labs & Notified Bodies", Building2],
   ["declaration", "Declaration & CE", BadgeCheck],
   ["regulation", "Regulation Map", Landmark],
+  ["controls", "Control Dashboard", FileCheck2],
 ];
 
 function Badge({ children, tone = "primary" }) {
@@ -237,6 +238,17 @@ function MissionControl({ data, openTab }) {
   const external = data.externalAssessments || [];
   return (
     <div className="space-y-5">
+      {d.next_deadline && (
+        <button
+          onClick={() => openTab("vulnerability")}
+          data-testid="cra-deadline-chip"
+          className="inline-flex items-center gap-2 rounded-full border border-high/30 bg-high/10 px-3.5 py-1.5 text-xs font-head font-bold text-high hover:bg-high/20 transition-colors"
+        >
+          <Clock3 className="w-3.5 h-3.5" />
+          {d.next_deadline.days_remaining} days to next CRA deadline
+          <span className="font-normal text-muted-foreground normal-case">· {d.next_deadline.label} ({d.next_deadline.date})</span>
+        </button>
+      )}
       <div className="grid grid-cols-2 xl:grid-cols-6 gap-4">
         <Metric label="Products" value={d.products || 0} sub={`${d.classification_approved || 0} classifications approved`} icon={Boxes} />
         <Metric label="CRA Readiness" value={`${d.average_readiness || 0}%`} sub="Average regulation-mapped assessment score" icon={Gauge} tone="low" />
@@ -643,6 +655,17 @@ function RegulatoryLedger({ data, isAdmin }) {
               <div className="text-[10px] font-mono text-muted-foreground mt-1">Expires {new Date(link.expires_at).toLocaleString()}</div>
             </div>
           )}
+          {productRef && (() => {
+            const sp = (data.products || []).find((p) => p.ref === productRef);
+            return (
+              <div className="mt-3 flex items-center gap-2 text-[11px] text-muted-foreground" data-testid="cra-verify-access">
+                <Fingerprint className="w-3.5 h-3.5 text-ai" />
+                {sp?.last_verification_view_at
+                  ? `Auditor last opened this product's link ${new Date(sp.last_verification_view_at).toLocaleString()} · ${sp.verification_view_count || 1} view${(sp.verification_view_count || 1) === 1 ? "" : "s"}`
+                  : "No auditor has opened this product's verification link yet."}
+              </div>
+            );
+          })()}
         </Panel>
       )}
       <Panel title="Internal Regulatory Ledger" subtitle="Private, append-only, hash-chained regulatory record. No external portal receives ledger access.">
@@ -903,6 +926,90 @@ function DeclarationDashboard({ data, reload, isAdmin }) {
   );
 }
 
+const RISK_TONE = { High: "crit", Medium: "high", Low: "low", Unknown: "primary" };
+const STATUS_TONE = { Implemented: "low", Partial: "high", Gap: "crit", "Not Started": "primary" };
+
+function ControlDashboard({ data }) {
+  const controls = data.controls?.controls || [];
+  const o = data.controls?.overall || {};
+  const pct = o.percentage || 0;
+  const chips = [
+    ["Implemented", o.implemented || 0, "text-low"],
+    ["Partial", o.partial || 0, "text-high"],
+    ["Gaps", o.gaps || 0, "text-crit"],
+    ["Not started", o.not_started || 0, "text-muted-foreground"],
+    ["High risk", o.high_risk || 0, "text-crit"],
+    ["Requirements", o.requirements_total || controls.length, "text-primary"],
+  ];
+  return (
+    <div className="space-y-5" data-testid="cra-controls">
+      <Panel title="CRA Control Dashboard" subtitle="Live compliance coverage of every EU CRA essential requirement, computed from the latest assessment on each product.">
+        <div className="grid lg:grid-cols-4 gap-4">
+          <div className="rounded-xl border border-border bg-secondary/20 p-4">
+            <div className="text-[10px] font-mono uppercase text-muted-foreground">Overall compliance</div>
+            <div className="font-head font-black text-4xl mt-2" data-testid="cra-controls-overall">{pct}%</div>
+            <div className="mt-3 h-2 rounded-full bg-secondary overflow-hidden">
+              <div className="h-full bg-low transition-all" style={{ width: `${pct}%` }} />
+            </div>
+            <div className="text-[10px] text-muted-foreground mt-2">{o.products_assessed || 0}/{o.products_total || 0} products assessed</div>
+          </div>
+          <div className="lg:col-span-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {chips.map(([label, value, cls]) => (
+              <div key={label} className="rounded-xl border border-border bg-secondary/20 p-4">
+                <div className="text-[10px] font-mono uppercase text-muted-foreground">{label}</div>
+                <div className={`font-head font-black text-2xl mt-1 ${cls}`}>{value}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </Panel>
+
+      <Panel title="Controls & requirements" subtitle="Every requirement with its coverage, implementation status and risk.">
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[900px] text-xs">
+            <thead className="font-mono uppercase text-[9px] text-muted-foreground border-b border-border">
+              <tr>
+                <th className="text-left py-3">Control</th>
+                <th className="text-left py-3">Legal basis</th>
+                <th className="text-left py-3 w-[170px]">Compliance</th>
+                <th className="text-left py-3">Status</th>
+                <th className="text-left py-3">Risk</th>
+              </tr>
+            </thead>
+            <tbody data-testid="cra-controls-table">
+              {controls.map((c) => (
+                <tr key={c.requirement_id} className="border-b border-border/60 align-top">
+                  <td className="py-3 pr-3">
+                    <div className="font-mono text-[10px] text-ai">{c.requirement_id}</div>
+                    <div className="font-head font-bold mt-0.5">{c.title}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">{c.domain} · {c.conforming}/{c.assessed || 0} conforming{c.nonconforming ? ` · ${c.nonconforming} non-conforming` : ""}</div>
+                  </td>
+                  <td className="py-3 pr-3 max-w-[200px] text-muted-foreground">{(c.legal_refs || []).join(", ")}</td>
+                  <td className="py-3 pr-3">
+                    {c.compliance_rate === null || c.compliance_rate === undefined ? (
+                      <span className="text-[10px] text-muted-foreground">Not assessed</span>
+                    ) : (
+                      <div>
+                        <div className="text-[10px] mb-1">{c.compliance_rate}%</div>
+                        <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
+                          <div className={`h-full ${c.compliance_rate === 100 ? "bg-low" : c.compliance_rate >= 50 ? "bg-high" : "bg-crit"}`} style={{ width: `${c.compliance_rate}%` }} />
+                        </div>
+                      </div>
+                    )}
+                  </td>
+                  <td className="py-3 pr-3"><Badge tone={STATUS_TONE[c.status] || "primary"}>{c.status}</Badge></td>
+                  <td className="py-3"><Badge tone={RISK_TONE[c.risk] || "primary"}>{c.risk}</Badge></td>
+                </tr>
+              ))}
+              {!controls.length && <tr><td colSpan={5} className="py-4 text-muted-foreground">No controls computed yet — register or load products and complete an assessment.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
 function RegulationMap({ data }) {
   const requirements = data.regulation?.requirements || [];
   return (
@@ -1003,6 +1110,7 @@ export default function CRAGovernance() {
       {active === "conformity" && <ConformityDashboard data={data} reload={reload} isAdmin={isAdmin} />}
       {active === "declaration" && <DeclarationDashboard data={data} reload={reload} isAdmin={isAdmin} />}
       {active === "regulation" && <RegulationMap data={data} />}
+      {active === "controls" && <ControlDashboard data={data} />}
 
       <Panel title="Defensibility and legal boundary" subtitle="Operational safeguards for a regulation-driven platform">
         <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3 text-xs">

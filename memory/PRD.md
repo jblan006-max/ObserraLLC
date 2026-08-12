@@ -1,5 +1,15 @@
 # Obserra EIOS — PRD
 
+## Round 30 (Jun 2026) — 6 CRA analyst/controls enhancements (iteration_151: backend 10/10 + frontend 100%, zero functional bugs)
+All 6 user-selected items delivered across `cra_governance.py`, `scheduled.py`, `CRAGovernance.jsx`, `Settings.jsx`, `useCRAData.js`:
+- **Control Dashboard** — new tab (`cra-tab-controls`) + `GET /api/cra/controls`: every CRA requirement rolled up to compliance_rate, Implemented/Partial/Gap/Not-Started status, Low/Medium/High/Unknown risk, and an overall % (live 82% across 18 controls). UI: overall ring + stat chips + coverage-bar table.
+- **Digest opt-in + schedule + send-now** — `GET/PUT /api/cra/digest/settings` (admin schedule: enabled, day_of_week 0=Mon, hour_utc), `PUT /api/cra/digest/optin` (per-user), `POST /api/cra/digest/send-now` (preview). Settings card `CraDigestCard`. Non-admin PUT→403; send-now with no products→400.
+- **Scheduler** — CRA digest moved OFF the fixed weekly cron into an hourly-gated `_run_cra_analyst_digest_tick` (wired into `hourly-overdue-digest`) that fires at each org's configured UTC day+hour, once per ISO week (`last_sent_week`), to opted-in admins/execs. Respects the 5-cron cap.
+- **PDF digest** — weekly email + send-now attach a one-page Executive Brief PDF (`_cra_exec_brief_pdf`, reportlab).
+- **Deadline chip** — Mission Control `cra-deadline-chip` shows the countdown to the nearest CRA milestone (dashboard + insight now return `next_deadline`); clicking opens Vulnerability & ENISA.
+- **Auditor access log** — `public_verify` records `last_verification_view_at` + increments `verification_view_count`; surfaced per product in the Regulatory Ledger auditor panel (`cra-verify-access`).
+- Backlog (non-blocking, from test review): split `CRAGovernance.jsx`/`cra_governance.py` into modules; rate-limit verification-link minting; relative-time for auditor access; surface partial email-send failures.
+
 ## Round 29 (Jun 2026) — 5 CRA AI-Analyst & guide enhancements (backend curl + digest send verified, frontend smoke-tested)
 All 5 user-selected follow-ups delivered on `cra_governance.py` / `CRAGovernance.jsx` / `scheduled.py` / `scripts/*`:
 - **Statutory-deadline headline** — `_cra_next_deadline()` computes the nearest CRA milestone (11 Jun 2026 conformity-body notification, 11 Sep 2026 Article 14 reporting, 11 Dec 2027 general application). The AI Analyst headline now opens with the countdown (verified live: "30 days to Article 14 … on 2026-09-11"). Insight endpoint refactored into reusable `compute_cra_insight(org_id, use_cache)`.

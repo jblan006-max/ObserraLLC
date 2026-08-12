@@ -480,7 +480,56 @@ async def dashboard(user: dict = Depends(get_current_user)):
         "reporting_overdue":overdue,
         "reporting_effective_date":REPORTING_EFFECTIVE_DATE,
         "general_application_date":GENERAL_APPLICATION_DATE,
+        "next_deadline":_cra_next_deadline(),
     }
+
+@cra_router.get("/controls")
+async def controls_dashboard(user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    products = await db.cra_products.find({"org_id":org_id},{"_id":0,"ref":1}).to_list(1000)
+    assessments = await db.cra_assessments.find({"org_id":org_id},{"_id":0}).to_list(1000)
+    latest = {}
+    for a in sorted(assessments, key=lambda x: x.get("updated_at",""), reverse=True):
+        latest.setdefault(a.get("product_ref"), a)
+    latest_list = list(latest.values())
+    controls = []
+    total_points = total_cells = 0
+    implemented = partial_ct = gaps = not_started = high_risk = 0
+    for req in REGULATORY_REQUIREMENTS:
+        rid = req["requirement_id"]
+        c = {"Conforming":0,"Partial":0,"Nonconforming":0,"Not Applicable":0,"Not Assessed":0}
+        for a in latest_list:
+            for ans in a.get("answers",[]):
+                if ans.get("requirement_id") == rid:
+                    st = ans.get("status","Not Assessed")
+                    c[st] = c.get(st,0) + 1
+                    break
+        assessed = c["Conforming"] + c["Partial"] + c["Nonconforming"]
+        points = c["Conforming"]*1.0 + c["Partial"]*0.5
+        total_points += points; total_cells += assessed
+        rate = round(points/assessed*100) if assessed else None
+        if assessed == 0:
+            status, risk = "Not Started", "Unknown"; not_started += 1
+        elif rate == 100:
+            status, risk = "Implemented", "Low"; implemented += 1
+        elif rate == 0:
+            status, risk = "Gap", "High"; gaps += 1
+        else:
+            status = "Partial"; risk = "Medium" if rate >= 50 else "High"; partial_ct += 1
+        if c["Nonconforming"] > 0 and risk != "High":
+            risk = "High"
+        if risk == "High":
+            high_risk += 1
+        controls.append({"requirement_id":rid,"domain":req["domain"],"title":req["title"],
+                         "legal_refs":req["legal_refs"],"assessed":assessed,"products_total":len(products),
+                         "conforming":c["Conforming"],"partial":c["Partial"],"nonconforming":c["Nonconforming"],
+                         "not_applicable":c["Not Applicable"],"not_assessed":c["Not Assessed"],
+                         "compliance_rate":rate,"status":status,"risk":risk})
+    overall = round(total_points/total_cells*100) if total_cells else 0
+    return {"overall":{"percentage":overall,"requirements_total":len(REGULATORY_REQUIREMENTS),
+                       "implemented":implemented,"partial":partial_ct,"gaps":gaps,"not_started":not_started,
+                       "high_risk":high_risk,"products_assessed":len(latest_list),"products_total":len(products)},
+            "controls":controls}
 
 @cra_router.get("/products")
 async def list_products(user: dict = Depends(get_current_user)):
@@ -1070,6 +1119,9 @@ async def public_verify(raw_token: str):
     product = await get_product(org_id, token["product_ref"])
     integrity, rows = await _verify_ledger_chain(org_id)
     pref = token["product_ref"]
+    await db.cra_products.update_one(
+        {"org_id": org_id, "ref": pref},
+        {"$set": {"last_verification_view_at": iso()}, "$inc": {"verification_view_count": 1}})
     timeline = [
         {"sequence": r["sequence"], "ts": r["ts"], "event_type": r["event_type"], "object_type": r["object_type"],
          "object_ref": r["object_ref"], "legal_refs": r.get("legal_refs", []), "actor": r.get("actor"),
@@ -1143,30 +1195,152 @@ def _cra_analyst_digest_html(org_name: str, insight: dict, ctx: dict) -> str:
         '</td></tr></table>')
 
 
-async def _run_cra_analyst_weekly_digest():
+def _cra_exec_brief_pdf(org_name, ctx, insight):
+    from io import BytesIO
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib.units import inch
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+
+    def x(s):
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    buf = BytesIO()
+    styles = getSampleStyleSheet()
+    navy = colors.HexColor("#0f1e3d"); ai = colors.HexColor("#12b4d6")
+    title = ParagraphStyle("t", parent=styles["Title"], fontSize=18, textColor=navy, spaceAfter=2)
+    sub = ParagraphStyle("s", parent=styles["Normal"], fontSize=9, textColor=colors.grey)
+    h = ParagraphStyle("h", parent=styles["Heading2"], fontSize=12, textColor=ai, spaceBefore=10, spaceAfter=4)
+    body = ParagraphStyle("b", parent=styles["BodyText"], fontSize=10, leading=14)
+    t = ctx["totals"]; nd = insight.get("next_deadline") or ctx.get("next_deadline")
+    doc = SimpleDocTemplate(buf, pagesize=LETTER, topMargin=0.7 * inch, bottomMargin=0.7 * inch, title="EU CRA Executive Brief")
+    story = [Paragraph("EU CRA Governance &#8212; Executive Brief", title),
+             Paragraph(f"{x(org_name)} &#183; Regulation (EU) 2024/2847 &#183; {datetime.now().strftime('%d %B %Y')}", sub),
+             HRFlowable(width="100%", color=ai), Spacer(1, 8),
+             Paragraph(x(insight.get("headline", "")), body)]
+    if nd:
+        story.append(Paragraph(f"<b>Next statutory deadline:</b> {x(nd['label'])} on {nd['date']} ({nd['days_remaining']} days).", body))
+    story.append(Paragraph("Portfolio posture", h))
+    rows = [["Products", str(t["products"])], ["Classification approved", str(t["classification_approved"])],
+            ["CE-ready", str(t["ce_ready"])], ["CE blockers", str(ctx["counts"]["blocked"])],
+            ["Overdue Article 14 clocks", str(ctx["counts"]["overdue_clocks"])], ["Average readiness", f"{t['average_readiness']}%"]]
+    tbl = Table(rows, colWidths=[3.2 * inch, 3.0 * inch])
+    tbl.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 10), ("TEXTCOLOR", (0, 0), (0, -1), navy),
+                             ("LINEBELOW", (0, 0), (-1, -1), 0.3, colors.HexColor("#e5e7eb")),
+                             ("BOTTOMPADDING", (0, 0), (-1, -1), 5), ("TOPPADDING", (0, 0), (-1, -1), 5)]))
+    story += [tbl, Paragraph("Key insights", h)]
+    for i in insight.get("insights", [])[:5]:
+        story.append(Paragraph(f"<b>{x((i.get('kind') or 'fact').upper())}:</b> {x(i.get('text', ''))}", body))
+    story.append(Paragraph("Recommended actions", h))
+    for a in insight.get("actions", [])[:5]:
+        story.append(Paragraph(f"&#8226; {x(a)}", body))
+    story += [Spacer(1, 10), HRFlowable(width="100%", color=colors.HexColor("#e5e7eb")),
+              Paragraph("Compiled live from Obserra records. Classifications are proposed until authorised approval. Decision-support only &#8212; not legal advice or a guarantee of CRA conformity.", sub)]
+    doc.build(story)
+    return buf.getvalue()
+
+
+async def _cra_digest_recipients(org_id: str) -> list[dict]:
+    users = await db.users.find(
+        {"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
+        {"_id": 0, "email": 1, "cra_digest_optin": 1}).to_list(200)
+    return [u for u in users if u.get("cra_digest_optin", True)]
+
+
+async def _send_cra_digest(org: dict, recipients: list[dict], attach_pdf: bool = True) -> int:
+    import base64
+    from kernel import notifications
+    org_id = str(org["_id"])
+    ctx = await _cra_insight_context(org_id)
+    insight = await compute_cra_insight(org_id, use_cache=False)
+    html = _cra_analyst_digest_html(org.get("name", "Your organization"), insight, ctx)
+    att = None
+    if attach_pdf:
+        try:
+            raw = _cra_exec_brief_pdf(org.get("name", "Your organization"), ctx, insight)
+            att = [{"filename": "obserra-eu-cra-executive-brief.pdf", "content": base64.b64encode(raw).decode()}]
+        except Exception:
+            att = None
+    sent = 0
+    for r in recipients:
+        await notifications.send_email(r["email"], "CRA AI Analyst — your weekly EU CRA briefing", html, attachments=att)
+        sent += 1
+    return sent
+
+
+async def _run_cra_analyst_digest_tick():
+    """Hourly gate: send each org's weekly CRA briefing at its configured UTC day + hour."""
     import logging
     from kernel import notifications
     logger = logging.getLogger("obserra.cra")
+    now = utcnow()
+    week_key = now.strftime("%G-W%V")
     orgs = await db.organizations.find({}).to_list(1000)
     for org in orgs:
         org_id = str(org["_id"])
         try:
+            cfg = org.get("cra_digest") or {}
+            if not cfg.get("enabled", True):
+                continue
+            if int(cfg.get("day_of_week", 0)) != now.weekday() or int(cfg.get("hour_utc", 8)) != now.hour:
+                continue
+            if cfg.get("last_sent_week") == week_key:
+                continue
             if not await db.cra_products.find_one({"org_id": org_id}, {"_id": 0, "ref": 1}):
                 continue
-            recipients = await db.users.find(
-                {"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
-                {"_id": 0, "email": 1, "digest_cadence": 1}).to_list(200)
-            recipients = [r for r in recipients if r.get("digest_cadence", "weekly") == "weekly"]
-            if not recipients:
-                continue
-            ctx = await _cra_insight_context(org_id)
-            insight = await compute_cra_insight(org_id, use_cache=False)
-            html = _cra_analyst_digest_html(org.get("name", "Your organization"), insight, ctx)
-            for r in recipients:
-                await notifications.send_email(r["email"], "CRA AI Analyst — your weekly EU CRA briefing", html)
-            await notifications.create(
-                org_id, "report", "CRA AI Analyst weekly briefing sent",
-                f"Emailed the EU CRA executive briefing to {len(recipients)} recipient(s).", ref="cra-analyst-digest")
-            logger.info(f"CRA analyst digest sent for org {org_id}: {len(recipients)} recipient(s)")
+            recipients = await _cra_digest_recipients(org_id)
+            if recipients:
+                sent = await _send_cra_digest(org, recipients, attach_pdf=True)
+                await notifications.create(
+                    org_id, "report", "CRA AI Analyst weekly briefing sent",
+                    f"Emailed the EU CRA executive briefing to {sent} recipient(s).", ref="cra-analyst-digest")
+                logger.info(f"CRA analyst digest sent for org {org_id}: {sent} recipient(s)")
+            await db.organizations.update_one({"_id": org["_id"]}, {"$set": {"cra_digest.last_sent_week": week_key}})
         except Exception as e:
-            logger.error(f"CRA analyst digest failed for org {org_id}: {e}")
+            logger.error(f"CRA analyst digest tick failed for org {org_id}: {e}")
+
+
+class CRADigestSchedule(BaseModel):
+    enabled: bool = True
+    day_of_week: int = Field(0, ge=0, le=6)
+    hour_utc: int = Field(8, ge=0, le=23)
+
+
+class CRADigestOptin(BaseModel):
+    optin: bool
+
+
+@cra_router.get("/digest/settings")
+async def get_digest_settings(user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}, {"_id": 0, "cra_digest": 1})
+    cfg = (org or {}).get("cra_digest") or {}
+    return {"schedule": {"enabled": cfg.get("enabled", True), "day_of_week": int(cfg.get("day_of_week", 0)), "hour_utc": int(cfg.get("hour_utc", 8))},
+            "optin": user.get("cra_digest_optin", True), "is_admin": user.get("role") == "admin",
+            "last_sent_week": cfg.get("last_sent_week")}
+
+
+@cra_router.put("/digest/settings")
+async def update_digest_settings(body: CRADigestSchedule, admin: dict = Depends(require_roles("admin"))):
+    from bson import ObjectId
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {
+        "cra_digest.enabled": body.enabled, "cra_digest.day_of_week": body.day_of_week, "cra_digest.hour_utc": body.hour_utc}})
+    return {"ok": True, "schedule": body.model_dump()}
+
+
+@cra_router.put("/digest/optin")
+async def update_digest_optin(body: CRADigestOptin, user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    await db.users.update_one({"_id": ObjectId(user["id"])}, {"$set": {"cra_digest_optin": body.optin}})
+    return {"ok": True, "optin": body.optin}
+
+
+@cra_router.post("/digest/send-now")
+async def send_digest_now(user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    if not await db.cra_products.find_one({"org_id": user["org_id"]}, {"_id": 0, "ref": 1}):
+        raise HTTPException(400, "Add or load a CRA product first — there is nothing to brief yet.")
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])})
+    await _send_cra_digest(org, [{"email": user["email"]}], attach_pdf=True)
+    return {"ok": True, "sent_to": user["email"]}
