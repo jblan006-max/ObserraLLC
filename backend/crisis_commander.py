@@ -631,7 +631,12 @@ async def update_obligation(ref: str, obligation_id: str, body: CrisisObligation
 # Demo Mode (staged ransomware scenario, clearly flagged, one-click clear)
 # ---------------------------------------------------------------------------
 async def _demo_clear(org_id: str) -> dict:
+    from bson import ObjectId
     await db.crisis_scenario.delete_many({"org_id": org_id})
+    try:
+        await db.organizations.update_one({"_id": ObjectId(org_id)}, {"$set": {"ci_demo_active": False}})
+    except Exception:
+        pass
     return {
         "cases": (await db.crisis_cases.delete_many({"org_id": org_id, "demo": True})).deleted_count,
         "actions": (await db.crisis_actions.delete_many({"org_id": org_id, "demo": True})).deleted_count,
@@ -663,6 +668,8 @@ async def demo_seed(user: dict = Depends(get_current_user)):
     await _ensure_indexes()
     org_id = user["org_id"]
     await _demo_clear(org_id)
+    from bson import ObjectId
+    await db.organizations.update_one({"_id": ObjectId(org_id)}, {"$set": {"ci_demo_active": True}})
     now = datetime.now(timezone.utc)
 
     def iso(minutes_ago):
@@ -1646,6 +1653,91 @@ async def webhook_rotate(user: dict = Depends(get_current_user)):
     return {"secret": sec}
 
 
+# --- Vendor payload mapping — map any SIEM/EDR/SOAR native JSON to our shape --
+_SEV_EXACT = {"5": "Critical", "sev1": "Critical", "p1": "Critical",
+              "4": "High", "sev2": "High", "p2": "High",
+              "3": "Medium", "sev3": "Medium", "p3": "Medium",
+              "2": "Low", "1": "Low", "sev4": "Low", "sev5": "Low", "p4": "Low", "p5": "Low"}
+_SEV_WORDS = [("critical", "Critical"), ("crit", "Critical"), ("emergency", "Critical"), ("fatal", "Critical"),
+              ("high", "High"), ("error", "High"),
+              ("medium", "Medium"), ("moderate", "Medium"), ("warn", "Medium"),
+              ("low", "Low"), ("info", "Low")]
+
+
+def _severity_norm(val) -> str:
+    if val is None:
+        return "High"
+    s = str(val).strip().lower()
+    if not s:
+        return "High"
+    if s in _SEV_EXACT:
+        return _SEV_EXACT[s]
+    for word, out in _SEV_WORDS:
+        if word in s:
+            return out
+    return "Medium"
+
+
+def _dig(obj, path):
+    cur = obj
+    for part in path.split("."):
+        if isinstance(cur, dict) and part in cur:
+            cur = cur[part]
+        else:
+            return None
+    return cur
+
+
+def _first(payload, paths):
+    for p in paths:
+        v = _dig(payload, p)
+        if v not in (None, "", []):
+            return v
+    return None
+
+
+_VENDOR_MAPS = {
+    "generic": {"title": ["title", "name", "message", "summary", "rule", "alert", "displayName", "short_description"],
+                "detail": ["detail", "description", "message", "info", "body"],
+                "severity": ["severity", "priority", "level", "urgency", "risk"],
+                "source": ["source", "vendor", "product", "tool"], "kind": ["kind", "type", "category", "class"],
+                "occurred_at": ["occurred_at", "timestamp", "time", "@timestamp", "createdAt", "eventTime"],
+                "default_source": "External", "default_kind": "Detection"},
+    "crowdstrike": {"title": ["detection_name", "name", "DetectName", "metadata.eventType", "pattern_disposition_description"],
+                    "detail": ["description", "technique", "tactic", "filename", "cmdline"],
+                    "severity": ["severity_name", "SeverityName", "max_severity", "severity"],
+                    "source": [], "kind": [], "occurred_at": ["timestamp", "created_timestamp", "ProcessStartTime"],
+                    "default_source": "CrowdStrike", "default_kind": "Threat"},
+    "splunk": {"title": ["search_name", "result.signature", "result.rule_title", "result.source", "name"],
+               "detail": ["result._raw", "result.description", "result.message"],
+               "severity": ["result.urgency", "result.severity", "urgency", "severity"],
+               "source": [], "kind": [], "occurred_at": ["result._time", "result.timestamp"],
+               "default_source": "Splunk", "default_kind": "Detection"},
+    "sentinel": {"title": ["properties.alertDisplayName", "AlertName", "DisplayName", "properties.displayName"],
+                 "detail": ["properties.description", "Description", "properties.remediationSteps"],
+                 "severity": ["properties.severity", "Severity", "AlertSeverity"],
+                 "source": [], "kind": [], "occurred_at": ["properties.timeGenerated", "TimeGenerated", "properties.startTimeUtc"],
+                 "default_source": "Microsoft Sentinel", "default_kind": "Detection"},
+    "servicenow": {"title": ["short_description", "number", "u_short_description"],
+                   "detail": ["description", "comments", "work_notes"],
+                   "severity": ["severity", "priority", "urgency", "impact"],
+                   "source": [], "kind": [], "occurred_at": ["opened_at", "sys_created_on"],
+                   "default_source": "ServiceNow", "default_kind": "Incident"},
+}
+
+
+def _map_vendor_event(fmt: str, payload: dict) -> dict:
+    m = _VENDOR_MAPS.get((fmt or "generic").lower(), _VENDOR_MAPS["generic"])
+    return {
+        "kind": str(_first(payload, m["kind"]) or m["default_kind"])[:40],
+        "title": str(_first(payload, m["title"]) or "Security event")[:200],
+        "detail": str(_first(payload, m["detail"]) or "")[:1000],
+        "source": str(_first(payload, m["source"]) or m["default_source"])[:60],
+        "severity": _severity_norm(_first(payload, m["severity"])),
+        "occurred_at": (str(_first(payload, m["occurred_at"])) if _first(payload, m["occurred_at"]) else None),
+    }
+
+
 class WebhookEvent(BaseModel):
     kind: str = "Detection"
     title: str
@@ -1662,6 +1754,21 @@ class WebhookIngest(BaseModel):
     case_title: str | None = None
     severity: str | None = None
     events: list[WebhookEvent] = []
+    format: str | None = None
+    payload: dict | None = None
+    payloads: list[dict] | None = None
+
+
+class TestMap(BaseModel):
+    format: str = "generic"
+    payload: dict = {}
+
+
+@api.post("/webhook/test-map")
+async def webhook_test_map(body: TestMap, user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    return {"format": body.format, "mapped": _map_vendor_event(body.format, body.payload or {}),
+            "formats": list(_VENDOR_MAPS.keys())}
 
 
 @api.post("/ingest/webhook")
@@ -1673,9 +1780,13 @@ async def ingest_webhook(body: WebhookIngest):
     if not org:
         raise HTTPException(status_code=401, detail="Invalid webhook secret.")
     org_id = str(org["_id"])
-    if not body.events:
-        raise HTTPException(status_code=400, detail="No events provided.")
-    if len(body.events) > 50:
+    raw_events = [e.model_dump() for e in body.events]
+    if not raw_events and body.format:
+        vend = body.payloads if body.payloads is not None else ([body.payload] if body.payload else [])
+        raw_events = [_map_vendor_event(body.format, p) for p in vend if isinstance(p, dict)]
+    if not raw_events:
+        raise HTTPException(status_code=400, detail="No events provided. Send 'events', or a 'format' + 'payload'.")
+    if len(raw_events) > 50:
         raise HTTPException(status_code=413, detail="Too many events in one call (max 50).")
     now = _now()
     ref = body.case_ref
@@ -1705,13 +1816,13 @@ async def ingest_webhook(body: WebhookIngest):
             raise HTTPException(status_code=409,
                 detail="No open crisis case to attach events to. Provide case_ref or set open_case=true.")
     ingested = 0
-    for ev in body.events:
+    for ev in raw_events:
         await db.crisis_events.insert_one({
             "org_id": org_id, "case_ref": ref, "via": "webhook",
             "event_id": await _next_ref(org_id, "crisis_events", "EVT"),
-            "kind": ev.kind or "Detection", "title": (ev.title or "Security event")[:200],
-            "detail": (ev.detail or "")[:1000], "source": ev.source or "External",
-            "severity": ev.severity or "High", "occurred_at": ev.occurred_at or now,
+            "kind": ev.get("kind") or "Detection", "title": (ev.get("title") or "Security event")[:200],
+            "detail": (ev.get("detail") or "")[:1000], "source": ev.get("source") or "External",
+            "severity": ev.get("severity") or "High", "occurred_at": ev.get("occurred_at") or now,
             "created_at": now, "created_by": "Inbound Webhook"})
         ingested += 1
     await db.crisis_cases.update_one({"org_id": org_id, "ref": ref}, {"$set": {"updated_at": now}})
@@ -1766,16 +1877,18 @@ async def revoke_snapshot(ref: str, user: dict = Depends(get_current_user)):
     return {"revoked": res.modified_count}
 
 
-@api.get("/public/snapshot/{token}")
-async def public_snapshot(token: str):
-    """PUBLIC — read-only board snapshot resolved by share token."""
-    from bson import ObjectId
+async def _resolve_snapshot_doc(token: str) -> dict:
     doc = await db.crisis_snapshots.find_one({"token": token}, {"_id": 0})
     if not doc or doc.get("revoked"):
         raise HTTPException(status_code=404, detail="This snapshot link is invalid or has been revoked.")
     exp = _parse_iso(doc.get("expires_at"))
     if exp and datetime.now(timezone.utc) > exp:
         raise HTTPException(status_code=410, detail="This snapshot link has expired.")
+    return doc
+
+
+async def _build_snapshot(doc: dict) -> dict:
+    from bson import ObjectId
     org_id, ref = doc["org_id"], doc["case_ref"]
     case = await db.crisis_cases.find_one({"org_id": org_id, "ref": ref}, {"_id": 0})
     if not case:
@@ -1813,47 +1926,236 @@ async def public_snapshot(token: str):
     }
 
 
+@api.get("/public/snapshot/{token}")
+async def public_snapshot(token: str):
+    """PUBLIC — read-only board snapshot resolved by share token."""
+    return await _build_snapshot(await _resolve_snapshot_doc(token))
+
+
+@api.get("/public/snapshot/{token}/stream")
+async def public_snapshot_stream(token: str):
+    """PUBLIC — Server-Sent Events: pushes a fresh snapshot whenever the incident
+    changes, so board members see updates the instant they happen."""
+    import asyncio
+    import json as _json
+    from starlette.responses import StreamingResponse
+
+    async def gen():
+        last_sig = None
+        for _ in range(200):  # ~10 min, then client auto-reconnects
+            try:
+                snap = await _build_snapshot(await _resolve_snapshot_doc(token))
+            except HTTPException as exc:
+                yield f"event: closed\ndata: {_json.dumps({'detail': exc.detail})}\n\n"
+                return
+            sig = f"{snap['case'].get('updated_at')}|{len(snap['timeline'])}|{snap['contained_pct']}|{snap['counts']['pending_decisions']}"
+            if sig != last_sig:
+                last_sig = sig
+                yield f"data: {_json.dumps(snap)}\n\n"
+            else:
+                yield ": keep-alive\n\n"
+            await asyncio.sleep(3)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache, no-transform",
+                                      "X-Accel-Buffering": "no", "Connection": "keep-alive"})
+
+
 # ===========================================================================
 # Sample-Breach scenario — a scripted, auto-advancing walkthrough that surfaces
 # timeline events + executive decisions in sequence (detection -> recovery),
 # so prospect demos play like a real incident with zero setup. Uses the demo
 # flag so the DEMO ribbon shows and one-click clear removes everything.
 # ===========================================================================
-_SCENARIO_BEATS = [
-    {"phase": "Triage", "severity": "Critical",
-     "events": [("Threat", "EDR confirms credential-theft malware on 3 endpoints",
-                 "Malicious binary matches a known ransomware loader.", "CrowdStrike EDR", "Critical")],
-     "participants": [("Incident Commander", "A. Rivera", "SecOps", "Engaged"),
-                      ("CISO", "Executive Sponsor", "Security leadership", "Engaged")]},
-    {"events": [("Threat", "Privileged account used to reach SAP production",
-                 "A compromised admin session pivoted to the ERP estate.", "Microsoft Entra", "Critical")],
-     "actions": [("Isolate SAP order-processing segment?", "Decision", "Critical", "Awaiting Approval",
-                  True, "CIO", "$1.8M/hr revenue impact", "Halts NA order processing")]},
-    {"phase": "Containment",
-     "events": [("Containment", "7 endpoints isolated via EDR",
-                 "Automated network containment applied to affected hosts.", "CrowdStrike EDR", "High")],
-     "actions": [("Revoke 3 compromised privileged identities", "Containment", "Critical", "Executing",
-                  False, "", "Stops lateral movement", "Locks out 3 admins pending re-issue")]},
-    {"events": [("Business Impact", "North American order fulfillment degraded",
-                 "Order-intake queue is backing up across NA.", "ServiceNow", "High")],
-     "actions": [("Engage cyber insurer and outside counsel", "Decision", "High", "Awaiting Approval",
-                  True, "General Counsel", "Preserves coverage & privilege", "None")]},
-    {"events": [("Communication", "CISO briefs executive team; holding statement drafted",
-                 "Board notified; customer comms staged for approval.", "Obserra", "Medium")],
-     "obligations": [("EU (GDPR)", "GDPR Art. 33 personal data breach", "Possible EU customer PII exposure",
-                      66, "General Counsel", "Assessing", "Scope of affected EU records")]},
-    {"status": "Recovering",
-     "events": [("Containment", "Attacker persistence removed; domain admin credentials rotated",
-                 "Golden-ticket risk mitigated across the domain.", "Microsoft Entra", "High")]},
-    {"phase": "Recovery",
-     "events": [("Recovery", "Order management restored from validated backup",
-                 "Clean restore verified against a known-good snapshot.", "Obserra", "High")],
-     "recovery": [("Order Management System", "System", "Validated"),
-                  ("SAP ERP Production", "System", "Restoring")]},
-    {"phase": "Post-Incident", "status": "Closed",
-     "events": [("Recovery", "All services verified; heightened monitoring in place",
-                 "Incident closed; post-incident review scheduled.", "Obserra", "Medium")]},
-]
+_SCENARIOS = {
+    "ransomware": {
+        "label": "Ransomware — Order Fulfillment",
+        "title": "Ransomware — North American Order Fulfillment (Sample Breach)",
+        "description": "Encryptor loose in NA fulfillment with SAP at risk — isolate, insurer and restore decisions.",
+        "severity": "High", "phase": "Detection",
+        "services": ["Order Management", "North American Sales", "Customer Fulfillment", "Payment Processing"],
+        "commander": "A. Rivera (SecOps Lead)", "sponsor": "CISO",
+        "seed": ("Detection", "SIEM flags anomalous authentication spike on VPN concentrator",
+                 "Impossible-travel + brute-force pattern from a single source ASN.", "Splunk SIEM", "High"),
+        "beats": [
+            {"phase": "Triage", "severity": "Critical",
+             "events": [("Threat", "EDR confirms credential-theft malware on 3 endpoints",
+                         "Malicious binary matches a known ransomware loader.", "CrowdStrike EDR", "Critical")],
+             "participants": [("Incident Commander", "A. Rivera", "SecOps", "Engaged"),
+                              ("CISO", "Executive Sponsor", "Security leadership", "Engaged")]},
+            {"events": [("Threat", "Privileged account used to reach SAP production",
+                         "A compromised admin session pivoted to the ERP estate.", "Microsoft Entra", "Critical")],
+             "actions": [("Isolate SAP order-processing segment?", "Decision", "Critical", "Awaiting Approval",
+                          True, "CIO", "$1.8M/hr revenue impact", "Halts NA order processing")]},
+            {"phase": "Containment",
+             "events": [("Containment", "7 endpoints isolated via EDR",
+                         "Automated network containment applied to affected hosts.", "CrowdStrike EDR", "High")],
+             "actions": [("Revoke 3 compromised privileged identities", "Containment", "Critical", "Executing",
+                          False, "", "Stops lateral movement", "Locks out 3 admins pending re-issue")]},
+            {"events": [("Business Impact", "North American order fulfillment degraded",
+                         "Order-intake queue is backing up across NA.", "ServiceNow", "High")],
+             "actions": [("Engage cyber insurer and outside counsel", "Decision", "High", "Awaiting Approval",
+                          True, "General Counsel", "Preserves coverage & privilege", "None")]},
+            {"events": [("Communication", "CISO briefs executive team; holding statement drafted",
+                         "Board notified; customer comms staged for approval.", "Obserra", "Medium")],
+             "obligations": [("EU (GDPR)", "GDPR Art. 33 personal data breach", "Possible EU customer PII exposure",
+                              66, "General Counsel", "Assessing", "Scope of affected EU records")]},
+            {"status": "Recovering",
+             "events": [("Containment", "Attacker persistence removed; domain admin credentials rotated",
+                         "Golden-ticket risk mitigated across the domain.", "Microsoft Entra", "High")]},
+            {"phase": "Recovery",
+             "events": [("Recovery", "Order management restored from validated backup",
+                         "Clean restore verified against a known-good snapshot.", "Obserra", "High")],
+             "recovery": [("Order Management System", "System", "Validated"),
+                          ("SAP ERP Production", "System", "Restoring")]},
+            {"phase": "Post-Incident", "status": "Closed",
+             "events": [("Recovery", "All services verified; heightened monitoring in place",
+                         "Incident closed; post-incident review scheduled.", "Obserra", "Medium")]},
+        ],
+    },
+    "insider": {
+        "label": "Insider Threat — IP Exfiltration",
+        "title": "Insider Data Exfiltration — Departing Engineer (Sample Breach)",
+        "description": "A departing engineer exfiltrates source code — suspend access, preserve evidence, protect IP.",
+        "severity": "High", "phase": "Detection",
+        "services": ["Source Control", "Product Engineering", "Intellectual Property"],
+        "commander": "M. Osei (Insider Risk Lead)", "sponsor": "CISO",
+        "seed": ("Detection", "DLP flags a 4.2 GB source-code upload to a personal cloud account",
+                 "Departing engineer uploaded repositories minutes before end of shift.", "Microsoft Purview DLP", "High"),
+        "beats": [
+            {"phase": "Triage", "severity": "Critical",
+             "events": [("Threat", "UEBA confirms mass repository cloning from one workstation",
+                         "38 private repos cloned in 12 minutes.", "Splunk UEBA", "Critical")],
+             "participants": [("Incident Commander", "M. Osei", "Insider Risk", "Engaged"),
+                              ("CISO", "Executive Sponsor", "Security leadership", "Engaged")]},
+            {"events": [("Threat", "Exfil destination is a personal, unmanaged cloud account",
+                         "Data has left the managed perimeter.", "Netskope CASB", "Critical")],
+             "actions": [("Suspend the employee's accounts and revoke access now?", "Decision", "Critical",
+                          "Awaiting Approval", True, "CHRO + CISO", "Prevents further exfil; HR/legal sensitivity",
+                          "Locks out the employee")]},
+            {"phase": "Containment",
+             "events": [("Containment", "Accounts disabled; sessions and tokens revoked",
+                         "Endpoint quarantined and egress blocked.", "Microsoft Entra", "High")],
+             "actions": [("Preserve a forensic image of the workstation", "Containment", "High", "Executing",
+                          False, "", "Chain of custody for potential litigation", "Read-only image")]},
+            {"events": [("Business Impact", "Exposed repos include the unreleased pricing engine IP",
+                         "Competitive and trade-secret exposure under review.", "Obserra", "High")],
+             "actions": [("Engage outside counsel and notify insurer", "Decision", "High", "Awaiting Approval",
+                          True, "General Counsel", "Trade-secret protection & privilege", "None")]},
+            {"events": [("Communication", "Legal issues litigation hold; HR briefed",
+                         "Evidence preserved; comms restricted to need-to-know.", "Obserra", "Medium")],
+             "obligations": [("US (Trade Secrets)", "DTSA misappropriation assessment",
+                              "Potential IP theft by an insider", 70, "General Counsel", "Assessing",
+                              "Repository and access logs")]},
+            {"status": "Recovering",
+             "events": [("Containment", "Cloud provider honored takedown; copies confirmed deleted",
+                         "Third-party deletion attestation received.", "Netskope CASB", "High")]},
+            {"phase": "Recovery",
+             "events": [("Recovery", "Access model tightened; least-privilege re-baselined",
+                         "Repo access scoped to active projects only.", "Obserra", "High")],
+             "recovery": [("Source Control Access", "Policy", "Validated"),
+                          ("Insider Risk Controls", "Policy", "Restoring")]},
+            {"phase": "Post-Incident", "status": "Closed",
+             "events": [("Recovery", "Case closed; insider-risk program review scheduled",
+                         "PIR and control updates queued.", "Obserra", "Medium")]},
+        ],
+    },
+    "third_party": {
+        "label": "Third-Party Breach — CRM Vendor",
+        "title": "Third-Party SaaS Breach — CRM Vendor Compromise (Sample Breach)",
+        "description": "A CRM vendor is breached with our customer data in scope — sever tokens, notify, re-onboard.",
+        "severity": "High", "phase": "Detection",
+        "services": ["CRM Integration", "Revenue Operations", "Customer Notifications"],
+        "commander": "D. Kaur (Vendor Risk Lead)", "sponsor": "CISO",
+        "seed": ("Detection", "CRM vendor discloses a breach of their production tenant",
+                 "Vendor bulletin: attacker accessed customer databases.", "Vendor Advisory", "High"),
+        "beats": [
+            {"phase": "Triage", "severity": "Critical",
+             "events": [("Threat", "Our customer records confirmed in the affected vendor tenant",
+                         "2.1M contact records with emails and phone numbers.", "Obserra", "Critical")],
+             "participants": [("Incident Commander", "D. Kaur", "Vendor Risk", "Engaged"),
+                              ("CISO", "Executive Sponsor", "Security leadership", "Engaged")]},
+            {"events": [("Threat", "Shared vendor API tokens may be compromised",
+                         "Integration tokens are in scope of the breach.", "Obserra", "High")],
+             "actions": [("Rotate all vendor API tokens and sever the integration?", "Decision", "Critical",
+                          "Awaiting Approval", True, "CIO", "Breaks CRM sync temporarily", "Halts vendor data flow")]},
+            {"phase": "Containment",
+             "events": [("Containment", "Vendor integration tokens rotated; connector paused",
+                         "Data flow to and from the vendor suspended.", "Obserra", "High")],
+             "actions": [("Force password reset for exposed customer accounts", "Containment", "High", "Executing",
+                          False, "", "Limits account takeover", "Mass credential reset")]},
+            {"events": [("Business Impact", "Sales pipeline visibility degraded during the CRM pause",
+                         "Revenue ops working from cached exports.", "ServiceNow", "Medium")],
+             "actions": [("Notify affected customers and regulators", "Decision", "High", "Awaiting Approval",
+                          True, "General Counsel", "Regulatory clocks are running", "None")]},
+            {"events": [("Communication", "Customer notification and FAQ drafted with legal",
+                         "Comms staged across regions.", "Obserra", "Medium")],
+             "obligations": [("EU (GDPR)", "GDPR Art. 33 processor breach", "Vendor acts as a data processor",
+                              60, "DPO", "Assessing", "Vendor DPA & affected records"),
+                             ("US (State)", "US state breach notifications", "PII of US residents exposed",
+                              70, "General Counsel", "Assessing", "Per-state resident counts")]},
+            {"status": "Recovering",
+             "events": [("Containment", "Vendor confirms containment; independent IR report received",
+                         "Root cause fixed by the vendor.", "Vendor Advisory", "High")]},
+            {"phase": "Recovery",
+             "events": [("Recovery", "Integration re-enabled with scoped tokens and monitoring",
+                         "Least-privilege tokens; anomaly alerts enabled.", "Obserra", "High")],
+             "recovery": [("CRM Integration", "System", "Validated"),
+                          ("Customer Notifications", "Process", "Restoring")]},
+            {"phase": "Post-Incident", "status": "Closed",
+             "events": [("Recovery", "Case closed; vendor re-scored and contract reviewed",
+                         "Breach SLAs added to the vendor contract.", "Obserra", "Medium")]},
+        ],
+    },
+    "ddos": {
+        "label": "DDoS Extortion — Customer Portal",
+        "title": "DDoS Extortion — Customer Portal (Sample Breach)",
+        "description": "A ransom DDoS saturates the portal — scrub traffic, hold the line, don't pay.",
+        "severity": "High", "phase": "Detection",
+        "services": ["Customer Portal", "Checkout / Payments", "Public Website"],
+        "commander": "R. Vance (NetSec Lead)", "sponsor": "CISO",
+        "seed": ("Detection", "Volumetric traffic spike saturates the customer portal edge",
+                 "450 Gbps multi-vector flood; portal latency climbing.", "Cloudflare", "High"),
+        "beats": [
+            {"phase": "Triage", "severity": "Critical",
+             "events": [("Threat", "Ransom DDoS note received demanding crypto payment",
+                         "Attacker threatens a sustained attack unless paid.", "Email", "Critical")],
+             "participants": [("Incident Commander", "R. Vance", "Network Security", "Engaged"),
+                              ("CISO", "Executive Sponsor", "Security leadership", "Engaged")]},
+            {"events": [("Business Impact", "Customer portal and checkout intermittently unavailable",
+                         "Conversion dropping; support volume spiking.", "ServiceNow", "High")],
+             "actions": [("Do NOT pay the ransom — engage scrubbing and law enforcement?", "Decision", "Critical",
+                          "Awaiting Approval", True, "CEO + General Counsel", "Sets precedent; policy decision", "None")]},
+            {"phase": "Containment",
+             "events": [("Containment", "Always-on DDoS scrubbing engaged; rate-limits applied",
+                         "Traffic rerouted through the mitigation provider.", "Cloudflare", "High")],
+             "actions": [("Enable geo/ASN filtering on attack sources", "Containment", "High", "Executing",
+                          False, "", "Cuts malicious volume", "May affect some legitimate users")]},
+            {"events": [("Threat", "Attack shifts to Layer-7 application floods",
+                         "Adaptive attacker targeting login and search.", "Cloudflare", "High")],
+             "actions": [("Shift the portal behind challenge / JS-challenge mode", "Decision", "Medium",
+                          "Awaiting Approval", True, "CIO", "Adds friction for users", "Bot mitigation on")]},
+            {"events": [("Communication", "Status page updated; customers and SOC briefed",
+                         "Holding statement published.", "Obserra", "Medium")],
+             "obligations": [("Contractual (SLA)", "Customer SLA breach notifications",
+                              "Portal availability SLA at risk", 24, "Customer Success", "Assessing",
+                              "Downtime minutes per customer")]},
+            {"status": "Recovering",
+             "events": [("Containment", "Attack volume subsides; mitigation holding",
+                         "Traffic normalizing behind scrubbing.", "Cloudflare", "High")]},
+            {"phase": "Recovery",
+             "events": [("Recovery", "Portal performance restored; challenge mode relaxed",
+                         "Latency back to baseline.", "Obserra", "High")],
+             "recovery": [("Customer Portal", "System", "Validated"),
+                          ("Checkout / Payments", "System", "Restoring")]},
+            {"phase": "Post-Incident", "status": "Closed",
+             "events": [("Recovery", "Case closed; always-on protections and runbook updated",
+                         "Permanent scrubbing tier enabled.", "Obserra", "Medium")]},
+        ],
+    },
+}
+_SCENARIO_DEFAULT = "ransomware"
+_SCENARIO_BEATS = _SCENARIOS[_SCENARIO_DEFAULT]["beats"]  # back-compat alias
 
 
 async def _apply_beat(org_id: str, ref: str, beat: dict, now_iso: str, actor: str) -> list:
@@ -1905,39 +2207,52 @@ async def _apply_beat(org_id: str, ref: str, beat: dict, now_iso: str, actor: st
     return revealed
 
 
+class ScenarioStart(BaseModel):
+    key: str = "ransomware"
+
+
+@api.get("/scenario/library")
+async def scenario_library(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    return {"scenarios": [{"key": k, "label": v["label"], "title": v["title"],
+                           "description": v["description"], "steps": len(v["beats"]) + 1}
+                          for k, v in _SCENARIOS.items()]}
+
+
 @api.post("/scenario/start")
-async def scenario_start(user: dict = Depends(get_current_user)):
+async def scenario_start(body: ScenarioStart = ScenarioStart(), user: dict = Depends(get_current_user)):
     _require_operator(user)
     await _ensure_indexes()
     org_id = user["org_id"]
     actor = _actor(user)
+    key = body.key if body.key in _SCENARIOS else _SCENARIO_DEFAULT
+    story = _SCENARIOS[key]
     await _demo_clear(org_id)
     await db.crisis_scenario.delete_many({"org_id": org_id})
+    from bson import ObjectId
+    await db.organizations.update_one({"_id": ObjectId(org_id)}, {"$set": {"ci_demo_active": True}})
     now_iso = datetime.now(timezone.utc).isoformat()
     ref = await _next_ref(org_id, "crisis_cases", "CRISIS")
     await db.crisis_cases.insert_one({
         "ref": ref, "org_id": org_id, "demo": True,
-        "title": "Ransomware — North American Order Fulfillment (Sample Breach)",
-        "severity": "High",
+        "title": story["title"], "severity": story["severity"],
         "summary": "Live sample-breach walkthrough. Events and executive decisions surface in sequence, "
                    "from first detection through containment and recovery.",
-        "incident_refs": [], "risk_refs": [],
-        "business_services": ["Order Management", "North American Sales", "Customer Fulfillment", "Payment Processing"],
-        "incident_commander": "A. Rivera (SecOps Lead)", "executive_sponsor": "CISO",
-        "status": "Active", "phase": "Detection",
+        "incident_refs": [], "risk_refs": [], "business_services": story["services"],
+        "incident_commander": story["commander"], "executive_sponsor": story["sponsor"],
+        "status": "Active", "phase": story["phase"],
         "started_at": now_iso, "updated_at": now_iso, "next_update_at": None, "created_by": actor})
+    sk, st, sd, ss, sv = story["seed"]
     await db.crisis_events.insert_one({
         "org_id": org_id, "case_ref": ref, "demo": True,
         "event_id": await _next_ref(org_id, "crisis_events", "EVT"),
-        "kind": "Detection", "title": "SIEM flags anomalous authentication spike on VPN concentrator",
-        "detail": "Impossible-travel + brute-force pattern from a single source ASN.",
-        "source": "Splunk SIEM", "severity": "High",
+        "kind": sk, "title": st, "detail": sd, "source": ss, "severity": sv,
         "occurred_at": now_iso, "created_at": now_iso, "created_by": actor})
-    total = len(_SCENARIO_BEATS) + 1
-    await db.crisis_scenario.insert_one({"org_id": org_id, "ref": ref, "cursor": 0, "total": total,
-                                         "created_at": now_iso})
-    await _audit(org_id, actor, "crisis.scenario.start", ref)
-    return {"ref": ref, "step": 1, "total": total, "done": False}
+    total = len(story["beats"]) + 1
+    await db.crisis_scenario.insert_one({"org_id": org_id, "ref": ref, "key": key, "cursor": 0,
+                                         "total": total, "created_at": now_iso})
+    await _audit(org_id, actor, "crisis.scenario.start", f"{key} {ref}")
+    return {"ref": ref, "key": key, "label": story["label"], "step": 1, "total": total, "done": False}
 
 
 @api.post("/scenario/advance")
@@ -1948,15 +2263,16 @@ async def scenario_advance(user: dict = Depends(get_current_user)):
     state = await db.crisis_scenario.find_one({"org_id": org_id})
     if not state:
         raise HTTPException(status_code=409, detail="No sample-breach scenario is running. Start it first.")
+    beats = _SCENARIOS.get(state.get("key", _SCENARIO_DEFAULT), _SCENARIOS[_SCENARIO_DEFAULT])["beats"]
     cursor = state.get("cursor", 0)
-    total = state.get("total", len(_SCENARIO_BEATS) + 1)
-    if cursor >= len(_SCENARIO_BEATS):
+    total = state.get("total", len(beats) + 1)
+    if cursor >= len(beats):
         return {"step": total, "total": total, "done": True, "revealed": []}
     now_iso = datetime.now(timezone.utc).isoformat()
-    revealed = await _apply_beat(org_id, state["ref"], _SCENARIO_BEATS[cursor], now_iso, actor)
+    revealed = await _apply_beat(org_id, state["ref"], beats[cursor], now_iso, actor)
     cursor += 1
     await db.crisis_scenario.update_one({"org_id": org_id}, {"$set": {"cursor": cursor}})
-    return {"step": cursor + 1, "total": total, "done": cursor >= len(_SCENARIO_BEATS), "revealed": revealed}
+    return {"step": cursor + 1, "total": total, "done": cursor >= len(beats), "revealed": revealed}
 
 
 @api.get("/scenario/status")
@@ -1964,8 +2280,11 @@ async def scenario_status(user: dict = Depends(get_current_user)):
     state = await db.crisis_scenario.find_one({"org_id": user["org_id"]}, {"_id": 0})
     if not state:
         return {"active": False}
-    return {"active": True, "ref": state["ref"], "step": state.get("cursor", 0) + 1,
-            "total": state.get("total", 0), "done": state.get("cursor", 0) >= len(_SCENARIO_BEATS)}
+    key = state.get("key", _SCENARIO_DEFAULT)
+    story = _SCENARIOS.get(key, _SCENARIOS[_SCENARIO_DEFAULT])
+    return {"active": True, "ref": state["ref"], "key": key, "label": story["label"],
+            "step": state.get("cursor", 0) + 1, "total": state.get("total", len(story["beats"]) + 1),
+            "done": state.get("cursor", 0) >= len(story["beats"])}
 
 
 @api.post("/scenario/stop")

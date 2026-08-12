@@ -30,24 +30,32 @@ export default function CrisisSnapshot() {
   const [loading, setLoading] = useState(true);
   const [updatedAt, setUpdatedAt] = useState(null);
 
+  const applyData = useCallback((data) => { setSnap(data); setError(null); setUpdatedAt(new Date()); setLoading(false); }, []);
   const load = useCallback(async () => {
     try {
       const { data } = await api.get(`/crisis/public/snapshot/${token}`);
-      setSnap(data);
-      setError(null);
-      setUpdatedAt(new Date());
+      applyData(data);
     } catch (e) {
       setError(e?.response?.data?.detail || "This snapshot link is invalid or has expired.");
-    } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, applyData]);
 
   useEffect(() => {
-    load();
-    const id = setInterval(load, 20000);
-    return () => clearInterval(id);
-  }, [load]);
+    load(); // immediate paint
+    const base = process.env.REACT_APP_BACKEND_URL || "";
+    let es;
+    let poll;
+    try {
+      es = new EventSource(`${base}/api/crisis/public/snapshot/${token}/stream`);
+      es.onmessage = (ev) => { try { applyData(JSON.parse(ev.data)); } catch (_) { /* ignore */ } };
+      es.addEventListener("closed", () => { if (es) es.close(); });
+      es.onerror = () => { if (!poll) poll = setInterval(load, 20000); };
+    } catch (_) {
+      poll = setInterval(load, 20000);
+    }
+    return () => { if (es) es.close(); if (poll) clearInterval(poll); };
+  }, [token, load, applyData]);
 
   if (loading) return <div className="min-h-screen bg-[#050810] text-white flex items-center justify-center"><Loader2 className="w-6 h-6 animate-spin text-ai" /></div>;
   if (error) return (

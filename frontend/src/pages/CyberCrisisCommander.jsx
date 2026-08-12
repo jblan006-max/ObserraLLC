@@ -319,6 +319,21 @@ function WebhookFeed() {
   };
   const url = `${base}${cfg?.path || "/api/crisis/ingest/webhook"}`;
   const copy = (text, label) => { navigator.clipboard?.writeText(text); toast.success(`${label} copied.`); };
+  const [fmt, setFmt] = useState("crowdstrike");
+  const [sample, setSample] = useState('{\n  "detection_name": "Ransomware Behavior Detected",\n  "SeverityName": "Critical",\n  "description": "Encryptor loader on host-42"\n}');
+  const [mapped, setMapped] = useState(null);
+  const [mapBusy, setMapBusy] = useState(false);
+  const preview = async () => {
+    setMapBusy(true); setMapped(null);
+    try {
+      const payload = JSON.parse(sample);
+      const { data } = await api.post("/crisis/webhook/test-map", { format: fmt, payload });
+      setMapped(data.mapped);
+    } catch (e) {
+      if (e instanceof SyntaxError) toast.error("Sample payload is not valid JSON.");
+      else toast.error(e.response?.data?.detail || "Mapping preview failed.");
+    } finally { setMapBusy(false); }
+  };
   return (
     <Panel testid="crisis-webhook-feed" title="Live Incident Feed — inbound webhook" subtitle="Point any SIEM / EDR / SOAR / ServiceNow at this endpoint to stream incidents and containment steps straight onto the crisis timeline in real time." actions={<button onClick={load} disabled={busy === "load"} data-testid="crisis-webhook-refresh" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{busy === "load" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Refresh</button>}>
       <div className="space-y-4">
@@ -333,6 +348,33 @@ function WebhookFeed() {
           </div>
         </div>
         <div className="text-[11px] text-muted-foreground font-mono bg-secondary/30 border border-border rounded-lg p-3 overflow-x-auto">{`curl -X POST ${url} -H 'Content-Type: application/json' -d '{"secret":"<secret>","open_case":true,"events":[{"kind":"Detection","title":"EDR: ransomware behavior","source":"CrowdStrike","severity":"Critical"}]}'`}</div>
+        <div className="bg-secondary/30 border border-border rounded-lg p-3 space-y-2" data-testid="crisis-webhook-mapper">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <div className="text-[9px] font-mono uppercase tracking-widest text-muted-foreground">Field mapping — paste native JSON, no pre-formatting</div>
+            <select value={fmt} onChange={(e) => setFmt(e.target.value)} data-testid="crisis-webhook-format" className="bg-background border border-border rounded-md px-2 py-1 text-xs font-mono">
+              <option value="generic">Generic</option>
+              <option value="crowdstrike">CrowdStrike</option>
+              <option value="splunk">Splunk</option>
+              <option value="sentinel">Microsoft Sentinel</option>
+              <option value="servicenow">ServiceNow</option>
+            </select>
+          </div>
+          <textarea value={sample} onChange={(e) => setSample(e.target.value)} data-testid="crisis-webhook-sample" rows={5} spellCheck={false} className="w-full bg-background border border-border rounded-md p-2 text-[11px] font-mono resize-y" />
+          <div className="flex items-center gap-2 flex-wrap">
+            <button onClick={preview} disabled={mapBusy} data-testid="crisis-webhook-preview" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">{mapBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Rss className="w-3.5 h-3.5" />}Preview mapping</button>
+            <span className="text-[10px] text-muted-foreground">{`Post native JSON as {secret, format, payload} — we map it onto the timeline.`}</span>
+          </div>
+          {mapped && (
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-1" data-testid="crisis-webhook-mapped">
+              {[["kind", mapped.kind], ["severity", mapped.severity], ["source", mapped.source], ["title", mapped.title], ["detail", mapped.detail]].map(([k, v]) => (
+                <div key={k}>
+                  <div className="text-[8px] font-mono uppercase tracking-widest text-muted-foreground">{k}</div>
+                  <div className="text-[11px] font-medium truncate" title={String(v || "")}>{String(v || "—")}</div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
         <div>
           <div className="text-[9px] font-mono uppercase tracking-widest text-muted-foreground mb-2">Recently received ({cfg?.count || 0})</div>
           {(cfg?.recent || []).length === 0 ? (
@@ -1234,6 +1276,8 @@ export default function CyberCrisisCommander() {
   const [scenario, setScenario] = useState({ active: false, step: 0, total: 0, done: false, ref: "" });
   const [scenarioBusy, setScenarioBusy] = useState(false);
   const [scenarioPlaying, setScenarioPlaying] = useState(false);
+  const [scenarioLib, setScenarioLib] = useState([]);
+  const [scenarioMenu, setScenarioMenu] = useState(false);
   const [snapshotLink, setSnapshotLink] = useState(null);
   const [snapshotBusy, setSnapshotBusy] = useState(false);
   const canOperate = ["admin", "owner", "executive"].includes(String(user?.role || "").toLowerCase());
@@ -1294,16 +1338,25 @@ export default function CyberCrisisCommander() {
     await Promise.all([reload(), loadCase(ref)]);
   };
 
-  const startScenario = async () => {
+  const openScenarioMenu = async () => {
+    setScenarioMenu((v) => !v);
+    if (scenarioLib.length === 0) {
+      try { const { data } = await api.get("/crisis/scenario/library"); setScenarioLib(data.scenarios || []); }
+      catch (_) { /* ignore */ }
+    }
+  };
+  const startScenario = async (key = "ransomware") => {
+    setScenarioMenu(false);
     setScenarioBusy(true);
     try {
-      const { data: res } = await api.post("/crisis/scenario/start");
+      const { data: res } = await api.post("/crisis/scenario/start", { key });
       setScenario({ active: true, step: res.step, total: res.total, done: false, ref: res.ref });
       setDemoActive(true);
+      window.dispatchEvent(new Event("ci-demo-changed"));
       setScenarioPlaying(true);
       await changed(res.ref);
       openTab("timeline");
-      toast.success("Sample breach started — playing live.");
+      toast.success(`${res.label || "Sample breach"} started — playing live.`);
     } catch (e) { toast.error(e.response?.data?.detail || "Unable to start sample breach."); }
     finally { setScenarioBusy(false); }
   };
@@ -1321,6 +1374,7 @@ export default function CyberCrisisCommander() {
       await api.post("/crisis/scenario/stop");
       setScenario({ active: false, step: 0, total: 0, done: false, ref: "" });
       setDemoActive(false);
+      window.dispatchEvent(new Event("ci-demo-changed"));
       await reload();
       toast.success("Sample breach cleared.");
     } catch (e) { toast.error(e.response?.data?.detail || "Unable to stop scenario."); }
@@ -1411,6 +1465,7 @@ export default function CyberCrisisCommander() {
       await reload();
       const s = await api.get("/crisis/demo/status");
       setDemoActive(!!s.data.active);
+      window.dispatchEvent(new Event("ci-demo-changed"));
     } catch (e) {
       toast.error(e.response?.data?.detail || "Unable to toggle demo mode.");
     } finally {
@@ -1549,7 +1604,22 @@ export default function CyberCrisisCommander() {
             <span data-testid="crisis-scenario-progress" className="px-1.5 text-[10px] font-mono text-ai">{scenario.done ? "Resolved" : `Step ${scenario.step}/${scenario.total}`}</span>
             <button onClick={stopScenario} disabled={scenarioBusy} data-testid="crisis-scenario-stop" title="Stop & clear" className="p-1.5 rounded text-crit hover:bg-crit/15 disabled:opacity-40"><Square className="w-3.5 h-3.5" /></button>
           </div>
-        ) : <button onClick={startScenario} disabled={scenarioBusy} data-testid="crisis-scenario-start" title="Play a scripted sample breach — detection through recovery" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-ai/40 bg-ai/10 text-ai text-xs font-head font-bold disabled:opacity-50">{scenarioBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Rss className="w-3.5 h-3.5" />}Sample Breach</button>)}{canOperate && selectedCase && <button onClick={shareSnapshot} disabled={snapshotBusy} data-testid="crisis-share-snapshot-btn" title="Create a public, mobile-friendly board snapshot link" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{snapshotBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Share2 className="w-3.5 h-3.5" />}Share Snapshot</button>}{selectedCase?.status === "Closed" && <button onClick={generatePIR} disabled={pirBusy} data-testid="crisis-pir-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{pirBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ClipboardList className="w-3.5 h-3.5" />}Post-Incident Review</button>}{selectedCase?.status === "Closed" && <button onClick={generateReportPack} disabled={packBusy} data-testid="crisis-report-pack-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{packBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}Report Pack</button>}{canOperate && <button onClick={ingestServiceNow} disabled={ingestBusy} data-testid="crisis-ingest-servicenow-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{ingestBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CloudDownload className="w-3.5 h-3.5" />}Ingest ServiceNow</button>}{canOperate && selectedCase && <button onClick={emailBrief} disabled={emailBusy} data-testid="crisis-email-brief-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{emailBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}Email Board Brief</button>}{canOperate && selectedCase && <select value={selectedCase.brief_schedule_hours || 0} onChange={(e) => setBriefCadence(e.target.value)} data-testid="crisis-brief-cadence" title="Auto-email the board brief on a cadence while the crisis is active" className="px-2 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">{[[0, "Auto-brief: Off"], [4, "Auto-brief: 4h"], [12, "Auto-brief: 12h"], [24, "Auto-brief: 24h"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>}<button onClick={() => setTourOpen(true)} data-testid="crisis-walkthrough-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-crit/30 bg-crit/10 text-crit text-xs font-head font-bold"><Siren className="w-3.5 h-3.5" />Walkthrough</button><button onClick={reload} disabled={refreshing} data-testid="crisis-refresh-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Refresh</button><button onClick={() => openTab("briefing")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Download className="w-3.5 h-3.5" />Executive Brief</button></div>
+        ) : (
+          <div className="relative" data-testid="crisis-scenario-menu-wrap">
+            <button onClick={openScenarioMenu} disabled={scenarioBusy} data-testid="crisis-scenario-start" title="Play a scripted sample breach — pick a storyline" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-ai/40 bg-ai/10 text-ai text-xs font-head font-bold disabled:opacity-50">{scenarioBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Rss className="w-3.5 h-3.5" />}Sample Breach</button>
+            {scenarioMenu && (
+              <div className="absolute right-0 mt-2 w-72 z-50 rounded-lg border border-border bg-popover shadow-xl p-1.5" data-testid="crisis-scenario-list">
+                <div className="px-2 py-1.5 text-[9px] font-mono uppercase tracking-widest text-muted-foreground">Pick a storyline</div>
+                {(scenarioLib.length ? scenarioLib : [{ key: "ransomware", label: "Ransomware — Order Fulfillment", description: "Loading storylines…", steps: 9 }]).map((s) => (
+                  <button key={s.key} onClick={() => startScenario(s.key)} data-testid={`crisis-scenario-pick-${s.key}`} className="w-full text-left px-2.5 py-2 rounded-md hover:bg-secondary transition-colors">
+                    <div className="text-xs font-head font-bold">{s.label}</div>
+                    <div className="text-[10px] text-muted-foreground leading-snug">{s.description}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}{canOperate && selectedCase && <button onClick={shareSnapshot} disabled={snapshotBusy} data-testid="crisis-share-snapshot-btn" title="Create a public, mobile-friendly board snapshot link" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{snapshotBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Share2 className="w-3.5 h-3.5" />}Share Snapshot</button>}{selectedCase?.status === "Closed" && <button onClick={generatePIR} disabled={pirBusy} data-testid="crisis-pir-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{pirBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ClipboardList className="w-3.5 h-3.5" />}Post-Incident Review</button>}{selectedCase?.status === "Closed" && <button onClick={generateReportPack} disabled={packBusy} data-testid="crisis-report-pack-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{packBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}Report Pack</button>}{canOperate && <button onClick={ingestServiceNow} disabled={ingestBusy} data-testid="crisis-ingest-servicenow-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{ingestBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CloudDownload className="w-3.5 h-3.5" />}Ingest ServiceNow</button>}{canOperate && selectedCase && <button onClick={emailBrief} disabled={emailBusy} data-testid="crisis-email-brief-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{emailBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />}Email Board Brief</button>}{canOperate && selectedCase && <select value={selectedCase.brief_schedule_hours || 0} onChange={(e) => setBriefCadence(e.target.value)} data-testid="crisis-brief-cadence" title="Auto-email the board brief on a cadence while the crisis is active" className="px-2 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">{[[0, "Auto-brief: Off"], [4, "Auto-brief: 4h"], [12, "Auto-brief: 12h"], [24, "Auto-brief: 24h"]].map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>}<button onClick={() => setTourOpen(true)} data-testid="crisis-walkthrough-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-crit/30 bg-crit/10 text-crit text-xs font-head font-bold"><Siren className="w-3.5 h-3.5" />Walkthrough</button><button onClick={reload} disabled={refreshing} data-testid="crisis-refresh-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Refresh</button><button onClick={() => openTab("briefing")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Download className="w-3.5 h-3.5" />Executive Brief</button></div>
       </div>
 
       {snapshotLink && (

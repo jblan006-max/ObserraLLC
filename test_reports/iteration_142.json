@@ -1,0 +1,46 @@
+{
+  "summary": "Iteration 142 — Re-tested the 3 new Cyber Crisis Commander features after the dropped-parenthesis fix in CyberCrisisCommander.jsx L1619. Backend: created /app/backend/tests/test_iter142_crisis_webhook_map_sse_library.py — 12/12 PASS covering webhook/test-map for all 5 vendor formats (generic/crowdstrike/splunk/sentinel/servicenow), ingest/webhook accepting native {secret,format,payload} plus 401 on bad secret, snapshot SSE stream emitting 'data:' events with correct content-type, bogus token SSE surfaces error payload, scenario/library returning 4 keys (ransomware/insider/third_party/ddos), scenario start→advance→stop, and demo cleanup. Also re-ran prior iter141 pytest → 9/9 PASS (18 total green). Frontend: logged in with admin creds (Enter on password), /app/cyber-crisis-commander renders page (data-testid=cyber-crisis-commander-page present, no white screen, no compile errors) with 12 crisis-tab-* tabs (mission, command, decisions, impact, response, warroom, recovery, regulatory, controls, timeline, briefing, defensibility) — all 12 switch cleanly. Webhook mapper preview: selecting 'crowdstrike' + sample JSON + Preview mapping populated crisis-webhook-mapped with KIND=Threat, SEVERITY=High, SOURCE=CrowdStrike. Scenario menu opens (crisis-scenario-list) and shows all 4 picks; picking ransomware shows Play/Pause/Step/Progress 'Step 1/9'/Stop controls; Step advances progress. Share Snapshot creates crisis-snapshot-bar with URL, Copy, Revoke; opening /crisis-snapshot/<token> in a no-cookie context rendered the full read-only board (LIVE indicator, KPIs, timeline, regulatory timers) via SSE. Revoke removes the bar; bogus token renders crisis-snapshot-error. Cleanup: revoked test snapshot on CRISIS-0002, called /crisis/scenario/stop, and confirmed org baseline restored (real CRISIS-0002 preserved).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "DemoRibbon (global)",
+        "issue": "Starting a scripted crisis scenario does NOT activate the global demo-mode-ribbon. POST /api/crisis/scenario/start succeeds and creates a demo case, but GET /api/control-intelligence/demo/state still returns {active:false}, so <DemoRibbon/> stays hidden. Request explicitly says 'Starting a scenario should activate the global DEMO ribbon.' Root cause: scenario_start in crisis_commander.py does not flip the Control-Intelligence demo flag that useDemoState polls.",
+        "selector": "[data-testid=\"demo-mode-ribbon\"]",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter142_crisis_webhook_map_sse_library.py",
+    "/app/backend/tests/test_iter141_crisis_webhook_snapshot_scenario.py",
+    "/app/test_reports/pytest/iter142_new.xml",
+    "/app/test_reports/pytest/iter142.xml"
+  ],
+  "action_items": [
+    "In backend crisis_commander.scenario_start (and ideally webhook ingest/demo/clear), also toggle the CI demo flag consumed by GET /control-intelligence/demo/state so the global <DemoRibbon/> lights up while a scripted scenario is running, and turns off on /scenario/stop. Otherwise the on-screen ribbon requested in the spec never appears during a showcase."
+  ],
+  "critical_code_review_comments": [
+    "CyberCrisisCommander.jsx is 1657 lines with WebhookFeed, scenario menu, snapshot bar, header actions and all 12 tab views inline. Extract SnapshotBar, ScenarioControls, WebhookFeed into siblings — this file already had one dropped-parenthesis regression (L1619) precisely because the JSX is that dense.",
+    "Public SSE endpoint /api/crisis/public/snapshot/{token}/stream returns 200 for bogus tokens and streams an error event instead of surfacing 404 at connect time. UI handles it (renders crisis-snapshot-error) but any generic HTTP monitor / uptime probe will treat the endpoint as healthy on garbage tokens.",
+    "useDemoState only polls /control-intelligence/demo/state and reacts to a manual 'ci-demo-changed' window event. The crisis scenario flow never fires that event nor flips that flag — the two subsystems are wired independently, which is why the ribbon bug exists."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter142_crisis_webhook_map_sse_library.py"
+  ],
+  "success_rate": {
+    "backend": "100% (12/12 iter142 + 9/9 iter141 = 21/21)",
+    "frontend": "~95% (all 3 features wired end-to-end; only gap = DEMO ribbon does not activate on scenario start)"
+  },
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin) — login by pressing Enter on password field (submit button overlay-intercepted at 1920px).",
+  "seed_data_creation": "1 webhook-ingested TEST case created via ingest/webhook crowdstrike sample (test), 1 snapshot created against CRISIS-0002 and then revoked, 1 ransomware scenario case created and then stopped. Post-run confirmed org baseline restored: /crisis/scenario/stop returned stopped:true, snapshot revoked:1, demo/state active:false.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 3 iter141 features (webhook mapping, snapshot SSE, sample-breach scenario library) are functional end-to-end after the L1619 parenthesis fix. The single outstanding issue is that starting a scripted scenario does not flip the Control-Intelligence demo flag, so the global <DemoRibbon/> (data-testid=demo-mode-ribbon) never appears — a small backend wiring fix in scenario_start / scenario_stop that toggles the same flag exposed by GET /api/control-intelligence/demo/state (used by useDemoState). Real cases CRISIS-0002 preserved. All test data cleaned up.",
+  "rca of the issue": "DemoRibbon.jsx depends on useDemoState() which polls /api/control-intelligence/demo/state. crisis_commander.scenario_start creates crisis cases with is_demo=true and inserts into db.crisis_scenario, but never updates the Control-Intelligence-side demo flag. Reproduction: POST /api/crisis/scenario/start {key:'ransomware'} → 200 with step:1/total:9, but immediately GET /api/control-intelligence/demo/state → {active:false}. Fix: in scenario_start also mark the CI demo state active (and undo it in scenario_stop / demo/clear). Alternatively, extend useDemoState to also check /api/crisis/scenario/status."
+}

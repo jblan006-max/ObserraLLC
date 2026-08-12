@@ -1,5 +1,9 @@
 # Obserra EIOS — PRD
 
+## Round 20 (Aug 2026) — Verified Webhook Mapping / SSE Snapshot / Scenario Library + DEMO-ribbon wiring (iteration_142, backend 21/21 + frontend ~100% after fix)
+Resumed the interrupted 3-feature batch (Webhook Field Mapping, Snapshot Auto-Refresh SSE, Scenario Library). First fixed a fork-hazard build blocker (dropped `)` at CyberCrisisCommander.jsx L1619). All 3 features verified live (backend curl + testing_agent). The only bug found — the global `<DemoRibbon/>` not activating on a scripted scenario — is fixed: `crisis_commander.py` scenario_start/demo_seed set `org.ci_demo_active=True` and `_demo_clear` sets it False (the same flag CI's `/demo/state` exposes to `useDemoState`); frontend fires the `ci-demo-changed` event for instant show/hide. Entra live-connect remains the only P1, blocked on user OAuth creds.
+
+
 
 
 ### Added Aug 2026 (post-rebrand): Live Incident Feed (generic inbound webhook, per-org secret, honest until fired), Board Snapshot Link (public token, 7-day expiry, revocable, mobile read-only page /crisis-snapshot/:token), and a scripted auto-advancing "Sample Breach" demo scenario (Play/Pause/Step, detection→recovery). All in crisis_commander.py + CyberCrisisCommander.jsx + CrisisSnapshot.jsx. Public API endpoints: POST /api/crisis/ingest/webhook and GET /api/crisis/public/snapshot/{token} (no auth).
