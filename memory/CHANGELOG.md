@@ -1,5 +1,13 @@
 # Obserra EIOS — CHANGELOG
 
+## 2026-08-12 — Crisis Commander: live crisis feeds, no old SAP/Obserra content (iteration_133 — backend 10/10, frontend 100%)
+User directive: all AI, connectors & data feeds must be live and populate Cyber Crisis Commander, not old-app SAP/Control-Intelligence data.
+- **Root cause fixed:** the crisis page's top "AI Analyst" used the shared `AIInsight` hardcoded to `GET /api/sap/insight` (SAP access posture / SoD conflicts). Added new backend `GET /api/crisis/insight` (crisis_commander.py) grounded ONLY on the live crisis case + its events/actions/decisions/recovery/obligations/participants (LLM openai gpt-5.4 + deterministic fallback, 120s cache). Wired the crisis page AI Analyst to it via new `AIInsight` props `endpoint` + `groundingLabel` (defaults preserve `/sap/insight` for all other pages).
+- **Crisis Advisor 100% crisis-grounded:** `AIExplain` gained optional `groundOnly` prop → posts `ground_only_context:true`; `/advisor/explain` skips the `unified_risk_correlation` merge + `_impact_estimate` (no at_stake/reduction badges) when true. Cache key now includes `ground_only_context` to prevent cross-contamination.
+- **Connector Health dashboard shows ALL connectors (SAP, AI, Obserra):** new shared `components/ConnectorCatalog.jsx` (extracted from AvailableConnectors) rendered on ConnectorHealth page as "Enterprise Connectors — SAP, AI & Obserra" panel — full `/connectors/catalog` (40 connectors / 11 categories incl. SAP Landscape, AI & Media, Identity, SIEM & GRC, ITSM) live-with-health + admin Auto-Discover/Connect/Test.
+- **Also fixed (iter132 leftovers):** War Room / Recovery / Regulatory tab render conditionals were missing in CyberCrisisCommander.jsx (tabs rendered blank); missing `Landmark` lucide import crashed the Regulatory tab; PIR PDF 500 (em-dash in title → Content-Disposition latin-1 error) fixed by ASCII-sanitising the filename in studio.py.
+
+
 ## 2026-06 — Kill-switch assurance suite: drill trend sparkline, Proof-Link QR, Slack/Teams proof post, Control Assurance page (iteration_102 — backend 100%, frontend 100% after 1 fix)
 User picked all four; all live/no-mock and testing_agent-verified:
 - **Drill Trend Chart** — `KillReplayDrillCard` now shows a trend block (control-confirmed rate pill + avg suspend/resume, and a recharts response-time sparkline over recent drills) with a link to the new Control Assurance page.

@@ -7,14 +7,14 @@ const money = (n) => n == null ? null : n >= 1e6 ? `$${(n / 1e6).toFixed(2)}M` :
 
 // Module-level cache so hovering a card can WARM its AI brief; clicking then shows it instantly.
 const _cache = new Map();
-const _key = (title, kind, context) => JSON.stringify({ title, kind, context });
+const _key = (title, kind, context, groundOnly) => JSON.stringify({ title, kind, context, groundOnly });
 
-export function prefetchExplain(title, kind = "item", context = {}) {
+export function prefetchExplain(title, kind = "item", context = {}, groundOnly = false) {
   if (!title) return Promise.resolve(null);
-  const key = _key(title, kind, context);
+  const key = _key(title, kind, context, groundOnly);
   const hit = _cache.get(key);
   if (hit) return hit.promise || Promise.resolve(hit.data);
-  const promise = api.post("/advisor/explain", { title, kind, context })
+  const promise = api.post("/advisor/explain", { title, kind, context, ground_only_context: groundOnly })
     .then((r) => { _cache.set(key, { data: r.data }); return r.data; })
     .catch(() => { _cache.delete(key); return null; });
   _cache.set(key, { promise });
@@ -23,22 +23,22 @@ export function prefetchExplain(title, kind = "item", context = {}) {
 
 // Lightweight AI insight + recommendation + board-defensible $ impact for a clicked item.
 // Grounded in the supplied live context (see backend /advisor/explain).
-export function AIExplain({ title, kind = "item", context = {}, accent = "266 85% 66%" }) {
+export function AIExplain({ title, kind = "item", context = {}, accent = "266 85% 66%", groundOnly = false }) {
   const [d, setD] = useState(null);
   const [loading, setLoading] = useState(false);
   const ctxKey = JSON.stringify(context);
 
   useEffect(() => {
-    const key = _key(title, kind, context);
+    const key = _key(title, kind, context, groundOnly);
     const hit = _cache.get(key);
     if (hit?.data) { setD(hit.data); setLoading(false); return; }
     let ok = true; setLoading(true); setD(null);
-    (hit?.promise || prefetchExplain(title, kind, context)).then((data) => {
+    (hit?.promise || prefetchExplain(title, kind, context, groundOnly)).then((data) => {
       if (ok) { setD(data); setLoading(false); }
     });
     return () => { ok = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, kind, ctxKey]);
+  }, [title, kind, ctxKey, groundOnly]);
 
   const sc = d ? (SEV[d.severity] || accent) : accent;
   const hasImpact = d && (d.at_stake != null || d.reduction_if_fixed != null);

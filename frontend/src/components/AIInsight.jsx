@@ -7,7 +7,7 @@ const KIND = { fact: "142 70% 45%", estimate: "35 90% 55%", risk: "0 84% 60%", p
 // Obserra-standard AI analyst summary for SAP UAC dashboards. Auto-runs on mount and
 // asks the grounded SAP advisor (GET /api/sap/insight) to read the LIVE access model
 // and return a board-grade headline + findings + next actions.
-export function AIInsight({ dashboard, accent = "190 90% 50%", auto = false, slug, focus }) {
+export function AIInsight({ dashboard, accent = "190 90% 50%", auto = false, slug, focus, endpoint = "/sap/insight", groundingLabel = "the live SAP access model" }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -17,7 +17,7 @@ export function AIInsight({ dashboard, accent = "190 90% 50%", auto = false, slu
   const run = async () => {
     setLoading(true); setErr("");
     try {
-      const r = await api.get(`/sap/insight${focus ? `?focus=${encodeURIComponent(focus)}` : ""}`);
+      const r = await api.get(`${endpoint}${focus ? `?focus=${encodeURIComponent(focus)}` : ""}`);
       setData(r.data);
     } catch (e) {
       setErr(e.response?.data?.detail || "Advisor unavailable right now.");
@@ -49,7 +49,7 @@ export function AIInsight({ dashboard, accent = "190 90% 50%", auto = false, slu
             </button>
           </div>
           <div className="text-[10px] font-mono text-muted-foreground truncate">
-            {data ? `${data.model} · grounded in the live SAP access model · ${new Date(data.generated_at).toLocaleTimeString()}` : "Live summary of your SAP access posture"}
+            {data ? `${data.model} · grounded in ${groundingLabel} · ${new Date(data.generated_at).toLocaleTimeString()}` : `Live summary · ${groundingLabel}`}
           </div>
         </div>
       </div>

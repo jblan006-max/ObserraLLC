@@ -573,6 +573,7 @@ class ExplainReq(BaseModel):
     title: str
     kind: str = "item"
     context: dict = {}
+    ground_only_context: bool = False
 
 
 _EXPLAIN_CACHE = {}
@@ -585,7 +586,7 @@ async def advisor_explain(body: ExplainReq, user: dict = Depends(require_active_
     import re as _re
     org_id = user["org_id"]
     now = datetime.now(timezone.utc)
-    key = (org_id, body.kind, body.title)
+    key = (org_id, body.kind, body.title, body.ground_only_context)
     cached = _EXPLAIN_CACHE.get(key)
     if cached and (now - cached["ts"]).total_seconds() < 300:
         return cached["data"]
@@ -602,8 +603,12 @@ async def advisor_explain(body: ExplainReq, user: dict = Depends(require_active_
     system += _persona_directive(f"{body.kind} {body.title}")
     chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"],
                    session_id=f"explain-{org_id}", system_message=system).with_model(provider, model)
-    merged_ctx = {**(body.context or {}), "unified_risk_correlation": await _engine_summary_safe(org_id)}
-    impact = _impact_estimate(body.context or {}, merged_ctx.get("unified_risk_correlation") or {})
+    if body.ground_only_context:
+        merged_ctx = dict(body.context or {})
+        impact = {}
+    else:
+        merged_ctx = {**(body.context or {}), "unified_risk_correlation": await _engine_summary_safe(org_id)}
+        impact = _impact_estimate(body.context or {}, merged_ctx.get("unified_risk_correlation") or {})
     prompt = (f"ITEM: {body.title}\nKIND: {body.kind}\nCONTEXT (JSON):\n"
               f"{json.dumps(merged_ctx, default=str)[:6000]}\n\nProduce the JSON now.")
     try:

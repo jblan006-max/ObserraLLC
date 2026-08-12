@@ -1,0 +1,31 @@
+{
+  "summary": "Iteration 132 QA for Cyber Crisis Commander v1.0.0 targeting the 5 newest features: (1) Demo Mode, (2) War Room, (3) Recovery Command, (4) Regulatory & Legal, (5) Post-Incident Review (PIR) PDF. Backend: created /app/backend/tests/test_iter132_crisis_commander.py with 7 pytest tests — all PASS. Frontend: full end-to-end Playwright walkthrough as admin (jblan2026@gmail.com) covering login → skip tour → seed demo → each new tab → add/remove/advance flows → set case Closed → PIR PDF download → exit demo. All 5 features functional. No 401s (post-login), no 500s, no runtime crashes on Regulatory tab (Landmark import fix verified indirectly by successful render). PIR PDF returns 200, content-type application/pdf, %PDF magic bytes, filename ASCII-sanitized (obserra-post-incident-review-CRISIS-0005.pdf) — em-dash bug regression confirmed fixed. Demo seed creates CRISIS-xxxx with 8 participants / 8 recovery items / 4 obligations / 10 events / 7 actions and demo:true flag; Exit Demo removes all demo-flagged docs and toast 'Crisis demo scenario cleared.' shown. Recovery pct mapping Down=0 / Restoring=50 / Validated=80 / Operational=100 verified via advance flow and backend PATCH.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Cyber Crisis Commander header/tabs", "issues": ["Obserran Advisor floating panel occasionally intercepts clicks on top-right and tab strip — non-blocking but caused a Playwright click miss; a click-outside dismiss or lower z-index would help e2e tests."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter132_crisis_commander.py",
+    "/app/test_reports/pytest/iter132.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "TABS uses id 'command' for Incident Command tab (data-testid=crisis-tab-command) — spec docs refer to 'incident'; consider aligning testid naming or documenting the mapping to reduce testing friction.",
+    "Add Obligation, Recovery, and Participant forms are inline toggles (setShowAdd) rather than modals; works but a modal would improve focus management and testid stability.",
+    "generatePIR uses filename with em-dash upstream — fine now since studio.py sanitizes, but recommend building an ASCII-safe filename in the frontend caller as belt-and-suspenders."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter132_crisis_commander.py"
+  ],
+  "success_rate": {"backend": "100% (7/7 pytest tests pass)", "frontend": "100% (all 5 new features and PIR flow verified end-to-end)"},
+  "test_credentials": "admin jblan2026@gmail.com / Obserra2026! (cookie session)",
+  "seed_data_creation": "Backend tests created 1 non-demo case (TEST_ Iter132 case CRISIS-000x) with a TEST_ participant (added+removed), a TEST_ recovery item (advanced to Operational), a TEST_ obligation, and marked the case Closed for PIR PDF test. Frontend also created CRISIS-0002 TEST_ Iter132 case + demo case CRISIS-0005 (subsequently cleared via Exit Demo). Residual TEST_ cases and one TEST_ Regulation Alpha obligation remain in DB — safe to leave or clean via backend.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Login: admin cookie-based POST /api/auth/login (email/password). Route: /app/cyber-crisis-commander. Tab testids use short ids: crisis-tab-{mission,command,decisions,impact,response,warroom,recovery,regulatory,controls,timeline,briefing,defensibility}. PIR button (crisis-pir-btn) only renders when selectedCase.status === 'Closed' — set via crisis-status-select on Incident Command tab. Demo seed/clear via crisis-demo-toggle; toast 'Crisis demo scenario cleared.' confirms clear. Recovery pct mapping: Down=0, Restoring=50, Validated=80, Operational=100. Studio PDF endpoint POST /api/studio/report/pdf now sanitizes filename Content-Disposition to ASCII, preventing latin-1 500 on em-dashes.",
+  "rca of the issue": "No new bugs found. The three fixes from the pre-run (WarRoom/Recovery/Regulatory render conditionals; Landmark lucide import; PDF filename ASCII sanitization) all verified: (1) tabs render live-seeded content, (2) Regulatory tab loads without runtime crash, (3) PIR PDF returns 200 with %PDF payload."
+}

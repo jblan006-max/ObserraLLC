@@ -10,6 +10,7 @@ import {
   Gauge,
   Gavel,
   GitCommitVertical,
+  Landmark,
   Loader2,
   Plus,
   RefreshCw,
@@ -17,6 +18,15 @@ import {
   ShieldCheck,
   Siren,
   Wrench,
+  Users,
+  LifeBuoy,
+  Scale,
+  HeartPulse,
+  Trash2,
+  Play,
+  Square,
+  Timer,
+  ClipboardList,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -42,6 +52,10 @@ import {
   mergeTimeline,
   money,
   portfolioExposure,
+  recoveryByCategory,
+  recoveryOverall,
+  obligationCountdown,
+  pirBlocks,
 } from "@/lib/crisisCommanderModels";
 import {
   fetchCrisisCase,
@@ -56,6 +70,9 @@ const TABS = [
   ["decisions", "Decision Room", Gavel],
   ["impact", "Business Impact", Banknote],
   ["response", "Containment & Recovery", Wrench],
+  ["warroom", "War Room", Users],
+  ["recovery", "Recovery", HeartPulse],
+  ["regulatory", "Regulatory & Legal", Scale],
   ["controls", "Control Failures", ShieldAlert],
   ["timeline", "Timeline & Evidence", GitCommitVertical],
   ["briefing", "Executive Briefing", FileText],
@@ -571,7 +588,7 @@ function ExecutiveBriefing({ data, selectedCase, caseDetail, reportBusy, generat
   return (
     <div className="space-y-5" data-testid="crisis-briefing">
       <div className="grid md:grid-cols-4 gap-4"><MetricCard label="Crisis" value={selectedCase?.severity || data.severity || "None"} sub={selectedCase?.title || "No case selected"} icon={Siren} /><MetricCard label="Exposure" value={money(exposure)} icon={Banknote} accent="35 90% 55%" /><MetricCard label="Response progress" value={`${response.progress}%`} kind="MODELLED" icon={CheckCircle2} accent="142 70% 45%" /><MetricCard label="Approvals pending" value={response.awaitingApproval} icon={Gavel} accent="266 85% 66%" /></div>
-      <Panel title="Obserra Crisis Advisor" subtitle="Executive analysis grounded in current crisis case, incidents, risks, controls and response status."><AIExplain title={selectedCase?.title || "Enterprise cyber crisis posture"} kind="cyber crisis executive decision business impact containment recovery" context={context} accent="0 84% 60%" /></Panel>
+      <Panel title="Obserra Crisis Advisor" subtitle="Executive analysis grounded solely in the current crisis case, incidents, exposure and response status."><AIExplain title={selectedCase?.title || "Enterprise cyber crisis posture"} kind="cyber crisis executive decision business impact containment recovery" context={context} accent="0 84% 60%" groundOnly /></Panel>
       <Panel title="Board and executive reporting" subtitle="Uses the existing Obserra Studio PDF service."><button onClick={generateReport} disabled={reportBusy} data-testid="crisis-generate-brief" className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-md bg-primary text-primary-foreground font-head font-bold disabled:opacity-50">{reportBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}Generate Cyber Crisis Executive Brief</button></Panel>
     </div>
   );
@@ -593,8 +610,254 @@ function Defensibility({ data, sourceStatus }) {
   );
 }
 
+function WarRoom({ selectedCase, caseDetail, changed }) {
+  const [busy, setBusy] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ role: "", name: "", contact: "", responsibility: "", status: "Engaged" });
+  const participants = caseDetail?.participants || [];
+  const pending = (caseDetail?.actions || []).filter((a) => a.decision_required || a.status === "Awaiting Approval");
+
+  const add = async (event) => {
+    event.preventDefault();
+    if (!selectedCase) return;
+    setBusy("add");
+    try {
+      await api.post(`/crisis/cases/${selectedCase.ref}/participants`, form);
+      setShowAdd(false);
+      setForm({ role: "", name: "", contact: "", responsibility: "", status: "Engaged" });
+      await changed(selectedCase.ref);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Unable to add participant.");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const remove = async (pid) => {
+    setBusy(pid);
+    try {
+      await api.delete(`/crisis/cases/${selectedCase.ref}/participants/${pid}`);
+      await changed(selectedCase.ref);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Unable to remove participant.");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <div className="grid xl:grid-cols-[1.3fr_1fr] gap-5" data-testid="crisis-war-room">
+      <Panel title="War room roster" subtitle="Leadership and responders coordinating this crisis, by role." actions={selectedCase ? <button onClick={() => setShowAdd((v) => !v)} data-testid="crisis-add-participant-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />Add Participant</button> : null}>
+        {!selectedCase ? <EmptyState title="No crisis case selected" text="Select a crisis case to convene the war room." /> : (
+          <>
+            {showAdd && (
+              <form onSubmit={add} className="rounded-lg border border-border bg-secondary/20 p-4 mb-4 grid md:grid-cols-2 gap-3">
+                <input required value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} placeholder="Role (e.g. Legal)" data-testid="crisis-participant-role" className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm" />
+                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Name" data-testid="crisis-participant-name" className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm" />
+                <input value={form.contact} onChange={(e) => setForm({ ...form, contact: e.target.value })} placeholder="Contact" className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm" />
+                <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm">{["Engaged", "Standby", "Stood Down"].map((v) => <option key={v}>{v}</option>)}</select>
+                <input value={form.responsibility} onChange={(e) => setForm({ ...form, responsibility: e.target.value })} placeholder="Responsibility" className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm md:col-span-2" />
+                <button disabled={busy === "add"} data-testid="crisis-participant-submit" className="md:col-span-2 px-3 py-2.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold">Add to War Room</button>
+              </form>
+            )}
+            {participants.length === 0 ? <EmptyState title="No participants yet" text="Add responders by role to build the war room roster." /> : (
+              <div className="space-y-2">{participants.map((p) => (
+                <div key={p.participant_id} data-testid={`crisis-participant-${p.participant_id}`} className="rounded-lg border border-border bg-secondary/20 p-3 flex items-center justify-between gap-3">
+                  <div className="min-w-0"><div className="flex items-center gap-2"><Users className="w-3.5 h-3.5 text-ai" /><span className="font-head font-bold text-sm">{p.role}</span><StatusPill value={p.status} /></div><div className="text-xs text-muted-foreground mt-1">{p.name || "Unassigned"}{p.responsibility ? ` · ${p.responsibility}` : ""}{p.contact ? ` · ${p.contact}` : ""}</div></div>
+                  <button onClick={() => remove(p.participant_id)} disabled={busy === p.participant_id} data-testid={`crisis-participant-remove-${p.participant_id}`} className="shrink-0 text-muted-foreground hover:text-crit"><Trash2 className="w-4 h-4" /></button>
+                </div>
+              ))}</div>
+            )}
+          </>
+        )}
+      </Panel>
+      <Panel title="Pending executive decisions" subtitle="Decisions awaiting an owner's approval, mirrored from the Decision Room.">
+        {pending.length === 0 ? <EmptyState title="No decisions pending" text="No response actions are currently awaiting executive approval." /> : (
+          <div className="space-y-2">{pending.map((a) => (
+            <div key={a.action_id} className="rounded-lg border border-high/25 bg-high/5 p-3">
+              <div className="font-mono text-[10px] text-ai">{a.action_id}</div>
+              <div className="font-head font-bold text-sm mt-1">{a.title}</div>
+              <div className="flex items-center justify-between gap-3 mt-2"><span className="text-xs text-muted-foreground">Owner: {a.decision_owner || "Unassigned"}</span><StatusPill value={a.status} /></div>
+            </div>
+          ))}</div>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function RecoveryCommand({ selectedCase, caseDetail, changed }) {
+  const [busy, setBusy] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ name: "", category: "System", owner: "" });
+  const items = caseDetail?.recovery || [];
+  const overall = recoveryOverall(items);
+  const byCat = recoveryByCategory(items);
+  const NEXT = { Down: "Restoring", Restoring: "Validated", Validated: "Operational", Operational: "Operational" };
+
+  const add = async (event) => {
+    event.preventDefault();
+    if (!selectedCase) return;
+    setBusy("add");
+    try {
+      await api.post(`/crisis/cases/${selectedCase.ref}/recovery`, { ...form, status: "Down", note: "" });
+      setShowAdd(false);
+      setForm({ name: "", category: "System", owner: "" });
+      await changed(selectedCase.ref);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Unable to add recovery item.");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const advance = async (item) => {
+    setBusy(item.recovery_id);
+    try {
+      await api.patch(`/crisis/cases/${selectedCase.ref}/recovery/${item.recovery_id}`, { status: NEXT[item.status] });
+      await changed(selectedCase.ref);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Unable to update recovery item.");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <div className="space-y-5" data-testid="crisis-recovery">
+      <div className="grid md:grid-cols-4 gap-4">
+        <MetricCard label="Overall recovery" value={`${overall}%`} kind="MODELLED" icon={HeartPulse} accent="142 70% 45%" />
+        <MetricCard label="Items tracked" value={items.length} icon={LifeBuoy} />
+        <MetricCard label="Operational" value={items.filter((i) => i.status === "Operational").length} icon={CheckCircle2} accent="142 70% 45%" />
+        <MetricCard label="Still down" value={items.filter((i) => i.status === "Down").length} icon={AlertOctagon} accent="0 84% 60%" />
+      </div>
+      <Panel title="Recovery by category" subtitle="Restoration percentage across systems, applications and business services.">
+        {byCat.length === 0 ? <EmptyState title="No recovery items" text="Add recovery items to track restoration by category." /> : (
+          <div className="space-y-3">{byCat.map((c) => (
+            <div key={c.category}>
+              <div className="flex items-center justify-between text-xs mb-1"><span className="font-head font-bold">{c.category}</span><span className="font-mono text-muted-foreground">{c.pct}% · {c.operational}/{c.items} operational</span></div>
+              <ProgressBar value={c.pct} accent={c.pct >= 80 ? "142 70% 45%" : c.pct >= 40 ? "35 90% 55%" : "0 84% 60%"} />
+            </div>
+          ))}</div>
+        )}
+      </Panel>
+      <Panel title="Recovery items" subtitle="Advance each item Down to Restoring to Validated to Operational." actions={selectedCase ? <button onClick={() => setShowAdd((v) => !v)} data-testid="crisis-add-recovery-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />Add Item</button> : null}>
+        {!selectedCase ? <EmptyState title="No crisis case selected" text="Select a crisis case to coordinate recovery." /> : (
+          <>
+            {showAdd && (
+              <form onSubmit={add} className="rounded-lg border border-border bg-secondary/20 p-4 mb-4 grid md:grid-cols-3 gap-3">
+                <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="System / application / service" data-testid="crisis-recovery-name" className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm md:col-span-2" />
+                <select value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} data-testid="crisis-recovery-category" className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm">{["System", "Application", "Business Service", "Region", "Business Unit"].map((v) => <option key={v}>{v}</option>)}</select>
+                <button disabled={busy === "add"} data-testid="crisis-recovery-submit" className="md:col-span-3 px-3 py-2.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold">Add Recovery Item</button>
+              </form>
+            )}
+            <div className="space-y-2">{items.map((item) => (
+              <div key={item.recovery_id} data-testid={`crisis-recovery-${item.recovery_id}`} className="rounded-lg border border-border bg-secondary/20 p-3 grid xl:grid-cols-[1.4fr_.6fr_.8fr_auto] gap-3 items-center">
+                <div><div className="font-head font-bold text-sm">{item.name}</div><div className="text-[10px] text-muted-foreground mt-1">{item.category}</div></div>
+                <StatusPill value={item.status} />
+                <div className="w-full"><ProgressBar value={item.pct} accent={item.pct >= 80 ? "142 70% 45%" : item.pct >= 40 ? "35 90% 55%" : "0 84% 60%"} /></div>
+                <div>{item.status !== "Operational" && <button onClick={() => advance(item)} disabled={busy === item.recovery_id} data-testid={`crisis-recovery-advance-${item.recovery_id}`} className="px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold">Advance</button>}</div>
+              </div>
+            ))}</div>
+          </>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function RegulatoryLegal({ selectedCase, caseDetail, changed }) {
+  const [busy, setBusy] = useState("");
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ jurisdiction: "", regulation: "", trigger: "", deadline_at: "", responsible: "", evidence_required: "" });
+  const obligations = caseDetail?.obligations || [];
+
+  const add = async (event) => {
+    event.preventDefault();
+    if (!selectedCase) return;
+    if (!form.deadline_at) { toast.error("A deadline is required."); return; }
+    setBusy("add");
+    try {
+      await api.post(`/crisis/cases/${selectedCase.ref}/obligations`, { ...form, deadline_at: new Date(form.deadline_at).toISOString() });
+      setShowAdd(false);
+      setForm({ jurisdiction: "", regulation: "", trigger: "", deadline_at: "", responsible: "", evidence_required: "" });
+      await changed(selectedCase.ref);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Unable to add obligation.");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const setStatus = async (o, status) => {
+    setBusy(o.obligation_id);
+    try {
+      await api.patch(`/crisis/cases/${selectedCase.ref}/obligations/${o.obligation_id}`, { status });
+      await changed(selectedCase.ref);
+    } catch (error) {
+      toast.error(error.response?.data?.detail || "Unable to update obligation.");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  return (
+    <div className="space-y-5" data-testid="crisis-regulatory">
+      <div className="rounded-xl border border-med/30 bg-med/5 p-4 flex items-start gap-3">
+        <Scale className="w-5 h-5 text-med shrink-0 mt-0.5" />
+        <div className="text-xs text-muted-foreground"><span className="font-head font-bold text-foreground">Evidence-only.</span> Obserra surfaces potential applicability, required evidence and deadlines. It never determines legal obligation as fact — authorized legal counsel confirms whether notification is required.</div>
+      </div>
+      <Panel title="Regulatory & legal command" subtitle="Potential notification obligations with countdown deadlines." actions={selectedCase ? <button onClick={() => setShowAdd((v) => !v)} data-testid="crisis-add-obligation-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />Add Obligation</button> : null}>
+        {!selectedCase ? <EmptyState title="No crisis case selected" text="Select a crisis case to track regulatory obligations." /> : (
+          <>
+            {showAdd && (
+              <form onSubmit={add} className="rounded-lg border border-border bg-secondary/20 p-4 mb-4 grid md:grid-cols-2 gap-3">
+                <input required value={form.jurisdiction} onChange={(e) => setForm({ ...form, jurisdiction: e.target.value })} placeholder="Jurisdiction (e.g. EU)" data-testid="crisis-obligation-jurisdiction" className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm" />
+                <input required value={form.regulation} onChange={(e) => setForm({ ...form, regulation: e.target.value })} placeholder="Regulation" data-testid="crisis-obligation-regulation" className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm" />
+                <input value={form.trigger} onChange={(e) => setForm({ ...form, trigger: e.target.value })} placeholder="Trigger" className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm md:col-span-2" />
+                <label className="text-xs text-muted-foreground">Deadline<input required type="datetime-local" value={form.deadline_at} onChange={(e) => setForm({ ...form, deadline_at: e.target.value })} data-testid="crisis-obligation-deadline" className="mt-1 w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm" /></label>
+                <input value={form.responsible} onChange={(e) => setForm({ ...form, responsible: e.target.value })} placeholder="Responsible attorney" className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm self-end" />
+                <input value={form.evidence_required} onChange={(e) => setForm({ ...form, evidence_required: e.target.value })} placeholder="Evidence required" className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm md:col-span-2" />
+                <button disabled={busy === "add"} data-testid="crisis-obligation-submit" className="md:col-span-2 px-3 py-2.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold">Add Obligation</button>
+              </form>
+            )}
+            {obligations.length === 0 ? <EmptyState title="No obligations tracked" text="Add potential notification obligations to start the countdown clocks." /> : (
+              <div className="space-y-3">{obligations.map((o) => {
+                const cd = obligationCountdown(o.deadline_at);
+                return (
+                  <div key={o.obligation_id} data-testid={`crisis-obligation-${o.obligation_id}`} className={`rounded-xl border p-4 ${cd.overdue ? "border-crit/30 bg-crit/5" : cd.urgent ? "border-high/30 bg-high/5" : "border-border bg-secondary/20"}`}>
+                    <div className="grid xl:grid-cols-[1.6fr_.7fr_auto] gap-4">
+                      <div>
+                        <div className="flex items-center gap-2"><Landmark className="w-3.5 h-3.5 text-ai" /><span className="font-head font-bold text-sm">{o.jurisdiction}</span></div>
+                        <div className="text-sm mt-1">{o.regulation}</div>
+                        <div className="text-xs text-muted-foreground mt-1">{o.trigger || "No trigger documented"}</div>
+                        <div className="text-[11px] text-muted-foreground mt-2">Attorney: {o.responsible || "Unassigned"}{o.evidence_required ? ` · Evidence: ${o.evidence_required}` : ""}</div>
+                      </div>
+                      <div>
+                        <div className="text-[9px] font-mono uppercase text-muted-foreground flex items-center gap-1"><Timer className="w-3 h-3" />Deadline</div>
+                        <div className={`font-head font-black text-lg mt-1 ${cd.overdue ? "text-crit" : cd.urgent ? "text-high" : ""}`} data-testid={`crisis-obligation-countdown-${o.obligation_id}`}>{cd.label}</div>
+                        <div className="text-[10px] text-muted-foreground mt-1">{o.deadline_at ? new Date(o.deadline_at).toLocaleString() : "-"}</div>
+                        <div className="mt-2"><StatusPill value={o.status} /></div>
+                      </div>
+                      <div className="flex flex-col gap-1.5">
+                        {["Notification Required", "Notified", "Not Applicable"].map((s) => (
+                          <button key={s} onClick={() => setStatus(o, s)} disabled={busy === o.obligation_id || o.status === s} data-testid={`crisis-obligation-${s.replace(/\s+/g, "-").toLowerCase()}-${o.obligation_id}`} className="px-2.5 py-1.5 rounded-md border border-border text-[10px] font-head font-bold disabled:opacity-40 hover:bg-secondary">{s}</button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}</div>
+            )}
+          </>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
 export default function CyberCrisisCommander() {
-  const { mode } = useAuth();
+  const { mode, user } = useAuth();
   const { data, loading, refreshing, error, sourceStatus, reload } = useCrisisCommanderData();
   const [activeTab, setActiveTab] = useState(() => localStorage.getItem("cyber-crisis-commander-tab") || "mission");
   const [selectedCaseRef, setSelectedCaseRef] = useState(() => localStorage.getItem("cyber-crisis-case-ref") || "");
@@ -602,6 +865,10 @@ export default function CyberCrisisCommander() {
   const [caseBusy, setCaseBusy] = useState(false);
   const [reportBusy, setReportBusy] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
+  const [demoActive, setDemoActive] = useState(false);
+  const [demoBusy, setDemoBusy] = useState(false);
+  const [pirBusy, setPirBusy] = useState(false);
+  const canOperate = ["admin", "owner", "executive"].includes(String(user?.role || "").toLowerCase());
 
   const selectedCase = useMemo(() => {
     if (caseDetail?.case) return caseDetail.case;
@@ -689,6 +956,59 @@ export default function CyberCrisisCommander() {
     }
   };
 
+  useEffect(() => {
+    api.get("/crisis/demo/status").then((r) => setDemoActive(!!r.data.active)).catch(() => {});
+  }, []);
+
+  const toggleDemo = async () => {
+    setDemoBusy(true);
+    try {
+      if (demoActive) {
+        await api.post("/crisis/demo/clear");
+        toast.success("Crisis demo scenario cleared.");
+        setCaseDetail(null);
+        setSelectedCaseRef("");
+        localStorage.removeItem("cyber-crisis-case-ref");
+      } else {
+        const r = await api.post("/crisis/demo/seed");
+        toast.success("Staged ransomware demo scenario loaded.");
+        if (r.data.ref) {
+          setSelectedCaseRef(r.data.ref);
+          localStorage.setItem("cyber-crisis-case-ref", r.data.ref);
+        }
+      }
+      await reload();
+      const s = await api.get("/crisis/demo/status");
+      setDemoActive(!!s.data.active);
+    } catch (e) {
+      toast.error(e.response?.data?.detail || "Unable to toggle demo mode.");
+    } finally {
+      setDemoBusy(false);
+    }
+  };
+
+  const generatePIR = async () => {
+    if (!effectiveData || !selectedCase) return;
+    setPirBusy(true);
+    try {
+      const response = await api.post(
+        "/studio/report/pdf",
+        {
+          title: `Post-Incident Review — ${selectedCase.ref}`,
+          ai_narrative: `Post-incident review for ${selectedCase.title}, compiled from the persistent, audit-logged crisis record. Generated by Obserra Cyber Crisis Commander ${APP_VERSION_LABEL}.`,
+          blocks: pirBlocks({ data: effectiveData, selectedCase, caseDetail }),
+        },
+        { responseType: "blob" }
+      );
+      downloadBlob(response.data, `obserra-post-incident-review-${selectedCase.ref}.pdf`);
+      toast.success("Post-Incident Review generated.");
+    } catch (pirError) {
+      toast.error(pirError.response?.data?.detail || "Unable to generate post-incident review.");
+    } finally {
+      setPirBusy(false);
+    }
+  };
+
   if (loading && !data) {
     return (
       <div className="min-h-[55vh] flex items-center justify-center">
@@ -705,12 +1025,12 @@ export default function CyberCrisisCommander() {
           <p className="text-sm text-muted-foreground mt-2 max-w-4xl">{mode === "executive" ? "Command enterprise cyber crises through business impact, financial exposure, executive decisions, containment, recovery, control failures, timeline evidence and board-ready intelligence." : "Coordinate persistent crisis cases, response actions, approvals, control failures, incident evidence, audit records and recovery using the existing Obserra platform services."}</p>
           <div className="text-[10px] font-mono text-muted-foreground mt-2">Current case: {selectedCase?.ref || "none"} · Data refresh {effectiveData?.generatedAt ? new Date(effectiveData.generatedAt).toLocaleString() : "unavailable"}{caseBusy ? " · refreshing case" : ""}</div>
         </div>
-        <div className="flex gap-2"><button onClick={() => setTourOpen(true)} data-testid="crisis-walkthrough-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-crit/30 bg-crit/10 text-crit text-xs font-head font-bold"><Siren className="w-3.5 h-3.5" />Walkthrough</button><button onClick={reload} disabled={refreshing} data-testid="crisis-refresh-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Refresh</button><button onClick={() => openTab("briefing")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Download className="w-3.5 h-3.5" />Executive Brief</button></div>
+        <div className="flex flex-wrap gap-2">{canOperate && <button onClick={toggleDemo} disabled={demoBusy} data-testid="crisis-demo-toggle" className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-head font-bold disabled:opacity-50 ${demoActive ? "border-ai/40 bg-ai/15 text-ai" : "border-border bg-secondary/40"}`}>{demoBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : demoActive ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}{demoActive ? "Exit Demo" : "Demo Mode"}</button>}{selectedCase?.status === "Closed" && <button onClick={generatePIR} disabled={pirBusy} data-testid="crisis-pir-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{pirBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ClipboardList className="w-3.5 h-3.5" />}Post-Incident Review</button>}<button onClick={() => setTourOpen(true)} data-testid="crisis-walkthrough-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-crit/30 bg-crit/10 text-crit text-xs font-head font-bold"><Siren className="w-3.5 h-3.5" />Walkthrough</button><button onClick={reload} disabled={refreshing} data-testid="crisis-refresh-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Refresh</button><button onClick={() => openTab("briefing")} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Download className="w-3.5 h-3.5" />Executive Brief</button></div>
       </div>
 
       {error && <div className="rounded-xl border border-crit/30 bg-crit/5 p-4 flex items-start gap-3" data-testid="crisis-error"><AlertTriangle className="w-5 h-5 text-crit shrink-0 mt-0.5" /><div><div className="font-head font-bold text-sm">Crisis intelligence incomplete</div><div className="text-xs text-muted-foreground mt-1">{error}</div></div></div>}
 
-      <AIInsight dashboard="Cyber Crisis Commander" accent="0 84% 60%" auto slug="cyber-crisis-commander" />
+      <AIInsight dashboard="Cyber Crisis Commander" endpoint={selectedCase ? `/crisis/insight?ref=${selectedCase.ref}` : "/crisis/insight"} groundingLabel="the live crisis case, decisions, recovery & regulatory clocks" accent="0 84% 60%" auto slug="cyber-crisis-commander" />
 
       <div className="overflow-x-auto"><div className="inline-flex min-w-max rounded-xl border border-border bg-card p-1">{TABS.map(([id, label, Icon]) => <button key={id} onClick={() => openTab(id)} data-testid={`crisis-tab-${id}`} className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-head font-bold transition-colors ${activeTab === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground hover:bg-secondary/50"}`}><Icon className="w-3.5 h-3.5" />{label}</button>)}</div></div>
 
@@ -719,6 +1039,9 @@ export default function CyberCrisisCommander() {
       {activeTab === "decisions" && <DecisionRoom selectedCase={selectedCase} caseDetail={caseDetail} recommendations={effectiveData?.recommendations || []} decisions={effectiveData?.decisions || []} changed={changed} />}
       {activeTab === "impact" && <BusinessImpact data={effectiveData} selectedCase={selectedCase} />}
       {activeTab === "response" && <ResponseActions selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}
+      {activeTab === "warroom" && <WarRoom selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}
+      {activeTab === "recovery" && <RecoveryCommand selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}
+      {activeTab === "regulatory" && <RegulatoryLegal selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}
       {activeTab === "controls" && <ControlFailures data={effectiveData} />}
       {activeTab === "timeline" && <TimelineEvidence selectedCase={selectedCase} caseDetail={caseDetail} data={effectiveData} changed={changed} />}
       {activeTab === "briefing" && <ExecutiveBriefing data={effectiveData} selectedCase={selectedCase} caseDetail={caseDetail} reportBusy={reportBusy} generateReport={generateReport} />}

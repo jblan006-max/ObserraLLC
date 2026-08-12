@@ -38,7 +38,8 @@ def _report_markdown(body: ReportExportBody) -> str:
 @studio_router.post("/report/pdf")
 async def report_pdf(body: ReportExportBody, user: dict = Depends(get_current_user)):
     buf = _build_pdf(_report_markdown(body), body.title)
-    fname = body.title.lower().replace(" ", "-")[:40] or "studio-report"
+    _slug = body.title.lower().replace(" ", "-")
+    fname = "".join(c for c in _slug if c.isascii() and (c.isalnum() or c == "-"))[:40].strip("-") or "studio-report"
     return StreamingResponse(buf, media_type="application/pdf",
                              headers={"Content-Disposition": f'attachment; filename="{fname}.pdf"'})
 

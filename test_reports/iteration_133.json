@@ -1,0 +1,32 @@
+{
+  "summary": "Iteration 133 verified the three 'live crisis feeds — no old SAP/Obserra content' changes on top of iter132. Backend: created /app/backend/tests/test_iter133_crisis_grounding.py with 10 pytest tests — 10/10 PASS in 32s. Confirmed (1) GET /api/crisis/insight returns {headline, insights[{text,kind}], actions[], model, generated_at}; grounds on latest case when ref omitted, on a specific CRISIS-xxxx when ref is passed, returns graceful payload for unknown ref, never emits SAP access-posture / SoD-conflict language. (2) POST /api/advisor/explain with ground_only_context=true returns NO at_stake/reduction_if_fixed fields; default (omitted/false) still merges unified_risk_correlation and returns impact keys. (3) GET /api/connectors/catalog returns 40+ connectors including sap-s4, openai, anthropic, servicenow, sap-scim; /api/connectors/health returns 200. (4) Regression: /api/sap/insight still returns 200 with insights. Frontend: logged in as admin jblan2026@gmail.com and validated end-to-end via Playwright: Cyber Crisis Commander page shows AI Analyst panel (data-testid=sap-insight-cyber-crisis-commander) with subtitle 'grounded in the live crisis case, decisions, recovery & regulatory clocks · openai/gpt-5.4', headline citing CRISIS-0007 (ransomware in North American Order Fulfillment, recovery 51%, SAP ERP Production down, first regulatory deadline 4h) — HAS_SAP_ACCESS_MODEL=False. Executive Briefing tab renders 'Obserra Crisis Advisor' AIExplain (data-testid=ai-explain) and impact badges (ai-impact, ai-impact-atstake, ai-impact-reduction) are ALL absent (count=0), proving groundOnly=true suppresses impact merge. Connector Health page shows all-connectors-panel + connector-catalog with catalog-connector-{sap-s4,openai,anthropic,servicenow,sap-scim} cards and matching catalog-<id>-status pills; auto-discover-connect button present for admin; pre-existing sap-insight-sap-systems AI card still renders (regression). Control Intelligence page's AIInsight still uses default endpoint (subtitle 'grounded in the live SAP access model · openai/gpt-5.4') and returns SoD-conflict content — confirms AIInsight prop defaults are backward compatible.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "All pages", "issues": ["Floating 'Obserrian Advisor' popover (bottom-right) can overlap tab bar / buttons on smaller viewports — carry-over from iter132, non-blocking."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter133_crisis_grounding.py",
+    "/app/test_reports/pytest/iter133.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "ai_advisor.py::advisor_explain uses _EXPLAIN_CACHE key=(org_id, kind, title) which does NOT include ground_only_context. If two callers use the same title+kind with different ground_only_context values within 5 minutes, the second caller receives the first caller's cached payload (impact fields leak, or are missing incorrectly). Include ground_only_context in the cache key to keep the two branches isolated.",
+    "crisis_commander.py::crisis_insight uses cache key ck=(org_id, ref, events_count, actions_count) — will not invalidate on regulatory/recovery/participant changes. Consider adding recovery/obligation counts (or a case updated_at) to the key so the panel refreshes when regulatory clocks or recovery states move without a new event.",
+    "AIExplain default cache in AIExplain.jsx should also fold groundOnly into its _key (spec confirms it does) — verified via prop wiring; keep an eye on any consumer that mutates groundOnly at runtime.",
+    "connectors/catalog response shape: verify long-term contract (list vs. grouped-by-category dict) — current backend test tolerates both; recommend fixing one canonical shape and documenting it."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter133_crisis_grounding.py"
+  ],
+  "success_rate": {"backend": "100% (10/10 pytest)", "frontend": "100% (all 3 features + 2 regressions visually and via testids verified)"},
+  "test_credentials": "admin jblan2026@gmail.com / Obserra2026! (cookie session)",
+  "seed_data_creation": "POST /api/crisis/demo/seed executed once (created CRISIS-0007 demo scenario with events/actions/recovery/obligations). Advisor explain tests created two TEST_-prefixed advisor_logs rows (kind=crisis-briefing and kind=spend-line). No destructive data written.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Route /app/cyber-crisis-commander is the crisis page. AI Analyst panel testid=sap-insight-cyber-crisis-commander, refresh testid=sap-insight-run-cyber-crisis-commander. AIExplain in Executive Briefing tab is testid=ai-explain and, because groundOnly=true, has NO ai-impact / ai-impact-atstake / ai-impact-reduction badges. Connector Health page = /app/systems: new panel testid=all-connectors-panel, grid testid=connector-catalog, card testid=catalog-connector-<id>, status testid=catalog-<id>-status, admin button testid=auto-discover-connect. AIInsight defaults preserved: pages without explicit endpoint hit /api/sap/insight with groundingLabel 'the live SAP access model'. Cache to be aware of: /api/advisor/explain caches by (org_id, kind, title) for 5 min ignoring ground_only_context — use distinct titles across test cases.",
+  "rca of the issue": "No bugs. All three implementations behave per spec: (A) /api/crisis/insight is genuinely crisis-grounded with LLM (openai/gpt-5.4) and a deterministic fallback, cites case ref/decisions/recovery %/systems down/regulatory deadlines; (B) ground_only_context=true branch in advisor_explain correctly skips unified_risk_correlation merge and _impact_estimate, verified by empty impact keys in response + absent DOM badges; (C) ConnectorCatalog renders the full 40-connector catalog grouped by category with live probe status pills and admin auto-discover/connect/test flows. Minor code-review notes (cache-key coverage) added under critical_code_review_comments; none are blockers."
+}

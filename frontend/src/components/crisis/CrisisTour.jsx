@@ -38,6 +38,27 @@ const STEPS = [
     body: "Containment, recovery, legal and communication actions move Open to Executing to Verified. External containment is never claimed until an integrated system verifies it.",
   },
   {
+    tab: "warroom",
+    target: "crisis-war-room",
+    eyebrow: "Digital War Room",
+    title: "One place for leadership",
+    body: "Roster your responders by role, see every pending executive decision and its owner, and keep the whole leadership team aligned in one view.",
+  },
+  {
+    tab: "recovery",
+    target: "crisis-recovery",
+    eyebrow: "Recovery Command",
+    title: "Restore the business",
+    body: "Track restoration percentage by system, application and business service — so leadership always knows how much of the business is back.",
+  },
+  {
+    tab: "regulatory",
+    target: "crisis-regulatory",
+    eyebrow: "Regulatory & Legal",
+    title: "Deadlines you can't miss",
+    body: "Countdown timers for every potential notification obligation. Obserra surfaces evidence and deadlines; authorized legal counsel confirms the obligation.",
+  },
+  {
     tab: "timeline",
     target: "crisis-timeline",
     eyebrow: "Timeline & Evidence",

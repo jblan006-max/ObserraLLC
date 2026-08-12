@@ -229,3 +229,101 @@ export function executiveBriefBlocks({ data, selectedCase, caseDetail }) {
     },
   ];
 }
+
+const RECOVERY_PCT = { Down: 0, Restoring: 50, Validated: 80, Operational: 100 };
+
+export function recoveryByCategory(recovery = []) {
+  const cats = {};
+  for (const item of recovery) {
+    const cat = item.category || "System";
+    const c = cats[cat] || (cats[cat] = { category: cat, items: 0, sum: 0, operational: 0 });
+    c.items += 1;
+    c.sum += Number.isFinite(item.pct) ? item.pct : RECOVERY_PCT[item.status] || 0;
+    if (item.status === "Operational") c.operational += 1;
+  }
+  return Object.values(cats)
+    .map((c) => ({ ...c, pct: c.items ? Math.round(c.sum / c.items) : 0 }))
+    .sort((a, b) => a.category.localeCompare(b.category));
+}
+
+export function recoveryOverall(recovery = []) {
+  if (!recovery.length) return 0;
+  const sum = recovery.reduce(
+    (acc, item) => acc + (Number.isFinite(item.pct) ? item.pct : RECOVERY_PCT[item.status] || 0),
+    0
+  );
+  return Math.round(sum / recovery.length);
+}
+
+export function obligationCountdown(deadlineAt) {
+  if (!deadlineAt) return { label: "No deadline", ms: null, overdue: false, urgent: false };
+  const ms = new Date(deadlineAt).getTime() - Date.now();
+  const overdue = ms < 0;
+  const abs = Math.abs(ms);
+  const hours = Math.floor(abs / 3_600_000);
+  const mins = Math.floor((abs % 3_600_000) / 60_000);
+  const base = hours >= 24 ? `${Math.floor(hours / 24)}d ${hours % 24}h` : `${hours}h ${mins}m`;
+  return {
+    label: overdue ? `${base} overdue` : base,
+    ms,
+    overdue,
+    urgent: !overdue && ms <= 6 * 3_600_000,
+  };
+}
+
+export function pirBlocks({ data, selectedCase, caseDetail }) {
+  const actions = caseDetail?.actions || [];
+  const decisions = actions.filter((a) => a.action_type === "Decision" || a.decision_required);
+  const controls = data.controls || [];
+  const failed = controls.filter((c) => c.status === "Failing" || c.drift || c.stale);
+  const held = controls.filter((c) => c.status === "Passing");
+  const events = caseDetail?.events || [];
+  const response = actionSummary(actions);
+  const recovery = recoveryByCategory(caseDetail?.recovery || []);
+
+  return [
+    {
+      heading: `Post-Incident Review — ${selectedCase?.title || "Crisis case"}`,
+      lines: [
+        `Case: ${selectedCase?.ref || "-"}`,
+        `Severity: ${selectedCase?.severity || "-"} · Final status: ${selectedCase?.status || "-"}`,
+        `Incident commander: ${selectedCase?.incident_commander || "Unassigned"}`,
+        `Executive sponsor: ${selectedCase?.executive_sponsor || "Unassigned"}`,
+        `Opened: ${selectedCase?.started_at || "-"} · Last update: ${selectedCase?.updated_at || "-"}`,
+      ],
+    },
+    {
+      heading: "Timeline (most recent first)",
+      lines: [...events].reverse().slice(0, 40).map((e) => `${e.occurred_at || e.created_at || "-"} — ${e.kind}: ${e.title}`),
+    },
+    {
+      heading: "Executive decisions",
+      lines: decisions.length
+        ? decisions.map((d) => `${d.action_id} — ${d.title} — ${d.status}${d.approved_by ? ` (approved by ${d.approved_by})` : ""}`)
+        : ["No executive decisions were recorded."],
+    },
+    {
+      heading: "Response actions",
+      lines: [`Total ${response.total}, verified/complete ${response.verified}, progress ${response.progress}%`, ...actions.map((a) => `${a.action_id} — ${a.title} — ${a.status}`)],
+    },
+    {
+      heading: "Controls that failed or drifted",
+      lines: failed.length ? failed.map((c) => `${c.control_id} — ${c.name} — ${c.status}`) : ["No failing or drifting controls recorded at review time."],
+    },
+    {
+      heading: "Controls that held",
+      lines: held.length ? held.slice(0, 25).map((c) => `${c.control_id} — ${c.name}`) : ["No passing controls recorded."],
+    },
+    {
+      heading: "Recovery outcome",
+      lines: recovery.length ? recovery.map((r) => `${r.category}: ${r.pct}% (${r.operational}/${r.items} operational)`) : ["No recovery items recorded."],
+    },
+    {
+      heading: "Defensibility",
+      lines: [
+        "Timeline, decisions, actions, controls and recovery are source facts from Obserra services and the persistent, audit-logged crisis record.",
+        "Control pass/fail and recovery states are drawn from the live feeds and the crisis case at review time.",
+      ],
+    },
+  ];
+}

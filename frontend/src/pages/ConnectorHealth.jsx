@@ -4,6 +4,7 @@ import { useAuth } from "@/context/AuthContext";
 import { api } from "@/lib/api";
 import { StatCard, Spinner } from "@/components/dash";
 import { AIInsight } from "@/components/AIInsight";
+import { ConnectorCatalog } from "@/components/ConnectorCatalog";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Plug, Server, Clock, CheckCircle2, AlertTriangle, RefreshCw, Activity, XCircle, Rocket, BookOpen, FileDown } from "lucide-react";
@@ -250,6 +251,12 @@ export default function ConnectorHealth() {
       <GoLiveChecklist />
 
       <AIInsight dashboard="Connector Health" focus="connector coverage, credential readiness and data freshness" accent="190 90% 50%" auto slug="sap-systems" />
+
+      <div className="bg-card fact-border rounded-xl p-5" data-testid="all-connectors-panel">
+        <h2 className="font-head font-bold text-lg mb-1">Enterprise Connectors — SAP, AI &amp; Obserra</h2>
+        <p className="text-xs text-muted-foreground mb-4">Every source system across the platform, live with real connectivity health. Connect any SAP, AI, identity, SIEM, ITSM or collaboration system to feed Control Intelligence and Cyber Crisis Commander.</p>
+        <ConnectorCatalog />
+      </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard label="SAP systems" value={d.systems.length} accent="210 92% 62%" icon={Server} testid="sys-count" />
