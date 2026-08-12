@@ -88,7 +88,7 @@ export function useControlIntelligenceData(demo = false) {
       error:
         sourceStatus.controls?.ok && sourceStatus.compliance?.ok
           ? ""
-          : "One or more core control intelligence sources are unavailable. No substitute controls or compliance values are generated.",
+          : "One or more core Control Posture sources are unavailable. No substitute controls or compliance values are generated.",
       data,
       sourceStatus,
     });

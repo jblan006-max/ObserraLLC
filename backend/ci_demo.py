@@ -1,4 +1,4 @@
-"""Control Intelligence — demo auditor-journey routes (admin, labelled DEMO, reversible).
+"""Control Posture — demo auditor-journey routes (admin, labelled DEMO, reversible).
 
 Split out of control_intelligence.py to keep the showcase logic isolated from live
 evidence handling. Routes attach to the shared ci_router; server.py imports this

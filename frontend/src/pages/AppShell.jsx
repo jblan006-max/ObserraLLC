@@ -71,7 +71,7 @@ function DualModeToggle() {
 const NAV_SECTIONS = [
   { section: null, items: [
     { to: "/app", label: "Executive Overview", icon: LayoutDashboard, end: true },
-    { to: "/app/control-intelligence", label: "Control Intelligence", icon: Layers },
+    { to: "/app/control-intelligence", label: "Control Posture", icon: Layers },
     { to: "/app/cyber-crisis-commander", label: "Cyber Crisis Commander", icon: Siren },
   ]},
   { section: "Assurance", cat: true, color: "ai", items: [
@@ -325,7 +325,7 @@ export default function AppShell() {
             </button>
             <img src="/brand-lockup.png" alt="Obserra" className="h-6 w-auto object-contain md:hidden" />
             <div className="text-xs font-mono text-muted-foreground uppercase tracking-widest truncate hidden lg:block">
-              {sub?.org_name || "Obserra — Control Intelligence"}
+              {sub?.org_name || "Obserra — Cyber Crisis Commander"}
             </div>
             <Popover>
               <PopoverTrigger asChild>

@@ -249,7 +249,7 @@ async def discover_shadow_ai(admin: dict = Depends(require_roles("admin"))):
                 org_id, f"🕵️ Shadow AI discovered: {added} new unsanctioned system(s)",
                 f"Live discovery flagged {added} new shadow AI system(s): {', '.join(new_names[:6])}. "
                 f"Sources: connectors {sources['connectors']}, telemetry {sources['telemetry']}, agents {sources['agents']}. "
-                f"Shadow queue now {total_shadow}. Review and sanction or block in the Control Intelligence control plane.")
+                f"Shadow queue now {total_shadow}. Review and sanction or block in the Cyber Crisis Commander control plane.")
         except Exception:
             pass
         try:

@@ -220,7 +220,7 @@ function MissionControl({ data, selectedCase, caseDetail, openTab }) {
       </div>
 
       <div className="grid xl:grid-cols-3 gap-5">
-        <Panel testid="crisis-active-command" title="Active crisis command" subtitle="Persistent crisis leadership and phase state.">
+        <Panel testid="crisis-active-command" title="Mission Control — Active Crisis Command" subtitle="Persistent crisis leadership and phase state.">
           {selectedCase ? (
             <div>
               <div className="flex items-start justify-between gap-3">
@@ -248,7 +248,7 @@ function MissionControl({ data, selectedCase, caseDetail, openTab }) {
           )}
         </Panel>
 
-        <Panel testid="crisis-response-status" title="Response action status" subtitle="Persistent response, recovery, legal, communication and decision actions.">
+        <Panel testid="crisis-response-status" title="Response Action Status" subtitle="Persistent response, recovery, legal, communication and decision actions.">
           <div className="h-64">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chart} margin={{ left: 0, right: 8, top: 10 }}>
@@ -263,7 +263,7 @@ function MissionControl({ data, selectedCase, caseDetail, openTab }) {
           <ProgressBar value={response.progress} />
         </Panel>
 
-        <Panel testid="crisis-control-failure" title="Control failure intelligence" subtitle="Current control failures, drift and stale evidence.">
+        <Panel testid="crisis-control-failure" title="Control Failure Intelligence" subtitle="Current control failures, drift and stale evidence.">
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-lg bg-crit/5 border border-crit/20 p-3"><div className="text-[9px] font-mono uppercase text-muted-foreground">Failing</div><div className="font-head font-black text-2xl mt-1 text-crit">{controls.failing}</div></div>
             <div className="rounded-lg bg-high/5 border border-high/20 p-3"><div className="text-[9px] font-mono uppercase text-muted-foreground">Drifting</div><div className="font-head font-black text-2xl mt-1 text-high">{controls.drifting}</div></div>
@@ -274,7 +274,7 @@ function MissionControl({ data, selectedCase, caseDetail, openTab }) {
         </Panel>
       </div>
 
-      <Panel testid="crisis-top-risks" title="Highest residual enterprise risks" subtitle="Current risk records that may amplify crisis impact.">
+      <Panel testid="crisis-top-risks" title="Highest Residual Enterprise Risks" subtitle="Current risk records that may amplify crisis impact.">
         <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
           {risks.map((risk) => (
             <button key={risk.ref} onClick={() => openTab("impact")} className="text-left rounded-xl border border-border bg-secondary/20 p-4 hover:bg-secondary/40">
@@ -333,7 +333,7 @@ function IncidentCommand({ data, selectedCase, caseDetail, loadCase, changed, cr
 
   return (
     <div className="grid xl:grid-cols-[360px_1fr] gap-5" data-testid="crisis-incident-command">
-      <Panel title="Crisis cases" subtitle="Persistent organization-scoped crisis cases." actions={<button onClick={() => setShowCreate((value) => !value)} data-testid="crisis-new-case-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />New Crisis</button>}>
+      <Panel title="Crisis Cases" subtitle="Persistent organization-scoped crisis cases." actions={<button onClick={() => setShowCreate((value) => !value)} data-testid="crisis-new-case-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />New Crisis</button>}>
         {showCreate && (
           <form onSubmit={createCase} className="mb-4 rounded-lg border border-border bg-secondary/20 p-3 space-y-2">
             <input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Crisis title" data-testid="crisis-form-title" className="w-full bg-secondary/60 rounded-md px-3 py-2 text-sm" />
@@ -357,7 +357,7 @@ function IncidentCommand({ data, selectedCase, caseDetail, loadCase, changed, cr
         </div>
       </Panel>
 
-      <Panel title="Incident command" subtitle="Leadership, phase, status and command summary.">
+      <Panel title="Incident Command" subtitle="Leadership, phase, status and command summary.">
         {!selectedCase ? (
           <EmptyState title="Select or create a crisis case" text="Persistent incident command begins with a crisis case." />
         ) : (
@@ -439,7 +439,7 @@ function DecisionRoom({ selectedCase, caseDetail, recommendations, decisions, ch
 
   return (
     <div className="space-y-5" data-testid="crisis-decision-room">
-      <Panel title="Executive approval queue" subtitle="Persistent crisis decisions with business and technical impact context." actions={selectedCase ? (<div className="flex items-center gap-2"><button onClick={scanSla} disabled={busy === "sla"} data-testid="crisis-sla-scan-btn" title="Ping Teams/Slack for any decision that has blown its approval SLA" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-med/40 bg-med/10 text-med text-xs font-head font-bold disabled:opacity-50">{busy === "sla" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Timer className="w-3.5 h-3.5" />}Scan SLAs</button><button onClick={() => setShowAdd((v) => !v)} data-testid="crisis-add-decision-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />Add Decision</button></div>) : null}>
+      <Panel title="Decision Room — Executive Approval Queue" subtitle="Persistent crisis decisions with business and technical impact context." actions={selectedCase ? (<div className="flex items-center gap-2"><button onClick={scanSla} disabled={busy === "sla"} data-testid="crisis-sla-scan-btn" title="Ping Teams/Slack for any decision that has blown its approval SLA" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-med/40 bg-med/10 text-med text-xs font-head font-bold disabled:opacity-50">{busy === "sla" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Timer className="w-3.5 h-3.5" />}Scan SLAs</button><button onClick={() => setShowAdd((v) => !v)} data-testid="crisis-add-decision-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />Add Decision</button></div>) : null}>
         {!selectedCase ? <EmptyState title="No crisis case selected" text="Select a crisis case before creating executive decision requirements." /> : (
           <>
             {showAdd && (
@@ -467,8 +467,8 @@ function DecisionRoom({ selectedCase, caseDetail, recommendations, decisions, ch
         )}
       </Panel>
       <div className="grid xl:grid-cols-2 gap-5">
-        <Panel title="Existing Obserra recommendations" subtitle="Current recommendation inventory for crisis context."><div className="space-y-2">{(recommendations || []).slice(0, 10).map((item) => <div key={item.ref} className="rounded-lg border border-border p-3"><div className="flex items-start justify-between gap-3"><div><div className="font-mono text-[10px] text-ai">{item.ref}</div><div className="text-sm font-medium mt-1">{item.title}</div></div><StatusPill value={item.status} /></div></div>)}</div></Panel>
-        <Panel title="Existing executive decisions" subtitle="Current decision register, preserved separately from crisis actions."><div className="space-y-2">{(decisions || []).slice(0, 10).map((item) => <div key={item.ref} className="rounded-lg border border-border p-3"><div className="font-mono text-[10px] text-ai">{item.ref}</div><div className="text-sm font-medium mt-1">{item.title}</div><div className="text-xs text-muted-foreground mt-2">Chosen: {item.chosen || "-"} · Approver: {item.approver || "-"}</div></div>)}</div></Panel>
+        <Panel title="Existing Obserra Recommendations" subtitle="Current recommendation inventory for crisis context."><div className="space-y-2">{(recommendations || []).slice(0, 10).map((item) => <div key={item.ref} className="rounded-lg border border-border p-3"><div className="flex items-start justify-between gap-3"><div><div className="font-mono text-[10px] text-ai">{item.ref}</div><div className="text-sm font-medium mt-1">{item.title}</div></div><StatusPill value={item.status} /></div></div>)}</div></Panel>
+        <Panel title="Existing Executive Decisions" subtitle="Current decision register, preserved separately from crisis actions."><div className="space-y-2">{(decisions || []).slice(0, 10).map((item) => <div key={item.ref} className="rounded-lg border border-border p-3"><div className="font-mono text-[10px] text-ai">{item.ref}</div><div className="text-sm font-medium mt-1">{item.title}</div><div className="text-xs text-muted-foreground mt-2">Chosen: {item.chosen || "-"} · Approver: {item.approver || "-"}</div></div>)}</div></Panel>
       </div>
     </div>
   );
@@ -488,10 +488,10 @@ function BusinessImpact({ data, selectedCase }) {
         <MetricCard label="Business services" value={services.length} sub="Explicitly linked to crisis case" icon={Gauge} accent="266 85% 66%" />
         <MetricCard label="Industry position" value={benchmark.position || "Not available"} sub={benchmark.industry || "No benchmark configured"} icon={FileText} accent="142 70% 45%" />
       </div>
-      <Panel title="Financial exposure by enterprise risk" subtitle="Existing residual ALE from the current risk engine. No crisis loss values are invented.">
+      <Panel title="Financial Exposure by Enterprise Risk" subtitle="Existing residual ALE from the current risk engine. No crisis loss values are invented.">
         <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-sm"><thead className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground border-b border-border"><tr><th className="text-left py-3 pr-3">Risk</th><th className="text-left py-3 px-3">Rating</th><th className="text-right py-3 px-3">Residual</th><th className="text-right py-3 px-3">Residual ALE</th><th className="text-left py-3 pl-3">Owner</th></tr></thead><tbody>{risks.map((risk) => <tr key={risk.ref} className="border-b border-border/60"><td className="py-3 pr-3"><div className="font-mono text-[10px] text-ai">{risk.ref}</div><div className="font-medium mt-1">{risk.title}</div></td><td className="py-3 px-3"><StatusPill value={risk.rating || "Risk"} /></td><td className="py-3 px-3 text-right font-mono">{risk.residual}</td><td className="py-3 px-3 text-right font-mono">{money(risk.residual_ale)}</td><td className="py-3 pl-3 text-muted-foreground">{risk.owner || "Unassigned"}</td></tr>)}</tbody></table></div>
       </Panel>
-      <Panel title="Business service impact" subtitle="Only explicitly linked business services are shown as crisis affected.">{services.length ? <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">{services.map((service) => <div key={service} className="rounded-lg border border-border bg-secondary/20 p-3"><div className="font-head font-bold text-sm">{service}</div></div>)}</div> : <EmptyState title="No business services linked" text="Link business services to the crisis case to support enterprise impact analysis." />}</Panel>
+      <Panel title="Business Service Impact" subtitle="Only explicitly linked business services are shown as crisis affected.">{services.length ? <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3">{services.map((service) => <div key={service} className="rounded-lg border border-border bg-secondary/20 p-3"><div className="font-head font-bold text-sm">{service}</div></div>)}</div> : <EmptyState title="No business services linked" text="Link business services to the crisis case to support enterprise impact analysis." />}</Panel>
     </div>
   );
 }
@@ -541,7 +541,7 @@ function EntraContainment({ selectedCase, changed }) {
   };
   return (
     <div data-testid="crisis-entra-containment">
-      <Panel title="Identity containment — Microsoft Entra" subtitle="Disable a compromised account and revoke its live sessions directly in Microsoft Entra (Graph).">
+      <Panel title="Identity Containment — Microsoft Entra" subtitle="Disable a compromised account and revoke its live sessions directly in Microsoft Entra (Graph).">
         {status === "unconnected" ? (
           <EmptyState title="Microsoft Entra not connected" text="Connect Microsoft Entra ID in Connector Health → Enterprise Connectors (Tenant ID, Client ID, Client secret) to enable live identity containment." />
         ) : (
@@ -610,7 +610,7 @@ function ResponseActions({ selectedCase, caseDetail, changed }) {
   };
 
   return (
-    <Panel testid="crisis-response-actions" title="Containment and recovery command" subtitle="Persistent response actions. External containment is not claimed until execution is verified by an integrated system." actions={selectedCase ? <button onClick={() => setShowAdd((v) => !v)} data-testid="crisis-add-action-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />Add Action</button> : null}>
+    <Panel testid="crisis-response-actions" title="Containment & Recovery Command" subtitle="Persistent response actions. External containment is not claimed until execution is verified by an integrated system." actions={selectedCase ? <button onClick={() => setShowAdd((v) => !v)} data-testid="crisis-add-action-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />Add Action</button> : null}>
       {!selectedCase ? <EmptyState title="No crisis case selected" text="Select a crisis case before coordinating containment and recovery." /> : (
         <>
           <div className="grid md:grid-cols-5 gap-3 mb-4">{[["Total",summary.total],["Open",summary.open],["Awaiting Approval",summary.awaitingApproval],["Executing",summary.executing],["Verified",summary.verified]].map(([label,value]) => <div key={label} className="rounded-lg bg-secondary/30 p-3"><div className="text-[9px] font-mono uppercase text-muted-foreground">{label}</div><div className="font-head font-black text-2xl mt-1">{value}</div></div>)}</div>
@@ -631,8 +631,8 @@ function ControlFailures({ data }) {
   return (
     <div className="space-y-5" data-testid="crisis-control-failures">
       <div className="grid md:grid-cols-4 gap-4"><MetricCard label="Failing controls" value={summary.failing} icon={AlertTriangle} /><MetricCard label="Drifting controls" value={summary.drifting} icon={AlertTriangle} accent="35 90% 55%" /><MetricCard label="Stale evidence" value={summary.stale} icon={Clock3} accent="266 85% 66%" /><MetricCard label="Unique attention" value={summary.totalAttention} icon={ShieldCheck} accent="142 70% 45%" /></div>
-      <Panel title="Control failures affecting crisis posture" subtitle="Existing control effectiveness, maturity, drift and evidence state."><div className="space-y-3">{attention.map((control) => <div key={control.control_id} className="rounded-xl border border-border bg-secondary/20 p-4"><div className="grid xl:grid-cols-[1.4fr_.6fr_.6fr_.7fr] gap-4"><div><div className="font-mono text-[10px] text-ai">{control.control_id}</div><div className="font-head font-bold mt-1">{control.name}</div><div className="text-xs text-muted-foreground mt-1">{control.category} · {control.owner || "Unassigned"}</div></div><div><div className="text-[9px] font-mono uppercase text-muted-foreground">Status</div><div className="mt-2"><StatusPill value={control.status} /></div></div><div><div className="text-[9px] font-mono uppercase text-muted-foreground">Effectiveness</div><div className="font-head font-black text-xl mt-1">{control.effectiveness}%</div></div><div><div className="text-[9px] font-mono uppercase text-muted-foreground">Evidence</div><div className="text-sm mt-1">{control.stale ? "Expired" : `${control.days_to_expiry ?? "-"} days to expiry`}</div></div></div></div>)}</div></Panel>
-      <Panel title="Framework readiness during crisis" subtitle="Current control framework coverage for audit and response assurance."><div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">{frameworks.map((framework) => <div key={framework.framework} className="rounded-lg border border-border p-3"><div className="font-head font-bold text-sm">{framework.framework}</div><div className="font-head font-black text-2xl mt-2">{framework.coverage}%</div><div className="text-xs text-muted-foreground mt-1">{framework.passing}/{framework.controls} controls passing</div></div>)}</div></Panel>
+      <Panel title="Control Failures Affecting Crisis Posture" subtitle="Existing control effectiveness, maturity, drift and evidence state."><div className="space-y-3">{attention.map((control) => <div key={control.control_id} className="rounded-xl border border-border bg-secondary/20 p-4"><div className="grid xl:grid-cols-[1.4fr_.6fr_.6fr_.7fr] gap-4"><div><div className="font-mono text-[10px] text-ai">{control.control_id}</div><div className="font-head font-bold mt-1">{control.name}</div><div className="text-xs text-muted-foreground mt-1">{control.category} · {control.owner || "Unassigned"}</div></div><div><div className="text-[9px] font-mono uppercase text-muted-foreground">Status</div><div className="mt-2"><StatusPill value={control.status} /></div></div><div><div className="text-[9px] font-mono uppercase text-muted-foreground">Effectiveness</div><div className="font-head font-black text-xl mt-1">{control.effectiveness}%</div></div><div><div className="text-[9px] font-mono uppercase text-muted-foreground">Evidence</div><div className="text-sm mt-1">{control.stale ? "Expired" : `${control.days_to_expiry ?? "-"} days to expiry`}</div></div></div></div>)}</div></Panel>
+      <Panel title="Framework Readiness During Crisis" subtitle="Current control framework coverage for audit and response assurance."><div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">{frameworks.map((framework) => <div key={framework.framework} className="rounded-lg border border-border p-3"><div className="font-head font-bold text-sm">{framework.framework}</div><div className="font-head font-black text-2xl mt-2">{framework.coverage}%</div><div className="text-xs text-muted-foreground mt-1">{framework.passing}/{framework.controls} controls passing</div></div>)}</div></Panel>
     </div>
   );
 }
@@ -660,7 +660,7 @@ function TimelineEvidence({ selectedCase, caseDetail, data, changed }) {
   };
 
   return (
-    <Panel testid="crisis-timeline" title="Crisis timeline and evidence" subtitle="Merged crisis events, incident timestamps and recent audit records." actions={selectedCase ? <button onClick={() => setShowAdd((v) => !v)} data-testid="crisis-add-event-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />Add Timeline Event</button> : null}>
+    <Panel testid="crisis-timeline" title="Crisis Timeline & Evidence" subtitle="Merged crisis events, incident timestamps and recent audit records." actions={selectedCase ? <button onClick={() => setShowAdd((v) => !v)} data-testid="crisis-add-event-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />Add Timeline Event</button> : null}>
       {showAdd && <form onSubmit={add} className="rounded-lg border border-border bg-secondary/20 p-4 mb-5 grid md:grid-cols-2 gap-3"><select value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })} className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm">{["Detection","Threat","Containment","Decision","Communication","Recovery","Business Impact","Legal","Evidence","Note"].map((v) => <option key={v}>{v}</option>)}</select><select value={form.severity} onChange={(e) => setForm({ ...form, severity: e.target.value })} className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm">{["Info","Low","Medium","High","Critical"].map((v) => <option key={v}>{v}</option>)}</select><input required value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="Timeline event" data-testid="crisis-event-title" className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm md:col-span-2" /><input value={form.source} onChange={(e) => setForm({ ...form, source: e.target.value })} placeholder="Source" className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm" /><textarea rows={3} value={form.detail} onChange={(e) => setForm({ ...form, detail: e.target.value })} placeholder="Detail" className="bg-secondary/60 rounded-md px-3 py-2.5 text-sm" /><button disabled={busy} data-testid="crisis-event-submit" className="md:col-span-2 px-3 py-2.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold">Add Timeline Event</button></form>}
       {rows.length === 0 ? <EmptyState title="No timeline evidence" text="No crisis events, incident timestamps or recent audit records are currently available." /> : <div className="relative"><div className="absolute left-[93px] top-0 bottom-0 w-px bg-border" /><div className="space-y-1">{rows.slice(0, 150).map((row) => <div key={`${row.id}:${row.ts}`} className="grid grid-cols-[80px_1fr] gap-7 py-3"><div className="text-right"><div className="font-mono text-[10px] text-muted-foreground">{row.ts ? new Date(row.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "-"}</div><div className="font-mono text-[9px] text-muted-foreground mt-1">{row.ts ? new Date(row.ts).toLocaleDateString() : ""}</div></div><div className="relative rounded-lg border border-border bg-secondary/20 p-3"><div className="absolute -left-[20px] top-4 w-2.5 h-2.5 rounded-full bg-primary border-2 border-background" /><div className="flex items-start justify-between gap-3"><div><div className="font-head font-bold text-sm">{row.title}</div><div className="text-[10px] text-muted-foreground mt-1">{row.kind} · {row.source}</div></div><StatusPill value={row.severity} /></div>{row.detail && <div className="text-xs text-muted-foreground mt-2">{row.detail}</div>}</div></div>)}</div></div>}
     </Panel>
@@ -686,7 +686,7 @@ function ExecutiveBriefing({ data, selectedCase, caseDetail, reportBusy, generat
     <div className="space-y-5" data-testid="crisis-briefing">
       <div className="grid md:grid-cols-4 gap-4"><MetricCard label="Crisis" value={selectedCase?.severity || data.severity || "None"} sub={selectedCase?.title || "No case selected"} icon={Siren} /><MetricCard label="Exposure" value={money(exposure)} icon={Banknote} accent="35 90% 55%" /><MetricCard label="Response progress" value={`${response.progress}%`} kind="MODELLED" icon={CheckCircle2} accent="142 70% 45%" /><MetricCard label="Approvals pending" value={response.awaitingApproval} icon={Gavel} accent="266 85% 66%" /></div>
       <Panel title="Obserra Crisis Advisor" subtitle="Executive analysis grounded solely in the current crisis case, incidents, exposure and response status."><AIExplain title={selectedCase?.title || "Enterprise cyber crisis posture"} kind="cyber crisis executive decision business impact containment recovery" context={context} accent="0 84% 60%" groundOnly /></Panel>
-      <Panel title="Board and executive reporting" subtitle="Uses the existing Obserra Studio PDF service."><button onClick={generateReport} disabled={reportBusy} data-testid="crisis-generate-brief" className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-md bg-primary text-primary-foreground font-head font-bold disabled:opacity-50">{reportBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}Generate Cyber Crisis Executive Brief</button></Panel>
+      <Panel title="Board & Executive Reporting" subtitle="Uses the existing Obserra Studio PDF service."><button onClick={generateReport} disabled={reportBusy} data-testid="crisis-generate-brief" className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-md bg-primary text-primary-foreground font-head font-bold disabled:opacity-50">{reportBusy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}Generate Cyber Crisis Executive Brief</button></Panel>
     </div>
   );
 }
@@ -698,11 +698,11 @@ function Defensibility({ data, sourceStatus }) {
   return (
     <div className="space-y-5" data-testid="crisis-defensibility">
       <div className="grid xl:grid-cols-3 gap-5">
-        <Panel title="Data source status" subtitle="Unavailable source data is surfaced, never replaced."><div className="space-y-2">{Object.entries(sourceStatus || {}).map(([key, status]) => <div key={key} className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5"><div className="text-sm font-medium">{labels[key] || key}</div><span className={`text-[10px] font-mono ${status.ok ? "text-low" : "text-crit"}`}>{status.ok ? "LIVE" : "UNAVAILABLE"}</span></div>)}</div></Panel>
-        <Panel title="Evidence classification" subtitle="Source records, models and AI interpretation remain distinct."><div className="space-y-4"><div className="rounded-lg border border-border p-4"><DataClassBadge kind="FACT" /><p className="text-xs text-muted-foreground mt-2">Crisis cases, incidents, risks, controls, decisions, audit events, workflows, financial ALE and response actions.</p></div><div className="rounded-lg border border-border p-4"><DataClassBadge kind="MODELLED" /><p className="text-xs text-muted-foreground mt-2">Enterprise crisis score and response progress.</p></div><div className="rounded-lg border border-border p-4"><DataClassBadge kind="AI RECOMMENDATION" /><p className="text-xs text-muted-foreground mt-2">Obserra Crisis Advisor summaries and recommendations.</p></div></div></Panel>
-        <Panel title="Execution boundary" subtitle="Crisis orchestration records are not confused with external defensive execution."><div className="space-y-3 text-sm"><div>External isolation, token revocation, SAP suspension or cloud containment is not claimed unless a connected execution system verifies the action.</div><div>Crisis case updates and action changes are written into the existing audit stream.</div><div>"Executing" means the response team marked execution in Obserra, not that an external system has been independently verified.</div></div></Panel>
+        <Panel title="Data Source Status" subtitle="Unavailable source data is surfaced, never replaced."><div className="space-y-2">{Object.entries(sourceStatus || {}).map(([key, status]) => <div key={key} className="flex items-center justify-between gap-3 rounded-lg border border-border px-3 py-2.5"><div className="text-sm font-medium">{labels[key] || key}</div><span className={`text-[10px] font-mono ${status.ok ? "text-low" : "text-crit"}`}>{status.ok ? "LIVE" : "UNAVAILABLE"}</span></div>)}</div></Panel>
+        <Panel title="Evidence Classification" subtitle="Source records, models and AI interpretation remain distinct."><div className="space-y-4"><div className="rounded-lg border border-border p-4"><DataClassBadge kind="FACT" /><p className="text-xs text-muted-foreground mt-2">Crisis cases, incidents, risks, controls, decisions, audit events, workflows, financial ALE and response actions.</p></div><div className="rounded-lg border border-border p-4"><DataClassBadge kind="MODELLED" /><p className="text-xs text-muted-foreground mt-2">Enterprise crisis score and response progress.</p></div><div className="rounded-lg border border-border p-4"><DataClassBadge kind="AI RECOMMENDATION" /><p className="text-xs text-muted-foreground mt-2">Obserra Crisis Advisor summaries and recommendations.</p></div></div></Panel>
+        <Panel title="Execution Boundary" subtitle="Crisis orchestration records are not confused with external defensive execution."><div className="space-y-3 text-sm"><div>External isolation, token revocation, SAP suspension or cloud containment is not claimed unless a connected execution system verifies the action.</div><div>Crisis case updates and action changes are written into the existing audit stream.</div><div>"Executing" means the response team marked execution in Obserra, not that an external system has been independently verified.</div></div></Panel>
       </div>
-      <Panel title="Connector health context" subtitle="Existing enterprise connector telemetry available to crisis leadership.">{connectors.length ? <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">{connectors.map((connector) => <div key={`${connector.id}:${connector.name}`} className="rounded-lg border border-border p-3"><div className="font-head font-bold text-sm">{connector.name}</div><div className="text-[10px] text-muted-foreground mt-1">{connector.category}</div><div className="text-[10px] font-mono mt-2">{connector.health || connector.state || "unknown"}</div></div>)}</div> : <EmptyState title="No connector health data" text="No connector health records are currently returned." />}</Panel>
+      <Panel title="Connector Health Context" subtitle="Existing enterprise connector telemetry available to crisis leadership.">{connectors.length ? <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">{connectors.map((connector) => <div key={`${connector.id}:${connector.name}`} className="rounded-lg border border-border p-3"><div className="font-head font-bold text-sm">{connector.name}</div><div className="text-[10px] text-muted-foreground mt-1">{connector.category}</div><div className="text-[10px] font-mono mt-2">{connector.health || connector.state || "unknown"}</div></div>)}</div> : <EmptyState title="No connector health data" text="No connector health records are currently returned." />}</Panel>
     </div>
   );
 }
@@ -770,7 +770,7 @@ function WarRoomChat({ selectedCase, caseDetail, user, live, changed }) {
 
   return (
     <div data-testid="crisis-war-room-chat">
-      <Panel title="War room chat" subtitle="Shared responder thread — @mention a role to ping them on Teams/Slack, and turn any message into a tracked decision.">
+      <Panel title="War Room Chat" subtitle="Shared responder thread — @mention a role to ping them on Teams/Slack, and turn any message into a tracked decision.">
         {!ref ? <EmptyState title="No crisis case selected" text="Select a crisis case to open the war room thread." /> : (
           <div className="flex flex-col h-[460px]">
             <div className="flex-1 overflow-y-auto space-y-3 pr-1" data-testid="crisis-chat-thread">
@@ -850,7 +850,7 @@ function RiskyUsers({ selectedCase, changed }) {
     return l === "high" ? "bg-crit/15 text-crit" : l === "medium" ? "bg-high/15 text-high" : l === "low" ? "bg-med/15 text-med" : "bg-secondary/60 text-muted-foreground";
   };
   return (
-    <Panel testid="crisis-risky-users" title="Identity Protection — risky users (live Microsoft Entra)" subtitle="Users flagged by Microsoft Entra ID Protection. Contain a compromised account in one click." actions={<button onClick={load} disabled={busy === "load"} data-testid="crisis-risky-refresh" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{busy === "load" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Refresh</button>}>
+    <Panel testid="crisis-risky-users" title="Identity Protection — Risky Users (live Microsoft Entra)" subtitle="Users flagged by Microsoft Entra ID Protection. Contain a compromised account in one click." actions={<button onClick={load} disabled={busy === "load"} data-testid="crisis-risky-refresh" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{busy === "load" ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}Refresh</button>}>
       {status === "unconnected" ? (
         <EmptyState title="Microsoft Entra not connected" text="Connect Microsoft Entra ID in Connector Health → Enterprise Connectors to surface live risky-user signals. Identity Protection requires Entra ID P2." />
       ) : rows.length === 0 ? (
@@ -932,7 +932,7 @@ function WarRoom({ selectedCase, caseDetail, changed, user, live }) {
   return (
     <div className="space-y-5" data-testid="crisis-war-room">
       <div className="grid xl:grid-cols-[1.3fr_1fr] gap-5">
-      <Panel title="War room roster" subtitle="Leadership and responders coordinating this crisis, by role." actions={selectedCase ? (
+      <Panel title="War Room Roster" subtitle="Leadership and responders coordinating this crisis, by role." actions={selectedCase ? (
         <div className="flex items-center gap-2">
           {live && <span data-testid="crisis-warroom-live" className="inline-flex items-center gap-1 text-[10px] font-mono text-low"><span className="w-1.5 h-1.5 rounded-full bg-low animate-pulse" />LIVE · 8s</span>}
           <button onClick={join} disabled={busy === "join"} data-testid="crisis-join-warroom-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-ai/40 bg-ai/10 text-ai text-xs font-head font-bold disabled:opacity-50"><UserPlus className="w-3.5 h-3.5" />Join War Room</button>
@@ -962,7 +962,7 @@ function WarRoom({ selectedCase, caseDetail, changed, user, live }) {
           </>
         )}
       </Panel>
-      <Panel title="Pending executive decisions" subtitle="Decisions awaiting an owner's approval, mirrored from the Decision Room.">
+      <Panel title="Pending Executive Decisions" subtitle="Decisions awaiting an owner's approval, mirrored from the Decision Room.">
         {pending.length === 0 ? <EmptyState title="No decisions pending" text="No response actions are currently awaiting executive approval." /> : (
           <div className="space-y-2">{pending.map((a) => (
             <div key={a.action_id} className="rounded-lg border border-high/25 bg-high/5 p-3">
@@ -1025,7 +1025,7 @@ function RecoveryCommand({ selectedCase, caseDetail, changed }) {
         <MetricCard label="Operational" value={items.filter((i) => i.status === "Operational").length} icon={CheckCircle2} accent="142 70% 45%" />
         <MetricCard label="Still down" value={items.filter((i) => i.status === "Down").length} icon={AlertOctagon} accent="0 84% 60%" />
       </div>
-      <Panel title="Recovery by category" subtitle="Restoration percentage across systems, applications and business services.">
+      <Panel title="Recovery by Category" subtitle="Restoration percentage across systems, applications and business services.">
         {byCat.length === 0 ? <EmptyState title="No recovery items" text="Add recovery items to track restoration by category." /> : (
           <div className="space-y-3">{byCat.map((c) => (
             <div key={c.category}>
@@ -1035,7 +1035,7 @@ function RecoveryCommand({ selectedCase, caseDetail, changed }) {
           ))}</div>
         )}
       </Panel>
-      <Panel title="Recovery items" subtitle="Advance each item Down to Restoring to Validated to Operational." actions={selectedCase ? <button onClick={() => setShowAdd((v) => !v)} data-testid="crisis-add-recovery-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />Add Item</button> : null}>
+      <Panel title="Recovery Items" subtitle="Advance each item Down to Restoring to Validated to Operational." actions={selectedCase ? <button onClick={() => setShowAdd((v) => !v)} data-testid="crisis-add-recovery-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />Add Item</button> : null}>
         {!selectedCase ? <EmptyState title="No crisis case selected" text="Select a crisis case to coordinate recovery." /> : (
           <>
             {showAdd && (
@@ -1101,7 +1101,7 @@ function RegulatoryLegal({ selectedCase, caseDetail, changed }) {
         <Scale className="w-5 h-5 text-med shrink-0 mt-0.5" />
         <div className="text-xs text-muted-foreground"><span className="font-head font-bold text-foreground">Evidence-only.</span> Obserra surfaces potential applicability, required evidence and deadlines. It never determines legal obligation as fact — authorized legal counsel confirms whether notification is required.</div>
       </div>
-      <Panel title="Regulatory & legal command" subtitle="Potential notification obligations with countdown deadlines." actions={selectedCase ? <button onClick={() => setShowAdd((v) => !v)} data-testid="crisis-add-obligation-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />Add Obligation</button> : null}>
+      <Panel title="Regulatory & Legal Command" subtitle="Potential notification obligations with countdown deadlines." actions={selectedCase ? <button onClick={() => setShowAdd((v) => !v)} data-testid="crisis-add-obligation-btn" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold"><Plus className="w-3.5 h-3.5" />Add Obligation</button> : null}>
         {!selectedCase ? <EmptyState title="No crisis case selected" text="Select a crisis case to track regulatory obligations." /> : (
           <>
             {showAdd && (

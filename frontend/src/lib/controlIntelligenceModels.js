@@ -228,7 +228,7 @@ export function boardReportBlocks({ controls = [], compliance = {}, crosswalk = 
 
   return [
     {
-      heading: "Executive Control Intelligence",
+      heading: "Executive Control Posture",
       lines: [
         `Control health score: ${summary.healthScore}/100`,
         `Controls: ${summary.total}`,

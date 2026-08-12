@@ -1,4 +1,4 @@
-"""Control Intelligence — auditor-link, brief-delivery & nudge-preference endpoints.
+"""Control Posture — auditor-link, brief-delivery & nudge-preference endpoints.
 
 Split out of control_intelligence.py (routes only; shared helpers stay there and are
 imported here). server.py imports this module so its routes register on ci_router.
@@ -168,7 +168,7 @@ async def public_auditor_brief_pdf(token: str, who: str = ""):
     org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"name": 1, "report_branding": 1})
     org_name = (org or {}).get("name") or "Organization"
     md = _ci_brief_markdown(a)
-    title = "Control Intelligence Assurance Brief"
+    title = "Control Posture Assurance Brief"
     raw = _build_pdf(md, title, cover=True, org_name=org_name, brand=_resolve_brand(org)).getvalue()
     seal = hashlib.sha256(md.encode()).hexdigest()
     auditor = (who or "").strip()[:120] or "External auditor"
@@ -224,16 +224,16 @@ async def _maybe_alert_auditor_access(doc, kind, who):
             f"<h2 style='color:#0f1e3d'>An auditor engaged your {org_name} assurance link</h2>"
             f"<p>An external auditor{(' (' + who + ')') if who else ''} just {label}.</p>"
             f"<p style='font-size:11px;color:#9ca3af'>You are notified once, on first engagement with this link. "
-            f"Full open/download history is in the Defensibility tab of Control Intelligence.</p></div>")
+            f"Full open/download history is in the Defensibility tab of Control Posture.</p></div>")
     for em in emails:
         try:
-            await notifications.send_email(em, f"Auditor engaged — {org_name} Control Intelligence", body)
+            await notifications.send_email(em, f"Auditor engaged — {org_name} Control Posture", body)
         except Exception:
             pass
     try:
         org2 = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"alert_channel_webhook": 1})
         wh = ((org2 or {}).get("alert_channel_webhook") or "").strip()
-        chat_title = f"Auditor engaged — {org_name} Control Intelligence"
+        chat_title = f"Auditor engaged — {org_name} Control Posture"
         chat_text = (f"An external auditor{(' (' + who + ')') if who else ''} {label}. "
                      f"First engagement — full open/download history is in the Defensibility tab.")
         if wh:
@@ -255,7 +255,7 @@ async def brief_pdf(admin: dict = Depends(require_roles("admin"))):
     org_name = (org or {}).get("name") or "Organization"
     md = _ci_brief_markdown(a)
     md += _engagement_section(await _auditor_engagement(admin["org_id"]))
-    title = "Control Intelligence Executive Assurance Brief"
+    title = "Control Posture Executive Assurance Brief"
     pdf = _build_pdf(md, title, cover=True, org_name=org_name, brand=_resolve_brand(org))
     return StreamingResponse(io.BytesIO(pdf.getvalue()), media_type="application/pdf",
                              headers={"Content-Disposition": 'inline; filename="obserra-brief-preview.pdf"'})

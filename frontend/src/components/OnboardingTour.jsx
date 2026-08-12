@@ -3,25 +3,25 @@ import { useAuth } from "@/context/AuthContext";
 import { ArrowRight, ArrowLeft } from "lucide-react";
 
 const EXEC_STEPS = [
-  { title: "Welcome to Obserra Control Intelligence",
+  { title: "Welcome to Obserra Cyber Crisis Commander",
     body: "Your continuous view of control effectiveness and assurance across the enterprise. Every number — control health, framework coverage, evidence freshness, remediation priority — recomputes live from your control feed. Switch altitude anytime from the toggle in the top bar." },
   { title: "Executive Mode", spotlight: true,
     body: "The boardroom view — highlighted above. Control posture framed for leadership: how effective your controls are, where coverage is thin and what needs executive action, without the noise." },
   { title: "Operational Mode", spotlight: true,
     body: "Flip the same toggle to Operational for the working view — control-by-control effectiveness, evidence status, framework gaps and the remediation queue — so your team can act on specifics." },
-  { title: "Start at Control Intelligence", spotlight: true, target: "nav-control-intelligence",
-    body: "Highlighted in the sidebar — Control Intelligence is where you explore Mission Control, framework readiness, evidence assurance, remediation and defensibility. Come back here anytime." },
+  { title: "Start at Control Posture", spotlight: true, target: "nav-control-posture",
+    body: "Highlighted in the sidebar — Control Posture is where you explore Mission Control, framework readiness, evidence assurance, remediation and defensibility. Come back here anytime." },
 ];
 
 const OPS_STEPS = [
-  { title: "Welcome to Obserra Control Intelligence",
+  { title: "Welcome to Obserra Cyber Crisis Commander",
     body: "This is your operational cockpit for continuous control assurance. Every metric is grounded in your live control feed and carries its data class, so you always know exactly what you're acting on." },
   { title: "Operational Mode", spotlight: true,
     body: "The toggle above keeps you in Operational view — control effectiveness, evidence freshness, framework gaps, remediation priority and drift. This is your day-to-day working surface." },
   { title: "Where you'll work",
-    body: "Jump into Obserra Control Intelligence from the sidebar to review Mission Control, close framework gaps and work the remediation queue. The Obserrian Advisor can help you triage too." },
-  { title: "Start at Control Intelligence", spotlight: true, target: "nav-control-intelligence",
-    body: "Highlighted in the sidebar — Control Intelligence is your triage home base: control health, evidence assurance and remediation priority, with the Obserrian Advisor one click away." },
+    body: "Jump into Obserra Control Posture from the sidebar to review Mission Control, close framework gaps and work the remediation queue. The Obserrian Advisor can help you triage too." },
+  { title: "Start at Control Posture", spotlight: true, target: "nav-control-posture",
+    body: "Highlighted in the sidebar — Control Posture is your triage home base: control health, evidence assurance and remediation priority, with the Obserrian Advisor one click away." },
 ];
 
 export const OnboardingTour = () => {

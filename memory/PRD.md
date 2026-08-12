@@ -1,6 +1,10 @@
 # Obserra EIOS — PRD
 
 
+## REBRAND (Aug 2026) — This deployment IS "Obserra Cyber Crisis Commander"
+The user clarified Control Intelligence is a SEPARATE already-built product; THIS app is Cyber Crisis Commander (template reuse). All user-facing "Control Intelligence" text was removed app-wide: app brand/estate/footers/PDF/email → "Cyber Crisis Commander"; the former Control Intelligence dashboard product → "Control Posture" (route `/app/control-intelligence` unchanged, sidebar testid now `nav-control-posture`). All executive dashboards + connectors remain as sidebar tabs. Crisis Commander card titles standardized to Title Case + tab-aligned. Known follow-up: regenerate on-prem guide PDFs (backend/assets/docs) which still carry the old name in their pre-built binaries.
+
+
 ## NEW APP (Jun 2026) — Obserra Control Intelligence (FRONTEND-ONLY, all live)
 Route `/app/control-intelligence` (sidebar "Control Intelligence"). Continuous Control Effectiveness & Assurance. REUSES existing backend only — NO backend changes. Strict directive: no mockups/placeholders; every panel derives from a live feed or shows a proper empty/UNAVAILABLE state.
 

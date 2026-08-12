@@ -1,0 +1,32 @@
+{
+  "summary": "Rebrand regression sweep for Obserra Cyber Crisis Commander. Backend smoke passes (PDF 200 %PDF, assurance-digest/preview 200 JSON). All sidebar routes load without crash. Onboarding tour title now 'Welcome to Obserra Cyber Crisis Commander' and 'Start at Control Posture' step targets data-testid nav-control-posture (which resolves). Executive Overview shows 'CYBER CRISIS COMMANDER ROLLUP' badge and 'whole Cyber Crisis Commander estate' body text. Control Posture nav item routes to /app/control-intelligence with heading 'Control Posture Mission Control'. Cyber Crisis Commander page: with Demo Mode enabled all 4 tabs render — Mission Control (Mission Control — Active Crisis Command + Response Action Status + Control Failure Intelligence), Decision Room (Decision Room — Executive Approval Queue + crisis-sla-scan-btn present), Containment & Recovery (Identity Containment panel present), War Room (Identity Protection + crisis-risky-users testid present). Demo mode was toggled off afterward. ONE regression miss found: static HTML head in frontend/public/index.html still contains 'Control Intelligence' in the <title> and meta description — the browser tab title on every page reads 'Obserra — Control Intelligence'. This is user-visible UI (tab title) and violates the 'no Control Intelligence anywhere in the UI' requirement.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "frontend/public/index.html", "issue": "Browser tab <title> still reads 'Obserra — Control Intelligence' and meta[name=description] still contains 'Obserra — Control Intelligence.' — rebrand miss, visible in every browser tab. Should be 'Obserra — Cyber Crisis Commander'.", "selector": "document.title / meta[name=description]", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "System Health (/app/system-health)", "issues": ["React hydration warning: <span> rendered as child of <select><option> (SystemHealth.jsx around line 1075). Not a rebrand bug — pre-existing DOM validity warning worth cleaning."]}
+    ]
+  },
+  "test_report_links": ["/app/test_reports/iteration_140.json"],
+  "action_items": [
+    "Update frontend/public/index.html: change <title>Obserra — Control Intelligence</title> and the meta[name=description] to use 'Cyber Crisis Commander' instead of 'Control Intelligence'. Also check apple-mobile-web-app-title/og:title/twitter:title if present."
+  ],
+  "critical_code_review_comments": [
+    "Rebrand missed static assets: frontend/public/index.html title + meta description still ship 'Control Intelligence' to every page load.",
+    "SystemHealth.jsx renders <span> inside <option> (hydration invalid nesting). Should render plain text in <option>."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "95%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin) — worked; login submitted via Enter on password field.",
+  "seed_data_creation": "Toggled Demo Mode ON on Cyber Crisis Commander to validate tab content, then toggled OFF at end of test. No other seed data created.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "After main agent fixes public/index.html, re-verify: document.title on /login and /app pages contains 'Cyber Crisis Commander' and no 'Control Intelligence'. Backend PDF/JSON endpoints already stable. Known non-bug per this task's context note: on-prem install-guide PDF assets under backend/assets/docs still contain 'Control Intelligence' in pre-built binaries — do NOT flag.",
+  "rca of the issue": "During the broad rebrand from 'Control Intelligence' to 'Cyber Crisis Commander' the static index.html <title> and description meta tags were not updated. These render as the browser tab title on every route, so the regression is user-visible even though no React component text was missed. Fix: edit frontend/public/index.html lines 44 and 61 to replace 'Control Intelligence' with 'Cyber Crisis Commander'."
+}

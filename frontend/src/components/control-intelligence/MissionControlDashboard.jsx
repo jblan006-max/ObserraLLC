@@ -250,7 +250,7 @@ export default function MissionControlDashboard({ data, onOpenTab, onSelectContr
           </button>
           {showAdvisor && (
             <div className="mt-3">
-              <AIInsight dashboard="Control Intelligence" accent="168 76% 46%" auto slug="control-intelligence-advisor" />
+              <AIInsight dashboard="Control Posture" accent="168 76% 46%" auto slug="control-intelligence-advisor" />
             </div>
           )}
         </Panel>

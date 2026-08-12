@@ -2,7 +2,7 @@ import { FlaskConical } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useDemoState } from "@/hooks/useDemoState";
 
-// Subtle global strip shown whenever Control Intelligence demo data is active, so a
+// Subtle global strip shown whenever Cyber Crisis Commander demo data is active, so a
 // showcase is never mistaken for live evidence during a screen-share. Clicking it
 // jumps straight to the Defensibility "Clear demo" control.
 export function DemoRibbon() {

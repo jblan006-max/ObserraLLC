@@ -1224,7 +1224,7 @@ export default function DefensibilityDashboard({ data, sourceStatus, isAdmin }) 
           </div>
         </Panel>
 
-        <Panel title="Evidence classification" subtitle="Control Intelligence separates source facts from calculations and recommendations." testid="control-intel-classification">
+        <Panel title="Evidence classification" subtitle="Control Posture separates source facts from calculations and recommendations." testid="control-intel-classification">
           <div className="space-y-4">
             <div className="rounded-lg border border-border p-4">
               <DataClassBadge kind="FACT" />

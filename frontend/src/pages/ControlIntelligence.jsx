@@ -143,9 +143,9 @@ export default function ControlIntelligence() {
       const response = await api.post(
         "/studio/report/pdf",
         {
-          title: "Control Intelligence Executive Assurance Brief",
+          title: "Control Posture Executive Assurance Brief",
           ai_narrative:
-            "This Obserra Control Intelligence brief uses the existing control catalog, effectiveness, maturity, evidence freshness, compliance framework and crosswalk data. Control health, priority scoring and cross-framework convergence are modeled client-side and are presented separately from source facts.",
+            "This Obserra Control Posture brief uses the existing control catalog, effectiveness, maturity, evidence freshness, compliance framework and crosswalk data. Control health, priority scoring and cross-framework convergence are modeled client-side and are presented separately from source facts.",
           blocks,
         },
         { responseType: "blob" }
@@ -155,7 +155,7 @@ export default function ControlIntelligence() {
         response.data,
         "obserra-control-intelligence-executive-assurance-brief.pdf"
       );
-      toast.success("Control Intelligence executive brief generated.");
+      toast.success("Control Posture executive brief generated.");
     } catch (e) {
       toast.error(e.response?.data?.detail || "Unable to generate executive brief.");
     } finally {
@@ -184,7 +184,7 @@ export default function ControlIntelligence() {
           <div className="flex items-center gap-2 flex-wrap">
             <ShieldCheck className="w-7 h-7 text-primary" />
             <h1 className="font-head font-black text-3xl tracking-tight">
-              Control Intelligence Mission Control
+              Control Posture Mission Control
             </h1>
             <span className="px-2 py-1 rounded-full border border-low/25 bg-low/10 text-low text-[10px] font-mono">
               CONTINUOUS ASSURANCE
@@ -260,7 +260,7 @@ export default function ControlIntelligence() {
       <ErrorBanner message={error} onRetry={reload} refreshing={refreshing} />
 
       <AIInsight
-        dashboard="Control Intelligence"
+        dashboard="Control Posture"
         accent="168 76% 46%"
         auto
         slug="control-intelligence"

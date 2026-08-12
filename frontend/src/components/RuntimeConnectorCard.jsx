@@ -90,7 +90,7 @@ export function RuntimeConnectorCard() {
         )}
       </div>
       <p className="text-sm text-muted-foreground">
-        Paste your agent execution environment's enforcement webhook. When set, Suspend / Kill / Resume in the Control Intelligence control plane are POSTed to this URL as <span className="text-foreground font-mono">{"{agent_ref, action, mode, org_id}"}</span> so
+        Paste your agent execution environment's enforcement webhook. When set, Suspend / Kill / Resume in the Cyber Crisis Commander control plane are POSTed to this URL as <span className="text-foreground font-mono">{"{agent_ref, action, mode, org_id}"}</span> so
         enforcement reaches the live runtime — not just the Obserra control plane. Leave blank to enforce in the control plane only.
       </p>
       <div className="flex items-center gap-2 flex-wrap">

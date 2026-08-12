@@ -113,7 +113,7 @@ export default function CIAuditorPortal() {
             <Gavel className="w-3.5 h-3.5" /> OBSERRA · READ-ONLY CONTROL ASSURANCE FOR AUDIT
           </span>
           <h1 className="font-head font-black text-3xl lg:text-4xl tracking-tight" data-testid="ci-auditor-title">
-            {data.org_name} — Control Intelligence
+            {data.org_name} — Cyber Crisis Commander
           </h1>
           <p className="text-sm text-white/60">
             Generated {fmtDT(data.generated_at)} · link expires {fmtDT(data.expires_at)}
@@ -208,7 +208,7 @@ export default function CIAuditorPortal() {
 
         <footer className="text-center text-[11px] text-white/30 pt-6 border-t border-white/10 flex items-center justify-center gap-1.5">
           <ShieldCheck className="w-3.5 h-3.5" />
-          Read-only control-assurance evidence — Obserra Control Intelligence. Effectiveness, evidence and coverage are FACT values; health &amp; coverage roll-ups are MODELLED.
+          Read-only control-assurance evidence — Obserra Cyber Crisis Commander. Effectiveness, evidence and coverage are FACT values; health &amp; coverage roll-ups are MODELLED.
         </footer>
       </div>
     </div>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 
-// Polls the org-wide Control Intelligence demo flag so the global DEMO ribbon and
+// Polls the org-wide Cyber Crisis Commander demo flag so the global DEMO ribbon and
 // the CI dashboards can light up together when a showcase journey is seeded.
 export function useDemoState(pollMs = 45000) {
   const [active, setActive] = useState(false);

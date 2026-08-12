@@ -185,7 +185,7 @@ export default function AIExecutiveOverview() {
         <div>
           <div className="flex items-center gap-2 flex-wrap">
             <h1 className="font-head font-black text-3xl tracking-tight">Executive Overview</h1>
-            <span className="px-2 py-1 rounded-full border border-ai/25 bg-ai/10 text-ai text-[10px] font-mono">CONTROL INTELLIGENCE ROLLUP</span>
+            <span className="px-2 py-1 rounded-full border border-ai/25 bg-ai/10 text-ai text-[10px] font-mono">CYBER CRISIS COMMANDER ROLLUP</span>
             <span data-testid="overview-version-badge" className="px-2 py-1 rounded-full border border-border bg-secondary/60 text-muted-foreground text-[10px] font-mono font-bold">{APP_VERSION_LABEL}</span>
             <GoLiveBadge />
             {isAdmin && <ControlAssuranceBadge />}
@@ -193,7 +193,7 @@ export default function AIExecutiveOverview() {
             <MuteBadge />
           </div>
           <p className="text-sm text-muted-foreground mt-2 max-w-3xl">
-            A single board-ready rollup of the whole Control Intelligence estate — modelled agent risk, delegated
+            A single board-ready rollup of the whole Cyber Crisis Commander estate — modelled agent risk, delegated
             autonomy, toxic capability combinations, shadow AI exposure, guardrail gaps and open incidents. Every card
             drills into the Control Plane or opens a full deep-dive.
           </p>
@@ -212,7 +212,7 @@ export default function AIExecutiveOverview() {
 
       <ErrorBanner message={error} onRetry={reload} refreshing={refreshing} />
 
-      <AIInsight dashboard="Control Intelligence — Executive Overview" accent={ACCENT} auto slug="agentic-ai-security" />
+      <AIInsight dashboard="Cyber Crisis Commander — Executive Overview" accent={ACCENT} auto slug="agentic-ai-security" />
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
         {kpis.map((k) => (

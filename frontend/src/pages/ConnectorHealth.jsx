@@ -254,7 +254,7 @@ export default function ConnectorHealth() {
 
       <div className="bg-card fact-border rounded-xl p-5" data-testid="all-connectors-panel">
         <h2 className="font-head font-bold text-lg mb-1">Enterprise Connectors — SAP, AI &amp; Obserra</h2>
-        <p className="text-xs text-muted-foreground mb-4">Every source system across the platform, live with real connectivity health. Connect any SAP, AI, identity, SIEM, ITSM or collaboration system to feed Control Intelligence and Cyber Crisis Commander.</p>
+        <p className="text-xs text-muted-foreground mb-4">Every source system across the platform, live with real connectivity health. Connect any SAP, AI, identity, SIEM, ITSM or collaboration system to feed Control Posture and Cyber Crisis Commander.</p>
         <ConnectorCatalog />
       </div>
 

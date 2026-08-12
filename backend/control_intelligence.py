@@ -1,4 +1,4 @@
-"""Obserra Control Intelligence — composed on the existing control feed.
+"""Obserra Control Posture — composed on the existing control feed.
 
 Adds three capabilities without introducing any new control data source:
   * daily control-effectiveness snapshot + trend history
@@ -117,7 +117,7 @@ def _nudge_html(at_risk, by_owner):
             f"<h2 style='color:#0f1e3d'>Control remediation reminder</h2>"
             f"<p>{len(at_risk)} control(s) need attention. Please pick up remediation for the controls you own.</p>"
             f"{rows}"
-            f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence — automated remediation nudge.</p></div>")
+            f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Posture — automated remediation nudge.</p></div>")
 
 
 async def _admin_exec_emails(org_id):
@@ -149,7 +149,7 @@ def _nudge_owner_html(owner, ctrls, scorecard_html=""):
             f"<p>Hi {owner}, {len(ctrls)} control(s) you own need remediation. Here is exactly what to pick up:</p>"
             f"{scorecard_html}"
             f"<ul>{items}</ul>"
-            f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence — personalized remediation nudge.</p></div>")
+            f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Posture — personalized remediation nudge.</p></div>")
 
 
 def _nudge_groups(by_owner, owner_map=None, muted=None):
@@ -181,14 +181,14 @@ async def _run_ci_owner_nudges(org_id, actor="scheduler@obserra"):
             sc = _owner_scorecard(a["statuses"], owner)
             trend = await _owner_trend(org_id, owner)
             await notifications.send_email(
-                em, "Your controls need remediation — Obserra Control Intelligence",
+                em, "Your controls need remediation — Obserra Control Posture",
                 _nudge_owner_html(owner, ctrls, _scorecard_html(sc, trend)))
             personalized.add(em)
     rollup = (await _admin_exec_emails(org_id)) - personalized
     if rollup:
         html = _nudge_html(at_risk, by_owner)
         for em in sorted(rollup):
-            await notifications.send_email(em, "Controls need remediation — Obserra Control Intelligence", html)
+            await notifications.send_email(em, "Controls need remediation — Obserra Control Posture", html)
     emailed = sorted(personalized | rollup)
     try:
         await notifications.create(org_id, "control", "Control remediation reminder sent",
@@ -288,7 +288,7 @@ def _engagement_section(eng):
 
 def _ci_brief_markdown(a):
     weak = sorted(a["statuses"], key=lambda c: c["effectiveness"])[:10]
-    lines = ["## Executive Control Intelligence",
+    lines = ["## Executive Control Posture",
              f"- Control health score: {a['health']}/100",
              f"- Controls: {a['total']}",
              f"- Passing: {a['passing']}",
@@ -367,7 +367,7 @@ async def _run_ci_brief_email(org_id, actor="scheduler@obserra", extra_recipient
     org_name = (org or {}).get("name") or "Organization"
     md = _ci_brief_markdown(a)
     md += _engagement_section(await _auditor_engagement(org_id))
-    title = "Control Intelligence Executive Assurance Brief"
+    title = "Control Posture Executive Assurance Brief"
     pdf = _build_pdf(md, title, cover=True, org_name=org_name, brand=_resolve_brand(org))
     attachments = [{"filename": "obserra-control-intelligence-assurance-brief.pdf",
                     "content": base64.b64encode(pdf.getvalue()).decode()}]
@@ -395,7 +395,7 @@ async def _run_ci_brief_email(org_id, actor="scheduler@obserra", extra_recipient
             to.append(em)
     try:
         await notifications.create(org_id, "report", "Executive Assurance Brief emailed",
-                                   f"Control Intelligence brief (PDF) emailed to {sent} recipient(s).",
+                                   f"Control Posture brief (PDF) emailed to {sent} recipient(s).",
                                    ref="control-intelligence")
     except Exception:
         pass
@@ -542,7 +542,7 @@ async def owner_nudges_preview(demo: bool = False, admin: dict = Depends(require
 async def brief_preview(admin: dict = Depends(require_roles("admin"))):
     a = await _ci_aggregate(admin["org_id"])
     md = _ci_brief_markdown(a) + _engagement_section(await _auditor_engagement(admin["org_id"]))
-    title = "Control Intelligence Executive Assurance Brief"
+    title = "Control Posture Executive Assurance Brief"
     return {"title": title, "markdown": md, "html": _report_html(md, title)}
 
 

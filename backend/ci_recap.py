@@ -1,4 +1,4 @@
-"""Control Intelligence — engagement follow-ups, weekly assurance recap & reviewer timeline.
+"""Control Posture — engagement follow-ups, weekly assurance recap & reviewer timeline.
 
 Split out of control_intelligence.py (routes + their private helpers). Shared aggregate/
 brief helpers stay in control_intelligence.py and are imported here. server.py imports this
@@ -61,7 +61,7 @@ async def auditor_link_follow_up(body: FollowUpBody, admin: dict = Depends(requi
             f"<p>Our records show the read-only assurance portal was opened but the signed evidence PDF "
             f"hasn't been downloaded yet. When you have a moment, please pull the sealed brief for your file:</p>"
             f"<p><a href='{url}' style='color:#12b4d6'>{url}</a></p>"
-            f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence \u2014 auditor follow-up.</p></div>")
+            f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Posture \u2014 auditor follow-up.</p></div>")
     sent = 0
     for em in recipients:
         try:
@@ -87,7 +87,7 @@ def _engagement_nudge_html(owner, points, days=2):
             f"<p>Hi {owner}, the average effectiveness of the controls you own has fallen for {days} days "
             f"running \u2014 from {prior}% to {latest}% (down {drop} pts). Please review your controls "
             f"before it slips further.</p>"
-            f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence \u2014 proactive readiness nudge.</p></div>")
+            f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Posture \u2014 proactive readiness nudge.</p></div>")
 
 
 async def _run_ci_engagement_nudges(org_id):
@@ -112,7 +112,7 @@ async def _run_ci_engagement_nudges(org_id):
             continue
         try:
             await notifications.send_email(
-                em, "Your control readiness is declining \u2014 Obserra Control Intelligence",
+                em, "Your control readiness is declining \u2014 Obserra Control Posture",
                 _engagement_nudge_html(owner, pts[-(drop_days + 1):], drop_days))
             await db.ci_sent_markers.insert_one({"marker": marker, "at": datetime.now(timezone.utc).isoformat()})
             nudged += 1
@@ -200,7 +200,7 @@ def _recap_html(org_name, rec, auditor_recipients=None):
         parts.append(f"<h3 style='color:#0f1e3d;margin:14px 0 4px'>Readiness nudges sent this week</h3>"
                      f"<p>{len(no)} owner(s) were auto-nudged for declining control readiness: "
                      f"{', '.join(no)}.</p>")
-    parts.append("<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence \u2014 weekly assurance recap.</p></div>")
+    parts.append("<p style='font-size:11px;color:#9ca3af'>Obserra Control Posture \u2014 weekly assurance recap.</p></div>")
     return "".join(parts)
 
 
@@ -223,7 +223,7 @@ def _recap_markdown(org_name, rec):
         lines += ["", "## Readiness nudges sent this week", f"- {', '.join(no)}"]
     lines += ["", "## Defensibility",
               "- Views/downloads/reviewers are FACT values from the auditor access log.",
-              "- Obserra Control Intelligence \u2014 weekly assurance recap."]
+              "- Obserra Control Posture \u2014 weekly assurance recap."]
     return "\n".join(lines)
 
 
@@ -591,7 +591,7 @@ def _assurance_digest_html(org_name, p):
             f"<h3 style='color:#0f1e3d;margin:14px 0 4px'>Highest-priority control gaps</h3><ul>{weak}</ul>"
             f"<h3 style='color:#0f1e3d;margin:14px 0 4px'>External assurance activity ({p['days']}d)</h3><p>{eng_line}</p>"
             + wn_html
-            + f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Intelligence \u2014 monthly assurance digest.</p></div>")
+            + f"<p style='font-size:11px;color:#9ca3af'>Obserra Control Posture \u2014 monthly assurance digest.</p></div>")
 
 
 def _assurance_digest_markdown(org_name, p):
