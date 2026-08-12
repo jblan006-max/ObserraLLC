@@ -1,35 +1,20 @@
 #!/usr/bin/env python3
-"""Auto-capture fresh dashboard screenshots for the SAP UAC Install & User Guide.
+"""Auto-capture fresh dashboard screenshots for the Obserra EU CRA Governance guides.
 
-Drives the live app with Playwright (Chromium), logs in as an admin, and saves
-JPEGs to scripts/shots using the exact filenames gen_docs.py embeds. Best-effort:
-any page that fails is skipped so a partial refresh still succeeds.
+Drives the live app with Playwright (Chromium), logs in as an admin, walks the EU
+CRA Governance tabs and saves JPEGs to scripts/shots using the exact filenames
+gen_docs.py embeds. Best-effort: any page that fails is skipped so a partial
+refresh still succeeds.
 
 Env overrides: SHOT_BASE_URL, SHOT_EMAIL, SHOT_PASSWORD.
 """
 import os
-import shutil
 
 os.environ.setdefault("PLAYWRIGHT_BROWSERS_PATH", "/pw-browsers")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SHOTS = os.path.join(HERE, "shots")
 os.makedirs(SHOTS, exist_ok=True)
-PUBLIC_TOUR = os.path.join(os.path.dirname(HERE), "frontend", "public", "tour")
-# in-app onboarding tour previews (served from /tour/*.jpg)
-TOUR_MAP = {"02_exec_overview": "overview", "04_sod_command_center": "sod",
-            "05_sod_watchlist_leaderboard": "watchlist", "07_access_monitoring": "monitoring"}
-
-
-def _copy_tour_shots():
-    os.makedirs(PUBLIC_TOUR, exist_ok=True)
-    for src, dst in TOUR_MAP.items():
-        sp = os.path.join(SHOTS, f"{src}.jpg")
-        if os.path.exists(sp):
-            try:
-                shutil.copyfile(sp, os.path.join(PUBLIC_TOUR, f"{dst}.jpg"))
-            except Exception:
-                pass
 
 
 def _backend_url():
@@ -50,22 +35,14 @@ BASE = _backend_url()
 EMAIL = os.environ.get("SHOT_EMAIL", "jblan2026@gmail.com")
 PASSWORD = os.environ.get("SHOT_PASSWORD", "Obserra2026!")
 
-# (route under /app, screenshot filename, scroll_y) — must match gen_docs.py SECTIONS
-PAGES = [
-    ("", "02_exec_overview", 0),
-    ("systems", "20_go_live", 0),
-    ("analytics", "03_sap_analytics", 0),
-    ("sod", "04_sod_command_center", 0),
-    ("sod", "05_sod_watchlist_leaderboard", 520),
-    ("privileged", "06_privileged_access", 0),
-    ("monitoring", "07_access_monitoring", 0),
-    ("identities", "08_identities", 0),
-    ("lifecycle", "09_lifecycle", 0),
-    ("hr-reconciliation", "10_hr_reconciliation", 0),
-    ("roles", "11_role_intelligence", 0),
-    ("access-requests", "12_access_requests", 0),
-    ("certifications", "13_certifications", 0),
-    ("settings", "14_settings", 0),
+# (cra tab id, screenshot filename) — must match gen_docs.py SECTIONS.
+CRA_TABS = [
+    ("mission", "cra_mission"),
+    ("products", "cra_products"),
+    ("ledger", "cra_ledger"),
+    ("vulnerability", "cra_vuln"),
+    ("declaration", "cra_declaration"),
+    ("regulation", "cra_regulation"),
 ]
 
 
@@ -121,11 +98,12 @@ def run():
             _lk["executable_path"] = _exe
         browser = p.chromium.launch(**_lk)
         page = browser.new_page(viewport={"width": 1440, "height": 900})
-        # Login (SAP UAC auth form lives on the landing route "/")
+        # Login (auth form lives on the landing route "/")
         page.goto(f"{BASE}/", wait_until="domcontentloaded", timeout=45000)
         page.wait_for_selector("input[type=email]", state="visible", timeout=25000)
         try:
             page.screenshot(path=os.path.join(SHOTS, "01_login.jpg"), type="jpeg", quality=70)
+            print("captured 01_login")
         except Exception:
             pass
         page.fill("input[type=email]", EMAIL)
@@ -134,29 +112,49 @@ def run():
         page.wait_for_timeout(3000)
         _settle(page)
         _dismiss_overlays(page)
-        pages = [p for p in PAGES if p[1] in TOUR_MAP] if os.environ.get("SHOT_TOUR_ONLY") else PAGES
+
         only = os.environ.get("SHOT_ONLY")
+        tabs = CRA_TABS
         if only:
             wanted = set(only.split(","))
-            pages = [p for p in pages if p[1] in wanted]
-        for route, name, scroll_y in pages:
+            tabs = [t for t in tabs if t[1] in wanted]
+
+        # Open the EU CRA Governance workspace once, then click through its tabs.
+        page.goto(f"{BASE}/app/cra-governance", wait_until="domcontentloaded", timeout=45000)
+        _settle(page)
+        page.wait_for_timeout(800)
+        _dismiss_overlays(page)
+        for tab, name in tabs:
             try:
-                page.goto(f"{BASE}/app/{route}", wait_until="domcontentloaded", timeout=45000)
-                _settle(page)
-                page.wait_for_timeout(800)
-                _dismiss_overlays(page)
-                if scroll_y:
-                    page.evaluate("(y) => window.scrollTo(0, y)", scroll_y)
+                btn = page.query_selector(f"[data-testid=cra-tab-{tab}]")
+                if btn:
+                    btn.click()
                     page.wait_for_timeout(700)
-                else:
-                    page.evaluate("() => window.scrollTo(0, 0)")
-                    page.wait_for_timeout(200)
+                _settle(page)
+                if tab == "mission":
+                    try:
+                        page.wait_for_selector("[data-testid=cra-insight-headline]", timeout=20000)
+                    except Exception:
+                        pass
+                page.evaluate("() => window.scrollTo(0, 0)")
+                page.wait_for_timeout(300)
                 page.screenshot(path=os.path.join(SHOTS, f"{name}.jpg"), type="jpeg", quality=70)
                 print("captured", name)
             except Exception as e:
                 print("skip", name, e)
+
+        # Shared Settings screen (branding + deployment downloads).
+        try:
+            page.goto(f"{BASE}/app/settings", wait_until="domcontentloaded", timeout=45000)
+            _settle(page)
+            page.wait_for_timeout(600)
+            _dismiss_overlays(page)
+            page.evaluate("() => window.scrollTo(0, 0)")
+            page.screenshot(path=os.path.join(SHOTS, "cra_settings.jpg"), type="jpeg", quality=70)
+            print("captured cra_settings")
+        except Exception as e:
+            print("skip cra_settings", e)
         browser.close()
-    _copy_tour_shots()
 
 
 if __name__ == "__main__":

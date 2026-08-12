@@ -794,6 +794,22 @@ async def portal_external_signoff(raw_token: str, external_ref: str, body: Exter
 # ===========================================================================
 _CRA_INSIGHT_CACHE: dict = {}
 
+# Key statutory CRA milestones (Regulation (EU) 2024/2847) in chronological order.
+_CRA_MILESTONES = [
+    ("2026-06-11", "conformity-assessment-body notification provisions apply (Chapter IV)"),
+    ("2026-09-11", "Article 14 vulnerability & incident reporting obligations apply"),
+    ("2027-12-11", "general application — full CRA obligations & CE marking"),
+]
+
+
+def _cra_next_deadline() -> dict | None:
+    today = utcnow().date()
+    for d, label in _CRA_MILESTONES:
+        due = datetime.strptime(d, "%Y-%m-%d").date()
+        if due >= today:
+            return {"date": d, "label": label, "days_remaining": (due - today).days}
+    return None
+
 
 async def _cra_insight_context(org_id: str) -> dict:
     products = await db.cra_products.find({"org_id": org_id}, {"_id": 0}).to_list(1000)
@@ -844,6 +860,7 @@ async def _cra_insight_context(org_id: str) -> dict:
         "overdue_article14": overdue[:20],
         "counts": {"products": len(products), "blocked": len(blockers), "overdue_clocks": len(overdue),
                    "assessments": len(assessments), "vulnerabilities": len(vulnerabilities)},
+        "next_deadline": _cra_next_deadline(),
     }
 
 
@@ -864,26 +881,33 @@ def _cra_insight_fallback(ctx: dict) -> dict:
     if ctx["ce_blockers"]:
         actions.append("Clear CE-marking blockers: approve classifications, complete assessments, generate SBOMs and approve EU declarations.")
     actions.append("Review products still on a Proposed classification and record formal approval.")
-    return {"headline": f"{t['products']} products under EU CRA governance · {ctx['counts']['blocked']} with CE blockers · {ctx['counts']['overdue_clocks']} overdue Article 14 clocks",
+    nd = ctx.get("next_deadline")
+    headline = f"{t['products']} products under EU CRA governance · {ctx['counts']['blocked']} with CE blockers · {ctx['counts']['overdue_clocks']} overdue Article 14 clocks"
+    if nd:
+        headline = f"{nd['days_remaining']} days to the next CRA deadline ({nd['date']} — {nd['label']}): {headline}"
+        insights.insert(0, {"text": f"Nearest statutory CRA deadline: {nd['label']} on {nd['date']} — {nd['days_remaining']} days away.",
+                            "kind": "risk" if nd["days_remaining"] <= 120 else "fact"})
+    return {"headline": headline,
             "insights": insights[:5], "actions": actions[:4], "model": "obserra/cra-grounded", "generated_at": iso()}
 
 
-@cra_router.get("/insight")
-async def cra_insight(user: dict = Depends(get_current_user)):
+async def compute_cra_insight(org_id: str, use_cache: bool = True) -> dict:
     import os
     import asyncio
-    org_id = user["org_id"]
     ctx = await _cra_insight_context(org_id)
+    nd = ctx.get("next_deadline")
     ck = (org_id, ctx["counts"]["products"], ctx["counts"]["blocked"], ctx["counts"]["overdue_clocks"],
           ctx["totals"]["classification_approved"], ctx["totals"]["ce_ready"], ctx["totals"]["average_readiness"])
-    hit = _CRA_INSIGHT_CACHE.get(ck)
-    if hit and (utcnow() - hit["ts"]).total_seconds() < 120:
-        return hit["data"]
+    if use_cache:
+        hit = _CRA_INSIGHT_CACHE.get(ck)
+        if hit and (utcnow() - hit["ts"]).total_seconds() < 120:
+            return hit["data"]
     if ctx["counts"]["products"] == 0:
-        data = {"headline": "No products under EU CRA governance yet.",
+        lead = f"{nd['days_remaining']} days to the next CRA deadline ({nd['date']} — {nd['label']}). " if nd else ""
+        data = {"headline": f"{lead}No products under EU CRA governance yet.",
                 "insights": [{"text": "Register a product with digital elements to begin CRA classification, assessment and CE readiness.", "kind": "fact"}],
                 "actions": ["Register your first product from Products & Classification.", "Load sample products to explore the workflow."],
-                "model": "obserra/cra-grounded", "generated_at": iso()}
+                "next_deadline": nd, "model": "obserra/cra-grounded", "generated_at": iso()}
         _CRA_INSIGHT_CACHE[ck] = {"ts": utcnow(), "data": data}
         return data
     try:
@@ -892,10 +916,11 @@ async def cra_insight(user: dict = Depends(get_current_user)):
             "You are the Obserra EU CRA Governance AI Analyst. Read the LIVE EU Cyber Resilience Act posture JSON "
             "and return a concise, executive compliance briefing STRICTLY as JSON: {\"headline\": str, \"insights\": "
             "[{\"text\": str, \"kind\": one of \"fact\"|\"estimate\"|\"risk\"}], \"actions\": [str]}. 3-5 insights, "
-            "2-4 actions. Ground EVERY statement in the data — cite product counts, classification split, named CE "
-            "blockers and overdue Article 14 reporting stages with hours overdue. This is EU CRA (Regulation (EU) "
-            "2024/2847) product-compliance guidance: NEVER mention SAP access, SoD conflicts, cyber-incident crisis "
-            "data or any unrelated governance domain. Return ONLY the JSON object.")
+            "2-4 actions. OPEN the headline with the countdown to the nearest statutory deadline in next_deadline, "
+            "phrased like 'N days to <label> on <date>'. Ground EVERY statement in the data — cite product counts, "
+            "classification split, named CE blockers and overdue Article 14 reporting stages with hours overdue. This "
+            "is EU CRA (Regulation (EU) 2024/2847) product-compliance guidance: NEVER mention SAP access, SoD "
+            "conflicts, cyber-incident crisis data or any unrelated governance domain. Return ONLY the JSON object.")
         chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"cra-insight-{org_id}",
                        system_message=system).with_model("openai", "gpt-5.4")
         prompt = f"LIVE EU CRA POSTURE (JSON):\n{json.dumps(ctx, default=str)[:9000]}"
@@ -915,13 +940,22 @@ async def cra_insight(user: dict = Depends(get_current_user)):
             data = _cra_insight_fallback(ctx)
         else:
             parsed.setdefault("actions", [])
+            if nd and nd["date"] not in (parsed.get("headline") or ""):
+                parsed["headline"] = f"{nd['days_remaining']} days to the next CRA deadline ({nd['date']} — {nd['label']}): {parsed.get('headline', '')}".strip()
+            parsed["next_deadline"] = nd
             parsed["model"] = "openai/gpt-5.4"
             parsed["generated_at"] = iso()
             data = parsed
     except Exception:
         data = _cra_insight_fallback(ctx)
+    data.setdefault("next_deadline", nd)
     _CRA_INSIGHT_CACHE[ck] = {"ts": utcnow(), "data": data}
     return data
+
+
+@cra_router.get("/insight")
+async def cra_insight(user: dict = Depends(get_current_user)):
+    return await compute_cra_insight(user["org_id"])
 
 
 # ===========================================================================
@@ -1061,3 +1095,78 @@ async def public_verify(raw_token: str):
         "timeline": timeline,
         "note": "Read-only, tamper-evident verification view. The private Internal Regulatory Ledger payloads are not exposed; only event metadata and hash-chain integrity are shown.",
     }
+
+
+# ===========================================================================
+# CRA AI Analyst — weekly executive email digest. Wired into the platform's
+# existing weekly cron (see scheduled.py). Only orgs with CRA products are sent.
+# ===========================================================================
+def _cra_analyst_digest_html(org_name: str, insight: dict, ctx: dict) -> str:
+    t = ctx["totals"]
+    nd = insight.get("next_deadline") or ctx.get("next_deadline")
+
+    def esc(s):
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    tone = {"fact": "#0f1e3d", "estimate": "#12b4d6", "risk": "#dc2626"}
+    ins_rows = "".join(
+        f'<tr><td style="padding:6px 0;border-bottom:1px solid #eef2f7;font:400 13px Arial;color:#1f2937">'
+        f'<span style="font:700 9px Arial;letter-spacing:.05em;color:{tone.get(i.get("kind"), "#0f1e3d")}">'
+        f'{esc((i.get("kind") or "fact").upper())}</span><br>{esc(i.get("text", ""))}</td></tr>'
+        for i in insight.get("insights", []))
+    act_rows = "".join(
+        f'<tr><td style="padding:6px 0;font:400 13px Arial;color:#1f2937">&#8226; {esc(a)}</td></tr>'
+        for a in insight.get("actions", []))
+    deadline_banner = ""
+    if nd:
+        deadline_banner = (
+            '<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:12px 14px;margin:12px 0;'
+            f'font:600 13px Arial;color:#b45309">{nd["days_remaining"]} days to the next CRA deadline &#8212; '
+            f'{esc(nd["label"])} on {esc(nd["date"])}.</div>')
+    return (
+        '<table width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;margin:auto;background:#fff">'
+        '<tr><td style="padding:24px">'
+        '<div style="font:800 18px Arial;color:#0f1e3d">CRA AI Analyst &#8212; Weekly Briefing</div>'
+        f'<div style="font:400 12px Arial;color:#6b7280;margin-bottom:6px">{esc(org_name)} &#183; Obserra EU CRA Governance</div>'
+        f'<div style="font:700 15px Arial;color:#0f1e3d;margin:12px 0 4px">{esc(insight.get("headline", ""))}</div>'
+        f'{deadline_banner}'
+        f'<div style="font:400 12px Arial;color:#374151;margin:8px 0">Products <b>{t["products"]}</b> &#183; CE-ready '
+        f'<b>{t["ce_ready"]}</b> &#183; Blocked <b>{ctx["counts"]["blocked"]}</b> &#183; Overdue Art.14 '
+        f'<b>{ctx["counts"]["overdue_clocks"]}</b> &#183; Avg readiness <b>{t["average_readiness"]}%</b></div>'
+        '<div style="font:700 11px Arial;color:#6b7280;letter-spacing:.05em;margin-top:14px">KEY INSIGHTS</div>'
+        f'<table width="100%">{ins_rows}</table>'
+        '<div style="font:700 11px Arial;color:#6b7280;letter-spacing:.05em;margin-top:14px">RECOMMENDED ACTIONS</div>'
+        f'<table width="100%">{act_rows}</table>'
+        '<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:10px;font:400 10px Arial;color:#9ca3af">'
+        'Grounded in your live product records. Sign in to Obserra EU CRA Governance for the full board view. '
+        'Decision-support only &#8212; not legal advice or a guarantee of CRA conformity.</div>'
+        '</td></tr></table>')
+
+
+async def _run_cra_analyst_weekly_digest():
+    import logging
+    from kernel import notifications
+    logger = logging.getLogger("obserra.cra")
+    orgs = await db.organizations.find({}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        try:
+            if not await db.cra_products.find_one({"org_id": org_id}, {"_id": 0, "ref": 1}):
+                continue
+            recipients = await db.users.find(
+                {"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
+                {"_id": 0, "email": 1, "digest_cadence": 1}).to_list(200)
+            recipients = [r for r in recipients if r.get("digest_cadence", "weekly") == "weekly"]
+            if not recipients:
+                continue
+            ctx = await _cra_insight_context(org_id)
+            insight = await compute_cra_insight(org_id, use_cache=False)
+            html = _cra_analyst_digest_html(org.get("name", "Your organization"), insight, ctx)
+            for r in recipients:
+                await notifications.send_email(r["email"], "CRA AI Analyst — your weekly EU CRA briefing", html)
+            await notifications.create(
+                org_id, "report", "CRA AI Analyst weekly briefing sent",
+                f"Emailed the EU CRA executive briefing to {len(recipients)} recipient(s).", ref="cra-analyst-digest")
+            logger.info(f"CRA analyst digest sent for org {org_id}: {len(recipients)} recipient(s)")
+        except Exception as e:
+            logger.error(f"CRA analyst digest failed for org {org_id}: {e}")

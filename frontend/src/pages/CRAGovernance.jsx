@@ -6,6 +6,7 @@ import {
   Building2,
   CheckCircle2,
   Clock3,
+  Copy,
   Download,
   FileCheck2,
   FileJson,
@@ -132,16 +133,24 @@ function PromptDialog({ open, onOpenChange, title, description, fields, submitLa
           {description && <DialogDescription>{description}</DialogDescription>}
         </DialogHeader>
         <div className="space-y-3 py-1">
-          {fields.map((f) => (
-            <div key={f.key}>
-              <label className="text-[10px] font-mono uppercase text-muted-foreground">{f.label}{f.required ? " *" : ""}</label>
-              {f.textarea ? (
-                <textarea rows={3} value={values[f.key] || ""} onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))} placeholder={f.placeholder} data-testid={`${testid}-${f.key}`} className="mt-1 w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm" />
-              ) : (
-                <input value={values[f.key] || ""} onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))} placeholder={f.placeholder} data-testid={`${testid}-${f.key}`} className="mt-1 w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm" />
-              )}
-            </div>
-          ))}
+          {fields.map((f, idx) => {
+            const onKeyDown = (e) => {
+              if (e.key === "Enter" && (!f.textarea || e.metaKey || e.ctrlKey) && canSubmit && !busy) {
+                e.preventDefault();
+                submit();
+              }
+            };
+            return (
+              <div key={f.key}>
+                <label className="text-[10px] font-mono uppercase text-muted-foreground">{f.label}{f.required ? " *" : ""}</label>
+                {f.textarea ? (
+                  <textarea autoFocus={idx === 0} rows={3} value={values[f.key] || ""} onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))} onKeyDown={onKeyDown} placeholder={f.placeholder} data-testid={`${testid}-${f.key}`} className="mt-1 w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm" />
+                ) : (
+                  <input autoFocus={idx === 0} value={values[f.key] || ""} onChange={(e) => setValues((v) => ({ ...v, [f.key]: e.target.value }))} onKeyDown={onKeyDown} placeholder={f.placeholder} data-testid={`${testid}-${f.key}`} className="mt-1 w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm" />
+                )}
+              </div>
+            );
+          })}
         </div>
         <DialogFooter>
           <button onClick={() => onOpenChange(false)} className="px-3 py-2 rounded-md border border-border bg-secondary text-xs font-head font-bold">Cancel</button>
@@ -617,7 +626,19 @@ function RegulatoryLedger({ data, isAdmin }) {
           </div>
           {link && (
             <div className="mt-3 rounded-lg border border-low/25 bg-low/5 p-3" data-testid="cra-verify-link">
-              <div className="text-[10px] font-mono text-low uppercase">Auditor verification link issued</div>
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-[10px] font-mono text-low uppercase">Auditor verification link issued</div>
+                <button
+                  onClick={async () => {
+                    try { await navigator.clipboard.writeText(link.url); toast.success("Verification link copied to clipboard."); }
+                    catch { toast.error("Copy failed — select the link manually."); }
+                  }}
+                  data-testid="cra-verify-copy"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-primary/25 bg-primary/10 text-primary text-[10px] font-head font-bold hover:bg-primary/20 transition-colors"
+                >
+                  <Copy className="w-3 h-3" /> Copy link
+                </button>
+              </div>
               <a href={link.url} target="_blank" rel="noreferrer" className="text-xs break-all mt-2 block underline text-primary">{link.url}</a>
               <div className="text-[10px] font-mono text-muted-foreground mt-1">Expires {new Date(link.expires_at).toLocaleString()}</div>
             </div>

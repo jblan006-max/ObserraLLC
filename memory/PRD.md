@@ -1,5 +1,13 @@
 # Obserra EIOS — PRD
 
+## Round 29 (Jun 2026) — 5 CRA AI-Analyst & guide enhancements (backend curl + digest send verified, frontend smoke-tested)
+All 5 user-selected follow-ups delivered on `cra_governance.py` / `CRAGovernance.jsx` / `scheduled.py` / `scripts/*`:
+- **Statutory-deadline headline** — `_cra_next_deadline()` computes the nearest CRA milestone (11 Jun 2026 conformity-body notification, 11 Sep 2026 Article 14 reporting, 11 Dec 2027 general application). The AI Analyst headline now opens with the countdown (verified live: "30 days to Article 14 … on 2026-09-11"). Insight endpoint refactored into reusable `compute_cra_insight(org_id, use_cache)`.
+- **Weekly CRA AI Analyst email digest** — `_run_cra_analyst_weekly_digest()` + `_cra_analyst_digest_html()` email admins/execs of orgs with CRA products (headline, deadline banner, insights, actions, CE stats). Wired into the EXISTING `weekly-drift-digest` cron (Mon 08:00 UTC) to respect the 5-cron limit; uses managed Resend via `kernel.notifications.send_email`. Verified end-to-end (test send returned an email id).
+- **Auditor link Copy button** — `cra-verify-copy` one-tap copy (clipboard + toast) next to the issued link.
+- **Dialog keyboard flow** — `PromptDialog` autofocuses the first field (verified) and submits on Enter (Ctrl/Cmd+Enter for textareas).
+- **Real CRA guide screenshots** — `scripts/capture_shots.py` rewritten to log in and walk the CRA tabs (01_login, cra_mission, cra_products, cra_ledger, cra_vuln, cra_declaration, cra_regulation, cra_settings). `gen_docs.py` embeds them; guides regenerated (~1MB PDFs). The weekly `weekly-guide-refresh` cron now recaptures CRA screens.
+
 ## Round 28 (Jun 2026) — 5 CRA feature completions (iteration_150, backend 11/11 + frontend 100%, zero bugs)
 Completed the previously-paused feature set on `CRAGovernance.jsx` + `cra_governance.py`, all approved by the user:
 - **Main title** now reads exactly "European Union Cyber Resilience Act Governance" (`data-testid=cra-page-title`).

@@ -87,12 +87,14 @@ SECTIONS = [
         "relevant workspace tab.",
         "The CRA AI Analyst sits at the top of Mission Control. It reads the LIVE CRA posture — "
         "product counts, classification split, named CE-marking blockers and overdue Article 14 "
-        "reporting stages — and returns a concise executive briefing: a headline, three-to-five "
-        "grounded insights labelled FACT / ESTIMATE / RISK, and prioritised recommended actions. "
-        "Every statement is grounded in your own records; a deterministic fallback keeps the "
-        "briefing available even if the AI service is momentarily unreachable. Click 'Regenerate' "
-        "to refresh after making changes.",
-    ], None, ALL),
+        "reporting stages — and returns a concise executive briefing: a headline that opens with the "
+        "countdown to the nearest statutory CRA deadline, three-to-five grounded insights labelled "
+        "FACT / ESTIMATE / RISK, and prioritised recommended actions. Every statement is grounded in "
+        "your own records; a deterministic fallback keeps the briefing available even if the AI "
+        "service is momentarily unreachable. Click 'Regenerate' to refresh after making changes, and "
+        "opt in to the weekly CRA AI Analyst email so leadership sees CE-readiness drift without "
+        "logging in.",
+    ], "cra_mission.jpg", ALL),
 
     ("Products & Classification", [
         "Register each product with digital elements: name, version, manufacturer legal name, "
@@ -105,7 +107,7 @@ SECTIONS = [
         "written rationale. Approving locks the classification into the compliance record and writes "
         "the decision, actor and legal basis to the Internal Regulatory Ledger. Products can be "
         "re-classified whenever functionality or categories change.",
-    ], None, ALL),
+    ], "cra_products.jpg", ALL),
 
     ("CRA Readiness Assessments & the Certification Portal", [
         "Each product is assessed against a regulation-mapped requirement set. Every question links "
@@ -137,7 +139,7 @@ SECTIONS = [
         "the submission package and records each stage against the single reporting platform; it "
         "does not claim a regulatory submission has been made until an official submission or receipt "
         "reference is recorded, keeping the timeline honest and audit-defensible.",
-    ], None, ALL),
+    ], "cra_vuln.jpg", ALL),
 
     ("Labs & Notified Bodies (Conformity Assessment)", [
         "Maintain a provider-neutral registry of testing labs, CRA notified bodies and certification "
@@ -160,7 +162,7 @@ SECTIONS = [
         "and title; the approval, signatory and declaration reference are written to the Internal "
         "Regulatory Ledger before a product is reported as CE ready. General CRA application begins "
         "11 December 2027.",
-    ], None, ALL),
+    ], "cra_declaration.jpg", ALL),
 
     ("Internal Regulatory Ledger & Auditor Verification", [
         "Every regulatory action — product registration, classification proposal and approval, "
@@ -168,18 +170,18 @@ SECTIONS = [
         "a private, hash-chained Internal Regulatory Ledger. Each record carries the prior-record "
         "hash and its own hash, so any tampering is detectable.",
         "For independent assurance, an admin issues a read-only Auditor Verification link for a "
-        "product from the Regulatory Ledger tab. The auditor or notified body opens the link and sees "
-        "the product's classification, conformity route, CE status, the tamper-evident compliance "
-        "timeline and a live re-computation of hash-chain integrity — without ever exposing the "
-        "private ledger payloads. Links are time-limited and tenant-scoped.",
-    ], None, ALL),
+        "product from the Regulatory Ledger tab and shares it with one tap. The auditor or notified "
+        "body opens the link and sees the product's classification, conformity route, CE status, the "
+        "tamper-evident compliance timeline and a live re-computation of hash-chain integrity — "
+        "without ever exposing the private ledger payloads. Links are time-limited and tenant-scoped.",
+    ], "cra_ledger.jpg", ALL),
 
     ("Regulation Map", [
         "The Regulation Map is the authoritative requirement catalogue: each governance object links "
         "back to Regulation (EU) 2024/2847 and Commission Implementing Regulation (EU) 2025/2392, "
         "with the obligation, legal basis and expected evidence types. It is the traceability layer "
         "that makes every workflow defensible against the source law.",
-    ], None, (A,)),
+    ], "cra_regulation.jpg", (A,)),
 
     ("Executive Brief & Board Reporting", [
         "One click generates the EU CRA Governance Executive Brief as a branded PDF — product "
@@ -193,7 +195,7 @@ SECTIONS = [
         "recipients, custom branding (company name, logo, accent colour), a 'send me a test now' "
         "button, and the Deployment & Documentation downloads — the on-premise package and these "
         "guides in PDF and Word.",
-    ], "14_settings.jpg", (A,)),
+    ], "cra_settings.jpg", (A,)),
 
     ("Support & Legal Boundary", [
         "For assistance contact your Obserra administrator. Classifications are automatically "
