@@ -75,41 +75,47 @@ function Countdown({ due }) {
 export function NativeConnectors() {
   const [data, setData] = useState(null);
   const [reveal, setReveal] = useState(false);
+  const [testing, setTesting] = useState("");
+  const [quiet, setQuiet] = useState(null);
+  const [quietBusy, setQuietBusy] = useState(false);
   const load = useCallback(async () => {
-    try {
-      const r = await api.get("/crisis/connectors/native");
-      setData(r.data);
-    } catch {
-      /* operator-only / not permitted — stay hidden */
-    }
+    try { const r = await api.get("/crisis/connectors/native"); setData(r.data); } catch { /* operator-only */ }
+    try { const q = await api.get("/crisis/connectors/quiet-check"); setQuiet(q.data); } catch { /* ignore */ }
   }, []);
   useEffect(() => { load(); }, [load]);
   const copy = (text, label) => { navigator.clipboard?.writeText(text); toast.success(`${label} copied.`); };
+  const testPing = async (vendor) => {
+    setTesting(vendor);
+    try {
+      await api.post(`/crisis/connectors/${vendor}/test`, {});
+      toast.success(`Test event sent through the ${vendor} connector — health updated.`);
+      await load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Test failed."); }
+    finally { setTesting(""); }
+  };
+  const toggleQuiet = async () => {
+    setQuietBusy(true);
+    try {
+      const { data: s } = await api.post("/crisis/settings", { connector_quiet: !(quiet?.enabled) });
+      toast.success(s.connector_quiet ? "Quiet-connector alerts enabled." : "Quiet-connector alerts disabled.");
+      await load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Unable to update."); }
+    finally { setQuietBusy(false); }
+  };
   if (!data) return null;
   const mask = (url) => (reveal ? url : url.replace(/secret=[^&]+/, "secret=••••••••••••"));
   return (
-    <Section
-      testid="crisis-native-connectors"
-      title="Native SIEM / EDR Connectors"
+    <Section testid="crisis-native-connectors" title="Native SIEM / EDR Connectors"
       subtitle="One paste to onboard a tool — each URL already carries the vendor field-mapping and your per-org secret. No transformation needed on the tool's side."
-      actions={
-        <button
-          onClick={() => setReveal((v) => !v)}
-          data-testid="crisis-native-reveal"
-          className="px-2.5 py-1.5 rounded-md border border-border bg-secondary/40 text-[10px] font-mono"
-        >
-          {reveal ? "Hide secrets" : "Show secrets"}
-        </button>
-      }
-    >
+      actions={<button onClick={() => setReveal((v) => !v)} data-testid="crisis-native-reveal" className="px-2.5 py-1.5 rounded-md border border-border bg-secondary/40 text-[10px] font-mono">{reveal ? "Hide secrets" : "Show secrets"}</button>}>
       <div className="grid gap-3 md:grid-cols-2">
         {(data.connectors || []).map((c) => {
           const url = `${BASE}${c.path}`;
           return (
             <div key={c.vendor} data-testid={`crisis-native-${c.vendor}`} className="rounded-lg border border-border bg-secondary/30 p-3">
-              <div className="flex items-center gap-2">
-                <Radio className="w-3.5 h-3.5 text-ai" />
-                <span className="font-head font-bold text-sm">{c.label}</span>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2"><Radio className="w-3.5 h-3.5 text-ai" /><span className="font-head font-bold text-sm">{c.label}</span></div>
+                <button onClick={() => testPing(c.vendor)} disabled={testing === c.vendor} data-testid={`crisis-native-test-${c.vendor}`} title="Send a synthetic test event to confirm wiring" className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md border border-ai/40 bg-ai/10 text-ai text-[10px] font-head font-bold disabled:opacity-50">{testing === c.vendor ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}Test</button>
               </div>
               <p className="text-[11px] text-muted-foreground mt-1 leading-snug">{c.note}</p>
               <div className="flex items-center gap-1.5 mt-1.5" data-testid={`crisis-native-health-${c.vendor}`}>
@@ -118,19 +124,17 @@ export function NativeConnectors() {
               </div>
               <div className="flex items-center gap-2 mt-2">
                 <code data-testid={`crisis-native-url-${c.vendor}`} className="text-[10px] font-mono break-all flex-1 bg-background border border-border rounded-md px-2 py-1.5">{mask(url)}</code>
-                <button
-                  onClick={() => copy(url, `${c.label} URL`)}
-                  data-testid={`crisis-native-copy-${c.vendor}`}
-                  className="shrink-0 p-1.5 rounded-md border border-border hover:bg-secondary"
-                  title="Copy push URL"
-                >
-                  <Copy className="w-3.5 h-3.5" />
-                </button>
+                <button onClick={() => copy(url, `${c.label} URL`)} data-testid={`crisis-native-copy-${c.vendor}`} className="shrink-0 p-1.5 rounded-md border border-border hover:bg-secondary" title="Copy push URL"><Copy className="w-3.5 h-3.5" /></button>
               </div>
               <div className="text-[9px] font-mono text-muted-foreground mt-1.5">or send the secret in the <span className="text-foreground">{c.header}</span> header</div>
             </div>
           );
         })}
+      </div>
+      <div className="mt-4 rounded-lg border border-border bg-secondary/20 p-3 flex items-center gap-3 flex-wrap" data-testid="crisis-connector-quiet">
+        <span className="text-xs font-head font-bold">Quiet-connector alerts</span>
+        <button onClick={toggleQuiet} disabled={quietBusy} data-testid="crisis-quiet-toggle" className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border text-[11px] font-head font-bold disabled:opacity-50 ${quiet?.enabled ? "border-low/40 bg-low/15 text-low" : "border-border bg-secondary/40"}`}>{quietBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <AlertTriangle className="w-3.5 h-3.5" />}{quiet?.enabled ? "On" : "Off"}</button>
+        <span className="text-[11px] text-muted-foreground">Pings the security channel if a wired connector goes silent for {quiet?.threshold_hours || 6}h+ during business hours.{quiet?.quiet?.length ? ` Currently quiet: ${quiet.quiet.map((x) => x.vendor).join(", ")}.` : ""}</span>
       </div>
     </Section>
   );
@@ -355,6 +359,8 @@ export function BoardCrisisDashboard({ selectedCase }) {
 
       <PresentToBoard selectedCase={selectedCase} variant="panel" />
 
+      <DirectorDigest />
+
       <div className="grid xl:grid-cols-2 gap-5">
         <Section testid="crisis-board-decisions" title="Decisions Awaiting the Board" subtitle="Executive approvals mirrored from the Decision Room, with SLA countdowns.">
           {pending.length === 0 ? <Empty title="No decisions pending" text="No executive decisions are currently awaiting approval." /> : (
@@ -396,5 +402,112 @@ export function BoardCrisisDashboard({ selectedCase }) {
         )}
       </Section>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Auto-SITREP Console — preview & tweak the scheduled SITREP wording, or send
+// a test SITREP to leadership chat right now.
+// ---------------------------------------------------------------------------
+export function SitrepConsole({ selectedCase, changed }) {
+  const [note, setNote] = useState("");
+  const [preview, setPreview] = useState(null);
+  const [cadence, setCadence] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [sending, setSending] = useState(false);
+  const ref = selectedCase?.ref;
+  const load = useCallback(async () => {
+    if (!ref) { setPreview(null); return; }
+    setLoading(true);
+    try {
+      const { data } = await api.get(`/crisis/cases/${ref}/sitrep/preview`);
+      setPreview(data.text); setNote(data.note || ""); setCadence(data.cadence_hours || 0);
+    } catch { /* operator-only */ }
+    finally { setLoading(false); }
+  }, [ref]);
+  useEffect(() => { load(); }, [load]);
+  const save = async () => {
+    if (!ref) return;
+    setSaving(true);
+    try {
+      await api.patch(`/crisis/cases/${ref}`, { sitrep_note: note });
+      toast.success("SITREP note saved — it will be included in scheduled posts.");
+      await changed?.(ref); await load();
+    } catch (e) { toast.error(e.response?.data?.detail || "Unable to save note."); }
+    finally { setSaving(false); }
+  };
+  const sendNow = async () => {
+    if (!ref) return;
+    setSending(true);
+    try {
+      const { data } = await api.post(`/crisis/cases/${ref}/sitrep/send-now`, {});
+      if (data.posted) toast.success("Test SITREP posted to leadership chat.");
+      else toast.message("No chat channel wired — connect Teams/Slack to post live. (Logged to timeline.)");
+      await changed?.(ref);
+    } catch (e) { toast.error(e.response?.data?.detail || "Send failed."); }
+    finally { setSending(false); }
+  };
+  if (!ref) return null;
+  return (
+    <Section testid="crisis-sitrep-console" title="Auto-SITREP Console"
+      subtitle={cadence > 0 ? `Scheduled every ${cadence}h while this crisis is active — preview and tweak the wording before it goes out.` : "Auto-SITREP is off — set a cadence from the header 'More' menu. You can still preview and send a test now."}>
+      <div className="space-y-3">
+        <div>
+          <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1">Preview (auto-composed + your note)</div>
+          <pre data-testid="crisis-sitrep-preview" className="whitespace-pre-wrap text-xs bg-background border border-border rounded-md p-3 font-mono leading-relaxed">{loading ? "Loading…" : (preview || "—")}</pre>
+        </div>
+        <div>
+          <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-1">Custom note (added to every SITREP)</div>
+          <textarea value={note} onChange={(e) => setNote(e.target.value)} data-testid="crisis-sitrep-note" rows={2}
+            placeholder="e.g. Bridge line open +1-555-0100 · Legal engaged · Next exec sync 14:00 UTC"
+            className="w-full bg-secondary/60 rounded-md px-3 py-2.5 text-sm outline-none focus:ring-1 focus:ring-primary resize-y" />
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <button onClick={save} disabled={saving} data-testid="crisis-sitrep-save" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <MessageSquare className="w-3.5 h-3.5" />}Save note &amp; preview</button>
+          <button onClick={sendNow} disabled={sending} data-testid="crisis-sitrep-send-now" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">{sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}Send test SITREP now</button>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Weekly Director Digest — opt-in weekly board rollup of all open crises.
+// ---------------------------------------------------------------------------
+export function DirectorDigest() {
+  const [enabled, setEnabled] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [sending, setSending] = useState(false);
+  useEffect(() => {
+    api.get("/crisis/settings").then((r) => setEnabled(!!r.data.director_digest)).catch(() => {});
+  }, []);
+  const toggle = async () => {
+    setBusy(true);
+    try {
+      const { data } = await api.post("/crisis/settings", { director_digest: !enabled });
+      setEnabled(!!data.director_digest);
+      toast.success(data.director_digest ? "Weekly director digest enabled." : "Weekly director digest disabled.");
+    } catch (e) { toast.error(e.response?.data?.detail || "Unable to update."); }
+    finally { setBusy(false); }
+  };
+  const sendNow = async () => {
+    setSending(true);
+    try {
+      const { data } = await api.post("/crisis/director-digest/send-now", {});
+      if (data.sent) toast.success(`Digest sent to ${data.sent} director(s) covering ${data.crises} open crisis(es).`);
+      else toast.message(data.message || "No open crises to report.");
+    } catch (e) { toast.error(e.response?.data?.detail || "Send failed."); }
+    finally { setSending(false); }
+  };
+  return (
+    <Section testid="crisis-director-digest" title="Weekly Director Digest"
+      subtitle="Email board members a weekly rollup of every open crisis — severity, containment %, decisions pending and exposure.">
+      <div className="flex items-center gap-2.5 flex-wrap">
+        <button onClick={toggle} disabled={busy} data-testid="crisis-digest-toggle" className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-md border text-xs font-head font-bold disabled:opacity-50 ${enabled ? "border-low/40 bg-low/15 text-low" : "border-border bg-secondary/40"}`}>{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}{enabled ? "Weekly digest: On" : "Weekly digest: Off"}</button>
+        <button onClick={sendNow} disabled={sending} data-testid="crisis-digest-send-now" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{sending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}Send now</button>
+        <span className="text-[11px] text-muted-foreground">Delivered to admins, executives &amp; owners.</span>
+      </div>
+    </Section>
   );
 }

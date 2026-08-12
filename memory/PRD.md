@@ -1,5 +1,9 @@
 # Obserra EIOS — PRD
 
+## Round 23 (Aug 2026) — Connector Test Ping + SITREP Preview + Weekly Director Digest + Connector-Quiet alert (iteration_145, backend 12/12 + frontend 100%)
+Shipped 4 more crisis features: (1) one-click "Test" button per SIEM connector (`POST /connectors/{vendor}/test`, updates health, no case created); (2) Auto-SITREP Console in the War Room — preview + editable `sitrep_note` + send-now (`/cases/{ref}/sitrep/preview` & `/sitrep/send-now`); (3) opt-in Weekly Director Digest emailing board members a rollup of open crises (`run_weekly_director_digest`, folded into weekly cron; `/director-digest/send-now`, `/settings`); (4) opt-in Connector-Quiet alerts pinging chat when a wired tool goes silent during business hours (`run_connector_quiet_alerts`, folded into hourly cron; `/connectors/quiet-check`). Still 5 crons (platform max). Applied review hardenings. Entra live-connect remains the only P1, blocked on user OAuth creds.
+
+
 ## Round 22 (Aug 2026) — Connector Health + Board Auto-Present + Header Tidy-Up + Auto-SITREP (iteration_144, backend 7/7 + frontend 100%)
 Shipped 4 more crisis features: (1) live "last received" health indicator per SIEM connector (`crisis_connector_health`, `/connectors/native` + `/connectors/health`); (2) Board Auto-Present — closing a real (non-demo) crisis auto-mints a board snapshot link and emails directors (`_auto_present_board` in `update_case`); (3) header tidy-up folding secondary actions into a "More" overflow menu; (4) Auto-SITREP — per-case cadence (`sitrep_schedule_hours`) posting containment SITREPs to Teams/Slack via `run_scheduled_sitreps`, folded into the existing hourly cron (5-cron platform max respected). Applied review hardenings (honest SITREP audit, auto-present failure logging, unique connector-health index). Entra live-connect remains the only P1, blocked on user OAuth creds.
 

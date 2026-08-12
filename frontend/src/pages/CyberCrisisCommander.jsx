@@ -76,7 +76,7 @@ import {
 } from "@/hooks/useCrisisCommanderData";
 import { APP_VERSION_LABEL } from "@/version";
 import { CrisisTour } from "@/components/crisis/CrisisTour";
-import { NativeConnectors, WarRoomBroadcast, BoardCrisisDashboard, PresentToBoard } from "@/components/crisis/CrisisExtensions";
+import { NativeConnectors, WarRoomBroadcast, BoardCrisisDashboard, PresentToBoard, SitrepConsole } from "@/components/crisis/CrisisExtensions";
 
 const TABS = [
   ["mission", "Mission Control", Gauge],
@@ -1662,7 +1662,7 @@ export default function CyberCrisisCommander() {
       {activeTab === "decisions" && <DecisionRoom selectedCase={selectedCase} caseDetail={caseDetail} recommendations={effectiveData?.recommendations || []} decisions={effectiveData?.decisions || []} changed={changed} />}
       {activeTab === "impact" && <BusinessImpact data={effectiveData} selectedCase={selectedCase} />}
       {activeTab === "response" && <div className="space-y-5"><ResponseActions selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} /><EntraContainment selectedCase={selectedCase} changed={changed} /></div>}
-      {activeTab === "warroom" && <div className="space-y-5">{canOperate && <WarRoomBroadcast selectedCase={selectedCase} changed={changed} />}<WarRoom selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} user={user} live={activeTab === "warroom"} /></div>}
+      {activeTab === "warroom" && <div className="space-y-5">{canOperate && <WarRoomBroadcast selectedCase={selectedCase} changed={changed} />}{canOperate && <SitrepConsole selectedCase={selectedCase} changed={changed} />}<WarRoom selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} user={user} live={activeTab === "warroom"} /></div>}
       {activeTab === "recovery" && <RecoveryCommand selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}
       {activeTab === "regulatory" && <RegulatoryLegal selectedCase={selectedCase} caseDetail={caseDetail} changed={changed} />}
       {activeTab === "controls" && <ControlFailures data={effectiveData} />}

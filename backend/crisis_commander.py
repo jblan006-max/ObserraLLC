@@ -110,6 +110,7 @@ class CrisisCaseUpdate(BaseModel):
     risk_refs: list[str] | None = None
     brief_schedule_hours: int | None = Field(default=None, ge=0, le=168)
     sitrep_schedule_hours: int | None = Field(default=None, ge=0, le=168)
+    sitrep_note: str | None = Field(default=None, max_length=500)
 
 
 class CrisisEventCreate(BaseModel):
@@ -2587,7 +2588,7 @@ async def _record_connector_health(org_id: str, vendor: str, title: str = ""):
     now = _now()
     await db.crisis_connector_health.update_one(
         {"org_id": org_id, "vendor": vendor},
-        {"$set": {"last_received": now, "last_title": (title or "")[:160]}, "$inc": {"count": 1}},
+        {"$set": {"last_received": now, "last_title": (title or "")[:160], "quiet_alerted_at": None}, "$inc": {"count": 1}},
         upsert=True)
 
 
@@ -2627,12 +2628,7 @@ async def run_scheduled_sitreps(org_id: str | None = None) -> int:
             continue
         ref = case["ref"]
         snap = await _build_snapshot({"org_id": oid, "case_ref": ref, "expires_at": None})
-        title = f"🚨 Auto-SITREP — {(case.get('title') or '')[:70]} ({ref})"
-        text = "\n".join([
-            f"Severity {case.get('severity')} · Phase {case.get('phase')} · Status {case.get('status')}",
-            f"Contained ~{snap['contained_pct']}% · {snap['counts']['pending_decisions']} decision(s) pending · {snap['counts']['open_actions']} open action(s)",
-            f"Incident commander: {case.get('incident_commander') or 'Unassigned'}",
-        ])
+        title, text = _compose_sitrep(case, snap, case.get("sitrep_note") or "")
         posted = True
         try:
             await _post_chat_alert(oid, title, text)
@@ -2720,3 +2716,279 @@ async def _auto_present_board(org_id: str, ref: str, actor: str) -> dict:
         "occurred_at": now, "created_at": now, "created_by": actor})
     await _audit(org_id, actor, "crisis.auto_present", f"{ref} -> {sent}/{len(emails)} directors")
     return {"token": token, "snapshot_path": link_path, "emailed": sent}
+
+
+
+# ===========================================================================
+# Crisis org settings (director digest + connector-quiet monitoring toggles).
+# ===========================================================================
+class CrisisSettingsBody(BaseModel):
+    director_digest: bool | None = None
+    connector_quiet: bool | None = None
+    connector_quiet_hours: int | None = Field(default=None, ge=1, le=72)
+
+
+async def _crisis_settings(org_id: str) -> dict:
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"crisis_settings": 1}) or {}
+    s = org.get("crisis_settings") or {}
+    return {"director_digest": bool(s.get("director_digest")),
+            "connector_quiet": bool(s.get("connector_quiet")),
+            "connector_quiet_hours": int(s.get("connector_quiet_hours") or 6)}
+
+
+@api.get("/settings")
+async def get_crisis_settings(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    return await _crisis_settings(user["org_id"])
+
+
+@api.post("/settings")
+async def set_crisis_settings(body: CrisisSettingsBody, user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    _require_operator(user)
+    org_id = user["org_id"]
+    upd = {}
+    if body.director_digest is not None:
+        upd["crisis_settings.director_digest"] = body.director_digest
+    if body.connector_quiet is not None:
+        upd["crisis_settings.connector_quiet"] = body.connector_quiet
+    if body.connector_quiet_hours is not None:
+        upd["crisis_settings.connector_quiet_hours"] = body.connector_quiet_hours
+    if upd:
+        await db.organizations.update_one({"_id": ObjectId(org_id)}, {"$set": upd})
+        await _audit(org_id, _actor(user), "crisis.settings", str(upd))
+    return await _crisis_settings(org_id)
+
+
+# ===========================================================================
+# Connector Test Ping — send a synthetic event through a vendor's mapping to
+# confirm wiring end-to-end in one click (updates health; no case created).
+# ===========================================================================
+_TEST_PAYLOADS = {
+    "crowdstrike": {"detection_name": "Obserra connection test", "SeverityName": "Low", "description": "Synthetic CrowdStrike test event to confirm the connector is wired."},
+    "splunk": {"search_name": "Obserra connection test", "urgency": "low", "signature": "Synthetic Splunk test event.", "_raw": "connection test"},
+    "sentinel": {"DisplayName": "Obserra connection test", "AlertSeverity": "Low", "Description": "Synthetic Microsoft Sentinel test event."},
+    "servicenow": {"short_description": "Obserra connection test", "priority": "4", "description": "Synthetic ServiceNow SecOps test event."},
+    "generic": {"title": "Obserra connection test", "severity": "Low", "detail": "Synthetic test event."},
+}
+
+
+@api.post("/connectors/{vendor}/test")
+async def connector_test_ping(vendor: str, user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    org_id = user["org_id"]
+    fmt = vendor if vendor in _VENDOR_MAPS else "generic"
+    mapped = _map_vendor_event(fmt, _TEST_PAYLOADS.get(fmt, _TEST_PAYLOADS["generic"]))
+    await _record_connector_health(org_id, fmt, "Connection test")
+    await _audit(org_id, _actor(user), "crisis.connector_test", fmt)
+    return {"ok": True, "vendor": fmt, "mapped": mapped, "tested_at": _now()}
+
+
+# ===========================================================================
+# SITREP composition + preview + send-now (tweak the auto-SITREP before it
+# goes out on a schedule).
+# ===========================================================================
+def _compose_sitrep(case: dict, snap: dict, note: str = "") -> tuple:
+    ref = case.get("ref")
+    title = f"🚨 SITREP — {(case.get('title') or '')[:70]} ({ref})"
+    lines = [
+        f"Severity {case.get('severity')} · Phase {case.get('phase')} · Status {case.get('status')}",
+        f"Contained ~{snap['contained_pct']}% · {snap['counts']['pending_decisions']} decision(s) pending · {snap['counts']['open_actions']} open action(s)",
+        f"Incident commander: {case.get('incident_commander') or 'Unassigned'}",
+    ]
+    if (note or "").strip():
+        lines.append(note.strip())
+    return title, "\n".join(lines)
+
+
+@api.get("/cases/{ref}/sitrep/preview")
+async def sitrep_preview(ref: str, user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    org_id = user["org_id"]
+    case = await _get_case(org_id, ref)
+    snap = await _build_snapshot({"org_id": org_id, "case_ref": ref, "expires_at": None})
+    note = case.get("sitrep_note") or ""
+    title, text = _compose_sitrep(case, snap, note)
+    return {"title": title, "text": text, "note": note,
+            "cadence_hours": int(case.get("sitrep_schedule_hours") or 0)}
+
+
+@api.post("/cases/{ref}/sitrep/send-now")
+async def sitrep_send_now(ref: str, user: dict = Depends(get_current_user)):
+    from self_scan import _post_chat_alert
+    _require_operator(user)
+    org_id = user["org_id"]
+    case = await _get_case(org_id, ref)
+    channels = await _chat_channels(org_id)
+    snap = await _build_snapshot({"org_id": org_id, "case_ref": ref, "expires_at": None})
+    title, text = _compose_sitrep(case, snap, case.get("sitrep_note") or "")
+    posted = False
+    if channels["teams"] or channels["slack"]:
+        try:
+            await _post_chat_alert(org_id, title, text)
+            posted = True
+        except Exception:
+            posted = False
+    now = _now()
+    actor = _actor(user)
+    await db.crisis_events.insert_one({
+        "org_id": org_id, "case_ref": ref,
+        "event_id": await _next_ref(org_id, "crisis_events", "EVT"),
+        "kind": "Communication", "title": "Manual SITREP sent to leadership chat" if posted else "Manual SITREP attempted (no chat channel wired)",
+        "detail": (case.get("sitrep_note") or "Situation report issued from the SITREP console.")[:1000],
+        "source": "SITREP Console", "severity": "Info",
+        "occurred_at": now, "created_at": now, "created_by": actor})
+    await db.crisis_cases.update_one({"org_id": org_id, "ref": ref}, {"$set": {"updated_at": now}})
+    await _audit(org_id, actor, "crisis.sitrep_send_now", f"{ref} posted={posted}")
+    return {"posted": posted, **channels}
+
+
+# ===========================================================================
+# Weekly Director Digest — email board members a rollup of every open crisis.
+# Folded into the weekly-drift-digest cron. Opt-in per org.
+# ===========================================================================
+async def _build_director_digest(org_id: str):
+    open_cases = await db.crisis_cases.find(
+        {"org_id": org_id, "status": {"$ne": "Closed"}, "demo": {"$ne": True}},
+        {"_id": 0}).to_list(200)
+    if not open_cases:
+        return None, 0
+    rows = []
+    for case in open_cases:
+        snap = await _build_snapshot({"org_id": org_id, "case_ref": case["ref"], "expires_at": None})
+        fin = case.get("financial_exposure")
+        fin_s = ("$" + format(int(fin), ",")) if isinstance(fin, (int, float)) else "—"
+        sev = case.get("severity", "")
+        sev_color = {"Critical": "#dc2626", "High": "#ea580c", "Medium": "#d97706", "Low": "#16a34a"}.get(sev, "#64748b")
+        rows.append(
+            f'<tr style="border-bottom:1px solid #e2e8f0">'
+            f'<td style="padding:10px 8px"><b>{case.get("ref")}</b><br><span style="font-size:12px;color:#64748b">{(case.get("title") or "")[:60]}</span></td>'
+            f'<td style="padding:10px 8px"><span style="color:{sev_color};font-weight:700">{sev}</span><br><span style="font-size:11px;color:#94a3b8">{case.get("phase","")}</span></td>'
+            f'<td style="padding:10px 8px;text-align:center">{snap.get("contained_pct", 0)}%</td>'
+            f'<td style="padding:10px 8px;text-align:center">{snap["counts"]["pending_decisions"]}</td>'
+            f'<td style="padding:10px 8px;text-align:right">{fin_s}</td></tr>')
+    html = (
+        f'<div style="font-family:Arial,Helvetica,sans-serif;max-width:720px;margin:auto;color:#0f172a">'
+        f'<div style="background:#0b1220;color:#fff;padding:18px 22px;border-radius:12px 12px 0 0">'
+        f'<div style="font-size:11px;letter-spacing:2px;color:#f87171">OBSERRA · CYBER CRISIS COMMANDER</div>'
+        f'<div style="font-size:20px;font-weight:800;margin-top:4px">Weekly Crisis Digest</div>'
+        f'<div style="font-size:12px;color:#94a3b8;margin-top:4px">{len(open_cases)} open crisis(es) as of {_now()[:10]}</div></div>'
+        f'<div style="border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;padding:16px 22px">'
+        f'<table style="width:100%;border-collapse:collapse;font-size:13px">'
+        f'<thead><tr style="text-align:left;color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:1px">'
+        f'<th style="padding:6px 8px">Crisis</th><th style="padding:6px 8px">Severity</th>'
+        f'<th style="padding:6px 8px;text-align:center">Contained</th><th style="padding:6px 8px;text-align:center">Decisions</th>'
+        f'<th style="padding:6px 8px;text-align:right">Exposure</th></tr></thead>'
+        f'<tbody>{"".join(rows)}</tbody></table>'
+        f'<p style="font-size:11px;color:#94a3b8;margin-top:16px">Open the Cyber Crisis Commander for full board views, timelines and decisions.</p></div></div>')
+    return html, len(open_cases)
+
+
+async def _send_director_digest(org_id: str) -> tuple:
+    from kernel import notifications
+    html, n = await _build_director_digest(org_id)
+    if not html:
+        return 0, 0
+    recipients = await db.users.find(
+        {"org_id": org_id, "role": {"$in": ["admin", "executive", "owner"]}},
+        {"_id": 0, "email": 1}).to_list(200)
+    sent = 0
+    for r in recipients:
+        if r.get("email"):
+            try:
+                await notifications.send_email(r["email"], f"Weekly Crisis Digest — {n} open crisis(es)", html)
+                sent += 1
+            except Exception as exc:
+                import logging
+                logging.getLogger("crisis").warning("Director digest email to %s failed: %s", r.get("email"), exc)
+    return sent, n
+
+
+@api.post("/director-digest/send-now")
+async def director_digest_send_now(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    org_id = user["org_id"]
+    sent, n = await _send_director_digest(org_id)
+    await _audit(org_id, _actor(user), "crisis.director_digest_now", f"sent={sent} crises={n}")
+    if not n:
+        return {"sent": 0, "crises": 0, "message": "No open crises to report."}
+    return {"sent": sent, "crises": n}
+
+
+async def run_weekly_director_digest(org_id: str | None = None) -> int:
+    from bson import ObjectId
+    orgs_q: dict = {"crisis_settings.director_digest": True}
+    if org_id:
+        orgs_q["_id"] = ObjectId(org_id)
+    total = 0
+    async for org in db.organizations.find(orgs_q, {"_id": 1}):
+        sent, _n = await _send_director_digest(str(org["_id"]))
+        total += sent
+    return total
+
+
+# ===========================================================================
+# Connector "went quiet" alerts — if a wired connector stops delivering for
+# longer than a threshold during business hours, ping the security channel.
+# Folded into the hourly cron. Opt-in per org.
+# ===========================================================================
+def _within_business_hours() -> bool:
+    now = datetime.now(timezone.utc)
+    return now.weekday() < 5 and 8 <= now.hour < 18
+
+
+async def _connector_quiet_scan(org_id: str, threshold_hours: int, post: bool = True) -> list:
+    from self_scan import _post_chat_alert
+    now = datetime.now(timezone.utc)
+    quiet = []
+    async for row in db.crisis_connector_health.find({"org_id": org_id}):
+        lr = _parse_iso(row.get("last_received"))
+        if not lr:
+            continue
+        hrs = (now - lr).total_seconds() / 3600
+        if hrs < threshold_hours:
+            continue
+        if row.get("last_title") == "Connection test":
+            continue
+        vendor = row.get("vendor")
+        quiet.append({"vendor": vendor, "hours": round(hrs, 1), "last_received": row.get("last_received")})
+        if post and not row.get("quiet_alerted_at"):
+            channels = await _chat_channels(org_id)
+            if channels["teams"] or channels["slack"]:
+                try:
+                    await _post_chat_alert(
+                        org_id, f"⚠️ Connector quiet — {vendor}",
+                        f"The {vendor} connector has not delivered an event for ~{round(hrs)}h "
+                        f"(last {row.get('last_received')}). Confirm the integration is still wired.")
+                except Exception:
+                    pass
+            await db.crisis_connector_health.update_one(
+                {"_id": row["_id"]}, {"$set": {"quiet_alerted_at": now.isoformat()}})
+    return quiet
+
+
+async def run_connector_quiet_alerts(org_id: str | None = None) -> int:
+    from bson import ObjectId
+    if not _within_business_hours():
+        return 0
+    orgs_q: dict = {"crisis_settings.connector_quiet": True}
+    if org_id:
+        orgs_q["_id"] = ObjectId(org_id)
+    alerted = 0
+    async for org in db.organizations.find(orgs_q, {"_id": 1, "crisis_settings": 1}):
+        thr = int((org.get("crisis_settings") or {}).get("connector_quiet_hours") or 6)
+        quiet = await _connector_quiet_scan(str(org["_id"]), thr, post=True)
+        alerted += len(quiet)
+    return alerted
+
+
+@api.get("/connectors/quiet-check")
+async def connector_quiet_check(user: dict = Depends(get_current_user)):
+    _require_operator(user)
+    org_id = user["org_id"]
+    s = await _crisis_settings(org_id)
+    quiet = await _connector_quiet_scan(org_id, s["connector_quiet_hours"], post=False)
+    return {"threshold_hours": s["connector_quiet_hours"],
+            "business_hours": _within_business_hours(),
+            "enabled": s["connector_quiet"], "quiet": quiet}
