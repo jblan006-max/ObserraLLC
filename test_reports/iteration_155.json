@@ -1,0 +1,21 @@
+{
+  "summary": "Verified 4 CRA follow-ups + liveness audit. Backend: /api/cra/executive-overview.pdf returns 200 application/pdf (4479 bytes, %PDF header). /api/cra/ai-monitor?days=30 returns trend[30] (first date 2026-07-15 null score, last 2026-08-13 score=55 count=15). /api/cra/digest/send-now -> 200 {ok:true,sent_to:'jblan2026@gmail.com'}. All 11 CRA feeds (dashboard, products, assessments, providers, external-assessments, vulnerabilities, regulation, controls, nist, ledger, insight) return 200. /api/connectors/health returns 58 connectors (1 connected/healthy, 57 credentials_required/unavailable — honest). /api/auth/providers: google=true, passwordless=true, apple=false, sso=false. Frontend: /app Executive Overview renders all 8 KPI cards, Obserrian CRA Analyst with grounding badge + v1.0.0, classification split, NIST bars. cra-exec-brief triggers download of obserra-eu-cra-executive-overview.pdf. All 4 KPI deep-links land on the correct governance tab (controls, nist, declaration, assurance) — verified LS key cra-governance-tab and active tab className. cra-ai-monitor-trend panel renders with recharts SVG on AI Assurance tab.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Executive Overview /app", "issues": ["Obserrian Advisor side drawer can auto-open and overlay right-column KPI cards (Article 14 overdue, AI grounding score), intercepting real user clicks on those KPIs. Programmatic click works fine, so the deep-link logic is correct — but a real user may need to dismiss the drawer to click the right-side KPIs. Consider auto-collapsing the drawer on the Executive Overview or lowering its z-index over KPI grid."]}
+    ]
+  },
+  "test_report_links": [],
+  "action_items": ["Low-priority: prevent Obserrian Advisor drawer from covering the right-side KPI cards on /app (see design_issues)."],
+  "critical_code_review_comments": [],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026!",
+  "seed_data_creation": "",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 4 follow-ups (Executive PDF Rollup, KPI Deep Links, Assurance Trend, Overview Auto-Email) verified end-to-end. Note: Obserrian Advisor drawer overlays right-column KPI cards on /app — use programmatic click or close drawer first when automating those KPIs."
+}

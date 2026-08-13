@@ -1,5 +1,14 @@
 # Obserra EIOS — CHANGELOG
 
+## 2026-06 — Executive Overview power-ups + liveness audit (iteration 155)
+- **Executive PDF Rollup**: `GET /api/cra/executive-overview.pdf` — board PDF (8 KPIs, NIST bars, top control gaps, classification, deadline). Overview "Executive Brief PDF" button downloads it.
+- **KPI Deep Links**: each Overview KPI opens the exact governance tab (via `localStorage['cra-governance-tab']`).
+- **Assurance Trend**: `/api/cra/ai-monitor` returns a 30-day `trend`; AI Assurance tab shows a recharts sparkline (`cra-ai-monitor-trend`).
+- **Overview Auto-Email**: scheduled CRA digest now sends the Executive Overview (richer PDF + subject "EU CRA Executive Overview — board briefing").
+- **Liveness audit**: logins live (google+passwordless; apple/sso off), 11 CRA feeds live, 58 connectors honest (1 connected). No mocks.
+- **UX fix**: Obserrian Advisor hint bubble non-blocking + auto-collapses (9s) so it no longer covers right-side KPIs.
+- **Testing**: iteration_155 — backend 100%, frontend 100%; only a low-priority advisor-overlay note, now fixed.
+
 ## 2026-06 — Obserrian CRA AI everywhere + connectors + versioning/hallucination monitor + Executive Overview (iterations 153–154)
 - **CRA AI analyst on every tab** (`POST /api/cra/dashboard-insight`) + **per-item AI cards** (`POST /api/cra/explain`) — summary · risk · risk-detail · fix. Components in `components/cra/CraAI.jsx`; wired across all CRA drill-downs.
 - **New connectors** in `connectors_catalog.py` (58 total): Universal API (REST/API-Key/Webhook, live probes), Quality Management (QMS) — Greenlight Guru, MasterControl, Qualio, ETQ, Veeva Vault QMS, Sparta TrackWise; Labs & Testing (LIMS) — LabWare, LabVantage, STARLIMS, Benchling, Thermo SampleManager, UL, Intertek, TUV SUD, Eurofins. Honest states only.

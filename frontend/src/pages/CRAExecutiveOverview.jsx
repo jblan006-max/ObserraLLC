@@ -72,18 +72,22 @@ export default function CRAExecutiveOverview() {
     api.get("/cra/ai-monitor?days=30").then((r) => setAssurance(r.data)).catch(() => {});
   }, []);
 
-  const goGov = () => navigate("/app/cra-governance");
+  // Deep-link each KPI to the exact governance tab it summarizes (CRAGovernance reads this key on mount).
+  const goTab = (tab) => {
+    localStorage.setItem("cra-governance-tab", tab);
+    navigate("/app/cra-governance");
+  };
 
   const downloadBrief = async () => {
     setBriefBusy(true);
     try {
-      const r = await api.get("/cra/digest/brief.pdf", { responseType: "blob" });
+      const r = await api.get("/cra/executive-overview.pdf", { responseType: "blob" });
       const url = URL.createObjectURL(r.data);
       const a = document.createElement("a");
-      a.href = url; a.download = "obserra-eu-cra-executive-brief.pdf";
+      a.href = url; a.download = "obserra-eu-cra-executive-overview.pdf";
       document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
     } catch {
-      toast.error("Could not generate the executive brief");
+      toast.error("Could not generate the executive overview PDF");
     }
     setBriefBusy(false);
   };
@@ -101,14 +105,14 @@ export default function CRAExecutiveOverview() {
   const nd = dash.next_deadline;
 
   const kpis = [
-    { label: "Products under CRA", value: products, sub: `${cls["Critical"] || 0} critical · ${cls["Class II"] || 0} Class II`, Icon: Boxes, tone: "text-primary border-primary/25" },
-    { label: "Classification approved", value: `${pct(dash.classification_approved || 0, products)}%`, sub: `${dash.classification_approved || 0} / ${products} approved`, Icon: BadgeCheck, tone: toneFor(pct(dash.classification_approved || 0, products)) },
-    { label: "CE market-ready", value: `${pct(dash.ce_ready || 0, products)}%`, sub: `${dash.ce_ready || 0} / ${products} ready`, Icon: ShieldCheck, tone: toneFor(pct(dash.ce_ready || 0, products)) },
-    { label: "Article 14 overdue", value: dash.reporting_overdue ?? 0, sub: "24h / 72h / final clocks", Icon: TriangleAlert, tone: (dash.reporting_overdue || 0) > 0 ? "text-crit border-crit/30" : "text-low border-low/30" },
-    { label: "Control compliance", value: `${controls.percentage ?? 0}%`, sub: `${controls.implemented ?? 0} implemented · ${controls.partial ?? 0} partial`, Icon: FileCheck2, tone: toneFor(controls.percentage) },
-    { label: "NIST CSF alignment", value: `${nist.alignment_percentage ?? 0}%`, sub: `${nist.functions_aligned ?? 0} / ${nist.functions_total ?? 6} functions aligned`, Icon: ShieldCheck, tone: toneFor(nist.alignment_percentage) },
-    { label: "External assessments", value: dash.open_external_assessments ?? 0, sub: "open notified-body reviews", Icon: Building2, tone: "text-primary border-primary/25" },
-    { label: "AI grounding score", value: assurance?.avg_score == null ? "—" : `${assurance.avg_score}%`, sub: assurance ? `${assurance.total_checks} answers checked · ${assurance.flagged_total} flagged` : "hallucination monitor", Icon: Fingerprint, tone: toneFor(assurance?.avg_score) },
+    { label: "Products under CRA", value: products, sub: `${cls["Critical"] || 0} critical · ${cls["Class II"] || 0} Class II`, Icon: Boxes, tone: "text-primary border-primary/25", tab: "products" },
+    { label: "Classification approved", value: `${pct(dash.classification_approved || 0, products)}%`, sub: `${dash.classification_approved || 0} / ${products} approved`, Icon: BadgeCheck, tone: toneFor(pct(dash.classification_approved || 0, products)), tab: "products" },
+    { label: "CE market-ready", value: `${pct(dash.ce_ready || 0, products)}%`, sub: `${dash.ce_ready || 0} / ${products} ready`, Icon: ShieldCheck, tone: toneFor(pct(dash.ce_ready || 0, products)), tab: "declaration" },
+    { label: "Article 14 overdue", value: dash.reporting_overdue ?? 0, sub: "24h / 72h / final clocks", Icon: TriangleAlert, tone: (dash.reporting_overdue || 0) > 0 ? "text-crit border-crit/30" : "text-low border-low/30", tab: "vulnerability" },
+    { label: "Control compliance", value: `${controls.percentage ?? 0}%`, sub: `${controls.implemented ?? 0} implemented · ${controls.partial ?? 0} partial`, Icon: FileCheck2, tone: toneFor(controls.percentage), tab: "controls" },
+    { label: "NIST CSF alignment", value: `${nist.alignment_percentage ?? 0}%`, sub: `${nist.functions_aligned ?? 0} / ${nist.functions_total ?? 6} functions aligned`, Icon: ShieldCheck, tone: toneFor(nist.alignment_percentage), tab: "nist" },
+    { label: "External assessments", value: dash.open_external_assessments ?? 0, sub: "open notified-body reviews", Icon: Building2, tone: "text-primary border-primary/25", tab: "conformity" },
+    { label: "AI grounding score", value: assurance?.avg_score == null ? "—" : `${assurance.avg_score}%`, sub: assurance ? `${assurance.total_checks} answers checked · ${assurance.flagged_total} flagged` : "hallucination monitor", Icon: Fingerprint, tone: toneFor(assurance?.avg_score), tab: "assurance" },
   ];
 
   return (
@@ -123,13 +127,13 @@ export default function CRAExecutiveOverview() {
           <p className="text-sm text-muted-foreground mt-2 max-w-3xl">
             A board-ready rollup of the whole EU Cyber Resilience Act posture — product classification, CE market
             readiness, essential-requirement control compliance, NIST CSF alignment, Article 14 reporting clocks and
-            AI-answer grounding. Every card opens the governance workspace.
+            AI-answer grounding. Every card opens the exact governance tab it summarizes.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={reload} disabled={refreshing} data-testid="cra-exec-refresh" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold"><RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} /> Refresh</button>
-          <button onClick={downloadBrief} disabled={briefBusy} data-testid="cra-exec-brief" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">{briefBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Executive Brief</button>
-          <button onClick={goGov} data-testid="cra-exec-open-governance" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold">Open Governance <ArrowRight className="w-3.5 h-3.5" /></button>
+          <button onClick={downloadBrief} disabled={briefBusy} data-testid="cra-exec-brief" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">{briefBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Executive Brief PDF</button>
+          <button onClick={() => goTab("mission")} data-testid="cra-exec-open-governance" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold">Open Governance <ArrowRight className="w-3.5 h-3.5" /></button>
         </div>
       </div>
 
@@ -149,7 +153,7 @@ export default function CRAExecutiveOverview() {
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
         {kpis.map((k) => (
-          <KpiCard key={k.label} {...k} onClick={goGov} testid={`cra-exec-kpi-${k.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`} />
+          <KpiCard key={k.label} {...k} onClick={() => goTab(k.tab)} testid={`cra-exec-kpi-${k.label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`} />
         ))}
       </div>
 
@@ -198,7 +202,7 @@ export default function CRAExecutiveOverview() {
             <div className="rounded-lg border border-border p-3"><div className="font-head font-black text-2xl text-foreground">{assurance?.total_checks ?? 0}</div><div className="text-[10px] font-mono uppercase text-muted-foreground">Checked</div></div>
             <div className={`rounded-lg border p-3 ${(assurance?.flagged_total || 0) > 0 ? "border-crit/25 text-crit" : "border-low/25 text-low"}`}><div className="font-head font-black text-2xl">{assurance?.flagged_total ?? 0}</div><div className="text-[10px] font-mono uppercase text-muted-foreground">Flagged</div></div>
           </div>
-          <button onClick={() => navigate("/app/cra-governance")} className="mt-4 inline-flex items-center gap-1.5 text-[11px] font-head font-bold text-ai hover:underline" data-testid="cra-exec-open-assurance">Open the AI Assurance monitor <ArrowRight className="w-3 h-3" /></button>
+          <button onClick={() => goTab("assurance")} className="mt-4 inline-flex items-center gap-1.5 text-[11px] font-head font-bold text-ai hover:underline" data-testid="cra-exec-open-assurance">Open the AI Assurance monitor <ArrowRight className="w-3 h-3" /></button>
         </Panel>
       </div>
 

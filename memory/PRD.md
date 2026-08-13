@@ -1,5 +1,13 @@
 # Obserra EIOS — PRD
 
+## Round 33 (Jun 2026) — Executive Overview power-ups + liveness audit (iteration_155: backend 100%, frontend 100%)
+- **Executive PDF Rollup** — `GET /api/cra/executive-overview.pdf` (`_cra_exec_overview_pdf`): richer board PDF with 8 KPIs, NIST CSF function bars, top control gaps, classification split and nearest deadline. Overview "Executive Brief PDF" button now downloads this (not the weekly one-pager).
+- **KPI Deep Links** — each Executive Overview KPI sets `localStorage['cra-governance-tab']` and opens the exact tab it summarizes (products / declaration / vulnerability / controls / nist / conformity / assurance).
+- **Assurance Trend** — `GET /api/cra/ai-monitor` now returns a continuous 30-day `trend`; the AI Assurance tab renders a recharts area sparkline (`cra-ai-monitor-trend`).
+- **Overview Auto-Email** — the scheduled CRA digest (`_send_cra_digest`, existing hourly-gated cron) now emails the Executive Overview: richer `_cra_exec_overview_pdf` attachment + subject "EU CRA Executive Overview — board briefing".
+- **Liveness audit** — all enabled logins live (email/pw 200; google + passwordless true; apple/sso honestly not configured); all 11 CRA feeds return live 200s (external-assessments legitimately empty); 58 connectors with honest probes (1 connected, 0 degraded). No mocks anywhere.
+- **UX fix** — Obserrian Advisor hint bubble made non-blocking (`pointer-events-none` container / `pointer-events-auto` children) and auto-collapses after 9s so it no longer overlays/intercepts the Overview's right-side KPI cards.
+
 ## Round 32 (Jun 2026) — Obserrian CRA AI everywhere + connectors + versioning/hallucination monitor + Executive Overview (iterations 153–154: backend 20/20, frontend 100%)
 - **Per-dashboard AI analyst** on every CRA tab — `POST /api/cra/dashboard-insight {tab}` → grounded {headline, insights[], actions[]} (gpt-5.4 via Emergent LLM key, deterministic fallback, 120s cache). UI: `CraTabAnalyst` in `components/cra/CraAI.jsx`.
 - **Per-item AI detail cards** (summary · risk · risk-detail · fix & recommendation) — `POST /api/cra/explain {title,kind,context}` → `CraExplain` (direct on Control drill / SBOM / Declaration) and `CraExplainToggle` (Product / Vulnerability / Conformity / NIST rows).

@@ -1334,13 +1334,16 @@ async def _send_cra_digest(org: dict, recipients: list[dict], attach_pdf: bool =
     att = None
     if attach_pdf:
         try:
-            raw = _cra_exec_brief_pdf(org.get("name", "Your organization"), ctx, insight)
-            att = [{"filename": "obserra-eu-cra-executive-brief.pdf", "content": base64.b64encode(raw).decode()}]
+            controls = await _compute_controls(org_id)
+            nist = await _compute_nist(org_id)
+            assurance = await _cra_grounding_summary(org_id)
+            raw = _cra_exec_overview_pdf(org.get("name", "Your organization"), ctx, controls, nist, assurance, insight)
+            att = [{"filename": "obserra-eu-cra-executive-overview.pdf", "content": base64.b64encode(raw).decode()}]
         except Exception:
             att = None
     sent = 0
     for r in recipients:
-        await notifications.send_email(r["email"], "CRA AI Analyst — your weekly EU CRA briefing", html, attachments=att)
+        await notifications.send_email(r["email"], "EU CRA Executive Overview — board briefing", html, attachments=att)
         sent += 1
     return sent
 
@@ -1909,6 +1912,148 @@ async def cra_ai_monitor(days: int = 30, user: dict = Depends(get_current_user))
                "flagged_count": r.get("flagged_count", 0), "claims": (r.get("claims") or [])[:6]}
               for r in rows[:40]]
     label = "Grounded" if (avg is None or avg >= 80) else ("Partially grounded" if avg >= 50 else "Unverified")
+    by_day = {}
+    for r in rows:
+        dd = (r.get("at") or "")[:10]
+        if not dd:
+            continue
+        bd = by_day.setdefault(dd, {"_ss": 0, "_sc": 0})
+        if isinstance(r.get("score"), int):
+            bd["_ss"] += r["score"]
+            bd["_sc"] += 1
+    trend = []
+    for i in range(days - 1, -1, -1):
+        dk = (utcnow() - timedelta(days=i)).strftime("%Y-%m-%d")
+        bd = by_day.get(dk)
+        trend.append({"date": dk, "score": round(bd["_ss"] / bd["_sc"]) if (bd and bd["_sc"]) else None,
+                      "count": (bd["_sc"] if bd else 0)})
     return {"version": CRA_APP_VERSION, "days": days, "total_checks": len(rows),
             "avg_score": avg, "label": label, "flagged_total": flagged_total,
-            "by_surface": surfaces, "recent": recent}
+            "by_surface": surfaces, "recent": recent, "trend": trend}
+
+
+
+# ---------------------------------------------------------------------------
+# Executive Overview — richer board PDF + reusable grounding summary/trend.
+# ---------------------------------------------------------------------------
+async def _cra_grounding_summary(org_id: str, days: int = 30) -> dict:
+    """Aggregate CRA AI grounding scores + a continuous per-day trend for sparklines."""
+    since = (utcnow() - timedelta(days=days)).isoformat()
+    rows = await db.ai_grounding_log.find(
+        {"org_id": org_id, "surface": {"$regex": "^cra:"}, "at": {"$gte": since}},
+        {"_id": 0, "score": 1, "at": 1, "flagged_count": 1}).to_list(3000)
+    scored = [r["score"] for r in rows if isinstance(r.get("score"), int)]
+    avg = round(sum(scored) / len(scored)) if scored else None
+    flagged = sum(1 for r in rows if (r.get("flagged_count") or 0) > 0)
+    by_day = {}
+    for r in rows:
+        d = (r.get("at") or "")[:10]
+        if not d:
+            continue
+        b = by_day.setdefault(d, {"_ss": 0, "_sc": 0})
+        if isinstance(r.get("score"), int):
+            b["_ss"] += r["score"]
+            b["_sc"] += 1
+    trend = []
+    for i in range(days - 1, -1, -1):
+        day = (utcnow() - timedelta(days=i)).strftime("%Y-%m-%d")
+        b = by_day.get(day)
+        trend.append({"date": day, "score": round(b["_ss"] / b["_sc"]) if (b and b["_sc"]) else None,
+                      "count": (b["_sc"] if b else 0)})
+    return {"avg_score": avg, "total": len(rows), "flagged_total": flagged, "trend": trend}
+
+
+def _cra_exec_overview_pdf(org_name, ctx, controls, nist, assurance, insight):
+    from io import BytesIO
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib.units import inch
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+
+    def x(s):
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def bar(p):
+        p = max(0, min(100, int(p or 0)))
+        filled = round(p / 10)
+        return "\u2588" * filled + "\u2591" * (10 - filled)
+
+    buf = BytesIO()
+    styles = getSampleStyleSheet()
+    navy = colors.HexColor("#0f1e3d"); ai = colors.HexColor("#12b4d6"); grey = colors.HexColor("#e5e7eb")
+    title = ParagraphStyle("t", parent=styles["Title"], fontSize=18, textColor=navy, spaceAfter=2)
+    sub = ParagraphStyle("s", parent=styles["Normal"], fontSize=9, textColor=colors.grey)
+    h = ParagraphStyle("h", parent=styles["Heading2"], fontSize=12, textColor=ai, spaceBefore=10, spaceAfter=4)
+    body = ParagraphStyle("b", parent=styles["BodyText"], fontSize=10, leading=14)
+    mono = ParagraphStyle("m", parent=styles["Normal"], fontSize=9, fontName="Courier")
+
+    t = ctx["totals"]; cnt = ctx["counts"]; tot = t["products"] or 1
+    co = controls.get("overall", {}); no = nist.get("overall", {})
+    nd = insight.get("next_deadline") or ctx.get("next_deadline")
+    avg = assurance.get("avg_score")
+
+    doc = SimpleDocTemplate(buf, pagesize=LETTER, topMargin=0.7 * inch, bottomMargin=0.7 * inch, title="EU CRA Executive Overview")
+    story = [Paragraph("EU CRA Executive Overview", title),
+             Paragraph(f"{x(org_name)} &#183; Regulation (EU) 2024/2847 &#183; Obserra CRA v{CRA_APP_VERSION} &#183; {datetime.now().strftime('%d %B %Y')}", sub),
+             HRFlowable(width="100%", color=ai), Spacer(1, 8),
+             Paragraph(x(insight.get("headline", "")), body)]
+    if nd:
+        story.append(Paragraph(f"<b>Next statutory deadline:</b> {x(nd['label'])} on {nd['date']} ({nd['days_remaining']} days).", body))
+
+    story.append(Paragraph("Board KPIs", h))
+    kpis = [["Products under CRA", str(t["products"])],
+            ["Classification approved", f"{t['classification_approved']}/{t['products']} ({round(t['classification_approved']/tot*100)}%)"],
+            ["CE market-ready", f"{t['ce_ready']}/{t['products']} ({round(t['ce_ready']/tot*100)}%)"],
+            ["Article 14 overdue clocks", str(cnt.get("overdue_clocks", 0))],
+            ["Control compliance", f"{co.get('percentage', 0)}% ({co.get('implemented', 0)} implemented, {co.get('partial', 0)} partial)"],
+            ["NIST CSF 2.0 alignment", f"{no.get('alignment_percentage', 0)}% ({no.get('functions_aligned', 0)}/{no.get('functions_total', 6)} functions)"],
+            ["CE blockers", str(cnt.get("blocked", 0))],
+            ["AI grounding score", (f"{avg}%" if avg is not None else "n/a") + f" ({assurance.get('total', 0)} answers checked)"]]
+    tbl = Table(kpis, colWidths=[3.0 * inch, 3.4 * inch])
+    tbl.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 10), ("TEXTCOLOR", (0, 0), (0, -1), navy),
+                             ("LINEBELOW", (0, 0), (-1, -1), 0.3, grey),
+                             ("BOTTOMPADDING", (0, 0), (-1, -1), 5), ("TOPPADDING", (0, 0), (-1, -1), 5)]))
+    story.append(tbl)
+
+    story.append(Paragraph("NIST CSF 2.0 function alignment", h))
+    for f in nist.get("functions", []):
+        story.append(Paragraph(f"{x(f['code'])} {x(f['name'])} &nbsp; {bar(f.get('compliance_rate'))} &nbsp; {f.get('compliance_rate', 0)}% ({x(f.get('risk', ''))})", mono))
+
+    gaps = sorted([c for c in controls.get("controls", []) if c.get("status") != "Implemented"],
+                  key=lambda c: (c.get("compliance_rate") if c.get("compliance_rate") is not None else -1))[:6]
+    if gaps:
+        story.append(Paragraph("Top control gaps", h))
+        grows = [["Requirement", "Status", "%"]] + [[f"{g['requirement_id']} — {g['title'][:52]}", g.get("status", ""), f"{g.get('compliance_rate', 0)}%"] for g in gaps]
+        gt = Table(grows, colWidths=[4.4 * inch, 1.3 * inch, 0.7 * inch])
+        gt.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 8.5), ("TEXTCOLOR", (0, 1), (0, -1), navy),
+                                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f5f9")),
+                                ("LINEBELOW", (0, 0), (-1, -1), 0.3, grey),
+                                ("BOTTOMPADDING", (0, 0), (-1, -1), 4), ("TOPPADDING", (0, 0), (-1, -1), 4)]))
+        story.append(gt)
+
+    story.append(Paragraph("Recommended actions", h))
+    for a in insight.get("actions", [])[:5]:
+        story.append(Paragraph(f"&#8226; {x(a)}", body))
+    story += [Spacer(1, 10), HRFlowable(width="100%", color=grey),
+              Paragraph("Compiled live from Obserra records; every figure is grounded and the AI grounding score reflects the hallucination monitor. Classifications are proposed until authorised approval. Decision-support only &#8212; not legal advice or a guarantee of CRA conformity.", sub)]
+    doc.build(story)
+    return buf.getvalue()
+
+
+@cra_router.get("/executive-overview.pdf")
+async def download_executive_overview(user: dict = Depends(get_current_user)):
+    from fastapi.responses import Response
+    from bson import ObjectId
+    org_id = user["org_id"]
+    if not await db.cra_products.find_one({"org_id": org_id}, {"_id": 0, "ref": 1}):
+        raise HTTPException(400, "Add or load a CRA product first — there is nothing to brief yet.")
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)})
+    ctx = await _cra_insight_context(org_id)
+    controls = await _compute_controls(org_id)
+    nist = await _compute_nist(org_id)
+    insight = await compute_cra_insight(org_id)
+    assurance = await _cra_grounding_summary(org_id)
+    pdf = _cra_exec_overview_pdf((org or {}).get("name", "Your organization"), ctx, controls, nist, assurance, insight)
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=obserra-eu-cra-executive-overview.pdf"})

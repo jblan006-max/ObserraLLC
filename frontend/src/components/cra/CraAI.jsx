@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { APP_VERSION_LABEL } from "@/version";
 import { Sparkles, Loader2, Zap, ShieldAlert, Lightbulb, ChevronDown, ShieldCheck, ScanEye, TriangleAlert } from "lucide-react";
+import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis, Tooltip } from "recharts";
 
 // Obserrian CRA Analyst (per-dashboard grounded briefing), CraExplain / CraExplainToggle
 // (per-item AI summary · risk · risk details · fix), and AiAssurance (hallucination monitor).
@@ -15,6 +16,7 @@ const SEV_CLASS = {
   opportunity: "border-low/25 bg-low/10 text-low",
   info: "border-ai/25 bg-ai/10 text-ai",
 };
+const AI_HEX = "#12b4d6";
 
 const _tabCache = new Map();
 const _groundCache = new Map();
@@ -231,6 +233,37 @@ const SURFACE_LABEL = (s) => {
   return s;
 };
 
+function GroundingTrend({ trend }) {
+  const points = (trend || []).filter((p) => p != null);
+  if (!points.length || !points.some((p) => p.score != null)) return null;
+  return (
+    <div className="rounded-xl border border-border bg-card p-5" data-testid="cra-ai-monitor-trend">
+      <div className="font-head font-bold text-sm mb-1">30-day grounding trend</div>
+      <div className="text-[11px] font-mono text-muted-foreground mb-3">Average grounding score per day — watch for accuracy drift</div>
+      <div style={{ width: "100%", height: 130 }}>
+        <ResponsiveContainer>
+          <AreaChart data={points} margin={{ top: 6, right: 10, left: -18, bottom: 0 }}>
+            <defs>
+              <linearGradient id="craGroundGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor={AI_HEX} stopOpacity={0.35} />
+                <stop offset="100%" stopColor={AI_HEX} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <XAxis dataKey="date" hide />
+            <YAxis domain={[0, 100]} tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }} width={30} />
+            <Tooltip
+              contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }}
+              labelStyle={{ color: "hsl(var(--muted-foreground))" }}
+              formatter={(v) => [v == null ? "—" : `${v}%`, "Grounding"]}
+            />
+            <Area type="monotone" dataKey="score" stroke={AI_HEX} strokeWidth={2} fill="url(#craGroundGrad)" connectNulls dot={false} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+    </div>
+  );
+}
+
 export function AiAssurance() {
   const [d, setD] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -280,6 +313,8 @@ export function AiAssurance() {
               <div className="text-xs font-mono text-muted-foreground mt-1">unsupported figure/ref detected</div>
             </div>
           </div>
+
+          <GroundingTrend trend={d.trend} />
 
           {d.by_surface?.length > 0 && (
             <div className="rounded-xl border border-border bg-card p-5">

@@ -89,6 +89,12 @@ export function AIAdvisor() {
     return () => clearInterval(t);
   }, [open]);
 
+  useEffect(() => {
+    if (!bubbleOn || open) return;
+    const t = setTimeout(() => setBubbleOn(false), 9000);
+    return () => clearTimeout(t);
+  }, [bubbleOn, open]);
+
   const dismissHint = () => {
     setShowHint(false);
     try { localStorage.setItem(hintKey, "1"); } catch {}
@@ -254,10 +260,10 @@ export function AIAdvisor() {
   return (
     <>
       {!open && (
-        <div data-testid="ai-advisor-launcher" className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-2.5">
+        <div data-testid="ai-advisor-launcher" className="fixed bottom-6 right-6 z-40 flex flex-col items-end gap-2.5 pointer-events-none">
           {bubbleOn && (
             <div data-testid="advisor-hint" onClick={openFromHint}
-              className="relative w-[min(15rem,calc(100vw-2rem))] rounded-2xl bg-popover border border-ai/30 shadow-xl p-3.5 text-xs leading-relaxed text-foreground cursor-pointer rise">
+              className="pointer-events-auto relative w-[min(15rem,calc(100vw-2rem))] rounded-2xl bg-popover border border-ai/30 shadow-xl p-3.5 text-xs leading-relaxed text-foreground cursor-pointer rise">
               <button data-testid="advisor-hint-dismiss" onClick={(e) => { e.stopPropagation(); hideBubble(); }}
                 className="absolute top-1.5 right-1.5 p-0.5 rounded hover:bg-secondary text-muted-foreground"><X className="w-3.5 h-3.5" /></button>
               <div className="flex items-center gap-1.5 font-head font-bold text-ai mb-1 pr-4">{MARK("w-4 h-4")} Obserrian Advisor</div>
@@ -267,7 +273,7 @@ export function AIAdvisor() {
           )}
           <button data-testid="advisor-toggle" onClick={openFromHint} title="Obserrian Advisor"
             style={{ backgroundColor: "#0f1e3d" }}
-            className="relative flex items-center justify-center w-14 h-14 rounded-full shadow-xl ring-1 ring-ai/30 hover:-translate-y-0.5 transition-transform duration-200">
+            className="pointer-events-auto relative flex items-center justify-center w-14 h-14 rounded-full shadow-xl ring-1 ring-ai/30 hover:-translate-y-0.5 transition-transform duration-200">
             <span className="absolute inset-0 rounded-full ring-2 ring-ai/50 animate-ping pointer-events-none" />
             <span className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-ai animate-pulse ring-2 ring-popover" />
             {MARK("w-8 h-8")}
