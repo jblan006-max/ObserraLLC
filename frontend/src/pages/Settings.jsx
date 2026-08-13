@@ -45,6 +45,19 @@ function CraDigestCard({ isAdmin }) {
     catch (e) { toast.error(e.response?.data?.detail || "Could not send preview."); }
     finally { setSending(false); }
   };
+  const [dl, setDl] = useState(false);
+  const downloadBrief = async () => {
+    setDl(true);
+    try {
+      const response = await api.get("/cra/digest/brief.pdf", { responseType: "blob" });
+      const url = URL.createObjectURL(response.data);
+      const a = document.createElement("a");
+      a.href = url; a.download = "obserra-eu-cra-weekly-brief.pdf";
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+      toast.success("This week's CRA brief downloaded.");
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not download the brief."); }
+    finally { setDl(false); }
+  };
   if (!cfg) return null;
   return (
     <div className="bg-card fact-border rounded-xl p-6 space-y-4" data-testid="cra-digest-settings">
@@ -78,8 +91,9 @@ function CraDigestCard({ isAdmin }) {
           <button onClick={saveSchedule} disabled={busy} data-testid="cra-digest-save" className="px-5 py-2.5 rounded-md bg-primary text-primary-foreground font-head font-bold text-sm inline-flex items-center gap-2 disabled:opacity-50">{busy && <Loader2 className="w-4 h-4 animate-spin" />} Save schedule</button>
         </div>
       )}
-      <div className="border-t border-border pt-4">
+      <div className="border-t border-border pt-4 flex flex-wrap gap-2">
         <button onClick={sendNow} disabled={sending} data-testid="cra-digest-send-now" className="px-5 py-2.5 rounded-md border border-primary/40 text-foreground hover:bg-primary/10 font-head font-bold text-sm inline-flex items-center gap-2 disabled:opacity-50">{sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4 text-primary" />} Send me one now</button>
+        <button onClick={downloadBrief} disabled={dl} data-testid="cra-digest-download" className="px-5 py-2.5 rounded-md border border-border bg-secondary/40 hover:bg-secondary font-head font-bold text-sm inline-flex items-center gap-2 disabled:opacity-50">{dl ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileText className="w-4 h-4 text-primary" />} Download this week's brief</button>
       </div>
     </div>
   );

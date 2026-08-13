@@ -483,10 +483,9 @@ async def dashboard(user: dict = Depends(get_current_user)):
         "next_deadline":_cra_next_deadline(),
     }
 
-@cra_router.get("/controls")
-async def controls_dashboard(user: dict = Depends(get_current_user)):
-    org_id = user["org_id"]
-    products = await db.cra_products.find({"org_id":org_id},{"_id":0,"ref":1}).to_list(1000)
+async def _compute_controls(org_id: str) -> dict:
+    products = await db.cra_products.find({"org_id":org_id},{"_id":0,"ref":1,"name":1}).to_list(1000)
+    name_by_ref = {p["ref"]: p.get("name", p["ref"]) for p in products}
     assessments = await db.cra_assessments.find({"org_id":org_id},{"_id":0}).to_list(1000)
     latest = {}
     for a in sorted(assessments, key=lambda x: x.get("updated_at",""), reverse=True):
@@ -498,12 +497,14 @@ async def controls_dashboard(user: dict = Depends(get_current_user)):
     for req in REGULATORY_REQUIREMENTS:
         rid = req["requirement_id"]
         c = {"Conforming":0,"Partial":0,"Nonconforming":0,"Not Applicable":0,"Not Assessed":0}
+        product_status = []
         for a in latest_list:
+            st = "Not Assessed"
             for ans in a.get("answers",[]):
                 if ans.get("requirement_id") == rid:
-                    st = ans.get("status","Not Assessed")
-                    c[st] = c.get(st,0) + 1
-                    break
+                    st = ans.get("status","Not Assessed"); break
+            c[st] = c.get(st,0) + 1
+            product_status.append({"ref":a.get("product_ref"),"name":name_by_ref.get(a.get("product_ref"),a.get("product_ref")),"status":st})
         assessed = c["Conforming"] + c["Partial"] + c["Nonconforming"]
         points = c["Conforming"]*1.0 + c["Partial"]*0.5
         total_points += points; total_cells += assessed
@@ -524,12 +525,17 @@ async def controls_dashboard(user: dict = Depends(get_current_user)):
                          "legal_refs":req["legal_refs"],"assessed":assessed,"products_total":len(products),
                          "conforming":c["Conforming"],"partial":c["Partial"],"nonconforming":c["Nonconforming"],
                          "not_applicable":c["Not Applicable"],"not_assessed":c["Not Assessed"],
-                         "compliance_rate":rate,"status":status,"risk":risk})
+                         "compliance_rate":rate,"status":status,"risk":risk,"product_status":product_status})
     overall = round(total_points/total_cells*100) if total_cells else 0
     return {"overall":{"percentage":overall,"requirements_total":len(REGULATORY_REQUIREMENTS),
                        "implemented":implemented,"partial":partial_ct,"gaps":gaps,"not_started":not_started,
                        "high_risk":high_risk,"products_assessed":len(latest_list),"products_total":len(products)},
             "controls":controls}
+
+
+@cra_router.get("/controls")
+async def controls_dashboard(user: dict = Depends(get_current_user)):
+    return await _compute_controls(user["org_id"])
 
 @cra_router.get("/products")
 async def list_products(user: dict = Depends(get_current_user)):
@@ -1105,6 +1111,10 @@ async def _verify_ledger_chain(org_id: str):
 async def create_verification_link(ref: str, admin: dict = Depends(require_roles("admin"))):
     org_id = admin["org_id"]
     await get_product(org_id, ref)
+    active = await db.cra_portal_tokens.count_documents(
+        {"org_id": org_id, "product_ref": ref, "role": "auditor", "revoked_at": None, "expires_at": {"$gt": utcnow()}})
+    if active >= 5:
+        raise HTTPException(429, "This product already has 5 active auditor links. Revoke or wait for existing links to expire before minting more.")
     issued = await issue_portal_token(org_id, ref, "auditor", None, None, "", 720, admin.get("email", "unknown"))
     await ledger_append(org_id, admin.get("email", "unknown"), "verification_link.issued", "product", ref, ["Article 28", "Article 31"], {"expires_at": issued["expires_at"]})
     return {"token": issued["token"], "expires_at": issued["expires_at"], "path": f"/cra-verify/{issued['token']}"}
@@ -1344,3 +1354,49 @@ async def send_digest_now(user: dict = Depends(get_current_user)):
     org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])})
     await _send_cra_digest(org, [{"email": user["email"]}], attach_pdf=True)
     return {"ok": True, "sent_to": user["email"]}
+
+
+@cra_router.get("/digest/brief.pdf")
+async def download_digest_brief(user: dict = Depends(get_current_user)):
+    from fastapi.responses import Response
+    from bson import ObjectId
+    org_id = user["org_id"]
+    if not await db.cra_products.find_one({"org_id": org_id}, {"_id": 0, "ref": 1}):
+        raise HTTPException(400, "Add or load a CRA product first — there is nothing to brief yet.")
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)})
+    ctx = await _cra_insight_context(org_id)
+    insight = await compute_cra_insight(org_id)
+    pdf = _cra_exec_brief_pdf((org or {}).get("name", "Your organization"), ctx, insight)
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=obserra-eu-cra-weekly-brief.pdf"})
+
+
+@cra_router.post("/scorecard-link")
+async def create_scorecard_link(admin: dict = Depends(require_roles("admin"))):
+    org_id = admin["org_id"]
+    active = await db.cra_portal_tokens.count_documents(
+        {"org_id": org_id, "role": "scorecard", "revoked_at": None, "expires_at": {"$gt": utcnow()}})
+    if active >= 5:
+        raise HTTPException(429, "This organisation already has 5 active scorecard links. Revoke or wait for existing links to expire before minting more.")
+    issued = await issue_portal_token(org_id, "", "scorecard", None, None, "", 720, admin.get("email", "unknown"))
+    await ledger_append(org_id, admin.get("email", "unknown"), "scorecard_link.issued", "organization", org_id, ["Article 13"], {"expires_at": issued["expires_at"]})
+    return {"token": issued["token"], "expires_at": issued["expires_at"], "path": f"/cra-scorecard/{issued['token']}"}
+
+
+@cra_public_router.get("/scorecard/{raw_token}")
+async def public_scorecard(raw_token: str):
+    from bson import ObjectId
+    token = await verify_portal_token(raw_token)
+    if token.get("role") != "scorecard":
+        raise HTTPException(403, "This link is not a compliance scorecard link")
+    org_id = token["org_id"]
+    computed = await _compute_controls(org_id)
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"_id": 0, "name": 1})
+    gaps = [{"requirement_id": c["requirement_id"], "domain": c["domain"], "title": c["title"],
+             "compliance_rate": c["compliance_rate"], "status": c["status"], "risk": c["risk"]}
+            for c in computed["controls"] if c["status"] in ("Gap", "Partial", "Not Started") or c["risk"] == "High"]
+    gaps.sort(key=lambda c: (c["compliance_rate"] if c["compliance_rate"] is not None else -1))
+    return {"role": "scorecard", "organization": (org or {}).get("name", "Organization"),
+            "regulation": CRA_VERSION, "generated_at": iso(), "expires_at": token["expires_at"].isoformat(),
+            "overall": computed["overall"], "top_gaps": gaps[:8], "next_deadline": _cra_next_deadline(),
+            "note": "Read-only compliance scorecard. Product names and internal records are not exposed."}

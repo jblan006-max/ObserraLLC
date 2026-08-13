@@ -1,5 +1,14 @@
 # Obserra EIOS — PRD
 
+## Round 31 (Jun 2026) — 5 CRA scorecard/controls/guardrail enhancements (iteration_152: backend 8/8 + frontend 100%, zero functional bugs)
+Delivered across `cra_governance.py`, `CRAGovernance.jsx`, `CRAScorecard.jsx` (new), `Settings.jsx`, `App.js`:
+- **Shareable compliance scorecard link** — `POST /api/cra/scorecard-link` (admin) → public `/cra-scorecard/:token` (`CRAScorecard.jsx`) backed by no-auth `GET /api/cra-public/scorecard/{token}`: overall %, stat chips, next-deadline chip and top-gaps table. Product names / product_status are NEVER exposed (verified). Non-scorecard token → 403.
+- **Control drill-down** — `/api/cra/controls` controls now carry `product_status:[{ref,name,status}]`; clicking a control row opens `cra-control-drill` listing each product's Conforming/Partial/Nonconforming/Not-Assessed status.
+- **Link guardrail** — auditor verification links capped at 5 active per product; scorecard links capped at 5 active per org; 6th mint → HTTP 429.
+- **Board PDF** — `GET /api/cra/digest/brief.pdf` (one-page Executive Brief); "This week's brief" button on Control Dashboard + "Download this week's brief" on the Settings digest card.
+- **Relative timestamps** — auditor access log shows "N minutes ago" with exact UTC on hover (`title`).
+- Backlog (non-blocking, from review): split `cra_governance.py` (1403 LOC) into `cra_digest.py`/`cra_portal.py` and `CRAGovernance.jsx` into per-tab files; add in-app "revoke links" on 429; show scorecard expiry + per-status counts on the public/drill views.
+
 ## Round 30 (Jun 2026) — 6 CRA analyst/controls enhancements (iteration_151: backend 10/10 + frontend 100%, zero functional bugs)
 All 6 user-selected items delivered across `cra_governance.py`, `scheduled.py`, `CRAGovernance.jsx`, `Settings.jsx`, `useCRAData.js`:
 - **Control Dashboard** — new tab (`cra-tab-controls`) + `GET /api/cra/controls`: every CRA requirement rolled up to compliance_rate, Implemented/Partial/Gap/Not-Started status, Low/Medium/High/Unknown risk, and an overall % (live 82% across 18 controls). UI: overall ring + stat chips + coverage-bar table.

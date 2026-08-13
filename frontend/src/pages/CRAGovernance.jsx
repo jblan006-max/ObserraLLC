@@ -658,10 +658,10 @@ function RegulatoryLedger({ data, isAdmin }) {
           {productRef && (() => {
             const sp = (data.products || []).find((p) => p.ref === productRef);
             return (
-              <div className="mt-3 flex items-center gap-2 text-[11px] text-muted-foreground" data-testid="cra-verify-access">
+              <div className="mt-3 flex items-center gap-2 text-[11px] text-muted-foreground" data-testid="cra-verify-access" title={sp?.last_verification_view_at ? new Date(sp.last_verification_view_at).toUTCString() : ""}>
                 <Fingerprint className="w-3.5 h-3.5 text-ai" />
                 {sp?.last_verification_view_at
-                  ? `Auditor last opened this product's link ${new Date(sp.last_verification_view_at).toLocaleString()} · ${sp.verification_view_count || 1} view${(sp.verification_view_count || 1) === 1 ? "" : "s"}`
+                  ? `Auditor last opened this product's link ${relTime(sp.last_verification_view_at)} · ${sp.verification_view_count || 1} view${(sp.verification_view_count || 1) === 1 ? "" : "s"}`
                   : "No auditor has opened this product's verification link yet."}
               </div>
             );
@@ -929,10 +929,27 @@ function DeclarationDashboard({ data, reload, isAdmin }) {
 const RISK_TONE = { High: "crit", Medium: "high", Low: "low", Unknown: "primary" };
 const STATUS_TONE = { Implemented: "low", Partial: "high", Gap: "crit", "Not Started": "primary" };
 
-function ControlDashboard({ data }) {
+function relTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const s = Math.floor((Date.now() - d.getTime()) / 1000);
+  if (s < 60) return "just now";
+  const m = Math.floor(s / 60); if (m < 60) return `${m} minute${m === 1 ? "" : "s"} ago`;
+  const h = Math.floor(m / 60); if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
+  const dd = Math.floor(h / 24); if (dd < 30) return `${dd} day${dd === 1 ? "" : "s"} ago`;
+  return d.toLocaleDateString();
+}
+
+const DRILL_TONE = { Conforming: "low", Partial: "high", Nonconforming: "crit", "Not Applicable": "primary", "Not Assessed": "primary" };
+
+function ControlDashboard({ data, isAdmin }) {
   const controls = data.controls?.controls || [];
   const o = data.controls?.overall || {};
   const pct = o.percentage || 0;
+  const [drill, setDrill] = useState(null);
+  const [briefBusy, setBriefBusy] = useState(false);
+  const [scoreLink, setScoreLink] = useState(null);
+  const [scoreBusy, setScoreBusy] = useState(false);
   const chips = [
     ["Implemented", o.implemented || 0, "text-low"],
     ["Partial", o.partial || 0, "text-high"],
@@ -941,16 +958,53 @@ function ControlDashboard({ data }) {
     ["High risk", o.high_risk || 0, "text-crit"],
     ["Requirements", o.requirements_total || controls.length, "text-primary"],
   ];
+  const downloadBrief = async () => {
+    setBriefBusy(true);
+    try {
+      const response = await api.get("/cra/digest/brief.pdf", { responseType: "blob" });
+      downloadBlob(response.data, "obserra-eu-cra-weekly-brief.pdf");
+      toast.success("This week's CRA brief downloaded.");
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not download the brief."); }
+    finally { setBriefBusy(false); }
+  };
+  const genScorecard = async () => {
+    setScoreBusy(true);
+    try {
+      const response = await api.post("/cra/scorecard-link");
+      const url = `${window.location.origin}${response.data.path}`;
+      setScoreLink({ url, expires_at: response.data.expires_at });
+      try { await navigator.clipboard.writeText(url); } catch {}
+      toast.success("Shareable compliance scorecard link created and copied.");
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not create scorecard link."); }
+    finally { setScoreBusy(false); }
+  };
   return (
     <div className="space-y-5" data-testid="cra-controls">
-      <Panel title="CRA Control Dashboard" subtitle="Live compliance coverage of every EU CRA essential requirement, computed from the latest assessment on each product.">
+      <Panel
+        title="CRA Control Dashboard"
+        subtitle="Live compliance coverage of every EU CRA essential requirement, computed from the latest assessment on each product."
+        actions={
+          <div className="flex flex-wrap gap-2">
+            <button onClick={downloadBrief} disabled={briefBusy} data-testid="cra-download-brief" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{briefBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} This week's brief</button>
+            {isAdmin && <button onClick={genScorecard} disabled={scoreBusy} data-testid="cra-scorecard-generate" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">{scoreBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Share scorecard</button>}
+          </div>
+        }
+      >
+        {scoreLink && (
+          <div className="mb-4 rounded-lg border border-primary/25 bg-primary/5 p-3" data-testid="cra-scorecard-link">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[10px] font-mono text-primary uppercase">Read-only compliance scorecard link (no account needed)</div>
+              <button onClick={async () => { try { await navigator.clipboard.writeText(scoreLink.url); toast.success("Scorecard link copied."); } catch { toast.error("Copy failed."); } }} data-testid="cra-scorecard-copy" className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md border border-primary/25 bg-primary/10 text-primary text-[10px] font-head font-bold"><Copy className="w-3 h-3" /> Copy</button>
+            </div>
+            <a href={scoreLink.url} target="_blank" rel="noreferrer" className="text-xs break-all mt-2 block underline text-primary">{scoreLink.url}</a>
+            <div className="text-[10px] font-mono text-muted-foreground mt-1">Expires {new Date(scoreLink.expires_at).toLocaleString()}</div>
+          </div>
+        )}
         <div className="grid lg:grid-cols-4 gap-4">
           <div className="rounded-xl border border-border bg-secondary/20 p-4">
             <div className="text-[10px] font-mono uppercase text-muted-foreground">Overall compliance</div>
             <div className="font-head font-black text-4xl mt-2" data-testid="cra-controls-overall">{pct}%</div>
-            <div className="mt-3 h-2 rounded-full bg-secondary overflow-hidden">
-              <div className="h-full bg-low transition-all" style={{ width: `${pct}%` }} />
-            </div>
+            <div className="mt-3 h-2 rounded-full bg-secondary overflow-hidden"><div className="h-full bg-low transition-all" style={{ width: `${pct}%` }} /></div>
             <div className="text-[10px] text-muted-foreground mt-2">{o.products_assessed || 0}/{o.products_total || 0} products assessed</div>
           </div>
           <div className="lg:col-span-3 grid grid-cols-2 sm:grid-cols-3 gap-3">
@@ -964,7 +1018,7 @@ function ControlDashboard({ data }) {
         </div>
       </Panel>
 
-      <Panel title="Controls & requirements" subtitle="Every requirement with its coverage, implementation status and risk.">
+      <Panel title="Controls & requirements" subtitle="Click any control to see exactly which products conform, are partial or are non-conforming.">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px] text-xs">
             <thead className="font-mono uppercase text-[9px] text-muted-foreground border-b border-border">
@@ -978,7 +1032,7 @@ function ControlDashboard({ data }) {
             </thead>
             <tbody data-testid="cra-controls-table">
               {controls.map((c) => (
-                <tr key={c.requirement_id} className="border-b border-border/60 align-top">
+                <tr key={c.requirement_id} onClick={() => setDrill(c)} data-testid={`cra-control-row-${c.requirement_id}`} className="border-b border-border/60 align-top cursor-pointer hover:bg-secondary/30 transition-colors">
                   <td className="py-3 pr-3">
                     <div className="font-mono text-[10px] text-ai">{c.requirement_id}</div>
                     <div className="font-head font-bold mt-0.5">{c.title}</div>
@@ -1006,6 +1060,23 @@ function ControlDashboard({ data }) {
           </table>
         </div>
       </Panel>
+
+      <Dialog open={!!drill} onOpenChange={(open) => !open && setDrill(null)}>
+        <DialogContent data-testid="cra-control-drill">
+          <DialogHeader>
+            <DialogTitle className="font-head font-black">{drill?.title}</DialogTitle>
+            <DialogDescription>{drill?.requirement_id} · {drill?.domain} · {(drill?.legal_refs || []).join(", ")}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 max-h-[55vh] overflow-y-auto">
+            {(drill?.product_status || []).length ? drill.product_status.map((p) => (
+              <div key={p.ref} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-secondary/20 px-3 py-2">
+                <div><div className="font-mono text-[10px] text-ai">{p.ref}</div><div className="text-sm font-head font-bold">{p.name}</div></div>
+                <Badge tone={DRILL_TONE[p.status] || "primary"}>{p.status}</Badge>
+              </div>
+            )) : <div className="text-sm text-muted-foreground">No assessed products for this control yet.</div>}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -1110,7 +1181,7 @@ export default function CRAGovernance() {
       {active === "conformity" && <ConformityDashboard data={data} reload={reload} isAdmin={isAdmin} />}
       {active === "declaration" && <DeclarationDashboard data={data} reload={reload} isAdmin={isAdmin} />}
       {active === "regulation" && <RegulationMap data={data} />}
-      {active === "controls" && <ControlDashboard data={data} />}
+      {active === "controls" && <ControlDashboard data={data} isAdmin={isAdmin} />}
 
       <Panel title="Defensibility and legal boundary" subtitle="Operational safeguards for a regulation-driven platform">
         <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3 text-xs">
