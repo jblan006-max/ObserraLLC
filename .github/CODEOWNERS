@@ -1,3 +1,3 @@
-# Obserra proprietary repository
-# All repository changes require review by the Obserra owner.
+# Obserra repository code owner.
+# Enforce this with branch protection requiring Code Owner review on main.
 * @jblan2026-hub
