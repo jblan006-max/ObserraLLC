@@ -472,6 +472,8 @@ async def hourly_overdue_digest(request: Request, background_tasks: BackgroundTa
     background_tasks.add_task(_run_cra_exec_overview_tick)
     from cra_governance import _run_cra_reassess_reminder_tick
     background_tasks.add_task(_run_cra_reassess_reminder_tick)
+    from cra_governance import _run_cra_risk_governance_tick
+    background_tasks.add_task(_run_cra_risk_governance_tick)
     return {"status": "accepted"}
 
 

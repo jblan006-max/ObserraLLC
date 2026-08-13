@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 158: Tested all 5 new CRA risk features (Register Export PDF/CSV, Owners & Due Dates, Snapshot Compare on public link, Risk Trend Line, and CORRELATED RISK section in shareable public link + board email). Backend: 7/7 pytest passing. Frontend: All new UI elements render and integrate correctly (export buttons, RiskTrend panel, OwnerForm assign flow, owner chip after save, public page risk hero + top-3 + movement section, invalid token error, email preview iframe contains 'CORRELATED RISK' with risk index + top risks). Cleaned up all TEST_ data (owner on risk-1, share links revoked, TEST_iter158 snapshots deleted). Dana Ruiz owner on risk-0 preserved as noted.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "CRA Executive Overview", "issues": ["React hydration warning: <span> cannot be a child of <option> in CRAExecutiveOverview line 418 — visual-editor injected wrapper span inside <option>. Non-fatal, but pollutes console. Likely from tooling, not core code."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_cra_risk_features.py", "/app/test_reports/pytest/iter158.xml"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Public exec-overview correctly withholds product names in risk hero/top-3 (verified in email preview snippet contains product names because it's admin-only email; public JSON still redacts as required).",
+    "Owner assignment flow is smooth: card-inline form, chip updates on refresh, stable key-based join is working."
+  ],
+  "updated_files": ["/app/backend/tests/test_cra_risk_features.py"],
+  "success_rate": {"backend": "100% (7/7)", "frontend": "100% (all selectors + flows verified)"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (from /app/memory/test_credentials.md)",
+  "seed_data_creation": "None. All TEST_ artifacts cleaned up (TEST_UI Owner on risk-1 deleted, share link revoked, TEST_iter158 snapshots deleted). Dana Ruiz owner on risk-0 left intact as noted in review request.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All 5 new risk features (register export PDF/CSV, owner assign flow with due date + auto-reminder cron, risk trend endpoint, public link snapshot movement + risk hero, email preview CORRELATED RISK section) are working end-to-end. Backend pytest suite lives at /app/backend/tests/test_cra_risk_features.py — reuse for regression. Login uses cookie-based session (POST /api/auth/login with JSON body, no bearer token). Share link endpoint is POST /api/cra/exec-overview-link (returns raw_token + url); revoke via POST /api/cra/exec-overview-link/revoke.",
+  "rca of the issue": "N/A — no bugs found."
+}

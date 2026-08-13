@@ -1989,7 +1989,8 @@ async def _compute_risk_correlation(org_id: str) -> dict:
             "deadline": None,
         })
 
-    # Dedup mapped controls, score, rate, sort, cap and id
+    # Dedup mapped controls, score, rate, sort, cap, id + stable key
+    import hashlib
     for r in risks:
         seen, dd = set(), []
         for m in r["mapped_controls"]:
@@ -1999,10 +2000,19 @@ async def _compute_risk_correlation(org_id: str) -> dict:
         r["mapped_controls"] = dd
         r["score"] = r["severity"] * r["likelihood"]
         r["rating"] = rate(r["score"])
+        r["key"] = "rk_" + hashlib.md5(f"{r['category']}|{r['title']}".encode()).hexdigest()[:12]
     risks.sort(key=lambda r: (-r["score"], r["title"]))
     risks = risks[:24]
+
+    owners = {o["risk_key"]: o for o in await db.cra_risk_owners.find(
+        {"org_id": org_id, "status": {"$ne": "resolved"}}).to_list(500)}
     for i, r in enumerate(risks):
         r["id"] = f"risk-{i}"
+        o = owners.get(r["key"])
+        r["owner"] = o.get("owner") if o else None
+        r["owner_email"] = o.get("owner_email") if o else None
+        r["due_date"] = o.get("due_date") if o else None
+        r["owner_note"] = o.get("note") if o else None
 
     counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
     for r in risks:
@@ -2022,10 +2032,25 @@ async def _compute_risk_correlation(org_id: str) -> dict:
         rid = max(ctr, key=lambda k: ctr[k])
         most = {"requirement_id": rid, "title": titles[rid], "count": ctr[rid]}
 
+    top_risks = [{"title": r["title"], "rating": r["rating"], "score": r["score"],
+                  "category": r["category"], "owner": r.get("owner"), "due_date": r.get("due_date")}
+                 for r in risks[:3]]
+
+    # Zero-touch daily history point so the board risk trend fills in without logins
+    try:
+        from datetime import datetime as _dt, timezone as _tz
+        today = _dt.now(_tz.utc).strftime("%Y-%m-%d")
+        await db.cra_risk_history.update_one(
+            {"org_id": org_id, "date": today},
+            {"$set": {"risk_index": risk_index, "counts": counts, "total": total, "at": iso()}},
+            upsert=True)
+    except Exception:
+        pass
+
     return {
         "version": CRA_APP_VERSION, "generated_at": iso(),
         "overall": {"total": total, "counts": counts, "risk_index": risk_index,
-                    "top_rating": top_rating, "most_correlated_control": most},
+                    "top_rating": top_rating, "most_correlated_control": most, "top_risks": top_risks},
         "risks": risks,
     }
 
@@ -2033,6 +2058,210 @@ async def _compute_risk_correlation(org_id: str) -> dict:
 @cra_router.get("/risk-correlation")
 async def cra_risk_correlation(user: dict = Depends(get_current_user)):
     return await _compute_risk_correlation(user["org_id"])
+
+
+class CRARiskOwnerReq(BaseModel):
+    risk_key: str
+    risk_title: str = ""
+    owner: str = Field(..., max_length=120)
+    owner_email: str = Field("", max_length=160)
+    due_date: str = Field("", max_length=10)
+    note: str = Field("", max_length=400)
+
+
+@cra_router.post("/risk-owner")
+async def assign_risk_owner(body: CRARiskOwnerReq, user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    now = iso()
+    doc = {"owner": body.owner.strip(), "owner_email": body.owner_email.strip(),
+           "due_date": body.due_date.strip(), "note": body.note.strip(),
+           "risk_title": body.risk_title, "status": "open", "updated_at": now, "assigned_by": user.get("email")}
+    await db.cra_risk_owners.update_one(
+        {"org_id": org_id, "risk_key": body.risk_key},
+        {"$set": doc, "$setOnInsert": {"org_id": org_id, "risk_key": body.risk_key, "created_at": now, "last_reminded": None}},
+        upsert=True)
+    try:
+        await ledger_append(org_id, user.get("email", "unknown"), "risk.owner_assigned", "risk", body.risk_key,
+                            ["Article 13"], {"owner": body.owner, "due_date": body.due_date})
+    except Exception:
+        pass
+    return {"ok": True}
+
+
+@cra_router.delete("/risk-owner/{risk_key}")
+async def clear_risk_owner(risk_key: str, user: dict = Depends(get_current_user)):
+    await db.cra_risk_owners.update_one({"org_id": user["org_id"], "risk_key": risk_key},
+                                        {"$set": {"status": "resolved", "resolved_at": iso()}})
+    return {"ok": True}
+
+
+@cra_router.get("/risk-trend")
+async def cra_risk_trend(days: int = 30, user: dict = Depends(get_current_user)):
+    from datetime import datetime, timezone, timedelta
+    org_id = user["org_id"]
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+    rows = await db.cra_risk_history.find({"org_id": org_id, "date": {"$gte": since}}, {"_id": 0}).sort("date", 1).to_list(400)
+    if not rows or rows[-1]["date"] != today:
+        await _compute_risk_correlation(org_id)
+        rows = await db.cra_risk_history.find({"org_id": org_id, "date": {"$gte": since}}, {"_id": 0}).sort("date", 1).to_list(400)
+    series = [{"date": r["date"], "risk_index": r.get("risk_index", 0), "counts": r.get("counts", {})} for r in rows]
+    first = series[0]["risk_index"] if series else 0
+    last = series[-1]["risk_index"] if series else 0
+    return {"days": days, "series": series, "change": last - first, "current": last}
+
+
+@cra_router.get("/risk-register.csv")
+async def risk_register_csv(user: dict = Depends(get_current_user)):
+    import csv, io
+    from fastapi.responses import Response
+    rc = await _compute_risk_correlation(user["org_id"])
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["Rating", "Score", "Severity", "Likelihood", "Category", "Risk", "Owner",
+                "Owner email", "Due date", "Mapped controls", "NIST CSF", "Recommendation", "Fixes"])
+    for r in rc["risks"]:
+        w.writerow([r["rating"], r["score"], r["severity"], r["likelihood"], r["category"], r["title"],
+                    r.get("owner") or "", r.get("owner_email") or "", r.get("due_date") or "",
+                    "; ".join(m["requirement_id"] for m in r["mapped_controls"]),
+                    "; ".join(c for m in r["mapped_controls"] for c in m.get("csf", [])),
+                    r["recommendation"], " | ".join(r["fixes"])])
+    return Response(content=buf.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=obserra-cra-risk-register.csv"})
+
+
+@cra_router.get("/risk-register.pdf")
+async def risk_register_pdf(user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    from fastapi.responses import Response
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}, {"_id": 0, "name": 1})
+    rc = await _compute_risk_correlation(user["org_id"])
+    pdf = _cra_risk_register_pdf((org or {}).get("name", "Your organization"), rc)
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=obserra-cra-risk-register.pdf"})
+
+
+def _cra_risk_register_pdf(org_name, rc):
+    import io
+    from reportlab.lib.pagesizes import LETTER, landscape
+    from reportlab.lib.units import inch
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(LETTER), leftMargin=0.5 * inch, rightMargin=0.5 * inch,
+                            topMargin=0.6 * inch, bottomMargin=0.5 * inch)
+    ss = getSampleStyleSheet()
+    NAVY = colors.HexColor("#0f1e3d")
+    h1 = ParagraphStyle("rh1", parent=ss["Title"], textColor=NAVY, fontSize=18, spaceAfter=2)
+    sub = ParagraphStyle("rsub", parent=ss["Normal"], textColor=colors.HexColor("#6b7280"), fontSize=9)
+    small = ParagraphStyle("rsm", parent=ss["Normal"], fontSize=7.5, leading=9, textColor=colors.HexColor("#9ca3af"))
+    cellst = ParagraphStyle("rcell", parent=ss["Normal"], fontSize=7.5, leading=9)
+    o = rc["overall"]
+    story = [Paragraph("EU CRA Risk Register", h1),
+             Paragraph(f'{org_name} &#183; Regulation (EU) 2024/2847 &#183; Obserra CRA v{rc["version"]} &#183; {rc["generated_at"][:10]}', sub),
+             Spacer(1, 6), HRFlowable(width="100%", color=colors.HexColor("#e5e7eb")), Spacer(1, 8),
+             Paragraph(f'<b>Correlated risk index:</b> {o["risk_index"]}/100 &#183; {o["total"]} risk(s) &#183; '
+                       f'Critical {o["counts"]["Critical"]} · High {o["counts"]["High"]} · Medium {o["counts"]["Medium"]} · Low {o["counts"]["Low"]}', sub),
+             Spacer(1, 8)]
+    header = ["Rating", "Score", "Category", "Risk", "Owner", "Due", "Mapped controls", "Recommendation"]
+    data = [header]
+    RTONE = {"Critical": colors.HexColor("#dc2626"), "High": colors.HexColor("#ea580c"),
+             "Medium": colors.HexColor("#ca8a04"), "Low": colors.HexColor("#16a34a")}
+    row_tones = []
+    for r in rc["risks"]:
+        data.append([r["rating"], str(r["score"]), r["category"],
+                     Paragraph(r["title"], cellst), Paragraph(r.get("owner") or "&#8212;", cellst),
+                     r.get("due_date") or "\u2014",
+                     Paragraph(", ".join(m["requirement_id"] for m in r["mapped_controls"]), cellst),
+                     Paragraph(r["recommendation"], cellst)])
+        row_tones.append(RTONE.get(r["rating"], NAVY))
+    tbl = Table(data, colWidths=[0.6 * inch, 0.4 * inch, 0.9 * inch, 2.3 * inch, 0.9 * inch, 0.7 * inch, 1.4 * inch, 2.4 * inch], repeatRows=1)
+    tstyle = [("BACKGROUND", (0, 0), (-1, 0), NAVY), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+              ("FONTSIZE", (0, 0), (-1, 0), 8), ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+              ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#e5e7eb")),
+              ("VALIGN", (0, 0), (-1, -1), "TOP"), ("FONTSIZE", (0, 1), (-1, -1), 7.5),
+              ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")])]
+    for i, tone in enumerate(row_tones, start=1):
+        tstyle.append(("TEXTCOLOR", (0, i), (0, i), tone))
+        tstyle.append(("FONTNAME", (0, i), (0, i), "Helvetica-Bold"))
+    tbl.setStyle(TableStyle(tstyle))
+    story.append(tbl)
+    story.append(Spacer(1, 10))
+    story.append(Paragraph("Ratings synthesised from live products, vulnerabilities, assessments, controls and the AI-grounding monitor. Decision-support only — not legal advice or a guarantee of CRA conformity.", small))
+    doc.build(story)
+    return buf.getvalue()
+
+
+def _cra_risk_reminder_html(org_name, risk, due, days_left):
+    def esc(s):
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    when = "overdue" if days_left < 0 else ("due today" if days_left == 0 else f"due in {days_left} day(s)")
+    ctrls = ", ".join(m["requirement_id"] for m in risk.get("mapped_controls", []))
+    fixes = "".join(f'<li style="margin:2px 0">{esc(f)}</li>' for f in risk.get("fixes", []))
+    return (
+        '<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:auto;background:#fff"><tr><td style="padding:24px">'
+        '<div style="font:800 18px Arial;color:#0f1e3d">EU CRA Risk Reminder</div>'
+        f'<div style="font:400 12px Arial;color:#6b7280;margin-bottom:10px">{esc(org_name)} &#183; Regulation (EU) 2024/2847</div>'
+        f'<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:12px 14px;font:600 13px Arial;color:#b45309">'
+        f'A CRA risk assigned to you is {when} ({esc(due)}).</div>'
+        f'<div style="font:700 15px Arial;color:#0f1e3d;margin:14px 0 4px">[{esc(risk["rating"])}] {esc(risk["title"])}</div>'
+        f'<div style="font:400 13px Arial;color:#374151">{esc(risk.get("recommendation", ""))}</div>'
+        f'<div style="font:700 11px Arial;color:#6b7280;margin-top:10px">MAPPED CONTROLS</div>'
+        f'<div style="font:400 12px Arial;color:#1f2937">{esc(ctrls)}</div>'
+        + (f'<div style="font:700 11px Arial;color:#6b7280;margin-top:10px">FIXES NEEDED</div><ul style="font:400 12px Arial;color:#1f2937;margin:4px 0 0 16px">{fixes}</ul>' if fixes else '')
+        + '<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:10px;font:400 10px Arial;color:#9ca3af">'
+        'Sign in to Obserra EU CRA Governance &#8594; Risk Correlation to update or close this risk.</div>'
+        '</td></tr></table>')
+
+
+async def _run_cra_risk_governance_tick():
+    """Hourly: snapshot each org's correlated risk index (zero-touch trend) and remind risk owners of due/overdue items."""
+    import logging as _lg
+    from datetime import datetime, timezone
+    from kernel import notifications
+    log = _lg.getLogger(__name__)
+    now = datetime.now(timezone.utc)
+    orgs = await db.organizations.find({}, {"_id": 1, "name": 1}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        try:
+            if not await db.cra_products.find_one({"org_id": org_id}, {"_id": 1}):
+                continue
+            rc = await _compute_risk_correlation(org_id)  # also upserts today's history point
+            active = {r["key"]: r for r in rc["risks"]}
+            owners = await db.cra_risk_owners.find({"org_id": org_id, "status": {"$ne": "resolved"}}).to_list(500)
+            for o in owners:
+                key = o.get("risk_key")
+                if key not in active:
+                    await db.cra_risk_owners.update_one({"_id": o["_id"]}, {"$set": {"status": "resolved", "resolved_at": iso()}})
+                    continue
+                due = o.get("due_date")
+                if not due or not o.get("owner_email"):
+                    continue
+                try:
+                    due_dt = datetime.strptime(due, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+                except Exception:
+                    continue
+                days_left = (due_dt - now).days
+                if days_left > 3:
+                    continue
+                last = o.get("last_reminded")
+                if last:
+                    try:
+                        if (now - datetime.fromisoformat(last)).total_seconds() < 20 * 3600:
+                            continue
+                    except Exception:
+                        pass
+                risk = active[key]
+                overdue = days_left < 0
+                subject = (("[Overdue] " if overdue else "") + f"CRA risk due: {risk['title'][:70]}")
+                html = _cra_risk_reminder_html(org.get("name", "Your organization"), risk, due, days_left)
+                await notifications.send_email(o["owner_email"], subject, html)
+                await db.cra_risk_owners.update_one({"_id": o["_id"]}, {"$set": {"last_reminded": iso()}})
+            log.info(f"CRA risk governance tick done for org {org_id}")
+        except Exception as e:
+            log.error(f"CRA risk governance tick failed for org {org_id}: {e}")
 
 
 
@@ -2202,7 +2431,7 @@ async def delete_exec_snapshot(sid: str, user: dict = Depends(get_current_user))
     return {"ok": True}
 
 
-def _cra_exec_overview_html(org_name, kpis, nd):
+def _cra_exec_overview_html(org_name, kpis, nd, risk=None):
     def esc(s):
         return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
@@ -2220,11 +2449,29 @@ def _cra_exec_overview_html(org_name, kpis, nd):
     if nd:
         deadline = (f'<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:12px 14px;margin:12px 0;'
                     f'font:600 13px Arial;color:#b45309">{nd["days_remaining"]} days to the next CRA deadline &#8212; {esc(nd["label"])} on {esc(nd["date"])}.</div>')
+    risk_html = ""
+    if risk:
+        rtone = {"Critical": "#dc2626", "High": "#ea580c", "Medium": "#ca8a04", "Low": "#16a34a"}
+        idx = risk.get("risk_index", 0)
+        cnt = risk.get("counts", {})
+        top = "".join(
+            f'<tr><td style="padding:5px 0;font:400 12px Arial;color:#1f2937;border-bottom:1px solid #f1f1f1">'
+            f'<b style="color:{rtone.get(t.get("rating"), "#0f1e3d")}">{esc(t.get("rating"))}</b> &#183; {esc(t.get("title", ""))}'
+            f'{" &#183; owner " + esc(t.get("owner")) if t.get("owner") else ""}</td></tr>'
+            for t in (risk.get("top_risks") or []))
+        idx_color = "#dc2626" if idx >= 60 else "#ea580c" if idx >= 35 else "#16a34a"
+        risk_html = (
+            '<div style="font:700 11px Arial;color:#6b7280;letter-spacing:.05em;margin-top:16px">CORRELATED RISK</div>'
+            f'<div style="background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;margin-top:6px">'
+            f'<div style="font:800 26px Arial;color:{idx_color}">{idx}<span style="font:400 12px Arial;color:#6b7280"> / 100 risk index</span></div>'
+            f'<div style="font:600 12px Arial;color:#6b7280;margin:2px 0 8px">Critical {cnt.get("Critical", 0)} &#183; High {cnt.get("High", 0)} &#183; Medium {cnt.get("Medium", 0)} &#183; Low {cnt.get("Low", 0)}</div>'
+            f'<table width="100%">{top}</table></div>')
     return (
         '<table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:auto;background:#fff"><tr><td style="padding:24px">'
         '<div style="font:800 18px Arial;color:#0f1e3d">EU CRA Executive Overview</div>'
         f'<div style="font:400 12px Arial;color:#6b7280;margin-bottom:6px">{esc(org_name)} &#183; Regulation (EU) 2024/2847 &#183; Obserra CRA v{CRA_APP_VERSION}</div>'
         f'{deadline}'
+        f'{risk_html}'
         '<div style="font:700 11px Arial;color:#6b7280;letter-spacing:.05em;margin-top:8px">BOARD KPIs</div>'
         f'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:6px">{rows}</table>'
         '<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:10px;font:400 10px Arial;color:#9ca3af">'
@@ -2242,7 +2489,11 @@ async def _send_cra_exec_overview_email(org, recipients) -> int:
     assurance = await _cra_grounding_summary(org_id)
     insight = await compute_cra_insight(org_id, use_cache=False)
     kpis = await _cra_exec_kpis(org_id)
-    html = _cra_exec_overview_html(org.get("name", "Your organization"), kpis, ctx.get("next_deadline"))
+    try:
+        risk = (await _compute_risk_correlation(org_id))["overall"]
+    except Exception:
+        risk = None
+    html = _cra_exec_overview_html(org.get("name", "Your organization"), kpis, ctx.get("next_deadline"), risk)
     att = None
     try:
         raw = _cra_exec_overview_pdf(org.get("name", "Your organization"), ctx, controls, nist, assurance, insight)
@@ -2295,7 +2546,11 @@ async def exec_email_preview(user: dict = Depends(get_current_user)):
     org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}, {"_id": 0, "name": 1})
     kpis = await _cra_exec_kpis(user["org_id"])
     ctx = await _cra_insight_context(user["org_id"])
-    html = _cra_exec_overview_html((org or {}).get("name", "Your organization"), kpis, ctx.get("next_deadline"))
+    try:
+        risk = (await _compute_risk_correlation(user["org_id"]))["overall"]
+    except Exception:
+        risk = None
+    html = _cra_exec_overview_html((org or {}).get("name", "Your organization"), kpis, ctx.get("next_deadline"), risk)
     return {"html": html, "subject": "EU CRA Executive Overview — board briefing"}
 
 
@@ -2339,6 +2594,14 @@ async def public_exec_overview(raw_token: str):
     controls = await _compute_controls(org_id)
     nist = await _compute_nist(org_id)
     ctx = await _cra_insight_context(org_id)
+    try:
+        risk = (await _compute_risk_correlation(org_id))["overall"]
+    except Exception:
+        risk = {}
+    snaps = await db.cra_exec_snapshots.find({"org_id": org_id}).sort("at", -1).to_list(1)
+    prev = snaps[0] if snaps else None
+    snapshot_delta = _snapshot_delta(kpis, prev.get("kpis", {})) if prev else None
+    previous_snapshot = {"label": prev.get("label"), "at": prev.get("at")} if prev else None
     return {
         "role": "exec_overview",
         "organization": (org or {}).get("name", "Organization"),
@@ -2351,6 +2614,9 @@ async def public_exec_overview(raw_token: str):
         "controls": controls["overall"],
         "nist": {"overall": nist["overall"], "functions": nist["functions"]},
         "next_deadline": _cra_next_deadline(),
+        "risk": risk,
+        "previous_snapshot": previous_snapshot,
+        "snapshot_delta": snapshot_delta,
         "note": "Read-only Executive Overview. Product names and internal records are not exposed.",
     }
 

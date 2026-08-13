@@ -1,15 +1,27 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Landmark, Loader2, TriangleAlert, Clock3, Boxes, BadgeCheck, ShieldCheck, FileCheck2, Fingerprint, Building2 } from "lucide-react";
+import { Landmark, Loader2, TriangleAlert, Clock3, Boxes, BadgeCheck, ShieldCheck, FileCheck2, Fingerprint, Building2, AlertOctagon, ArrowUpRight, ArrowDownRight, Camera } from "lucide-react";
 import { api } from "@/lib/api";
 
 const NIST_TONE = { Low: "bg-low", Medium: "bg-high", High: "bg-crit", Unknown: "bg-secondary" };
+const RATING_TEXT = { Critical: "text-crit", High: "text-high", Medium: "text-med", Low: "text-low" };
+const GOOD_DOWN = new Set(["article14_overdue", "ce_blockers"]);
+const PCT_KEYS = new Set(["classification_approved_pct", "ce_ready_pct", "control_compliance_pct", "nist_alignment_pct", "ai_grounding_score"]);
+const DELTA_ROWS = [["Classification", "classification_approved_pct"], ["CE-ready", "ce_ready_pct"], ["Control", "control_compliance_pct"], ["NIST", "nist_alignment_pct"], ["AI grounding", "ai_grounding_score"], ["Art.14 overdue", "article14_overdue"]];
 
 function toneCls(score) {
   if (score == null) return "text-muted-foreground";
   if (score >= 80) return "text-low";
   if (score >= 50) return "text-high";
   return "text-crit";
+}
+
+function Delta({ k, v }) {
+  if (v == null || v === 0) return <span className="text-[10px] font-mono text-muted-foreground">±0</span>;
+  const up = v > 0;
+  const good = GOOD_DOWN.has(k) ? !up : up;
+  const Arrow = up ? ArrowUpRight : ArrowDownRight;
+  return <span className={`inline-flex items-center gap-0.5 text-[11px] font-mono font-bold ${good ? "text-low" : "text-crit"}`}><Arrow className="w-3 h-3" />{up ? "+" : ""}{v}{PCT_KEYS.has(k) ? "" : ""}</span>;
 }
 
 function Bar({ label, value, total, tone = "bg-primary" }) {
@@ -75,6 +87,10 @@ export default function CRAExecOverviewPublic() {
   const cls = data.classifications || {};
   const products = k.products || 0;
   const nd = data.next_deadline;
+  const risk = data.risk || {};
+  const riskTone = risk.risk_index >= 60 ? "text-crit" : risk.risk_index >= 35 ? "text-high" : "text-low";
+  const delta = data.snapshot_delta;
+  const prev = data.previous_snapshot;
 
   const kpis = [
     { label: "Products under CRA", value: products, sub: `${cls["Critical"] || 0} critical · ${cls["Class II"] || 0} Class II`, Icon: Boxes },
@@ -83,7 +99,7 @@ export default function CRAExecOverviewPublic() {
     { label: "Article 14 overdue", value: k.article14_overdue ?? 0, sub: "24h / 72h / final clocks", Icon: TriangleAlert, tone: (k.article14_overdue || 0) > 0 ? "text-crit" : "text-low" },
     { label: "Control compliance", value: `${k.control_compliance_pct ?? 0}%`, sub: `${c.implemented ?? 0} implemented · ${c.partial ?? 0} partial`, Icon: FileCheck2, tone: toneCls(k.control_compliance_pct) },
     { label: "NIST CSF alignment", value: `${k.nist_alignment_pct ?? 0}%`, sub: `${nist.functions_aligned ?? 0} / ${nist.functions_total ?? 6} functions aligned`, Icon: ShieldCheck, tone: toneCls(k.nist_alignment_pct) },
-    { label: "External assessments", value: c.products_total != null ? (k.ce_blockers ?? 0) : 0, sub: "open CE blockers", Icon: Building2 },
+    { label: "CE blockers", value: k.ce_blockers ?? 0, sub: "open market-readiness blockers", Icon: Building2 },
     { label: "AI grounding score", value: k.ai_grounding_score == null ? "—" : `${k.ai_grounding_score}%`, sub: `${k.ai_checks ?? 0} answers checked`, Icon: Fingerprint, tone: toneCls(k.ai_grounding_score) },
   ];
 
@@ -105,6 +121,45 @@ export default function CRAExecOverviewPublic() {
       </header>
 
       <main className="max-w-6xl mx-auto p-5 space-y-5">
+        {/* The single most important number, front and centre */}
+        <section className="bg-card fact-border rounded-xl p-5 grid lg:grid-cols-3 gap-5" data-testid="cra-exec-public-risk">
+          <div>
+            <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground"><AlertOctagon className="w-3.5 h-3.5" /> Correlated risk index</div>
+            <div className={`font-head font-black text-5xl mt-2 ${riskTone}`}>{risk.risk_index ?? 0}</div>
+            <div className="text-[11px] font-mono text-muted-foreground mt-1">{risk.total ?? 0} correlated risk(s) · Critical {risk.counts?.Critical ?? 0} · High {risk.counts?.High ?? 0} · Medium {risk.counts?.Medium ?? 0}</div>
+            <div className="mt-3 h-2 rounded-full bg-secondary/60 overflow-hidden"><div className={`h-full ${risk.risk_index >= 60 ? "bg-crit" : risk.risk_index >= 35 ? "bg-high" : "bg-low"}`} style={{ width: `${risk.risk_index ?? 0}%` }} /></div>
+          </div>
+          <div className="lg:col-span-2">
+            <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Top risks right now</div>
+            <div className="space-y-2" data-testid="cra-exec-public-toprisks">
+              {(risk.top_risks || []).map((t, i) => (
+                <div key={i} className="flex items-center justify-between gap-3 border-b border-border/60 pb-2 last:border-0">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className={`text-[10px] font-mono font-bold ${RATING_TEXT[t.rating] || "text-foreground"}`}>{t.rating?.toUpperCase()}</span>
+                    <span className="text-sm text-foreground/90 truncate">{t.title}</span>
+                  </div>
+                  <span className="text-[10px] font-mono text-muted-foreground shrink-0">{t.owner ? `owner ${t.owner}` : "unassigned"} · {t.score}/25</span>
+                </div>
+              ))}
+              {(!risk.top_risks || risk.top_risks.length === 0) && <div className="text-sm text-muted-foreground">No correlated risks in the live records.</div>}
+            </div>
+          </div>
+        </section>
+
+        {delta && prev && (
+          <section className="bg-card fact-border rounded-xl p-4" data-testid="cra-exec-public-movement">
+            <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2"><Camera className="w-3.5 h-3.5" /> Movement since “{prev.label}” ({new Date(prev.at).toLocaleDateString()})</div>
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-3">
+              {DELTA_ROWS.map(([lbl, key]) => (
+                <div key={key} className="text-center">
+                  <div className="text-[9px] font-mono uppercase text-muted-foreground">{lbl}</div>
+                  <div className="mt-0.5"><Delta k={key} v={delta[key]} /></div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
         <section className="grid grid-cols-2 lg:grid-cols-4 gap-3" data-testid="cra-exec-public-kpis">
           {kpis.map((kp) => <Kpi key={kp.label} {...kp} />)}
         </section>

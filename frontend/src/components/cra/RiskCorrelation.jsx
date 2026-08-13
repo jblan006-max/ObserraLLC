@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { toast } from "sonner";
 import { CraExplainToggle } from "@/components/cra/CraAI";
-import { AlertOctagon, Loader2, ShieldAlert, Link2, Boxes, Wrench, Clock3, GitBranch, Lightbulb } from "lucide-react";
+import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip } from "recharts";
+import {
+  AlertOctagon, Loader2, ShieldAlert, Link2, Boxes, Wrench, Clock3, GitBranch, Lightbulb,
+  FileText, FileSpreadsheet, UserPlus, TrendingUp, TrendingDown, Minus, Save, X,
+} from "lucide-react";
 
 const RATING_TONE = {
   Critical: "border-crit/30 bg-crit/10 text-crit",
@@ -11,6 +16,7 @@ const RATING_TONE = {
 };
 const RATING_BG = { Critical: "bg-crit", High: "bg-high", Medium: "bg-med", Low: "bg-low" };
 const RATING_ORDER = ["Critical", "High", "Medium", "Low"];
+const AI_HEX = "#22d3ee";
 
 function ratingFromScore(s) {
   if (s >= 20) return "Critical";
@@ -18,6 +24,16 @@ function ratingFromScore(s) {
   if (s >= 6) return "Medium";
   return "Low";
 }
+
+const download = async (path, filename) => {
+  try {
+    const r = await api.get(path, { responseType: "blob" });
+    const url = URL.createObjectURL(r.data);
+    const a = document.createElement("a");
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  } catch { toast.error("Export failed — please try again"); }
+};
 
 function RiskMatrix({ risks }) {
   const cells = {};
@@ -48,12 +64,95 @@ function RiskMatrix({ risks }) {
   );
 }
 
+function RiskTrend({ trend }) {
+  const series = trend?.series || [];
+  const line = series.map((p) => ({ date: p.date?.slice(5), risk_index: p.risk_index }));
+  const change = trend?.change ?? 0;
+  const Arrow = change > 0 ? TrendingUp : change < 0 ? TrendingDown : Minus;
+  const tone = change > 0 ? "text-crit" : change < 0 ? "text-low" : "text-muted-foreground";
+  return (
+    <div className="rounded-xl border border-border bg-card p-5" data-testid="cra-risk-trend">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground">Risk index trend</div>
+        <span className={`inline-flex items-center gap-1 text-[11px] font-mono font-bold ${tone}`}><Arrow className="w-3.5 h-3.5" />{change > 0 ? "+" : ""}{change} over {trend?.days ?? 30}d</span>
+      </div>
+      {line.length < 2 ? (
+        <div className="text-xs text-muted-foreground mt-6">Trend builds daily — check back tomorrow for movement. Today's index is {trend?.current ?? 0}.</div>
+      ) : (
+        <div className="h-[130px] mt-2">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={line} margin={{ top: 6, right: 6, left: -22, bottom: 0 }}>
+              <defs><linearGradient id="craRiskGrad" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#ef4444" stopOpacity={0.35} /><stop offset="100%" stopColor="#ef4444" stopOpacity={0} /></linearGradient></defs>
+              <XAxis dataKey="date" tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} minTickGap={24} />
+              <YAxis domain={[0, 100]} tick={{ fontSize: 9, fill: "hsl(var(--muted-foreground))" }} axisLine={false} tickLine={false} />
+              <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }} formatter={(v) => [`${v}/100`, "Risk index"]} />
+              <Area type="monotone" dataKey="risk_index" stroke="#ef4444" strokeWidth={2} fill="url(#craRiskGrad)" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function Chip({ tone = "border-border bg-secondary/40 text-muted-foreground", children, onClick, testid }) {
   const Cmp = onClick ? "button" : "span";
   return <Cmp onClick={onClick} data-testid={testid} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border text-[10px] font-mono ${tone} ${onClick ? "hover:bg-secondary/70 transition-colors" : ""}`}>{children}</Cmp>;
 }
 
-function RiskCard({ r, openTab }) {
+function OwnerForm({ r, onSaved }) {
+  const [open, setOpen] = useState(false);
+  const [owner, setOwner] = useState(r.owner || "");
+  const [email, setEmail] = useState(r.owner_email || "");
+  const [due, setDue] = useState(r.due_date || "");
+  const [busy, setBusy] = useState(false);
+  const fld = "bg-background border border-border rounded-md px-2 py-1.5 text-xs font-mono outline-none focus:border-ai";
+
+  const save = async () => {
+    if (!owner.trim()) { toast.error("Enter an owner name"); return; }
+    setBusy(true);
+    try {
+      await api.post("/cra/risk-owner", { risk_key: r.key, risk_title: r.title, owner, owner_email: email, due_date: due });
+      toast.success("Owner assigned"); setOpen(false); onSaved && onSaved();
+    } catch { toast.error("Could not save owner"); }
+    setBusy(false);
+  };
+  const clear = async () => {
+    setBusy(true);
+    try { await api.delete(`/cra/risk-owner/${r.key}`); toast.success("Owner cleared"); setOpen(false); onSaved && onSaved(); }
+    catch { toast.error("Could not clear owner"); }
+    setBusy(false);
+  };
+
+  if (!open) {
+    return r.owner ? (
+      <button onClick={() => setOpen(true)} data-testid={`cra-risk-owner-${r.id}`} className="inline-flex items-center gap-1.5 rounded-full border border-ai/30 bg-ai/10 px-2.5 py-1 text-[10px] font-mono text-ai hover:bg-ai/20 transition-colors">
+        <UserPlus className="w-3 h-3" /> {r.owner}{r.due_date ? ` · due ${r.due_date}` : ""}
+      </button>
+    ) : (
+      <button onClick={() => setOpen(true)} data-testid={`cra-risk-assign-${r.id}`} className="inline-flex items-center gap-1.5 rounded-full border border-dashed border-border px-2.5 py-1 text-[10px] font-mono text-muted-foreground hover:text-foreground hover:border-ai/40 transition-colors">
+        <UserPlus className="w-3 h-3" /> Assign owner
+      </button>
+    );
+  }
+  return (
+    <div className="rounded-lg border border-ai/30 bg-ai/5 p-3 w-full" data-testid={`cra-risk-owner-form-${r.id}`}>
+      <div className="grid sm:grid-cols-3 gap-2">
+        <input value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="Owner name" data-testid={`cra-risk-owner-name-${r.id}`} className={fld} />
+        <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="owner@email" data-testid={`cra-risk-owner-email-${r.id}`} className={fld} />
+        <input type="date" value={due} onChange={(e) => setDue(e.target.value)} data-testid={`cra-risk-owner-due-${r.id}`} className={fld} />
+      </div>
+      <div className="flex items-center gap-2 mt-2">
+        <button onClick={save} disabled={busy} data-testid={`cra-risk-owner-save-${r.id}`} className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold">{busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />} Save</button>
+        {r.owner && <button onClick={clear} disabled={busy} className="px-3 py-1.5 rounded-md border border-crit/40 bg-crit/10 text-crit text-xs font-head font-bold">Clear</button>}
+        <button onClick={() => setOpen(false)} className="px-3 py-1.5 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold inline-flex items-center gap-1"><X className="w-3.5 h-3.5" /> Cancel</button>
+        <span className="text-[10px] font-mono text-muted-foreground">Owner gets auto-reminders as the due date nears.</span>
+      </div>
+    </div>
+  );
+}
+
+function RiskCard({ r, openTab, onChanged }) {
   return (
     <div data-testid={`cra-risk-card-${r.id}`} className="rounded-xl border border-border bg-card p-5">
       <div className="flex items-start justify-between gap-3 flex-wrap">
@@ -65,11 +164,14 @@ function RiskCard({ r, openTab }) {
           </div>
           <div className="font-head font-bold text-base mt-1.5">{r.title}</div>
         </div>
-        {r.deadline && (
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-high/30 bg-high/10 px-2.5 py-1 text-[10px] font-mono font-bold text-high shrink-0">
-            <Clock3 className="w-3 h-3" /> {r.deadline.days_remaining}d to {r.deadline.date}
-          </span>
-        )}
+        <div className="flex items-center gap-2 shrink-0">
+          {r.deadline && (
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-high/30 bg-high/10 px-2.5 py-1 text-[10px] font-mono font-bold text-high">
+              <Clock3 className="w-3 h-3" /> {r.deadline.days_remaining}d to {r.deadline.date}
+            </span>
+          )}
+          <OwnerForm r={r} onSaved={onChanged} />
+        </div>
       </div>
 
       {r.drivers?.length > 0 && (
@@ -113,7 +215,7 @@ function RiskCard({ r, openTab }) {
               <div className="flex flex-wrap gap-1.5">
                 {r.mapped_controls.map((m, i) => (
                   <Chip key={i} onClick={() => openTab && openTab("controls")} testid={`cra-risk-control-${r.id}-${m.requirement_id}`}
-                    tone="border-ai/30 bg-ai/10 text-ai" >
+                    tone="border-ai/30 bg-ai/10 text-ai">
                     {m.requirement_id}{m.csf?.length ? ` · ${m.csf.join("/")}` : ""}
                   </Chip>
                 ))}
@@ -138,11 +240,15 @@ function RiskCard({ r, openTab }) {
 
 export function RiskCorrelation({ openTab }) {
   const [d, setD] = useState(null);
+  const [trend, setTrend] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    api.get("/cra/risk-correlation").then((r) => { setD(r.data); setLoading(false); }).catch(() => setLoading(false));
-  }, []);
+  const load = () => api.get("/cra/risk-correlation").then((r) => { setD(r.data); setLoading(false); }).catch(() => setLoading(false));
+  const loadTrend = () => api.get("/cra/risk-trend?days=30").then((r) => setTrend(r.data)).catch(() => {});
+
+  useEffect(() => { load(); loadTrend(); }, []);
+
+  const onChanged = () => { load(); };
 
   if (loading && !d) {
     return <div className="flex items-center gap-2 text-sm text-muted-foreground p-6" data-testid="cra-risk-loading"><Loader2 className="w-4 h-4 animate-spin" /> Correlating the live EU CRA risk picture…</div>;
@@ -156,11 +262,16 @@ export function RiskCorrelation({ openTab }) {
 
   return (
     <div className="space-y-5" data-testid="cra-risk-correlation">
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="flex items-center justify-end gap-2">
+        <button onClick={() => download("/cra/risk-register.pdf", "obserra-cra-risk-register.pdf")} data-testid="cra-risk-export-pdf" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold"><FileText className="w-3.5 h-3.5" /> Risk register PDF</button>
+        <button onClick={() => download("/cra/risk-register.csv", "obserra-cra-risk-register.csv")} data-testid="cra-risk-export-csv" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold"><FileSpreadsheet className="w-3.5 h-3.5" /> CSV</button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
         <div className="rounded-xl border border-border bg-card p-5" data-testid="cra-risk-index">
           <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider text-muted-foreground"><AlertOctagon className="w-3.5 h-3.5" /> Correlated risk index</div>
           <div className={`font-head font-black text-5xl mt-2 ${idxTone}`}>{o.risk_index ?? 0}</div>
-          <div className="text-[11px] font-mono text-muted-foreground mt-1">{o.total ?? 0} correlated risk(s) · weighted exposure 0–100</div>
+          <div className="text-[11px] font-mono text-muted-foreground mt-1">{o.total ?? 0} correlated risk(s) · 0–100</div>
           <div className="mt-3 h-2 rounded-full bg-secondary/60 overflow-hidden"><div className={`h-full ${o.risk_index >= 60 ? "bg-crit" : o.risk_index >= 35 ? "bg-high" : "bg-low"}`} style={{ width: `${o.risk_index ?? 0}%` }} /></div>
         </div>
 
@@ -181,14 +292,16 @@ export function RiskCorrelation({ openTab }) {
           )}
         </div>
 
+        <RiskTrend trend={trend} />
+
         <div className="rounded-xl border border-border bg-card p-5">
-          <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-3">Severity × Likelihood matrix</div>
+          <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-3">Severity × Likelihood</div>
           <RiskMatrix risks={d.risks || []} />
         </div>
       </div>
 
       <div className="space-y-3">
-        {(d.risks || []).map((r) => <RiskCard key={r.id} r={r} openTab={openTab} />)}
+        {(d.risks || []).map((r) => <RiskCard key={r.id} r={r} openTab={openTab} onChanged={onChanged} />)}
         {(!d.risks || d.risks.length === 0) && (
           <div className="rounded-xl border border-low/25 bg-low/5 p-6 flex items-center gap-3" data-testid="cra-risk-empty">
             <ShieldAlert className="w-5 h-5 text-low" />
