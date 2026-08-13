@@ -2,18 +2,33 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "@/lib/api";
 import { APP_VERSION_LABEL } from "@/version";
+import { useAuth } from "@/context/AuthContext";
 import { useCRAData } from "@/hooks/useCRAData";
 import { CraTabAnalyst } from "@/components/cra/CraAI";
 import { toast } from "sonner";
 import {
   Boxes, BadgeCheck, ShieldCheck, TriangleAlert, FileCheck2, Fingerprint,
   Building2, Download, RefreshCw, ArrowRight, Clock3, Loader2,
-  Camera, Trash2, Mail, ArrowUpRight, ArrowDownRight,
+  Camera, Trash2, Mail, ArrowUpRight, ArrowDownRight, Share2, Eye, X, Copy, Check, GitCompareArrows,
 } from "lucide-react";
 
 const pct = (n, d) => (d ? Math.round((n / d) * 100) : 0);
 const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const GOOD_DOWN = new Set(["article14_overdue", "ce_blockers"]);
+const PCT_KEYS = new Set(["classification_approved_pct", "ce_ready_pct", "control_compliance_pct", "nist_alignment_pct", "average_readiness_pct", "ai_grounding_score"]);
+
+// Every board KPI stored on a snapshot, in board reading order.
+const CMP_ROWS = [
+  ["Products under CRA", "products"],
+  ["Classification approved", "classification_approved_pct"],
+  ["CE market-ready", "ce_ready_pct"],
+  ["Article 14 overdue", "article14_overdue"],
+  ["Control compliance", "control_compliance_pct"],
+  ["NIST CSF alignment", "nist_alignment_pct"],
+  ["CE blockers", "ce_blockers"],
+  ["Average readiness", "average_readiness_pct"],
+  ["AI grounding score", "ai_grounding_score"],
+];
 
 function toneFor(score) {
   if (score == null) return "text-muted-foreground border-border";
@@ -21,6 +36,8 @@ function toneFor(score) {
   if (score >= 50) return "text-high border-high/30";
   return "text-crit border-crit/30";
 }
+
+const fmtVal = (k, v) => (v == null ? "—" : PCT_KEYS.has(k) ? `${v}%` : `${v}`);
 
 function DeltaChip({ k, v }) {
   if (v == null || v === 0) return <span className="text-[10px] font-mono text-muted-foreground">±0</span>;
@@ -68,12 +85,74 @@ function Bar({ label, value, total, tone = "bg-primary" }) {
   );
 }
 
+// Live board-facing countdown to the nearest statutory CRA deadline.
+function Seg({ n, label, urgent }) {
+  return (
+    <div className="text-center">
+      <div className={`font-head font-black text-3xl lg:text-4xl tabular-nums ${urgent ? "text-crit" : "text-high"}`}>{String(n).padStart(2, "0")}</div>
+      <div className="text-[9px] font-mono uppercase tracking-widest text-muted-foreground">{label}</div>
+    </div>
+  );
+}
+function DeadlineCountdown({ nd }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  if (!nd) return null;
+  const target = new Date(`${nd.date}T00:00:00Z`).getTime();
+  const diff = Math.max(0, target - now);
+  const d = Math.floor(diff / 86400000);
+  const h = Math.floor((diff % 86400000) / 3600000);
+  const m = Math.floor((diff % 3600000) / 60000);
+  const s = Math.floor((diff % 60000) / 1000);
+  const urgent = d <= 120;
+  return (
+    <div data-testid="cra-exec-deadline" className={`rounded-xl border p-4 lg:p-5 flex flex-col sm:flex-row sm:items-center gap-4 ${urgent ? "border-crit/30 bg-crit/5" : "border-high/25 bg-high/5"}`}>
+      <div className="flex items-start gap-3 flex-1 min-w-0">
+        <Clock3 className={`w-5 h-5 shrink-0 mt-0.5 ${urgent ? "text-crit" : "text-high"}`} />
+        <div className="min-w-0">
+          <div className="font-head font-bold text-sm">Countdown to the next CRA statutory deadline</div>
+          <div className="text-[11px] font-mono text-muted-foreground truncate">{nd.label} · {nd.date}</div>
+        </div>
+      </div>
+      <div className="grid grid-cols-4 gap-4 sm:gap-6 shrink-0" data-testid="cra-exec-countdown">
+        <Seg n={d} label="Days" urgent={urgent} />
+        <Seg n={h} label="Hrs" urgent={urgent} />
+        <Seg n={m} label="Min" urgent={urgent} />
+        <Seg n={s} label="Sec" urgent={urgent} />
+      </div>
+    </div>
+  );
+}
+
+// Lightweight centered modal (avoids pulling in a dialog dependency for these panels).
+function Modal({ title, subtitle, onClose, children, testid, wide }) {
+  return (
+    <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-background/80 backdrop-blur-sm" data-testid={testid} onClick={onClose}>
+      <div className={`w-full ${wide ? "max-w-3xl" : "max-w-lg"} max-h-[88vh] overflow-hidden rounded-xl border border-border bg-card shadow-2xl flex flex-col`} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-border">
+          <div>
+            <div className="font-head font-black text-lg">{title}</div>
+            {subtitle && <div className="text-[11px] font-mono text-muted-foreground mt-0.5">{subtitle}</div>}
+          </div>
+          <button onClick={onClose} data-testid={`${testid}-close`} className="text-muted-foreground hover:text-foreground"><X className="w-5 h-5" /></button>
+        </div>
+        <div className="p-5 overflow-y-auto">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 const NIST_TONE = { Low: "bg-low", Medium: "bg-high", High: "bg-crit", Unknown: "bg-secondary" };
 const SNAP_KPIS = [["Class.", "classification_approved_pct"], ["CE", "ce_ready_pct"], ["Control", "control_compliance_pct"], ["NIST", "nist_alignment_pct"], ["AI", "ai_grounding_score"]];
 const fld = "mt-1 w-full bg-background border border-border rounded-md px-2 py-1.5 text-xs font-mono outline-none focus:border-ai";
 
 export default function CRAExecutiveOverview() {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const { data, loading, error, reload, refreshing } = useCRAData();
   const [assurance, setAssurance] = useState(null);
   const [briefBusy, setBriefBusy] = useState(false);
@@ -82,8 +161,21 @@ export default function CRAExecutiveOverview() {
   const [emailCfg, setEmailCfg] = useState(null);
   const [sched, setSched] = useState({ enabled: false, day_of_week: 0, hour_utc: 8 });
   const [emailBusy, setEmailBusy] = useState(false);
+  // Compare
+  const [cmpA, setCmpA] = useState("");
+  const [cmpB, setCmpB] = useState("current");
+  // Email preview
+  const [preview, setPreview] = useState(null);
+  const [previewBusy, setPreviewBusy] = useState(false);
+  // Share link
+  const [share, setShare] = useState(null); // {url, expires_at}
+  const [shareBusy, setShareBusy] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  const loadSnapshots = () => api.get("/cra/exec-snapshots").then((r) => setSnap(r.data)).catch(() => {});
+  const loadSnapshots = () => api.get("/cra/exec-snapshots").then((r) => {
+    setSnap(r.data);
+    setCmpA((prev) => prev || (r.data.snapshots?.length ? r.data.snapshots[r.data.snapshots.length - 1].id : "current"));
+  }).catch(() => {});
   const loadEmailCfg = () => api.get("/cra/exec-email/settings").then((r) => { setEmailCfg(r.data); setSched(r.data.schedule); }).catch(() => {});
 
   useEffect(() => {
@@ -92,7 +184,6 @@ export default function CRAExecutiveOverview() {
     loadEmailCfg();
   }, []);
 
-  // Deep-link each KPI to the exact governance tab it summarizes + pulse it on arrival.
   const goTab = (tab) => {
     localStorage.setItem("cra-governance-tab", tab);
     localStorage.setItem("cra-governance-tab-pulse", tab);
@@ -130,6 +221,29 @@ export default function CRAExecutiveOverview() {
     catch (e) { toast.error(e?.response?.data?.detail || "Could not send"); }
     setEmailBusy(false);
   };
+  const openPreview = async () => {
+    setPreviewBusy(true);
+    try { const r = await api.get("/cra/exec-email/preview"); setPreview(r.data.html); }
+    catch { toast.error("Could not load the email preview"); }
+    setPreviewBusy(false);
+  };
+  const createShareLink = async () => {
+    setShareBusy(true);
+    try {
+      const r = await api.post("/cra/exec-overview-link");
+      setShare({ url: `${window.location.origin}${r.data.path}`, expires_at: r.data.expires_at });
+      setCopied(false);
+    } catch (e) { toast.error(e?.response?.data?.detail || "Could not create a share link"); }
+    setShareBusy(false);
+  };
+  const copyShare = async () => {
+    try { await navigator.clipboard.writeText(share.url); setCopied(true); toast.success("Link copied"); setTimeout(() => setCopied(false), 2000); }
+    catch { toast.error("Copy failed — select and copy the link manually"); }
+  };
+  const revokeShare = async () => {
+    try { const r = await api.post("/cra/exec-overview-link/revoke"); toast.success(`Revoked ${r.data.revoked} link(s)`); setShare(null); }
+    catch { toast.error("Could not revoke links"); }
+  };
 
   if (loading && !data) {
     return <div className="flex items-center gap-2 text-sm text-muted-foreground p-8"><Loader2 className="w-4 h-4 animate-spin" /> Loading the EU CRA executive posture…</div>;
@@ -154,6 +268,12 @@ export default function CRAExecutiveOverview() {
     { label: "AI grounding score", value: assurance?.avg_score == null ? "—" : `${assurance.avg_score}%`, sub: assurance ? `${assurance.total_checks} answers checked · ${assurance.flagged_total} flagged` : "hallucination monitor", Icon: Fingerprint, tone: toneFor(assurance?.avg_score), tab: "assurance" },
   ];
 
+  const cmpOptions = [{ id: "current", label: "Live now" }, ...(snap?.snapshots || []).map((s) => ({ id: s.id, label: `${s.label} · ${new Date(s.at).toLocaleDateString()}` }))];
+  const getKpis = (sel) => (sel === "current" ? (snap?.current || {}) : (snap?.snapshots.find((s) => s.id === sel)?.kpis || {}));
+  const aK = getKpis(cmpA);
+  const bK = getKpis(cmpB);
+  const canCompare = snap && (snap.snapshots?.length || 0) >= 1;
+
   return (
     <div className="rise space-y-6" data-testid="cra-executive-overview">
       <div className="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
@@ -165,11 +285,12 @@ export default function CRAExecutiveOverview() {
           </div>
           <p className="text-sm text-muted-foreground mt-2 max-w-3xl">
             A board-ready rollup of the whole EU Cyber Resilience Act posture. Every KPI opens the exact governance tab it
-            summarizes; save dated snapshots to compare month over month and schedule the board email to directors.
+            summarizes; save dated snapshots to compare month over month, share a read-only board link and schedule the board email to directors.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={reload} disabled={refreshing} data-testid="cra-exec-refresh" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold"><RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} /> Refresh</button>
+          {isAdmin && <button onClick={createShareLink} disabled={shareBusy} data-testid="cra-exec-share" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-ai/40 bg-ai/10 text-ai text-xs font-head font-bold">{shareBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Share2 className="w-3.5 h-3.5" />} Share read-only link</button>}
           <button onClick={saveSnapshot} disabled={savingSnap} data-testid="cra-exec-snapshot-save" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">{savingSnap ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />} Save snapshot</button>
           <button onClick={downloadBrief} disabled={briefBusy} data-testid="cra-exec-brief" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">{briefBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Executive Brief PDF</button>
           <button onClick={() => goTab("mission")} data-testid="cra-exec-open-governance" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold">Open Governance <ArrowRight className="w-3.5 h-3.5" /></button>
@@ -178,12 +299,7 @@ export default function CRAExecutiveOverview() {
 
       {error && <div className="rounded-xl border border-crit/25 bg-crit/5 p-4 text-sm">{error}</div>}
 
-      {nd && (
-        <div data-testid="cra-exec-deadline" className={`rounded-xl border p-4 flex items-center gap-3 ${nd.days_remaining <= 120 ? "border-crit/30 bg-crit/5" : "border-high/25 bg-high/5"}`}>
-          <Clock3 className={`w-5 h-5 shrink-0 ${nd.days_remaining <= 120 ? "text-crit" : "text-high"}`} />
-          <div className="text-sm"><span className="font-head font-bold">{nd.days_remaining} days to the next CRA deadline</span><span className="text-muted-foreground"> · {nd.label} ({nd.date})</span></div>
-        </div>
-      )}
+      <DeadlineCountdown nd={nd} />
 
       <CraTabAnalyst tab="mission" />
 
@@ -240,6 +356,49 @@ export default function CRAExecutiveOverview() {
         </Panel>
       </div>
 
+      {/* Snapshot compare — side-by-side board movement */}
+      <Panel title="Compare snapshots" subtitle="See exactly what moved between two dated snapshots (or against the live posture)" testid="cra-exec-compare">
+        {!canCompare ? (
+          <div className="text-sm text-muted-foreground">Save at least one snapshot to compare it against the live posture or another snapshot.</div>
+        ) : (
+          <>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <label className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Baseline (A)
+                <select data-testid="cra-exec-compare-a" value={cmpA} onChange={(e) => setCmpA(e.target.value)} className={fld}>
+                  {cmpOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                </select>
+              </label>
+              <label className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Compare to (B)
+                <select data-testid="cra-exec-compare-b" value={cmpB} onChange={(e) => setCmpB(e.target.value)} className={fld}>
+                  {cmpOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
+                </select>
+              </label>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs" data-testid="cra-exec-compare-table">
+                <thead className="font-mono uppercase text-[9px] text-muted-foreground border-b border-border">
+                  <tr><th className="text-left py-2">KPI</th><th className="text-right py-2">A</th><th className="text-right py-2">B</th><th className="text-right py-2 flex items-center justify-end gap-1"><GitCompareArrows className="w-3 h-3" /> Change</th></tr>
+                </thead>
+                <tbody>
+                  {CMP_ROWS.map(([label, key]) => {
+                    const a = aK[key]; const b = bK[key];
+                    const delta = (typeof a === "number" && typeof b === "number") ? b - a : null;
+                    return (
+                      <tr key={key} className="border-b border-border/60" data-testid={`cra-exec-compare-row-${key}`}>
+                        <td className="py-2 pr-3 text-foreground/90">{label}</td>
+                        <td className="py-2 text-right font-mono">{fmtVal(key, a)}</td>
+                        <td className="py-2 text-right font-mono font-bold">{fmtVal(key, b)}</td>
+                        <td className="py-2 text-right"><DeltaChip k={key} v={delta} /></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </Panel>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         <Panel title="Executive Overview board email" subtitle="Schedule this rollup to directors — separate from the analyst digest" testid="cra-exec-email">
           {emailCfg ? (
@@ -262,6 +421,7 @@ export default function CRAExecutiveOverview() {
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {emailCfg.is_admin && <button onClick={saveEmailCfg} data-testid="cra-exec-email-save" className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold">Save schedule</button>}
+                <button onClick={openPreview} disabled={previewBusy} data-testid="cra-exec-email-preview" className="px-3 py-1.5 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold inline-flex items-center gap-1.5">{previewBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />} Preview email</button>
                 <button onClick={sendEmailNow} disabled={emailBusy} data-testid="cra-exec-email-sendnow" className="px-3 py-1.5 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold inline-flex items-center gap-1.5">{emailBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />} Send me one now</button>
               </div>
               {!emailCfg.is_admin && <div className="text-[11px] font-mono text-muted-foreground">Only admins can change the schedule.</div>}
@@ -297,6 +457,30 @@ export default function CRAExecutiveOverview() {
       <div className="text-[10px] font-mono text-muted-foreground">
         Article 14 reporting applies {dash.reporting_effective_date} · General CRA application {dash.general_application_date} · Live figures — Obserra never substitutes synthetic regulatory data.
       </div>
+
+      {preview !== null && (
+        <Modal title="Board email preview" subtitle="Exactly what directors receive" testid="cra-exec-email-preview-modal" onClose={() => setPreview(null)} wide>
+          <div className="rounded-lg border border-border overflow-hidden bg-white">
+            <iframe title="email-preview" srcDoc={preview} className="w-full h-[60vh]" data-testid="cra-exec-email-preview-frame" sandbox="" />
+          </div>
+        </Modal>
+      )}
+
+      {share && (
+        <Modal title="Read-only Executive Overview link" subtitle="Directors can view the live board posture without logging in" testid="cra-exec-share-modal" onClose={() => setShare(null)}>
+          <div className="space-y-4">
+            <div className="flex items-center gap-2">
+              <input readOnly value={share.url} data-testid="cra-exec-share-url" className="flex-1 bg-background border border-border rounded-md px-3 py-2 text-xs font-mono outline-none" onFocus={(e) => e.target.select()} />
+              <button onClick={copyShare} data-testid="cra-exec-share-copy" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold shrink-0">{copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />} {copied ? "Copied" : "Copy"}</button>
+            </div>
+            <div className="text-[11px] font-mono text-muted-foreground">Expires {new Date(share.expires_at).toLocaleString()} · product names & internal records are never exposed · up to 5 active links.</div>
+            <div className="flex items-center gap-2 pt-2 border-t border-border">
+              <a href={share.url} target="_blank" rel="noreferrer" data-testid="cra-exec-share-open" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">Open <ArrowRight className="w-3.5 h-3.5" /></a>
+              <button onClick={revokeShare} data-testid="cra-exec-share-revoke" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-crit/40 bg-crit/10 text-crit text-xs font-head font-bold">Revoke all links</button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

@@ -234,7 +234,13 @@ const SURFACE_LABEL = (s) => {
 };
 
 function GroundingTrend({ trend, days }) {
-  const points = (trend || []).filter((p) => p != null);
+  const raw = (trend || []).filter((p) => p != null);
+  const firstKnown = (raw.find((p) => p.score != null) || {}).score ?? null;
+  let last = firstKnown;
+  const points = raw.map((p) => {
+    if (p.score != null) last = p.score;
+    return { ...p, line: last };
+  });
   if (!points.length || !points.some((p) => p.score != null)) {
     return (
       <div className="rounded-xl border border-border bg-card p-5" data-testid="cra-ai-monitor-trend">
@@ -261,9 +267,13 @@ function GroundingTrend({ trend, days }) {
             <Tooltip
               contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8, fontSize: 12 }}
               labelStyle={{ color: "hsl(var(--muted-foreground))" }}
-              formatter={(v) => [v == null ? "—" : `${v}%`, "Grounding"]}
+              formatter={(v, n, p) => [p?.payload?.score == null ? `${v}% · carried forward` : `${p.payload.score}%`, "Grounding"]}
             />
-            <Area type="monotone" dataKey="score" stroke={AI_HEX} strokeWidth={2} fill="url(#craGroundGrad)" connectNulls dot={{ r: 2, fill: AI_HEX }} activeDot={{ r: 4 }} />
+            <Area
+              type="monotone" dataKey="line" stroke={AI_HEX} strokeWidth={2} fill="url(#craGroundGrad)" connectNulls
+              dot={(props) => (props.payload?.score == null ? null : <circle key={props.payload.date} cx={props.cx} cy={props.cy} r={2.5} fill={AI_HEX} />)}
+              activeDot={{ r: 4 }}
+            />
           </AreaChart>
         </ResponsiveContainer>
       </div>

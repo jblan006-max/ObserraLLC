@@ -1661,6 +1661,7 @@ _CRA_TAB_FOCUS = {
     "regulation": "the authoritative CRA requirement map linking each obligation to Regulation (EU) 2024/2847 and Implementing Regulation (EU) 2025/2392",
     "controls": "the CRA control dashboard — compliance rate per essential requirement, gaps, high-risk controls and gap ownership",
     "nist": "the mapping of EU CRA controls onto the NIST CSF 2.0 functions (GV/ID/PR/DE/RS/RC) and SP 800-218 (SSDF) practices",
+    "riskcorrelation": "the correlated EU CRA risk picture — rated risks synthesised from overdue Article 14 reporting, open vulnerabilities, control gaps, CE-marking blockers and AI-grounding drift, each mapped to the CRA essential requirements they threaten",
 }
 
 
@@ -1704,6 +1705,13 @@ async def _cra_tab_context(org_id: str, tab: str) -> dict:
             base["nist_functions"] = [{"code": f["code"], "name": f["name"], "compliance_rate": f["compliance_rate"],
                                        "risk": f["risk"], "mapped": f["mapped"], "implemented": f["implemented"],
                                        "gaps": f["gaps"]} for f in nist["functions"]]
+    if tab == "riskcorrelation":
+        rc = await _compute_risk_correlation(org_id)
+        base["risk_overall"] = rc["overall"]
+        base["top_risks"] = [{"title": r["title"], "rating": r["rating"], "category": r["category"],
+                              "score": r["score"], "drivers": r["drivers"][:2],
+                              "mapped_controls": [m["requirement_id"] for m in r["mapped_controls"]]}
+                             for r in rc["risks"][:6]]
     base["focus_tab"] = tab
     base["focus"] = _CRA_TAB_FOCUS.get(tab, "EU CRA product compliance")
     return base
@@ -1836,6 +1844,195 @@ async def cra_explain(body: CRAExplainReq, user: dict = Depends(get_current_user
         data = _cra_explain_fallback(body)
     _CRA_EXPLAIN_CACHE[ckey] = {"ts": utcnow(), "data": data}
     return data
+
+
+async def _compute_risk_correlation(org_id: str) -> dict:
+    """Correlate live EU CRA signals into rated risk items mapped to the essential requirements they threaten."""
+    ctx = await _cra_insight_context(org_id)
+    controls = await _compute_controls(org_id)
+    vulns = await db.cra_vulnerabilities.find({"org_id": org_id}, {"_id": 0}).to_list(1000)
+    try:
+        assurance = await _cra_grounding_summary(org_id)
+    except Exception:
+        assurance = {}
+
+    req_by_id = {r["requirement_id"]: r for r in REGULATORY_REQUIREMENTS}
+
+    def mc(rid):
+        r = req_by_id.get(rid, {})
+        n = NIST_ALIGNMENT.get(rid, {})
+        return {"requirement_id": rid, "title": r.get("title", rid), "legal_refs": r.get("legal_refs", []), "csf": n.get("csf", [])}
+
+    def rate(score):
+        if score >= 20:
+            return "Critical"
+        if score >= 12:
+            return "High"
+        if score >= 6:
+            return "Medium"
+        return "Low"
+
+    risks = []
+    SEVMAP = {"Critical": 5, "High": 4, "Medium": 3, "Low": 2}
+    CLSSEV = {"Critical": 5, "Class II": 4, "Class I": 3, "Default": 2}
+
+    # 1) Overdue statutory Article 14 reporting
+    for v in vulns:
+        clock = reporting_clock(v)
+        overdue = [s for s in clock.get("stages", []) if s.get("overdue")]
+        if not overdue:
+            continue
+        stage_names = [s["stage"].replace("_", " ") for s in overdue]
+        risks.append({
+            "title": f"Overdue Article 14 report — {v.get('title') or v.get('ref')}",
+            "category": "Statutory Reporting", "severity": 5, "likelihood": 5,
+            "drivers": [f"{len(overdue)} reporting stage(s) past deadline: {', '.join(stage_names)}",
+                        f"Vulnerability severity: {v.get('severity', 'n/a')}",
+                        "Actively exploited" if v.get("actively_exploited") else "Not flagged as actively exploited"],
+            "affected": [{"ref": v.get("product_ref"), "name": v.get("product_name") or v.get("product_ref")}],
+            "recommendation": "Submit the overdue Article 14 report(s) to ENISA/the CSIRT immediately and record the receipt on the ledger.",
+            "fixes": [f"Open Vulnerability & ENISA → {v.get('ref')} and submit the {n} report" for n in stage_names],
+            "mapped_controls": [mc("CRA-REPORT-01"), mc("CRA-VULN-02")],
+            "deadline": None,
+        })
+
+    # 2) Open high-severity / actively-exploited vulnerabilities (not already overdue)
+    for v in vulns:
+        clock = reporting_clock(v)
+        if any(s.get("overdue") for s in clock.get("stages", [])):
+            continue
+        sev_label = v.get("severity", "High")
+        if sev_label not in ("High", "Critical") and not v.get("actively_exploited"):
+            continue
+        sev = SEVMAP.get(sev_label, 4)
+        like = 5 if v.get("actively_exploited") else (4 if v.get("severe_incident") else 3)
+        if v.get("corrective_measure_available_at"):
+            like = max(2, like - 1)
+        risks.append({
+            "title": f"Open {str(sev_label).lower()} vulnerability — {v.get('title') or v.get('ref')}",
+            "category": "Vulnerability", "severity": sev, "likelihood": like,
+            "drivers": [f"Severity {sev_label}" + (f" · CVE {v.get('cve')}" if v.get("cve") else ""),
+                        "Actively exploited (KEV-style exposure)" if v.get("actively_exploited") else "Not currently flagged as actively exploited",
+                        "Corrective measure available" if v.get("corrective_measure_available_at") else "No corrective measure recorded yet"],
+            "affected": [{"ref": v.get("product_ref"), "name": v.get("product_name") or v.get("product_ref")}],
+            "recommendation": "Remediate via a security update and confirm the fix, then keep the Article 14 clock evidence current.",
+            "fixes": ["Ship/verify the security update for the affected product",
+                      "Record the corrective measure and update the vulnerability status",
+                      "Confirm no Article 14 reporting stage is approaching its deadline"],
+            "mapped_controls": [mc("CRA-VULN-01"), mc("CRA-VULN-02"), mc("CRA-VDP-01")],
+            "deadline": None,
+        })
+
+    # 3) Control gaps / high-risk essential requirements
+    for c in controls["controls"]:
+        rate_v = c["compliance_rate"]
+        is_risk = c["status"] in ("Gap", "Not Started") or c["risk"] == "High" or (c["status"] == "Partial" and (rate_v or 0) < 50)
+        if not is_risk:
+            continue
+        sev = 5 if c["risk"] == "High" else (3 if c["risk"] == "Medium" else 2)
+        like = 5 if (rate_v is None or rate_v == 0) else (4 if rate_v < 50 else 3)
+        affected = [{"ref": ps["ref"], "name": ps["name"]} for ps in c.get("product_status", [])
+                    if ps["status"] in ("Nonconforming", "Partial", "Not Assessed")][:10]
+        risks.append({
+            "title": f"Control gap — {c['requirement_id']}: {c['title'][:90]}",
+            "category": "Control Gap", "severity": sev, "likelihood": like,
+            "drivers": [f"Status {c['status']} · compliance {rate_v if rate_v is not None else 'not assessed'}%",
+                        f"{c['risk']} risk control",
+                        f"{c['nonconforming']} nonconforming · {c['partial']} partial · {c['not_assessed']} not assessed across products"],
+            "affected": affected,
+            "recommendation": f"Raise coverage of {c['requirement_id']} — assign an owner and close the gap across affected products.",
+            "fixes": ["Assign an owner and due date on the Control Dashboard",
+                      "Complete or re-run the readiness assessment for affected products",
+                      "Attach conformity evidence so the change is written to the Regulatory Ledger"],
+            "mapped_controls": [mc(c["requirement_id"])],
+            "deadline": None,
+        })
+
+    # 4) CE market-readiness blockers
+    BLOCKER_REQ = {"classification not approved": "CRA-CLASS-01", "readiness assessment incomplete": "CRA-RISK-01",
+                   "no SBOM": "CRA-SBOM-01", "EU declaration not approved": "CRA-DOC-01"}
+    BLOCKER_FIX = {"classification not approved": "Approve the product classification",
+                   "readiness assessment incomplete": "Complete the CRA readiness assessment",
+                   "no SBOM": "Generate and attach a CycloneDX/SPDX SBOM",
+                   "EU declaration not approved": "Approve the EU Declaration of Conformity"}
+    nd = ctx.get("next_deadline")
+    for b in ctx.get("ce_blockers", []):
+        sev = CLSSEV.get(b.get("classification", "Default"), 2)
+        blk = b.get("blockers", [])
+        like = min(5, 2 + len(blk))
+        mapped = [mc(BLOCKER_REQ[x]) for x in blk if x in BLOCKER_REQ]
+        risks.append({
+            "title": f"CE market-readiness blocked — {b.get('product')}",
+            "category": "CE Readiness", "severity": sev, "likelihood": like,
+            "drivers": [f"{b.get('classification')} product with {len(blk)} open blocker(s)"] + list(blk),
+            "affected": [{"ref": b.get("ref"), "name": b.get("product")}],
+            "recommendation": "Clear the open CE-marking blockers so the product can lawfully carry the CE mark.",
+            "fixes": [BLOCKER_FIX.get(x, x) for x in blk],
+            "mapped_controls": mapped + [mc("CRA-CE-01")],
+            "deadline": nd,
+        })
+
+    # 5) AI grounding / oversight drift
+    if (assurance.get("flagged_total") or 0) > 0 and assurance.get("avg_score") is not None and assurance["avg_score"] < 80:
+        sev = 4 if assurance["avg_score"] < 50 else 3
+        risks.append({
+            "title": "AI grounding drift on CRA analyst answers",
+            "category": "AI Oversight", "severity": sev, "likelihood": 3,
+            "drivers": [f"{assurance['flagged_total']} flagged AI answer(s)",
+                        f"Average grounding score {assurance['avg_score']}% (below the 80% assurance target)"],
+            "affected": [],
+            "recommendation": "Review flagged AI answers in the AI Assurance monitor and correct any ungrounded guidance before it informs a decision.",
+            "fixes": ["Open AI Assurance and inspect the flagged answers",
+                      "Correct the underlying data or evidence the answer relied on",
+                      "Re-run the analyst and confirm the grounding score recovers"],
+            "mapped_controls": [mc("CRA-DOC-01"), mc("CRA-RISK-01")],
+            "deadline": None,
+        })
+
+    # Dedup mapped controls, score, rate, sort, cap and id
+    for r in risks:
+        seen, dd = set(), []
+        for m in r["mapped_controls"]:
+            if m["requirement_id"] not in seen:
+                seen.add(m["requirement_id"])
+                dd.append(m)
+        r["mapped_controls"] = dd
+        r["score"] = r["severity"] * r["likelihood"]
+        r["rating"] = rate(r["score"])
+    risks.sort(key=lambda r: (-r["score"], r["title"]))
+    risks = risks[:24]
+    for i, r in enumerate(risks):
+        r["id"] = f"risk-{i}"
+
+    counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
+    for r in risks:
+        counts[r["rating"]] += 1
+    total = len(risks)
+    risk_index = round(100 * sum(r["score"] for r in risks) / (total * 25)) if total else 0
+    top_rating = next((k for k in ("Critical", "High", "Medium", "Low") if counts[k] > 0), None)
+
+    ctr, titles = {}, {}
+    for r in risks:
+        for m in r["mapped_controls"]:
+            rid = m["requirement_id"]
+            ctr[rid] = ctr.get(rid, 0) + 1
+            titles[rid] = m["title"]
+    most = None
+    if ctr:
+        rid = max(ctr, key=lambda k: ctr[k])
+        most = {"requirement_id": rid, "title": titles[rid], "count": ctr[rid]}
+
+    return {
+        "version": CRA_APP_VERSION, "generated_at": iso(),
+        "overall": {"total": total, "counts": counts, "risk_index": risk_index,
+                    "top_rating": top_rating, "most_correlated_control": most},
+        "risks": risks,
+    }
+
+
+@cra_router.get("/risk-correlation")
+async def cra_risk_correlation(user: dict = Depends(get_current_user)):
+    return await _compute_risk_correlation(user["org_id"])
 
 
 
@@ -2090,6 +2287,72 @@ async def send_exec_email_now(user: dict = Depends(get_current_user)):
     org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])})
     await _send_cra_exec_overview_email(org, [{"email": user["email"]}])
     return {"ok": True, "sent_to": user["email"]}
+
+
+@cra_router.get("/exec-email/preview")
+async def exec_email_preview(user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}, {"_id": 0, "name": 1})
+    kpis = await _cra_exec_kpis(user["org_id"])
+    ctx = await _cra_insight_context(user["org_id"])
+    html = _cra_exec_overview_html((org or {}).get("name", "Your organization"), kpis, ctx.get("next_deadline"))
+    return {"html": html, "subject": "EU CRA Executive Overview — board briefing"}
+
+
+@cra_router.post("/exec-overview-link")
+async def create_exec_overview_link(admin: dict = Depends(require_roles("admin"))):
+    org_id = admin["org_id"]
+    active = await db.cra_portal_tokens.count_documents(
+        {"org_id": org_id, "role": "exec_overview", "revoked_at": None, "expires_at": {"$gt": utcnow()}})
+    if active >= 5:
+        raise HTTPException(429, "This organisation already has 5 active Executive Overview links. Revoke or wait for existing links to expire before minting more.")
+    issued = await issue_portal_token(org_id, "", "exec_overview", None, None, "", 720, admin.get("email", "unknown"))
+    await ledger_append(org_id, admin.get("email", "unknown"), "exec_overview_link.issued", "organization", org_id, ["Article 13"], {"expires_at": issued["expires_at"]})
+    return {"token": issued["token"], "expires_at": issued["expires_at"], "path": f"/exec-overview/{issued['token']}"}
+
+
+@cra_router.get("/exec-overview-links")
+async def list_exec_overview_links(admin: dict = Depends(require_roles("admin"))):
+    org_id = admin["org_id"]
+    active = await db.cra_portal_tokens.count_documents(
+        {"org_id": org_id, "role": "exec_overview", "revoked_at": None, "expires_at": {"$gt": utcnow()}})
+    return {"active": active}
+
+
+@cra_router.post("/exec-overview-link/revoke")
+async def revoke_exec_overview_links(admin: dict = Depends(require_roles("admin"))):
+    org_id = admin["org_id"]
+    result = await db.cra_portal_tokens.update_many(
+        {"org_id": org_id, "role": "exec_overview", "revoked_at": None}, {"$set": {"revoked_at": utcnow()}})
+    return {"ok": True, "revoked": result.modified_count}
+
+
+@cra_public_router.get("/exec-overview/{raw_token}")
+async def public_exec_overview(raw_token: str):
+    from bson import ObjectId
+    token = await verify_portal_token(raw_token)
+    if token.get("role") != "exec_overview":
+        raise HTTPException(403, "This link is not an Executive Overview link")
+    org_id = token["org_id"]
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"_id": 0, "name": 1})
+    kpis = await _cra_exec_kpis(org_id)
+    controls = await _compute_controls(org_id)
+    nist = await _compute_nist(org_id)
+    ctx = await _cra_insight_context(org_id)
+    return {
+        "role": "exec_overview",
+        "organization": (org or {}).get("name", "Organization"),
+        "regulation": CRA_VERSION,
+        "version": CRA_APP_VERSION,
+        "generated_at": iso(),
+        "expires_at": token["expires_at"].isoformat(),
+        "kpis": kpis,
+        "classifications": ctx.get("by_class", {}),
+        "controls": controls["overall"],
+        "nist": {"overall": nist["overall"], "functions": nist["functions"]},
+        "next_deadline": _cra_next_deadline(),
+        "note": "Read-only Executive Overview. Product names and internal records are not exposed.",
+    }
 
 
 async def _run_cra_exec_overview_tick():

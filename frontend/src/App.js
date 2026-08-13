@@ -66,6 +66,7 @@ const CRAGovernance = lazyWithRetry(() => import("@/pages/CRAGovernance"));
 const CRACertificationPortal = lazyWithRetry(() => import("@/pages/CRACertificationPortal"));
 const CRAVerify = lazyWithRetry(() => import("@/pages/CRAVerify"));
 const CRAScorecard = lazyWithRetry(() => import("@/pages/CRAScorecard"));
+const CRAExecOverviewPublic = lazyWithRetry(() => import("@/pages/CRAExecOverviewPublic"));
 
 function PageLoader() {
   return (
@@ -105,6 +106,7 @@ function AppRoutes() {
         <Route path="/cra-certification/:token" element={<CRACertificationPortal />} />
         <Route path="/cra-verify/:token" element={<CRAVerify />} />
         <Route path="/cra-scorecard/:token" element={<CRAScorecard />} />
+        <Route path="/exec-overview/:token" element={<CRAExecOverviewPublic />} />
         <Route path="/payment/success" element={<Gate><PaymentSuccess /></Gate>} />
         <Route path="/app" element={<Gate><AppShell /></Gate>}>
           <Route index element={<CRAExecutiveOverview />} />

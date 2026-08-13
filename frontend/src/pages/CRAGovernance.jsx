@@ -46,6 +46,8 @@ import {
   vulnerabilityDeadline,
 } from "@/lib/craModels";
 import { CraTabAnalyst, CraExplain, CraExplainToggle, AiAssurance } from "@/components/cra/CraAI";
+import { RiskCorrelation } from "@/components/cra/RiskCorrelation";
+import { Radar } from "lucide-react";
 
 const TABS = [
   ["mission", "Mission Control", Gauge],
@@ -59,6 +61,7 @@ const TABS = [
   ["regulation", "Regulation Map", Landmark],
   ["controls", "Control Dashboard", FileCheck2],
   ["nist", "NIST Alignment", ShieldCheck],
+  ["riskcorrelation", "Risk Correlation", Radar],
   ["assurance", "AI Assurance", Fingerprint],
 ];
 
@@ -1344,6 +1347,7 @@ export default function CRAGovernance() {
       {active === "regulation" && <RegulationMap data={data} />}
       {active === "controls" && <ControlDashboard data={data} isAdmin={isAdmin} reload={reload} />}
       {active === "nist" && <NistDashboard data={data} />}
+      {active === "riskcorrelation" && <RiskCorrelation openTab={openTab} />}
 
       <Panel title="Defensibility and legal boundary" subtitle="Operational safeguards for a regulation-driven platform">
         <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3 text-xs">
