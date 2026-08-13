@@ -98,3 +98,10 @@ body {
     50% { box-shadow: 0 0 0 3px hsl(190 90% 55% / 1), 0 0 0 13px hsl(190 90% 55% / 0); }
 }
 .tour-pulse-ring { border-radius: 9999px; animation: tourRing 1.6s ease-in-out infinite; }
+
+@keyframes craTabPulse {
+    0% { box-shadow: 0 0 0 0 hsl(190 90% 55% / 0.7); }
+    70% { box-shadow: 0 0 0 8px hsl(190 90% 55% / 0); }
+    100% { box-shadow: 0 0 0 0 hsl(190 90% 55% / 0); }
+}
+.cra-tab-pulse { animation: craTabPulse 0.85s ease-out 3; }

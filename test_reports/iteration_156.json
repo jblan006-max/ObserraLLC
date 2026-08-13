@@ -1,0 +1,28 @@
+{
+  "summary": "Iteration 156 — Verified 4 Executive Overview power-ups end-to-end. BACKEND (pytest 6/6 pass): (1) GET /api/cra/ai-monitor?days=7|30|90 returns trend arrays of exact length 7/30/90 with avg_score/total_checks/flagged_total. (2) POST /api/cra/exec-snapshot creates snapshot with id; GET /api/cra/exec-snapshots lists it; DELETE /api/cra/exec-snapshot/{id} removes it and it is gone on re-list. (3) PUT /api/cra/exec-email/settings persists {enabled:true, day_of_week:2, hour_utc:9} — GET returns them under schedule{}. (4) POST /api/cra/exec-email/send-now returns 200 for admin. FRONTEND (Playwright, admin login via Enter-in-password, tour dismissed): Executive Overview /app renders v1.0.0 stamp (4 occurrences), cra-exec-snapshot-save, cra-exec-brief, cra-exec-open-governance, cra-exec-email panel with all 5 controls. Save schedule shows toast 'Board email schedule saved'. Save snapshot shows toast 'Snapshot saved' and the new snapshot row cra-exec-snapshot-{id} appears (went from 1 -> 2 rows). Delete button removes the row (2 -> 1). Deep-link pulse: clicking cra-exec-open-governance navigates to /app/cra-governance with cra-tab-mission ACTIVE and carrying class 'cra-tab-pulse'. Clicking cra-exec-open-assurance navigates and cra-tab-assurance is ACTIVE with class 'cra-tab-pulse' — cra-ai-monitor renders. AI Assurance range 7d/30d/90d buttons all clickable; header text updates ('7-day/30-day/90-day grounding trend'), avg score / checks / flagged update (checks 32 -> 33 -> 33), and GET /cra/ai-monitor is re-issued (verified via backend trend length).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Executive board email 'Send me one now'", "issue": "Backend POST /api/cra/exec-email/send-now returns 200 (verified in pytest), but the frontend success toast 'Sent to ...' was not detected in the DOM during automation. The toast may render very briefly or the response payload may be missing sent_to. Non-blocking — send actually succeeds server-side.", "affected_selectors": ["[data-testid='cra-exec-email-sendnow']"]}
+    ],
+    "design_issues": [
+      {"screen": "AI Assurance trend sparkline (cra-ai-monitor-trend)", "issues": ["Trend chart is very sparse — only one dot rendered because most day entries have null score (backend returns 7/30/90 points but the majority have score=null). Consider filling gaps or drawing a step-line so the chart looks populated in 30d/90d windows."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter156_exec_powerups.py", "/app/test_reports/pytest/iter156.xml"],
+  "action_items": [
+    "Investigate why 'Sent to <email>' toast does not appear on the Executive Overview after clicking cra-exec-email-sendnow — confirm the JSON response includes sent_to; the API returns 200 either way (non-blocking).",
+    "Consider densifying the AI Assurance trend by carrying forward last known score for empty days so the sparkline is not effectively a single-point chart on 30d/90d."
+  ],
+  "critical_code_review_comments": [
+    "Task description referenced testids 'cra-save-snapshot' and 'cra-open-gov', but implementation uses 'cra-exec-snapshot-save' / 'cra-exec-snapshots-save' and 'cra-exec-open-governance'. Not a bug — flag so future tests use the correct testids."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter156_exec_powerups.py"],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "95% (all 4 power-ups verified; only the 'Sent to' toast wording was not asserted visible)"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (login via Enter in cra-password field; dismiss tour-skip)",
+  "seed_data_creation": "Created and then deleted one Exec snapshot via UI (id cra-exec-snapshot-6a7d258bfb1f5c06dbd7ce52). Backend pytest also created+deleted a TEST_iter156 snapshot. One prior snapshot 'QA Aug' (6a7d23a4...) remains from previous session.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All four power-ups (Assurance range toggle, KPI deep-link pulse, separate Exec-Email schedule, Exec snapshots CRUD) are functionally working end-to-end. Pulse CSS class 'cra-tab-pulse' correctly appears on the destination cra-tab-* button. Backend GET /api/cra/exec-email/settings returns {schedule:{enabled,day_of_week,hour_utc}, is_admin, last_sent_week} — NOT flat {enabled,day,hour}."
+}

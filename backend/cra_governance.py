@@ -1334,16 +1334,13 @@ async def _send_cra_digest(org: dict, recipients: list[dict], attach_pdf: bool =
     att = None
     if attach_pdf:
         try:
-            controls = await _compute_controls(org_id)
-            nist = await _compute_nist(org_id)
-            assurance = await _cra_grounding_summary(org_id)
-            raw = _cra_exec_overview_pdf(org.get("name", "Your organization"), ctx, controls, nist, assurance, insight)
-            att = [{"filename": "obserra-eu-cra-executive-overview.pdf", "content": base64.b64encode(raw).decode()}]
+            raw = _cra_exec_brief_pdf(org.get("name", "Your organization"), ctx, insight)
+            att = [{"filename": "obserra-eu-cra-weekly-brief.pdf", "content": base64.b64encode(raw).decode()}]
         except Exception:
             att = None
     sent = 0
     for r in recipients:
-        await notifications.send_email(r["email"], "EU CRA Executive Overview — board briefing", html, attachments=att)
+        await notifications.send_email(r["email"], "CRA AI Analyst — your weekly EU CRA briefing", html, attachments=att)
         sent += 1
     return sent
 
@@ -1929,8 +1926,201 @@ async def cra_ai_monitor(days: int = 30, user: dict = Depends(get_current_user))
                       "count": (bd["_sc"] if bd else 0)})
     return {"version": CRA_APP_VERSION, "days": days, "total_checks": len(rows),
             "avg_score": avg, "label": label, "flagged_total": flagged_total,
-            "by_surface": surfaces, "recent": recent, "trend": trend}
+            "surfaces": surfaces, "recent": recent, "trend": trend}
 
+
+# ---------------------------------------------------------------------------
+# Executive Overview snapshots (month-over-month) + a SEPARATE scheduled
+# Executive-Overview board email (own day/time, distinct from the analyst digest).
+# ---------------------------------------------------------------------------
+async def _cra_exec_kpis(org_id: str) -> dict:
+    ctx = await _cra_insight_context(org_id)
+    controls = await _compute_controls(org_id)
+    nist = await _compute_nist(org_id)
+    assurance = await _cra_grounding_summary(org_id)
+    t = ctx["totals"]; c = ctx["counts"]; co = controls["overall"]; no = nist["overall"]
+    p = t["products"] or 1
+    return {
+        "products": t["products"],
+        "classification_approved": t["classification_approved"],
+        "classification_approved_pct": round(t["classification_approved"] / p * 100),
+        "ce_ready": t["ce_ready"],
+        "ce_ready_pct": round(t["ce_ready"] / p * 100),
+        "article14_overdue": c.get("overdue_clocks", 0),
+        "control_compliance_pct": co.get("percentage", 0),
+        "nist_alignment_pct": no.get("alignment_percentage", 0),
+        "ce_blockers": c.get("blocked", 0),
+        "average_readiness_pct": t["average_readiness"],
+        "ai_grounding_score": assurance.get("avg_score"),
+        "ai_checks": assurance.get("total", 0),
+        "next_deadline": ctx.get("next_deadline"),
+    }
+
+
+def _snapshot_delta(cur: dict, prev: dict) -> dict:
+    d = {}
+    for k in ("classification_approved_pct", "ce_ready_pct", "control_compliance_pct",
+              "nist_alignment_pct", "ai_grounding_score", "article14_overdue", "ce_blockers", "products"):
+        a = cur.get(k); b = prev.get(k)
+        if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+            d[k] = a - b
+    return d
+
+
+class CRASnapshotReq(BaseModel):
+    label: str = Field(default="", max_length=80)
+
+
+@cra_router.post("/exec-snapshot")
+async def save_exec_snapshot(body: CRASnapshotReq, user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    kpis = await _cra_exec_kpis(org_id)
+    doc = {"org_id": org_id, "at": iso(), "label": (body.label or datetime.now().strftime("%b %Y")).strip(),
+           "kpis": kpis, "by": user.get("email"), "version": CRA_APP_VERSION}
+    res = await db.cra_exec_snapshots.insert_one(doc)
+    return {"ok": True, "id": str(res.inserted_id), "at": doc["at"], "label": doc["label"], "kpis": kpis}
+
+
+@cra_router.get("/exec-snapshots")
+async def list_exec_snapshots(user: dict = Depends(get_current_user)):
+    org_id = user["org_id"]
+    rows = await db.cra_exec_snapshots.find({"org_id": org_id}).sort("at", -1).to_list(24)
+    out = [{"id": str(r["_id"]), "at": r.get("at"), "label": r.get("label"),
+            "kpis": r.get("kpis", {}), "by": r.get("by")} for r in rows]
+    for i, s in enumerate(out):
+        older = out[i + 1] if i + 1 < len(out) else None
+        s["delta"] = _snapshot_delta(s["kpis"], older["kpis"]) if older else None
+    live = await _cra_exec_kpis(org_id)
+    return {"current": live, "snapshots": out}
+
+
+@cra_router.delete("/exec-snapshot/{sid}")
+async def delete_exec_snapshot(sid: str, user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    try:
+        oid = ObjectId(sid)
+    except Exception:
+        raise HTTPException(400, "Bad snapshot id")
+    await db.cra_exec_snapshots.delete_one({"_id": oid, "org_id": user["org_id"]})
+    return {"ok": True}
+
+
+def _cra_exec_overview_html(org_name, kpis, nd):
+    def esc(s):
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    def cell(label, val):
+        return (f'<td style="padding:10px 12px;border:1px solid #eef2f7;vertical-align:top">'
+                f'<div style="font:700 9px Arial;letter-spacing:.05em;color:#6b7280;text-transform:uppercase">{label}</div>'
+                f'<div style="font:800 18px Arial;color:#0f1e3d;margin-top:2px">{val}</div></td>')
+    g = kpis.get("ai_grounding_score")
+    rows = (
+        f'<tr>{cell("Products", kpis.get("products", 0))}{cell("Classification approved", str(kpis.get("classification_approved_pct", 0)) + "%")}'
+        f'{cell("CE market-ready", str(kpis.get("ce_ready_pct", 0)) + "%")}{cell("Article 14 overdue", kpis.get("article14_overdue", 0))}</tr>'
+        f'<tr>{cell("Control compliance", str(kpis.get("control_compliance_pct", 0)) + "%")}{cell("NIST CSF alignment", str(kpis.get("nist_alignment_pct", 0)) + "%")}'
+        f'{cell("CE blockers", kpis.get("ce_blockers", 0))}{cell("AI grounding", (str(g) + "%") if g is not None else "n/a")}</tr>')
+    deadline = ""
+    if nd:
+        deadline = (f'<div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:12px 14px;margin:12px 0;'
+                    f'font:600 13px Arial;color:#b45309">{nd["days_remaining"]} days to the next CRA deadline &#8212; {esc(nd["label"])} on {esc(nd["date"])}.</div>')
+    return (
+        '<table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:auto;background:#fff"><tr><td style="padding:24px">'
+        '<div style="font:800 18px Arial;color:#0f1e3d">EU CRA Executive Overview</div>'
+        f'<div style="font:400 12px Arial;color:#6b7280;margin-bottom:6px">{esc(org_name)} &#183; Regulation (EU) 2024/2847 &#183; Obserra CRA v{CRA_APP_VERSION}</div>'
+        f'{deadline}'
+        '<div style="font:700 11px Arial;color:#6b7280;letter-spacing:.05em;margin-top:8px">BOARD KPIs</div>'
+        f'<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-top:6px">{rows}</table>'
+        '<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:10px;font:400 10px Arial;color:#9ca3af">'
+        'The attached PDF has the full board rollup incl. NIST alignment and top control gaps. Grounded in live records; the AI grounding score reflects the hallucination monitor. Decision-support only &#8212; not legal advice or a guarantee of CRA conformity.</div>'
+        '</td></tr></table>')
+
+
+async def _send_cra_exec_overview_email(org, recipients) -> int:
+    import base64
+    from kernel import notifications
+    org_id = str(org["_id"])
+    ctx = await _cra_insight_context(org_id)
+    controls = await _compute_controls(org_id)
+    nist = await _compute_nist(org_id)
+    assurance = await _cra_grounding_summary(org_id)
+    insight = await compute_cra_insight(org_id, use_cache=False)
+    kpis = await _cra_exec_kpis(org_id)
+    html = _cra_exec_overview_html(org.get("name", "Your organization"), kpis, ctx.get("next_deadline"))
+    att = None
+    try:
+        raw = _cra_exec_overview_pdf(org.get("name", "Your organization"), ctx, controls, nist, assurance, insight)
+        att = [{"filename": "obserra-eu-cra-executive-overview.pdf", "content": base64.b64encode(raw).decode()}]
+    except Exception:
+        att = None
+    sent = 0
+    for r in recipients:
+        await notifications.send_email(r["email"], "EU CRA Executive Overview — board briefing", html, attachments=att)
+        sent += 1
+    return sent
+
+
+class CRAExecEmailSchedule(BaseModel):
+    enabled: bool = False
+    day_of_week: int = Field(0, ge=0, le=6)
+    hour_utc: int = Field(8, ge=0, le=23)
+
+
+@cra_router.get("/exec-email/settings")
+async def get_exec_email_settings(user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}, {"_id": 0, "cra_exec_email": 1})
+    cfg = (org or {}).get("cra_exec_email") or {}
+    return {"schedule": {"enabled": cfg.get("enabled", False), "day_of_week": int(cfg.get("day_of_week", 0)), "hour_utc": int(cfg.get("hour_utc", 8))},
+            "is_admin": user.get("role") == "admin", "last_sent_week": cfg.get("last_sent_week")}
+
+
+@cra_router.put("/exec-email/settings")
+async def update_exec_email_settings(body: CRAExecEmailSchedule, admin: dict = Depends(require_roles("admin"))):
+    from bson import ObjectId
+    await db.organizations.update_one({"_id": ObjectId(admin["org_id"])}, {"$set": {
+        "cra_exec_email.enabled": body.enabled, "cra_exec_email.day_of_week": body.day_of_week, "cra_exec_email.hour_utc": body.hour_utc}})
+    return {"ok": True, "schedule": body.model_dump()}
+
+
+@cra_router.post("/exec-email/send-now")
+async def send_exec_email_now(user: dict = Depends(get_current_user)):
+    from bson import ObjectId
+    if not await db.cra_products.find_one({"org_id": user["org_id"]}, {"_id": 0, "ref": 1}):
+        raise HTTPException(400, "Add or load a CRA product first — there is nothing to brief yet.")
+    org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])})
+    await _send_cra_exec_overview_email(org, [{"email": user["email"]}])
+    return {"ok": True, "sent_to": user["email"]}
+
+
+async def _run_cra_exec_overview_tick():
+    """Hourly gate: send each org's Executive Overview board email at its own configured UTC day + hour."""
+    import logging
+    from kernel import notifications
+    logger = logging.getLogger("obserra.cra")
+    now = utcnow()
+    week_key = now.strftime("%G-W%V")
+    orgs = await db.organizations.find({}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        try:
+            cfg = org.get("cra_exec_email") or {}
+            if not cfg.get("enabled", False):
+                continue
+            if int(cfg.get("day_of_week", 0)) != now.weekday() or int(cfg.get("hour_utc", 8)) != now.hour:
+                continue
+            if cfg.get("last_sent_week") == week_key:
+                continue
+            if not await db.cra_products.find_one({"org_id": org_id}, {"_id": 0, "ref": 1}):
+                continue
+            recipients = await _cra_digest_recipients(org_id)
+            if recipients:
+                sent = await _send_cra_exec_overview_email(org, recipients)
+                await notifications.create(org_id, "report", "CRA Executive Overview board email sent",
+                                           f"Emailed the EU CRA Executive Overview to {sent} recipient(s).", ref="cra-exec-overview")
+                logger.info(f"CRA exec overview email sent for org {org_id}: {sent} recipient(s)")
+            await db.organizations.update_one({"_id": org["_id"]}, {"$set": {"cra_exec_email.last_sent_week": week_key}})
+        except Exception as e:
+            logger.error(f"CRA exec overview tick failed for org {org_id}: {e}")
 
 
 # ---------------------------------------------------------------------------

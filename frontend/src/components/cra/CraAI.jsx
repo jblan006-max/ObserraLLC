@@ -233,12 +233,19 @@ const SURFACE_LABEL = (s) => {
   return s;
 };
 
-function GroundingTrend({ trend }) {
+function GroundingTrend({ trend, days }) {
   const points = (trend || []).filter((p) => p != null);
-  if (!points.length || !points.some((p) => p.score != null)) return null;
+  if (!points.length || !points.some((p) => p.score != null)) {
+    return (
+      <div className="rounded-xl border border-border bg-card p-5" data-testid="cra-ai-monitor-trend">
+        <div className="font-head font-bold text-sm mb-1">{days}-day grounding trend</div>
+        <div className="text-[11px] font-mono text-muted-foreground">No grounding checks in this window yet — open any analyst or item advisor and scores will chart here.</div>
+      </div>
+    );
+  }
   return (
     <div className="rounded-xl border border-border bg-card p-5" data-testid="cra-ai-monitor-trend">
-      <div className="font-head font-bold text-sm mb-1">30-day grounding trend</div>
+      <div className="font-head font-bold text-sm mb-1">{days}-day grounding trend</div>
       <div className="text-[11px] font-mono text-muted-foreground mb-3">Average grounding score per day — watch for accuracy drift</div>
       <div style={{ width: "100%", height: 130 }}>
         <ResponsiveContainer>
@@ -256,7 +263,7 @@ function GroundingTrend({ trend }) {
               labelStyle={{ color: "hsl(var(--muted-foreground))" }}
               formatter={(v) => [v == null ? "—" : `${v}%`, "Grounding"]}
             />
-            <Area type="monotone" dataKey="score" stroke={AI_HEX} strokeWidth={2} fill="url(#craGroundGrad)" connectNulls dot={false} />
+            <Area type="monotone" dataKey="score" stroke={AI_HEX} strokeWidth={2} fill="url(#craGroundGrad)" connectNulls dot={{ r: 2, fill: AI_HEX }} activeDot={{ r: 4 }} />
           </AreaChart>
         </ResponsiveContainer>
       </div>
@@ -267,12 +274,14 @@ function GroundingTrend({ trend }) {
 export function AiAssurance() {
   const [d, setD] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [days, setDays] = useState(30);
 
-  const load = () => {
+  const load = (n) => {
+    const win = n || days;
     setLoading(true);
-    api.get("/cra/ai-monitor?days=30").then((r) => { setD(r.data); setLoading(false); }).catch(() => setLoading(false));
+    api.get(`/cra/ai-monitor?days=${win}`).then((r) => { setD(r.data); setLoading(false); }).catch(() => setLoading(false));
   };
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(days); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [days]);
 
   const t = groundTone(d?.avg_score);
   return (
@@ -283,12 +292,20 @@ export function AiAssurance() {
             <span className="inline-flex items-center justify-center w-9 h-9 rounded-lg shrink-0 bg-ai/15"><ScanEye className="w-5 h-5 text-ai" strokeWidth={1.5} /></span>
             <div>
               <div className="font-head font-black text-xl tracking-tight">AI Assurance · Hallucination Monitor</div>
-              <div className="text-[11px] font-mono text-muted-foreground">Every Obserrian CRA AI answer is scored against the live data that produced it · Obserra CRA {APP_VERSION_LABEL} · last 30 days</div>
+              <div className="text-[11px] font-mono text-muted-foreground">Every Obserrian CRA AI answer is scored against the live data that produced it · Obserra CRA {APP_VERSION_LABEL} · last {days} days</div>
             </div>
           </div>
-          <button onClick={load} disabled={loading} className="flex items-center gap-1.5 text-[11px] font-head font-bold px-3 py-1.5 rounded-full bg-ai text-background disabled:opacity-50">
-            {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />} Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="flex rounded-full border border-border overflow-hidden" data-testid="cra-ai-monitor-range">
+              {[7, 30, 90].map((n) => (
+                <button key={n} data-testid={`cra-ai-monitor-range-${n}`} onClick={() => setDays(n)}
+                  className={`text-[11px] font-head font-bold px-2.5 py-1 transition-colors ${days === n ? "bg-ai text-background" : "text-muted-foreground hover:bg-secondary/50"}`}>{n}d</button>
+              ))}
+            </div>
+            <button onClick={() => load()} disabled={loading} className="flex items-center gap-1.5 text-[11px] font-head font-bold px-3 py-1.5 rounded-full bg-ai text-background disabled:opacity-50">
+              {loading ? <Loader2 className="w-3 h-3 animate-spin" /> : <Zap className="w-3 h-3" />} Refresh
+            </button>
+          </div>
         </div>
       </div>
 
@@ -314,7 +331,7 @@ export function AiAssurance() {
             </div>
           </div>
 
-          <GroundingTrend trend={d.trend} />
+          <GroundingTrend trend={d.trend} days={days} />
 
           {d.by_surface?.length > 0 && (
             <div className="rounded-xl border border-border bg-card p-5">

@@ -1266,9 +1266,18 @@ export default function CRAGovernance() {
   const { data, loading, refreshing, error, sourceStatus, reload } = useCRAData();
   const [active, setActive] = useState(() => localStorage.getItem("cra-governance-tab") || "mission");
   const [reportBusy, setReportBusy] = useState(false);
+  const [pulse, setPulse] = useState(() => localStorage.getItem("cra-governance-tab-pulse") || null);
+
+  useEffect(() => {
+    if (!pulse) return;
+    localStorage.removeItem("cra-governance-tab-pulse");
+    const t = setTimeout(() => setPulse(null), 2600);
+    return () => clearTimeout(t);
+  }, [pulse]);
 
   const openTab = (tab) => {
     setActive(tab);
+    setPulse(null);
     localStorage.setItem("cra-governance-tab", tab);
   };
 
@@ -1315,7 +1324,7 @@ export default function CRAGovernance() {
       <div>
         <div className="flex flex-wrap gap-1 rounded-xl border border-border bg-card p-1">
           {TABS.map(([id, label, Icon]) => (
-            <button key={id} data-testid={`cra-tab-${id}`} onClick={() => openTab(id)} className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-head font-bold ${active === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"}`}><Icon className="w-3.5 h-3.5" /> {label}</button>
+            <button key={id} data-testid={`cra-tab-${id}`} onClick={() => openTab(id)} className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-head font-bold ${active === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"} ${pulse === id ? "cra-tab-pulse" : ""}`}><Icon className="w-3.5 h-3.5" /> {label}</button>
           ))}
         </div>
       </div>

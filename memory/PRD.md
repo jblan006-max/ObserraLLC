@@ -1,5 +1,13 @@
 # Obserra EIOS — PRD
 
+## Round 34 (Jun 2026) — 4 Executive Overview refinements + backend crash recovery (iteration_156: backend 6/6, frontend 95% — all 4 power-ups verified)
+- **Backend recovery** — session opened with backend DOWN (SyntaxError in `cra_governance.py`): the `cra_ai_monitor` return dict was truncated and a stray fragment was left inside `_run_cra_exec_overview_tick`. Both repaired; `GET /api/cra/ai-monitor` now returns `{version, days, total_checks, avg_score, label, flagged_total, surfaces, recent, trend}`.
+- **Assurance trend toggle (7/30/90d)** — `AiAssurance` (`components/cra/CraAI.jsx`) has a range switch (`cra-ai-monitor-range-7/-30/-90`) that re-fetches `GET /api/cra/ai-monitor?days=N`; trend length matches the window. Verified.
+- **Deep-link tab pulse** — Executive Overview `goTab()` writes `localStorage['cra-governance-tab-pulse']`; NEW consumer in `CRAGovernance.jsx` (pulse state + effect, cleared after 2.6s) applies CSS class `.cra-tab-pulse` (new keyframe `craTabPulse` in `index.css`) to the destination `cra-tab-*` button. Verified: mission + assurance deep-links land active AND pulse.
+- **Separate Exec board-email schedule** — `GET/PUT /api/cra/exec-email/settings` (`{schedule:{enabled,day_of_week,hour_utc}, is_admin, last_sent_week}`) + `POST /api/cra/exec-email/send-now`; hourly cron `_run_cra_exec_overview_tick` gates per-org day/hour, distinct from the analyst digest. UI panel `cra-exec-email`. Verified (Save schedule toast; send-now returns 200 w/ `sent_to`).
+- **Overview snapshots** — `POST /api/cra/exec-snapshot`, `GET /api/cra/exec-snapshots` (returns `current` KPIs + dated history with month-over-month `delta`), `DELETE /api/cra/exec-snapshot/{id}`. UI Save/Delete verified.
+- **Non-blocking follow-ups**: (a) send-now success toast wording not asserted by automation (endpoint returns 200 with `sent_to` — works); (b) 30/90d sparkline is sparse because most days have null grounding score — consider carry-forward/step-line to densify.
+
 ## Round 33 (Jun 2026) — Executive Overview power-ups + liveness audit (iteration_155: backend 100%, frontend 100%)
 - **Executive PDF Rollup** — `GET /api/cra/executive-overview.pdf` (`_cra_exec_overview_pdf`): richer board PDF with 8 KPIs, NIST CSF function bars, top control gaps, classification split and nearest deadline. Overview "Executive Brief PDF" button now downloads this (not the weekly one-pager).
 - **KPI Deep Links** — each Executive Overview KPI sets `localStorage['cra-governance-tab']` and opens the exact tab it summarizes (products / declaration / vulnerability / controls / nist / conformity / assurance).

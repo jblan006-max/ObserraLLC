@@ -8,9 +8,12 @@ import { toast } from "sonner";
 import {
   Boxes, BadgeCheck, ShieldCheck, TriangleAlert, FileCheck2, Fingerprint,
   Building2, Download, RefreshCw, ArrowRight, Clock3, Loader2,
+  Camera, Trash2, Mail, ArrowUpRight, ArrowDownRight,
 } from "lucide-react";
 
 const pct = (n, d) => (d ? Math.round((n / d) * 100) : 0);
+const DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+const GOOD_DOWN = new Set(["article14_overdue", "ce_blockers"]);
 
 function toneFor(score) {
   if (score == null) return "text-muted-foreground border-border";
@@ -19,28 +22,35 @@ function toneFor(score) {
   return "text-crit border-crit/30";
 }
 
+function DeltaChip({ k, v }) {
+  if (v == null || v === 0) return <span className="text-[10px] font-mono text-muted-foreground">±0</span>;
+  const up = v > 0;
+  const good = GOOD_DOWN.has(k) ? !up : up;
+  const Arrow = up ? ArrowUpRight : ArrowDownRight;
+  return <span className={`inline-flex items-center gap-0.5 text-[10px] font-mono font-bold ${good ? "text-low" : "text-crit"}`}><Arrow className="w-3 h-3" />{up ? "+" : ""}{v}</span>;
+}
+
 function KpiCard({ label, value, sub, Icon, tone = "text-primary border-primary/25", onClick, testid }) {
   return (
-    <button
-      onClick={onClick}
-      data-testid={testid}
-      className={`text-left rounded-xl border bg-card p-4 hover:bg-secondary/30 transition-colors ${tone}`}
-    >
-      <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider opacity-80">
-        <Icon className="w-3.5 h-3.5" /> {label}
-      </div>
+    <button onClick={onClick} data-testid={testid} className={`text-left rounded-xl border bg-card p-4 hover:bg-secondary/30 transition-colors ${tone}`}>
+      <div className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-wider opacity-80"><Icon className="w-3.5 h-3.5" /> {label}</div>
       <div className="font-head font-black text-3xl mt-1 text-foreground">{value}</div>
       {sub && <div className="text-[11px] font-mono text-muted-foreground mt-0.5">{sub}</div>}
     </button>
   );
 }
 
-function Panel({ title, subtitle, children, testid }) {
+function Panel({ title, subtitle, children, testid, action }) {
   return (
     <div className="rounded-xl border border-border bg-card p-5" data-testid={testid}>
-      <div className="font-head font-bold text-sm">{title}</div>
-      {subtitle && <div className="text-[11px] font-mono text-muted-foreground mb-3">{subtitle}</div>}
-      <div className={subtitle ? "" : "mt-3"}>{children}</div>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="font-head font-bold text-sm">{title}</div>
+          {subtitle && <div className="text-[11px] font-mono text-muted-foreground">{subtitle}</div>}
+        </div>
+        {action}
+      </div>
+      <div className="mt-3">{children}</div>
     </div>
   );
 }
@@ -53,28 +63,39 @@ function Bar({ label, value, total, tone = "bg-primary" }) {
         <span className="text-foreground/90">{label}</span>
         <span className="font-mono text-muted-foreground">{value}{total ? ` / ${total}` : ""}</span>
       </div>
-      <div className="h-2 rounded-full bg-secondary/60 overflow-hidden">
-        <div className={`h-full ${tone}`} style={{ width: `${p}%` }} />
-      </div>
+      <div className="h-2 rounded-full bg-secondary/60 overflow-hidden"><div className={`h-full ${tone}`} style={{ width: `${p}%` }} /></div>
     </div>
   );
 }
 
 const NIST_TONE = { Low: "bg-low", Medium: "bg-high", High: "bg-crit", Unknown: "bg-secondary" };
+const SNAP_KPIS = [["Class.", "classification_approved_pct"], ["CE", "ce_ready_pct"], ["Control", "control_compliance_pct"], ["NIST", "nist_alignment_pct"], ["AI", "ai_grounding_score"]];
+const fld = "mt-1 w-full bg-background border border-border rounded-md px-2 py-1.5 text-xs font-mono outline-none focus:border-ai";
 
 export default function CRAExecutiveOverview() {
   const navigate = useNavigate();
   const { data, loading, error, reload, refreshing } = useCRAData();
   const [assurance, setAssurance] = useState(null);
   const [briefBusy, setBriefBusy] = useState(false);
+  const [snap, setSnap] = useState(null);
+  const [savingSnap, setSavingSnap] = useState(false);
+  const [emailCfg, setEmailCfg] = useState(null);
+  const [sched, setSched] = useState({ enabled: false, day_of_week: 0, hour_utc: 8 });
+  const [emailBusy, setEmailBusy] = useState(false);
+
+  const loadSnapshots = () => api.get("/cra/exec-snapshots").then((r) => setSnap(r.data)).catch(() => {});
+  const loadEmailCfg = () => api.get("/cra/exec-email/settings").then((r) => { setEmailCfg(r.data); setSched(r.data.schedule); }).catch(() => {});
 
   useEffect(() => {
     api.get("/cra/ai-monitor?days=30").then((r) => setAssurance(r.data)).catch(() => {});
+    loadSnapshots();
+    loadEmailCfg();
   }, []);
 
-  // Deep-link each KPI to the exact governance tab it summarizes (CRAGovernance reads this key on mount).
+  // Deep-link each KPI to the exact governance tab it summarizes + pulse it on arrival.
   const goTab = (tab) => {
     localStorage.setItem("cra-governance-tab", tab);
+    localStorage.setItem("cra-governance-tab-pulse", tab);
     navigate("/app/cra-governance");
   };
 
@@ -86,10 +107,28 @@ export default function CRAExecutiveOverview() {
       const a = document.createElement("a");
       a.href = url; a.download = "obserra-eu-cra-executive-overview.pdf";
       document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-    } catch {
-      toast.error("Could not generate the executive overview PDF");
-    }
+    } catch { toast.error("Could not generate the executive overview PDF"); }
     setBriefBusy(false);
+  };
+
+  const saveSnapshot = async () => {
+    setSavingSnap(true);
+    try { await api.post("/cra/exec-snapshot", { label: "" }); await loadSnapshots(); toast.success("Snapshot saved"); }
+    catch { toast.error("Could not save snapshot"); }
+    setSavingSnap(false);
+  };
+  const deleteSnapshot = async (id) => {
+    try { await api.delete(`/cra/exec-snapshot/${id}`); await loadSnapshots(); } catch { toast.error("Could not delete snapshot"); }
+  };
+  const saveEmailCfg = async () => {
+    try { await api.put("/cra/exec-email/settings", sched); toast.success("Board email schedule saved"); loadEmailCfg(); }
+    catch { toast.error("Could not save schedule"); }
+  };
+  const sendEmailNow = async () => {
+    setEmailBusy(true);
+    try { const r = await api.post("/cra/exec-email/send-now"); toast.success(`Sent to ${r.data.sent_to}`); }
+    catch (e) { toast.error(e?.response?.data?.detail || "Could not send"); }
+    setEmailBusy(false);
   };
 
   if (loading && !data) {
@@ -125,13 +164,13 @@ export default function CRAExecutiveOverview() {
             <span data-testid="cra-exec-version" className="px-2 py-1 rounded-full border border-border bg-secondary/60 text-muted-foreground text-[10px] font-mono font-bold">Obserra CRA {APP_VERSION_LABEL}</span>
           </div>
           <p className="text-sm text-muted-foreground mt-2 max-w-3xl">
-            A board-ready rollup of the whole EU Cyber Resilience Act posture — product classification, CE market
-            readiness, essential-requirement control compliance, NIST CSF alignment, Article 14 reporting clocks and
-            AI-answer grounding. Every card opens the exact governance tab it summarizes.
+            A board-ready rollup of the whole EU Cyber Resilience Act posture. Every KPI opens the exact governance tab it
+            summarizes; save dated snapshots to compare month over month and schedule the board email to directors.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={reload} disabled={refreshing} data-testid="cra-exec-refresh" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold"><RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} /> Refresh</button>
+          <button onClick={saveSnapshot} disabled={savingSnap} data-testid="cra-exec-snapshot-save" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">{savingSnap ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />} Save snapshot</button>
           <button onClick={downloadBrief} disabled={briefBusy} data-testid="cra-exec-brief" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold">{briefBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Executive Brief PDF</button>
           <button onClick={() => goTab("mission")} data-testid="cra-exec-open-governance" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold">Open Governance <ArrowRight className="w-3.5 h-3.5" /></button>
         </div>
@@ -142,10 +181,7 @@ export default function CRAExecutiveOverview() {
       {nd && (
         <div data-testid="cra-exec-deadline" className={`rounded-xl border p-4 flex items-center gap-3 ${nd.days_remaining <= 120 ? "border-crit/30 bg-crit/5" : "border-high/25 bg-high/5"}`}>
           <Clock3 className={`w-5 h-5 shrink-0 ${nd.days_remaining <= 120 ? "text-crit" : "text-high"}`} />
-          <div className="text-sm">
-            <span className="font-head font-bold">{nd.days_remaining} days to the next CRA deadline</span>
-            <span className="text-muted-foreground"> · {nd.label} ({nd.date})</span>
-          </div>
+          <div className="text-sm"><span className="font-head font-bold">{nd.days_remaining} days to the next CRA deadline</span><span className="text-muted-foreground"> · {nd.label} ({nd.date})</span></div>
         </div>
       )}
 
@@ -179,9 +215,7 @@ export default function CRAExecutiveOverview() {
                   <span className="text-foreground/90"><span className="font-mono text-muted-foreground">{f.code}</span> {f.name}</span>
                   <span className="font-mono text-muted-foreground">{f.compliance_rate}%</span>
                 </div>
-                <div className="h-2 rounded-full bg-secondary/60 overflow-hidden">
-                  <div className={`h-full ${NIST_TONE[f.risk] || "bg-primary"}`} style={{ width: `${f.compliance_rate}%` }} />
-                </div>
+                <div className="h-2 rounded-full bg-secondary/60 overflow-hidden"><div className={`h-full ${NIST_TONE[f.risk] || "bg-primary"}`} style={{ width: `${f.compliance_rate}%` }} /></div>
               </div>
             ))}
           </div>
@@ -203,6 +237,60 @@ export default function CRAExecutiveOverview() {
             <div className={`rounded-lg border p-3 ${(assurance?.flagged_total || 0) > 0 ? "border-crit/25 text-crit" : "border-low/25 text-low"}`}><div className="font-head font-black text-2xl">{assurance?.flagged_total ?? 0}</div><div className="text-[10px] font-mono uppercase text-muted-foreground">Flagged</div></div>
           </div>
           <button onClick={() => goTab("assurance")} className="mt-4 inline-flex items-center gap-1.5 text-[11px] font-head font-bold text-ai hover:underline" data-testid="cra-exec-open-assurance">Open the AI Assurance monitor <ArrowRight className="w-3 h-3" /></button>
+        </Panel>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        <Panel title="Executive Overview board email" subtitle="Schedule this rollup to directors — separate from the analyst digest" testid="cra-exec-email">
+          {emailCfg ? (
+            <div className="space-y-3">
+              <label className="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" data-testid="cra-exec-email-enabled" checked={!!sched.enabled} disabled={!emailCfg.is_admin} onChange={(e) => setSched({ ...sched, enabled: e.target.checked })} />
+                Email the Executive Overview to directors weekly
+              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <label className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Day
+                  <select data-testid="cra-exec-email-day" value={sched.day_of_week} disabled={!emailCfg.is_admin} onChange={(e) => setSched({ ...sched, day_of_week: +e.target.value })} className={fld}>
+                    {DAYS.map((dd, i) => <option key={i} value={i}>{dd}</option>)}
+                  </select>
+                </label>
+                <label className="text-[11px] font-mono uppercase tracking-wider text-muted-foreground">Hour (UTC)
+                  <select data-testid="cra-exec-email-hour" value={sched.hour_utc} disabled={!emailCfg.is_admin} onChange={(e) => setSched({ ...sched, hour_utc: +e.target.value })} className={fld}>
+                    {Array.from({ length: 24 }, (_, h) => <option key={h} value={h}>{String(h).padStart(2, "0")}:00</option>)}
+                  </select>
+                </label>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {emailCfg.is_admin && <button onClick={saveEmailCfg} data-testid="cra-exec-email-save" className="px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold">Save schedule</button>}
+                <button onClick={sendEmailNow} disabled={emailBusy} data-testid="cra-exec-email-sendnow" className="px-3 py-1.5 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold inline-flex items-center gap-1.5">{emailBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Mail className="w-3.5 h-3.5" />} Send me one now</button>
+              </div>
+              {!emailCfg.is_admin && <div className="text-[11px] font-mono text-muted-foreground">Only admins can change the schedule.</div>}
+            </div>
+          ) : <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="w-4 h-4 animate-spin" /> Loading schedule…</div>}
+        </Panel>
+
+        <Panel title="Executive Overview snapshots" subtitle="Save a dated snapshot to compare CRA posture month over month" testid="cra-exec-snapshots"
+          action={<button onClick={saveSnapshot} disabled={savingSnap} data-testid="cra-exec-snapshots-save" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold shrink-0">{savingSnap ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />} Save</button>}>
+          {(!snap || snap.snapshots.length === 0) && <div className="text-sm text-muted-foreground">No snapshots yet — save one to start tracking CRA posture over time. Deltas appear on the next snapshot.</div>}
+          <div className="space-y-2 max-h-[320px] overflow-y-auto pr-1">
+            {snap?.snapshots.map((s) => (
+              <div key={s.id} data-testid={`cra-exec-snapshot-${s.id}`} className="rounded-lg border border-border p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <div><span className="font-head font-bold text-sm">{s.label}</span> <span className="text-[10px] font-mono text-muted-foreground">{new Date(s.at).toLocaleDateString()}</span></div>
+                  <button onClick={() => deleteSnapshot(s.id)} data-testid={`cra-exec-snapshot-del-${s.id}`} className="text-muted-foreground hover:text-crit"><Trash2 className="w-3.5 h-3.5" /></button>
+                </div>
+                <div className="grid grid-cols-5 gap-2 mt-2 text-center">
+                  {SNAP_KPIS.map(([lbl, key]) => (
+                    <div key={key}>
+                      <div className="text-[9px] font-mono uppercase text-muted-foreground">{lbl}</div>
+                      <div className="font-head font-bold text-sm">{s.kpis[key] == null ? "—" : `${s.kpis[key]}%`}</div>
+                      {s.delta && <DeltaChip k={key} v={s.delta[key]} />}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         </Panel>
       </div>
 
