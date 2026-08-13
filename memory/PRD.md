@@ -1,5 +1,15 @@
 # Obserra EIOS — PRD
 
+## Round 38 (Jun 2026) — Risk waivers, bulk owner reassign, public burndown, digest preview, AI board memo + public-leak fix (iteration_160: backend 11/11, frontend 100%; HIGH leak found & fixed)
+- **Risk Acceptance & Waivers**: `POST/DELETE /api/cra/risk-waiver` (admin; `cra_risk_waivers`, keyed by org+risk_key, `expires>=today`). `_compute_risk_correlation` partitions waived vs active — index/counts/history from ACTIVE only; returns `waived[]` + `overall.waived_count`. UI `WaiverForm` on each card (admin) + "Accepted / waived risks" section with revoke; waivers auto-lapse at expiry.
+- **Owner Reassignment Bulk**: `POST /api/cra/risk-owner/bulk {keys,owner,owner_email,due_date,shift_days}`. By-owner view has per-risk checkboxes + a sticky bulk bar (reassign owner/email/due, Shift +7/+14d).
+- **Burndown on public link**: `public_exec_overview` returns `burndown` (via `_cra_risk_burndown` + `cra_risk_target`); public page shows `cra-exec-public-burndown` (target vs current + projected date).
+- **Digest Preview**: `GET /api/cra/risk-owner-digest/preview` (admin; owners list, or `?owner_email=`→html). UI modal with owner select + iframe of the exact weekly digest.
+- **Board Risk Memo**: `GET /api/cra/risk-memo` (`_cra_risk_memo`) — grounded 3-sentence narrative via Emergent LLM (openai gpt-5.4) with a deterministic fallback. UI `BoardMemo` card (refresh + copy).
+- **SECURITY FIX**: public board-share `risk.top_risks` was leaking product + owner names (introduced Round 36); now sanitized to `{rating, score, category}` only. Verified via curl leak scan → NONE. Frontend public page shows category instead of title, no owner.
+- **New collections**: `cra_risk_waivers` (plus `cra_risk_target`, `cra_risk_alerted`, `cra_risk_owners`, `cra_risk_history`).
+- **Known non-fatal**: `<span> in <option>` console warning from visual-editor tooling (not app code).
+
 ## Round 37 (Jun 2026) — Burndown target, owner workload, Slack/Teams risk alerts, register filters, weekly owner digest (iteration_159: backend 13/13, frontend 100%, no bugs)
 - **Risk Burndown Target**: `GET/PUT /api/cra/risk-target` (`cra_risk_target`, admin PUT) + `_cra_risk_burndown` — target vs current, gap, linear slope from `cra_risk_history`, projected date/days-to-target when trending down. UI `BurndownTarget` card (`cra-risk-burndown` + `cra-risk-target-input/save`).
 - **Owner Workload View**: `By risk` / `By owner` toggle (`cra-risk-view-risks/-owners`); `OwnerWorkload` groups risks by owner (count, overdue, rating breakdown, due dates) with an Unassigned bucket — client-side from `/risk-correlation`.

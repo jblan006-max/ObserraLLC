@@ -2006,6 +2006,10 @@ async def _compute_risk_correlation(org_id: str) -> dict:
 
     owners = {o["risk_key"]: o for o in await db.cra_risk_owners.find(
         {"org_id": org_id, "status": {"$ne": "resolved"}}).to_list(500)}
+    from datetime import datetime as _dt, timezone as _tz
+    today = _dt.now(_tz.utc).strftime("%Y-%m-%d")
+    waivers = {w["risk_key"]: w for w in await db.cra_risk_waivers.find(
+        {"org_id": org_id, "status": {"$ne": "revoked"}, "expires": {"$gte": today}}).to_list(500)}
     for i, r in enumerate(risks):
         r["id"] = f"risk-{i}"
         o = owners.get(r["key"])
@@ -2013,6 +2017,18 @@ async def _compute_risk_correlation(org_id: str) -> dict:
         r["owner_email"] = o.get("owner_email") if o else None
         r["due_date"] = o.get("due_date") if o else None
         r["owner_note"] = o.get("note") if o else None
+
+    waived, active = [], []
+    for r in risks:
+        w = waivers.get(r["key"])
+        if w:
+            rr = dict(r)
+            rr["waived"] = True
+            rr["waiver"] = {"reason": w.get("reason"), "expires": w.get("expires"), "accepted_by": w.get("accepted_by")}
+            waived.append(rr)
+        else:
+            active.append(r)
+    risks = active
 
     counts = {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
     for r in risks:
@@ -2038,8 +2054,6 @@ async def _compute_risk_correlation(org_id: str) -> dict:
 
     # Zero-touch daily history point so the board risk trend fills in without logins
     try:
-        from datetime import datetime as _dt, timezone as _tz
-        today = _dt.now(_tz.utc).strftime("%Y-%m-%d")
         await db.cra_risk_history.update_one(
             {"org_id": org_id, "date": today},
             {"$set": {"risk_index": risk_index, "counts": counts, "total": total, "at": iso()}},
@@ -2050,14 +2064,171 @@ async def _compute_risk_correlation(org_id: str) -> dict:
     return {
         "version": CRA_APP_VERSION, "generated_at": iso(),
         "overall": {"total": total, "counts": counts, "risk_index": risk_index,
-                    "top_rating": top_rating, "most_correlated_control": most, "top_risks": top_risks},
+                    "top_rating": top_rating, "most_correlated_control": most, "top_risks": top_risks,
+                    "waived_count": len(waived)},
         "risks": risks,
+        "waived": waived,
     }
 
 
 @cra_router.get("/risk-correlation")
 async def cra_risk_correlation(user: dict = Depends(get_current_user)):
     return await _compute_risk_correlation(user["org_id"])
+
+
+class CRARiskWaiverReq(BaseModel):
+    risk_key: str
+    risk_title: str = ""
+    reason: str = Field(..., max_length=500)
+    expires: str = Field(..., max_length=10)
+
+
+@cra_router.post("/risk-waiver")
+async def accept_risk_waiver(body: CRARiskWaiverReq, admin: dict = Depends(require_roles("admin"))):
+    org_id = admin["org_id"]
+    now = iso()
+    await db.cra_risk_waivers.update_one(
+        {"org_id": org_id, "risk_key": body.risk_key},
+        {"$set": {"reason": body.reason.strip(), "expires": body.expires.strip(), "risk_title": body.risk_title,
+                  "status": "open", "accepted_by": admin.get("email"), "updated_at": now},
+         "$setOnInsert": {"org_id": org_id, "risk_key": body.risk_key, "created_at": now}},
+        upsert=True)
+    try:
+        await ledger_append(org_id, admin.get("email", "unknown"), "risk.waiver_accepted", "risk", body.risk_key,
+                            ["Article 13"], {"reason": body.reason, "expires": body.expires})
+    except Exception:
+        pass
+    return {"ok": True}
+
+
+@cra_router.delete("/risk-waiver/{risk_key}")
+async def revoke_risk_waiver(risk_key: str, admin: dict = Depends(require_roles("admin"))):
+    await db.cra_risk_waivers.update_one({"org_id": admin["org_id"], "risk_key": risk_key},
+                                         {"$set": {"status": "revoked", "revoked_at": iso()}})
+    return {"ok": True}
+
+
+class CRARiskBulkReq(BaseModel):
+    keys: list[str]
+    owner: str = ""
+    owner_email: str = ""
+    due_date: str = ""
+    shift_days: int = 0
+
+
+@cra_router.post("/risk-owner/bulk")
+async def bulk_risk_owner(body: CRARiskBulkReq, user: dict = Depends(get_current_user)):
+    from datetime import datetime, timedelta
+    org_id = user["org_id"]
+    now = iso()
+    n = 0
+    for key in body.keys:
+        existing = await db.cra_risk_owners.find_one({"org_id": org_id, "risk_key": key})
+        setdoc = {"status": "open", "updated_at": now, "assigned_by": user.get("email")}
+        if body.owner.strip():
+            setdoc["owner"] = body.owner.strip()
+            setdoc["owner_email"] = body.owner_email.strip()
+        if body.due_date.strip():
+            setdoc["due_date"] = body.due_date.strip()
+        elif body.shift_days and existing and existing.get("due_date"):
+            try:
+                base = datetime.strptime(existing["due_date"], "%Y-%m-%d")
+                setdoc["due_date"] = (base + timedelta(days=body.shift_days)).strftime("%Y-%m-%d")
+            except Exception:
+                pass
+        await db.cra_risk_owners.update_one(
+            {"org_id": org_id, "risk_key": key},
+            {"$set": setdoc, "$setOnInsert": {"org_id": org_id, "risk_key": key, "created_at": now, "last_reminded": None}},
+            upsert=True)
+        n += 1
+    return {"ok": True, "updated": n}
+
+
+@cra_router.get("/risk-owner-digest/preview")
+async def preview_risk_owner_digest(owner_email: str = "", admin: dict = Depends(require_roles("admin"))):
+    from bson import ObjectId
+    from datetime import datetime, timezone
+    org_id = admin["org_id"]
+    org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"_id": 0, "name": 1})
+    rc = await _compute_risk_correlation(org_id)
+    now = datetime.now(timezone.utc)
+    by_owner = {}
+    for r in rc["risks"]:
+        em = r.get("owner_email")
+        if not em:
+            continue
+        overdue = False
+        if r.get("due_date"):
+            try:
+                overdue = datetime.strptime(r["due_date"], "%Y-%m-%d").replace(tzinfo=timezone.utc) < now
+            except Exception:
+                overdue = False
+        by_owner.setdefault(em, []).append({"title": r["title"], "rating": r["rating"], "due_date": r.get("due_date"),
+                                            "overdue": overdue, "controls": [m["requirement_id"] for m in r["mapped_controls"]]})
+    owners = [{"email": em, "count": len(items)} for em, items in by_owner.items()]
+    html = None
+    if owner_email and owner_email in by_owner:
+        order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+        items = sorted(by_owner[owner_email], key=lambda it: (0 if it["overdue"] else 1, order.get(it["rating"], 9), it.get("due_date") or "9999"))
+        html = _cra_risk_owner_digest_html((org or {}).get("name", "Your organization"), items)
+    return {"owners": owners, "html": html}
+
+
+async def _cra_risk_memo(org_id):
+    import os, asyncio
+    rc = await _compute_risk_correlation(org_id)
+    o = rc["overall"]
+    rows = await db.cra_risk_history.find({"org_id": org_id}, {"_id": 0}).sort("date", 1).to_list(400)
+    series = rows[-30:]
+    first = series[0]["risk_index"] if series else o["risk_index"]
+    change = o["risk_index"] - first
+    span = len(series)
+    tdoc = await db.cra_risk_target.find_one({"org_id": org_id}, {"_id": 0})
+    target = tdoc.get("target", 30) if tdoc else 30
+    facts = {"current_index": o["risk_index"], "target": target, "change_over_window": change, "window_days": span,
+             "counts": o["counts"], "total": o["total"], "most_threatened_control": o.get("most_correlated_control"),
+             "top_risks": o.get("top_risks", []), "waived_count": o.get("waived_count", 0)}
+    trendword = "unchanged" if change == 0 else (f"down {abs(change)} points" if change < 0 else f"up {change} points")
+    top = o.get("top_risks", [])
+    top_txt = "; ".join(f"{t['rating']} — {t['title']}" for t in top[:2]) or "no active risks"
+    mcc = o.get("most_correlated_control")
+    mcc_txt = f"{mcc['requirement_id']} across {mcc['count']} risks" if mcc else "no single control"
+    memo = (
+        f"The correlated CRA risk index is {o['risk_index']}/100 ({trendword} over the last {span} day(s)) against a board target of {target}. "
+        f"There are {o['total']} active risk(s) — {o['counts']['Critical']} Critical, {o['counts']['High']} High, {o['counts']['Medium']} Medium — most concentrated on {mcc_txt}. "
+        f"The biggest exposures are {top_txt}"
+        + (f", and {o.get('waived_count', 0)} risk(s) are formally accepted/waived." if o.get('waived_count') else "."))
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
+        system = (
+            "You are the Obserra EU CRA Governance AI Advisor writing a board risk memo. Using ONLY the supplied live "
+            "facts (never invent numbers, product names or control refs), write EXACTLY 3 plain-English sentences a "
+            "board would read in minutes: (1) the risk index, its movement and the target; (2) the composition and the "
+            "most-threatened control; (3) the biggest exposures / next focus. This is EU CRA (Regulation (EU) 2024/2847). "
+            "No markdown, no bullet points, no preamble — return only the 3 sentences.")
+        chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"cra-memo-{org_id}",
+                       system_message=system).with_model("openai", "gpt-5.4")
+        prompt = f"LIVE FACTS (JSON):\n{json.dumps(facts, default=str)[:4000]}"
+        collected = []
+
+        async def _run():
+            async for ev in chat.stream_message(UserMessage(text=prompt)):
+                if isinstance(ev, TextDelta):
+                    collected.append(ev.content)
+                elif isinstance(ev, StreamDone):
+                    break
+        await asyncio.wait_for(_run(), timeout=16)
+        out = "".join(collected).strip()
+        if out and len(out) > 40:
+            memo = out
+    except Exception:
+        pass
+    return {"memo": memo, "facts": facts, "generated_at": iso(), "grounded": True}
+
+
+@cra_router.get("/risk-memo")
+async def cra_risk_memo(user: dict = Depends(get_current_user)):
+    return await _cra_risk_memo(user["org_id"])
 
 
 class CRARiskOwnerReq(BaseModel):
@@ -2749,9 +2920,20 @@ async def public_exec_overview(raw_token: str):
     nist = await _compute_nist(org_id)
     ctx = await _cra_insight_context(org_id)
     try:
-        risk = (await _compute_risk_correlation(org_id))["overall"]
+        _rk = (await _compute_risk_correlation(org_id))["overall"]
+        risk = {"risk_index": _rk.get("risk_index"), "counts": _rk.get("counts"),
+                "total": _rk.get("total"), "top_rating": _rk.get("top_rating"),
+                "most_correlated_control": _rk.get("most_correlated_control"),
+                "waived_count": _rk.get("waived_count"),
+                "top_risks": [{"rating": t.get("rating"), "score": t.get("score"),
+                               "category": t.get("category")} for t in (_rk.get("top_risks") or [])]}
     except Exception:
         risk = {}
+    try:
+        tdoc = await db.cra_risk_target.find_one({"org_id": org_id}, {"_id": 0})
+        burndown = await _cra_risk_burndown(org_id, (tdoc or {}).get("target", 30))
+    except Exception:
+        burndown = None
     snaps = await db.cra_exec_snapshots.find({"org_id": org_id}).sort("at", -1).to_list(1)
     prev = snaps[0] if snaps else None
     snapshot_delta = _snapshot_delta(kpis, prev.get("kpis", {})) if prev else None
@@ -2769,6 +2951,7 @@ async def public_exec_overview(raw_token: str):
         "nist": {"overall": nist["overall"], "functions": nist["functions"]},
         "next_deadline": _cra_next_deadline(),
         "risk": risk,
+        "burndown": burndown,
         "previous_snapshot": previous_snapshot,
         "snapshot_delta": snapshot_delta,
         "note": "Read-only Executive Overview. Product names and internal records are not exposed.",

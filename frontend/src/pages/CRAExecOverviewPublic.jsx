@@ -128,6 +128,11 @@ export default function CRAExecOverviewPublic() {
             <div className={`font-head font-black text-5xl mt-2 ${riskTone}`}>{risk.risk_index ?? 0}</div>
             <div className="text-[11px] font-mono text-muted-foreground mt-1">{risk.total ?? 0} correlated risk(s) · Critical {risk.counts?.Critical ?? 0} · High {risk.counts?.High ?? 0} · Medium {risk.counts?.Medium ?? 0}</div>
             <div className="mt-3 h-2 rounded-full bg-secondary/60 overflow-hidden"><div className={`h-full ${risk.risk_index >= 60 ? "bg-crit" : risk.risk_index >= 35 ? "bg-high" : "bg-low"}`} style={{ width: `${risk.risk_index ?? 0}%` }} /></div>
+            {data.burndown && (
+              <div className="mt-2 text-[11px] font-mono text-muted-foreground" data-testid="cra-exec-public-burndown">
+                Board target {data.burndown.target} · {data.burndown.on_track ? "✓ target met" : data.burndown.projected_date ? `on track to hit by ${data.burndown.projected_date}` : `gap ${data.burndown.gap}, not trending down yet`}
+              </div>
+            )}
           </div>
           <div className="lg:col-span-2">
             <div className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground mb-2">Top risks right now</div>
@@ -136,9 +141,9 @@ export default function CRAExecOverviewPublic() {
                 <div key={i} className="flex items-center justify-between gap-3 border-b border-border/60 pb-2 last:border-0">
                   <div className="flex items-center gap-2 min-w-0">
                     <span className={`text-[10px] font-mono font-bold ${RATING_TEXT[t.rating] || "text-foreground"}`}>{t.rating?.toUpperCase()}</span>
-                    <span className="text-sm text-foreground/90 truncate">{t.title}</span>
+                    <span className="text-sm text-foreground/90 truncate">{t.category}</span>
                   </div>
-                  <span className="text-[10px] font-mono text-muted-foreground shrink-0">{t.owner ? `owner ${t.owner}` : "unassigned"} · {t.score}/25</span>
+                  <span className="text-[10px] font-mono text-muted-foreground shrink-0">{t.score}/25</span>
                 </div>
               ))}
               {(!risk.top_risks || risk.top_risks.length === 0) && <div className="text-sm text-muted-foreground">No correlated risks in the live records.</div>}
