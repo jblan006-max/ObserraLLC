@@ -81,6 +81,12 @@ from cra_governance import cra_router, cra_public_router, ensure_cra_indexes
 app.include_router(cra_router)
 app.include_router(cra_public_router)
 
+
+@app.get("/api/version")
+async def app_version():
+    return {"name": "Obserra EU CRA Governance", "version": "1.0.0",
+            "regulation": "Regulation (EU) 2024/2847"}
+
 _cors = os.environ.get("CORS_ORIGINS", "*").strip()
 _cors_kwargs = {"allow_origin_regex": ".*"} if _cors == "*" else {"allow_origins": [o.strip() for o in _cors.split(",") if o.strip()]}
 app.add_middleware(

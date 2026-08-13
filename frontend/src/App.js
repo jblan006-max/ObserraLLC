@@ -48,6 +48,7 @@ const ControlAssurance = lazyWithRetry(() => import("@/pages/ControlAssurance"))
 const ControlIntelligence = lazyWithRetry(() => import("@/pages/ControlIntelligence"));
 const CyberCrisisCommander = lazyWithRetry(() => import("@/pages/CyberCrisisCommander"));
 const AIExecutiveOverview = lazyWithRetry(() => import("@/pages/AIExecutiveOverview"));
+const CRAExecutiveOverview = lazyWithRetry(() => import("@/pages/CRAExecutiveOverview"));
 // Reused platform pages (identical to Obserra).
 const AuditLog = lazyWithRetry(() => import("@/pages/AuditLog"));
 const Team = lazyWithRetry(() => import("@/pages/Team"));
@@ -106,7 +107,7 @@ function AppRoutes() {
         <Route path="/cra-scorecard/:token" element={<CRAScorecard />} />
         <Route path="/payment/success" element={<Gate><PaymentSuccess /></Gate>} />
         <Route path="/app" element={<Gate><AppShell /></Gate>}>
-          <Route index element={<AIExecutiveOverview />} />
+          <Route index element={<CRAExecutiveOverview />} />
           <Route path="sod" element={<SodCommandCenter />} />
           <Route path="identities" element={<Identities />} />
           <Route path="privileged" element={<PrivilegedAccess />} />

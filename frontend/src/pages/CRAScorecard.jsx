@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import { Landmark, Loader2, ShieldAlert, TriangleAlert, Clock3 } from "lucide-react";
+import { Download, Landmark, Loader2, ShieldAlert, TriangleAlert, Clock3 } from "lucide-react";
 import { api } from "@/lib/api";
 
 const STATUS_TONE = {
@@ -24,6 +24,7 @@ export default function CRAScorecard() {
   const { token } = useParams();
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
+  const [dl, setDl] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -36,6 +37,17 @@ export default function CRAScorecard() {
       }
     })();
   }, [token]);
+
+  const downloadPdf = async () => {
+    setDl(true);
+    try {
+      const response = await api.get(`/cra-public/scorecard/${token}/pdf`, { responseType: "blob" });
+      const url = URL.createObjectURL(response.data);
+      const a = document.createElement("a");
+      a.href = url; a.download = "obserra-eu-cra-compliance-scorecard.pdf";
+      document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+    } catch { /* noop */ } finally { setDl(false); }
+  };
 
   if (error) {
     return (
@@ -67,17 +79,22 @@ export default function CRAScorecard() {
   return (
     <div className="min-h-screen bg-background" data-testid="cra-scorecard-page">
       <header className="border-b border-border bg-card">
-        <div className="max-w-6xl mx-auto px-5 py-4 flex items-center justify-between gap-4">
+        <div className="max-w-6xl mx-auto px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
           <div>
             <div className="flex items-center gap-2 text-[10px] font-mono text-primary uppercase tracking-wider"><Landmark className="w-3.5 h-3.5" /> Obserra Compliance Scorecard</div>
             <h1 className="font-head font-black text-2xl mt-1">{data.organization}</h1>
-            <div className="text-xs text-muted-foreground mt-1">{data.regulation} · read-only</div>
+            <div className="text-xs text-muted-foreground mt-1">{data.regulation} · read-only · expires {new Date(data.expires_at).toLocaleDateString()}</div>
           </div>
-          {data.next_deadline && (
-            <div className="inline-flex items-center gap-2 rounded-full border border-high/30 bg-high/10 px-3.5 py-1.5 text-xs font-head font-bold text-high">
-              <Clock3 className="w-3.5 h-3.5" /> {data.next_deadline.days_remaining} days to next CRA deadline
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            {data.next_deadline && (
+              <div className="inline-flex items-center gap-2 rounded-full border border-high/30 bg-high/10 px-3.5 py-1.5 text-xs font-head font-bold text-high">
+                <Clock3 className="w-3.5 h-3.5" /> {data.next_deadline.days_remaining} days to next CRA deadline
+              </div>
+            )}
+            <button onClick={downloadPdf} disabled={dl} data-testid="cra-scorecard-download" className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">
+              {dl ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} Download PDF
+            </button>
+          </div>
         </div>
       </header>
 
@@ -115,7 +132,7 @@ export default function CRAScorecard() {
               <tbody data-testid="cra-scorecard-gaps">
                 {(data.top_gaps || []).map((g) => (
                   <tr key={g.requirement_id} className="border-b border-border/60">
-                    <td className="py-3 pr-3"><div className="font-mono text-[10px] text-ai">{g.requirement_id}</div><div className="font-head font-bold mt-0.5">{g.title}</div><div className="text-[10px] text-muted-foreground">{g.domain}</div></td>
+                    <td className="py-3 pr-3"><div className="font-mono text-[10px] text-ai">{g.requirement_id}</div><div className="font-head font-bold mt-0.5">{g.title}</div><div className="text-[10px] text-muted-foreground">{g.domain}{g.assessed ? ` · ${g.conforming}/${g.assessed} conforming` : ""}</div></td>
                     <td className="py-3 pr-3 text-muted-foreground">{(g.legal_refs || []).join(", ")}</td>
                     <td className="py-3 pr-3">{g.compliance_rate === null || g.compliance_rate === undefined ? "Not assessed" : `${g.compliance_rate}%`}</td>
                     <td className="py-3 pr-3"><Tag map={STATUS_TONE} value={g.status} /></td>

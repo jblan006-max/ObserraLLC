@@ -45,6 +45,7 @@ import {
   reportBlocks,
   vulnerabilityDeadline,
 } from "@/lib/craModels";
+import { CraTabAnalyst, CraExplain, CraExplainToggle, AiAssurance } from "@/components/cra/CraAI";
 
 const TABS = [
   ["mission", "Mission Control", Gauge],
@@ -57,6 +58,8 @@ const TABS = [
   ["declaration", "Declaration & CE", BadgeCheck],
   ["regulation", "Regulation Map", Landmark],
   ["controls", "Control Dashboard", FileCheck2],
+  ["nist", "NIST Alignment", ShieldCheck],
+  ["assurance", "AI Assurance", Fingerprint],
 ];
 
 function Badge({ children, tone = "primary" }) {
@@ -502,6 +505,13 @@ function ProductClassification({ data, reload, isAdmin }) {
                 )}
               </div>
             </div>
+            <div className="mt-3 pt-3 border-t border-border/60">
+              <CraExplainToggle
+                title={`${product.ref} · ${product.name}`}
+                kind="cra-product"
+                context={{ ref: product.ref, name: product.name, classification: cls(product), classification_status: clsStatus(product), pathway: product.classification?.pathway?.pathway, risk: cls(product) === "Critical" ? "High" : cls(product) === "Class II" ? "Medium" : "Low" }}
+              />
+            </div>
           </div>
         ))}
       </div>
@@ -635,6 +645,7 @@ function RegulatoryLedger({ data, isAdmin }) {
             <button onClick={generate} disabled={!productRef || busy} data-testid="cra-verify-generate" className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">
               {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Generate verification link
             </button>
+            <button onClick={async () => { if (!productRef) return; try { const { data: r } = await api.post(`/cra/products/${productRef}/verification-link/revoke`); toast.success(`Revoked ${r.revoked} link(s).`); setLink(null); } catch (e) { toast.error(e.response?.data?.detail || "Could not revoke links."); } }} disabled={!productRef} data-testid="cra-verify-revoke" className="inline-flex items-center justify-center gap-1.5 px-4 py-2.5 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50"><Trash2 className="w-3.5 h-3.5" /> Revoke links</button>
           </div>
           {link && (
             <div className="mt-3 rounded-lg border border-low/25 bg-low/5 p-3" data-testid="cra-verify-link">
@@ -740,6 +751,13 @@ function SBOMDashboard({ data, reload }) {
         {result ? (
           <div>
             <div className="grid grid-cols-2 gap-3"><Metric label="SBOM Reference" value={result.ref} icon={FileJson} /><Metric label="Components" value={result.component_count} icon={Boxes} tone="low" /></div>
+            <div className="mt-4">
+              <CraExplain
+                title={`SBOM · ${result.ref}`}
+                kind="cra-sbom"
+                context={{ ref: result.ref, product_ref: productRef, format, component_count: result.component_count, risk: result.component_count > 0 ? "Low" : "Medium" }}
+              />
+            </div>
             <pre className="mt-4 rounded-lg bg-background/70 border border-border p-4 overflow-auto max-h-[450px] text-[10px]">{JSON.stringify(result.document, null, 2)}</pre>
           </div>
         ) : <div className="text-sm text-muted-foreground">Generate an SBOM to preview the machine-readable artifact.</div>}
@@ -815,6 +833,13 @@ function VulnerabilityDashboard({ data, reload }) {
                     ))}
                   </div>
                 </div>
+                <div className="mt-3 pt-3 border-t border-border/60">
+                  <CraExplainToggle
+                    title={`${item.ref} · ${item.title}`}
+                    kind="cra-vulnerability"
+                    context={{ ref: item.ref, product: item.product_name, cve: item.cve, severity: item.severity, actively_exploited: item.actively_exploited, severe_incident: item.severe_incident, next_stage: next ? next.stage : null, hours_remaining: next ? next.hours_remaining : null, overdue: next ? next.overdue : false, risk: next && next.overdue ? "High" : item.severity }}
+                  />
+                </div>
               </div>
             );
           })}
@@ -872,6 +897,13 @@ function ConformityDashboard({ data, reload, isAdmin }) {
             <div key={item.ref} className="rounded-lg border border-border p-3">
               <div className="flex justify-between gap-3"><div><div className="font-mono text-[10px] text-ai">{item.ref}</div><div className="font-head font-bold text-sm mt-1">{item.product_name}</div></div><Badge tone={item.decision === "Conforming" ? "low" : item.decision === "Nonconforming" ? "crit" : "med"}>{item.status}</Badge></div>
               <div className="text-xs text-muted-foreground mt-2">{item.provider_name} · {item.module}</div>
+              <div className="mt-2 pt-2 border-t border-border/60">
+                <CraExplainToggle
+                  title={`${item.ref} · ${item.product_name}`}
+                  kind="cra-conformity-assessment"
+                  context={{ ref: item.ref, product: item.product_name, provider: item.provider_name, module: item.module, status: item.status, decision: item.decision, risk: item.decision === "Nonconforming" ? "High" : item.decision === "Conforming" ? "Low" : "Medium" }}
+                />
+              </div>
             </div>
           ))}
         </div>
@@ -905,6 +937,13 @@ function DeclarationDashboard({ data, reload, isAdmin }) {
               {result.blockers.map((item) => <div key={item} className="rounded-lg border border-crit/20 bg-crit/5 p-3 text-sm">{item}</div>)}
               {result.warnings.map((item) => <div key={item} className="rounded-lg border border-high/20 bg-high/5 p-3 text-sm">{item}</div>)}
               {!result.blockers.length && <div className="rounded-lg border border-low/20 bg-low/5 p-3 text-sm">All current Obserra market-readiness gates are satisfied.</div>}
+            </div>
+            <div className="mt-4">
+              <CraExplain
+                title={`Market readiness · ${result.product_name || selected}`}
+                kind="cra-ce-readiness"
+                context={{ product_ref: selected, ce_status: result.ce_status, ready: result.ready, blockers: result.blockers, warnings: result.warnings, risk: result.ready ? "Low" : (result.blockers && result.blockers.length ? "High" : "Medium") }}
+              />
             </div>
           </>
         ) : <div className="text-sm text-muted-foreground">Select a product and run the market readiness evaluation.</div>}
@@ -942,7 +981,7 @@ function relTime(iso) {
 
 const DRILL_TONE = { Conforming: "low", Partial: "high", Nonconforming: "crit", "Not Applicable": "primary", "Not Assessed": "primary" };
 
-function ControlDashboard({ data, isAdmin }) {
+function ControlDashboard({ data, isAdmin, reload }) {
   const controls = data.controls?.controls || [];
   const o = data.controls?.overall || {};
   const pct = o.percentage || 0;
@@ -950,6 +989,14 @@ function ControlDashboard({ data, isAdmin }) {
   const [briefBusy, setBriefBusy] = useState(false);
   const [scoreLink, setScoreLink] = useState(null);
   const [scoreBusy, setScoreBusy] = useState(false);
+  const [form, setForm] = useState({ owner: "", due_date: "", status: "Open", note: "" });
+  const [savingAssign, setSavingAssign] = useState(false);
+  useEffect(() => {
+    if (drill) {
+      const a = drill.assignment || {};
+      setForm({ owner: a.owner || "", due_date: (a.due_date || "").slice(0, 10), status: a.status || "Open", note: a.note || "" });
+    }
+  }, [drill]);
   const chips = [
     ["Implemented", o.implemented || 0, "text-low"],
     ["Partial", o.partial || 0, "text-high"],
@@ -978,6 +1025,20 @@ function ControlDashboard({ data, isAdmin }) {
     } catch (e) { toast.error(e.response?.data?.detail || "Could not create scorecard link."); }
     finally { setScoreBusy(false); }
   };
+  const revokeScorecards = async () => {
+    try { const { data: r } = await api.post("/cra/scorecard-link/revoke"); toast.success(`Revoked ${r.revoked} scorecard link(s).`); setScoreLink(null); }
+    catch (e) { toast.error(e.response?.data?.detail || "Could not revoke links."); }
+  };
+  const saveAssignment = async () => {
+    setSavingAssign(true);
+    try {
+      await api.put(`/cra/controls/${drill.requirement_id}/assignment`, form);
+      toast.success("Control ownership saved.");
+      setDrill(null);
+      if (reload) await reload();
+    } catch (e) { toast.error(e.response?.data?.detail || "Could not save ownership."); }
+    finally { setSavingAssign(false); }
+  };
   return (
     <div className="space-y-5" data-testid="cra-controls">
       <Panel
@@ -987,6 +1048,7 @@ function ControlDashboard({ data, isAdmin }) {
           <div className="flex flex-wrap gap-2">
             <button onClick={downloadBrief} disabled={briefBusy} data-testid="cra-download-brief" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold disabled:opacity-50">{briefBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />} This week's brief</button>
             {isAdmin && <button onClick={genScorecard} disabled={scoreBusy} data-testid="cra-scorecard-generate" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold disabled:opacity-50">{scoreBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Link2 className="w-3.5 h-3.5" />} Share scorecard</button>}
+            {isAdmin && <button onClick={revokeScorecards} data-testid="cra-scorecard-revoke" className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md border border-border bg-secondary/40 text-xs font-head font-bold"><Trash2 className="w-3.5 h-3.5" /> Revoke links</button>}
           </div>
         }
       >
@@ -1018,7 +1080,7 @@ function ControlDashboard({ data, isAdmin }) {
         </div>
       </Panel>
 
-      <Panel title="Controls & requirements" subtitle="Click any control to see exactly which products conform, are partial or are non-conforming.">
+      <Panel title="Controls & requirements" subtitle="Click any control to see which products conform and to assign an owner and due date to close the gap.">
         <div className="overflow-x-auto">
           <table className="w-full min-w-[900px] text-xs">
             <thead className="font-mono uppercase text-[9px] text-muted-foreground border-b border-border">
@@ -1037,6 +1099,7 @@ function ControlDashboard({ data, isAdmin }) {
                     <div className="font-mono text-[10px] text-ai">{c.requirement_id}</div>
                     <div className="font-head font-bold mt-0.5">{c.title}</div>
                     <div className="text-[10px] text-muted-foreground mt-0.5">{c.domain} · {c.conforming}/{c.assessed || 0} conforming{c.nonconforming ? ` · ${c.nonconforming} non-conforming` : ""}</div>
+                    {c.assignment?.owner && <div className="text-[10px] text-primary mt-0.5">Owner: {c.assignment.owner} · {c.assignment.status}{c.assignment.due_date ? ` · due ${String(c.assignment.due_date).slice(0, 10)}` : ""}</div>}
                   </td>
                   <td className="py-3 pr-3 max-w-[200px] text-muted-foreground">{(c.legal_refs || []).join(", ")}</td>
                   <td className="py-3 pr-3">
@@ -1067,7 +1130,13 @@ function ControlDashboard({ data, isAdmin }) {
             <DialogTitle className="font-head font-black">{drill?.title}</DialogTitle>
             <DialogDescription>{drill?.requirement_id} · {drill?.domain} · {(drill?.legal_refs || []).join(", ")}</DialogDescription>
           </DialogHeader>
-          <div className="space-y-2 max-h-[55vh] overflow-y-auto">
+          <div className="flex gap-3 flex-wrap text-[10px] font-mono mb-1" data-testid="cra-drill-counts">
+            <span className="text-low">{drill?.conforming || 0} Conforming</span>
+            <span className="text-high">{drill?.partial || 0} Partial</span>
+            <span className="text-crit">{drill?.nonconforming || 0} Non-conforming</span>
+            <span className="text-muted-foreground">{drill?.not_assessed || 0} Not assessed</span>
+          </div>
+          <div className="space-y-2 max-h-[38vh] overflow-y-auto">
             {(drill?.product_status || []).length ? drill.product_status.map((p) => (
               <div key={p.ref} className="flex items-center justify-between gap-3 rounded-lg border border-border bg-secondary/20 px-3 py-2">
                 <div><div className="font-mono text-[10px] text-ai">{p.ref}</div><div className="text-sm font-head font-bold">{p.name}</div></div>
@@ -1075,8 +1144,87 @@ function ControlDashboard({ data, isAdmin }) {
               </div>
             )) : <div className="text-sm text-muted-foreground">No assessed products for this control yet.</div>}
           </div>
+          <div className="border-t border-border pt-3 mt-1 space-y-2">
+            <div className="text-[10px] font-mono uppercase text-muted-foreground">Gap ownership</div>
+            <div className="grid sm:grid-cols-2 gap-2">
+              <input value={form.owner} onChange={(e) => setForm({ ...form, owner: e.target.value })} placeholder="Owner (name or email)" data-testid="cra-assign-owner" className="bg-secondary/60 rounded-md px-3 py-2 text-sm" />
+              <input type="date" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })} data-testid="cra-assign-due" className="bg-secondary/60 rounded-md px-3 py-2 text-sm" />
+              <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} data-testid="cra-assign-status" className="bg-secondary/60 rounded-md px-3 py-2 text-sm">
+                <option>Open</option><option>In Progress</option><option>Closed</option>
+              </select>
+              <input value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} placeholder="Note (optional)" data-testid="cra-assign-note" className="bg-secondary/60 rounded-md px-3 py-2 text-sm" />
+            </div>
+            <button onClick={saveAssignment} disabled={savingAssign} data-testid="cra-assign-save" className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-xs font-head font-bold inline-flex items-center gap-2 disabled:opacity-50">{savingAssign && <Loader2 className="w-3.5 h-3.5 animate-spin" />} Save ownership</button>
+          </div>
+          {drill && (
+            <div className="border-t border-border pt-3 mt-1">
+              <CraExplain
+                title={`${drill.requirement_id} · ${drill.title}`}
+                kind="cra-control"
+                context={{ requirement_id: drill.requirement_id, domain: drill.domain, legal_refs: drill.legal_refs, status: drill.status, risk: drill.risk, compliance_rate: drill.compliance_rate, conforming: drill.conforming, partial: drill.partial, nonconforming: drill.nonconforming, not_assessed: drill.not_assessed, assessed: drill.assessed }}
+              />
+            </div>
+          )}
         </DialogContent>
       </Dialog>
+    </div>
+  );
+}
+
+const CSF_COLORS = { GV: "text-primary", ID: "text-ai", PR: "text-low", DE: "text-high", RS: "text-crit", RC: "text-primary" };
+
+function NistDashboard({ data }) {
+  const nist = data.nist || { overall: {}, functions: [] };
+  const o = nist.overall || {};
+  return (
+    <div className="space-y-5" data-testid="cra-nist">
+      <Panel title="NIST Alignment" subtitle={`EU CRA controls mapped to ${o.framework || "NIST CSF 2.0 · SP 800-218 (SSDF)"}. Synced live with the Control Dashboard.`}>
+        <div className="mb-4 flex items-center gap-4">
+          <div>
+            <div className="text-[10px] font-mono uppercase text-muted-foreground">Overall NIST alignment</div>
+            <div className="font-head font-black text-4xl mt-1" data-testid="cra-nist-overall">{o.alignment_percentage || 0}%</div>
+          </div>
+          <div className="text-[10px] text-muted-foreground">{o.functions_aligned || 0}/{o.functions_total || 6} CSF functions fully aligned</div>
+        </div>
+        <div className="grid grid-cols-2 lg:grid-cols-6 gap-3">
+          {(nist.functions || []).map((f) => (
+            <div key={f.code} className="rounded-xl border border-border bg-secondary/20 p-4" data-testid={`cra-nist-fn-${f.code}`}>
+              <div className={`text-[10px] font-mono uppercase ${CSF_COLORS[f.code] || "text-primary"}`}>{f.code} · {f.name}</div>
+              <div className="font-head font-black text-2xl mt-1">{f.compliance_rate === null || f.compliance_rate === undefined ? "—" : `${f.compliance_rate}%`}</div>
+              <div className="mt-2 h-1.5 rounded-full bg-secondary overflow-hidden"><div className={`h-full ${(f.compliance_rate || 0) >= 100 ? "bg-low" : (f.compliance_rate || 0) >= 50 ? "bg-high" : "bg-crit"}`} style={{ width: `${f.compliance_rate || 0}%` }} /></div>
+              <div className="text-[10px] text-muted-foreground mt-2">{f.mapped} controls</div>
+              <div className="mt-1"><Badge tone={RISK_TONE[f.risk] || "primary"}>{f.risk}</Badge></div>
+            </div>
+          ))}
+        </div>
+      </Panel>
+      {(nist.functions || []).map((f) => (
+        <Panel key={f.code} title={`${f.code} — ${f.name}`} subtitle={`${(f.categories || []).join(", ") || "—"} · ${f.implemented} implemented · ${f.partial} partial · ${f.gaps} gaps · ${f.not_started} not started`}>
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[720px] text-xs">
+              <thead className="font-mono uppercase text-[9px] text-muted-foreground border-b border-border"><tr><th className="text-left py-2">Control</th><th className="text-left py-2">CSF categories</th><th className="text-left py-2">SSDF</th><th className="text-left py-2">Compliance</th><th className="text-left py-2">Status</th></tr></thead>
+              <tbody>
+                {f.controls.map((c) => (
+                  <tr key={c.requirement_id} className="border-b border-border/60">
+                    <td className="py-2 pr-3"><span className="font-mono text-ai">{c.requirement_id}</span> {c.title}</td>
+                    <td className="py-2 pr-3 text-muted-foreground">{(c.categories || []).join(", ")}</td>
+                    <td className="py-2 pr-3 text-muted-foreground">{(c.ssdf || []).join(", ")}</td>
+                    <td className="py-2 pr-3">{c.compliance_rate === null || c.compliance_rate === undefined ? "—" : `${c.compliance_rate}%`}</td>
+                    <td className="py-2"><Badge tone={STATUS_TONE[c.status] || "primary"}>{c.status}</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-3 pt-3 border-t border-border/60">
+            <CraExplainToggle
+              title={`NIST ${f.code} — ${f.name}`}
+              kind="cra-nist-function"
+              context={{ function: f.code, name: f.name, compliance_rate: f.compliance_rate, risk: f.risk, mapped: f.mapped, implemented: f.implemented, partial: f.partial, gaps: f.gaps, not_started: f.not_started, categories: f.categories }}
+            />
+          </div>
+        </Panel>
+      ))}
     </div>
   );
 }
@@ -1164,13 +1312,17 @@ export default function CRAGovernance() {
 
       {error && <div className="rounded-xl border border-crit/25 bg-crit/5 p-4 text-sm">{error}</div>}
 
-      <div className="overflow-x-auto">
-        <div className="inline-flex min-w-max rounded-xl border border-border bg-card p-1">
+      <div>
+        <div className="flex flex-wrap gap-1 rounded-xl border border-border bg-card p-1">
           {TABS.map(([id, label, Icon]) => (
             <button key={id} data-testid={`cra-tab-${id}`} onClick={() => openTab(id)} className={`inline-flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-head font-bold ${active === id ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-secondary/50 hover:text-foreground"}`}><Icon className="w-3.5 h-3.5" /> {label}</button>
           ))}
         </div>
       </div>
+
+      {active !== "mission" && active !== "assurance" && <CraTabAnalyst tab={active} />}
+
+      {active === "assurance" && <AiAssurance />}
 
       {active === "mission" && <MissionControl data={data} openTab={openTab} />}
       {active === "products" && <ProductClassification data={data} reload={reload} isAdmin={isAdmin} />}
@@ -1181,7 +1333,8 @@ export default function CRAGovernance() {
       {active === "conformity" && <ConformityDashboard data={data} reload={reload} isAdmin={isAdmin} />}
       {active === "declaration" && <DeclarationDashboard data={data} reload={reload} isAdmin={isAdmin} />}
       {active === "regulation" && <RegulationMap data={data} />}
-      {active === "controls" && <ControlDashboard data={data} isAdmin={isAdmin} />}
+      {active === "controls" && <ControlDashboard data={data} isAdmin={isAdmin} reload={reload} />}
+      {active === "nist" && <NistDashboard data={data} />}
 
       <Panel title="Defensibility and legal boundary" subtitle="Operational safeguards for a regulation-driven platform">
         <div className="grid md:grid-cols-2 xl:grid-cols-4 gap-3 text-xs">

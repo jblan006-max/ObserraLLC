@@ -10,6 +10,7 @@ const SOURCES = [
   ["vulnerabilities", "/cra/vulnerabilities", []],
   ["regulation", "/cra/regulation", { requirements: [], categories: {} }],
   ["controls", "/cra/controls", { overall: {}, controls: [] }],
+  ["nist", "/cra/nist", { overall: {}, functions: [] }],
   ["ledger", "/cra/ledger?limit=300", []],
 ];
 

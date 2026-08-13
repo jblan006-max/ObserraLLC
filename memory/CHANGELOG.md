@@ -1,5 +1,13 @@
 # Obserra EIOS — CHANGELOG
 
+## 2026-06 — Obserrian CRA AI everywhere + connectors + versioning/hallucination monitor + Executive Overview (iterations 153–154)
+- **CRA AI analyst on every tab** (`POST /api/cra/dashboard-insight`) + **per-item AI cards** (`POST /api/cra/explain`) — summary · risk · risk-detail · fix. Components in `components/cra/CraAI.jsx`; wired across all CRA drill-downs.
+- **New connectors** in `connectors_catalog.py` (58 total): Universal API (REST/API-Key/Webhook, live probes), Quality Management (QMS) — Greenlight Guru, MasterControl, Qualio, ETQ, Veeva Vault QMS, Sparta TrackWise; Labs & Testing (LIMS) — LabWare, LabVantage, STARLIMS, Benchling, Thermo SampleManager, UL, Intertek, TUV SUD, Eurofins. Honest states only.
+- **Versioning**: `GET /api/version` → 1.0.0; `Obserra CRA v1.0.0` stamped on all CRA AI output.
+- **Hallucination monitor**: `POST /api/cra/ground` (reuses `hallucination.ground_answer`, non-blocking) + `GET /api/cra/ai-monitor`; grounding badge on analyst/explain + new **AI Assurance** tab (`AiAssurance`). `_cra_tab_context.derived_metrics` keeps grounding fair on derived %.
+- **EU CRA Executive Overview** (`pages/CRAExecutiveOverview.jsx`): `/app` index now a board rollup (8 KPIs, deadline banner, grounded mission analyst, classification/NIST/control posture, AI-assurance, Executive Brief PDF). Fixed nav previously pointing at the Cyber Crisis Commander overview. CRA tab bar wraps (12 tabs visible).
+- **Testing**: iteration_153 (backend 16/16, frontend 100% — analyst on all tabs, per-item cards, 3 connector categories) + iteration_154 (backend 4/4, frontend 100% — version stamp, grounding badge 92%, AI Assurance tab, tab-wrap). Executive Overview self-verified (screenshot + `/cra/digest/brief.pdf` 200 application/pdf).
+
 ## 2026-08-12 — 4 more Crisis extensions: Connector Test Ping + SITREP Preview + Weekly Director Digest + Connector-Quiet alert (iteration 145)
 - **Connector Test Ping:** `POST /api/crisis/connectors/{vendor}/test` sends a synthetic event through the vendor mapping to confirm wiring in one click — updates connector health (green pulse + "last received") WITHOUT creating a case/timeline event. UI: a "Test" button on every connector card.
 - **SITREP Preview & tweak:** new "Auto-SITREP Console" in the War Room — live preview of the composed SITREP + an editable custom note (`sitrep_note`, saved via PATCH, folded into scheduled + manual posts) + "Send test SITREP now" (`POST /cases/{ref}/sitrep/send-now`, honest posted/attempted timeline title). `GET /cases/{ref}/sitrep/preview` returns the composed text.

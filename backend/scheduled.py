@@ -468,6 +468,8 @@ async def hourly_overdue_digest(request: Request, background_tasks: BackgroundTa
     background_tasks.add_task(run_weekly_director_digest)
     from cra_governance import _run_cra_analyst_digest_tick
     background_tasks.add_task(_run_cra_analyst_digest_tick)
+    from cra_governance import _run_cra_reassess_reminder_tick
+    background_tasks.add_task(_run_cra_reassess_reminder_tick)
     return {"status": "accepted"}
 
 

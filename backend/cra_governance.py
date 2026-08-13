@@ -339,6 +339,7 @@ async def ensure_cra_indexes() -> None:
     await db.cra_regulatory_ledger.create_index([("org_id",1),("sequence",1)],unique=True)
     await db.cra_portal_tokens.create_index("expires_at",expireAfterSeconds=0)
     await db.cra_portal_tokens.create_index("token_hash",unique=True)
+    await db.cra_control_owners.create_index([("org_id",1),("requirement_id",1)],unique=True)
 
 class ProductCreate(BaseModel):
     name: str = Field(min_length=2,max_length=180)
@@ -483,10 +484,39 @@ async def dashboard(user: dict = Depends(get_current_user)):
         "next_deadline":_cra_next_deadline(),
     }
 
+NIST_CSF_FUNCTIONS = [("GV", "Govern"), ("ID", "Identify"), ("PR", "Protect"), ("DE", "Detect"), ("RS", "Respond"), ("RC", "Recover")]
+
+# Maps each EU CRA requirement to NIST CSF 2.0 functions/categories and NIST SP 800-218 (SSDF) practices.
+NIST_ALIGNMENT = {
+    "CRA-SCOPE-01":    {"csf": ["GV"], "categories": ["GV.OC", "GV.SC"], "ssdf": ["PO.1"]},
+    "CRA-RISK-01":     {"csf": ["ID", "GV"], "categories": ["ID.RA", "GV.RM"], "ssdf": ["PO.1", "PW.1"]},
+    "CRA-ANNEX-I-1":   {"csf": ["PR"], "categories": ["PR.PS", "PR.AA"], "ssdf": ["PW.4", "PW.5"]},
+    "CRA-ANNEX-I-2":   {"csf": ["PR"], "categories": ["PR.PS", "PR.DS"], "ssdf": ["PW.4", "PW.9"]},
+    "CRA-COMP-01":     {"csf": ["GV", "ID"], "categories": ["GV.SC", "ID.RA"], "ssdf": ["PW.4", "PO.3"]},
+    "CRA-SUPPORT-01":  {"csf": ["GV"], "categories": ["GV.RM", "GV.OC"], "ssdf": ["RV.3"]},
+    "CRA-SBOM-01":     {"csf": ["ID"], "categories": ["ID.AM"], "ssdf": ["PS.3", "PW.4"]},
+    "CRA-VULN-01":     {"csf": ["ID", "PR"], "categories": ["ID.RA", "PR.PS"], "ssdf": ["RV.1", "PW.7"]},
+    "CRA-VULN-02":     {"csf": ["DE"], "categories": ["DE.CM", "DE.AE"], "ssdf": ["RV.1", "RV.2"]},
+    "CRA-VDP-01":      {"csf": ["RS"], "categories": ["RS.CO"], "ssdf": ["RV.1"]},
+    "CRA-REPORT-01":   {"csf": ["RS"], "categories": ["RS.CO", "RS.MA"], "ssdf": ["RV.2"]},
+    "CRA-TECHDOC-01":  {"csf": ["GV"], "categories": ["GV.OC", "GV.PO"], "ssdf": ["PS.3", "PO.2"]},
+    "CRA-CLASS-01":    {"csf": ["ID"], "categories": ["ID.AM", "ID.RA"], "ssdf": ["PO.1"]},
+    "CRA-CONFORM-01":  {"csf": ["GV"], "categories": ["GV.OV"], "ssdf": ["PS.1"]},
+    "CRA-NB-01":       {"csf": ["GV"], "categories": ["GV.OV", "GV.SC"], "ssdf": ["PS.1"]},
+    "CRA-DOC-01":      {"csf": ["GV"], "categories": ["GV.OC"], "ssdf": ["PO.2"]},
+    "CRA-CE-01":       {"csf": ["GV"], "categories": ["GV.OC", "GV.OV"], "ssdf": ["PO.2"]},
+    "CRA-USERINFO-01": {"csf": ["PR", "GV"], "categories": ["PR.AT", "GV.OC"], "ssdf": ["PW.9", "RV.3"]},
+}
+_RISK_ORDER = {"Unknown": 0, "Low": 1, "Medium": 2, "High": 3}
+
+
 async def _compute_controls(org_id: str) -> dict:
     products = await db.cra_products.find({"org_id":org_id},{"_id":0,"ref":1,"name":1}).to_list(1000)
     name_by_ref = {p["ref"]: p.get("name", p["ref"]) for p in products}
     assessments = await db.cra_assessments.find({"org_id":org_id},{"_id":0}).to_list(1000)
+    owners = {o["requirement_id"]: {"owner":o.get("owner",""),"due_date":o.get("due_date"),"status":o.get("status","Open"),
+                                    "note":o.get("note",""),"updated_at":o.get("updated_at"),"updated_by":o.get("updated_by")}
+              for o in await db.cra_control_owners.find({"org_id":org_id},{"_id":0}).to_list(1000)}
     latest = {}
     for a in sorted(assessments, key=lambda x: x.get("updated_at",""), reverse=True):
         latest.setdefault(a.get("product_ref"), a)
@@ -525,7 +555,8 @@ async def _compute_controls(org_id: str) -> dict:
                          "legal_refs":req["legal_refs"],"assessed":assessed,"products_total":len(products),
                          "conforming":c["Conforming"],"partial":c["Partial"],"nonconforming":c["Nonconforming"],
                          "not_applicable":c["Not Applicable"],"not_assessed":c["Not Assessed"],
-                         "compliance_rate":rate,"status":status,"risk":risk,"product_status":product_status})
+                         "compliance_rate":rate,"status":status,"risk":risk,"product_status":product_status,
+                         "assignment":owners.get(rid),"nist":NIST_ALIGNMENT.get(rid, {"csf":[],"categories":[],"ssdf":[]})})
     overall = round(total_points/total_cells*100) if total_cells else 0
     return {"overall":{"percentage":overall,"requirements_total":len(REGULATORY_REQUIREMENTS),
                        "implemented":implemented,"partial":partial_ct,"gaps":gaps,"not_started":not_started,
@@ -536,6 +567,41 @@ async def _compute_controls(org_id: str) -> dict:
 @cra_router.get("/controls")
 async def controls_dashboard(user: dict = Depends(get_current_user)):
     return await _compute_controls(user["org_id"])
+
+
+async def _compute_nist(org_id: str) -> dict:
+    computed = await _compute_controls(org_id)
+    functions = []
+    for code, name in NIST_CSF_FUNCTIONS:
+        mapped = [c for c in computed["controls"] if code in (c.get("nist") or {}).get("csf", [])]
+        cats = sorted({cat for c in mapped for cat in (c.get("nist") or {}).get("categories", []) if cat.startswith(code)})
+        sconf = sum(c["conforming"] for c in mapped)
+        spart = sum(c["partial"] for c in mapped)
+        sass = sum(c["assessed"] for c in mapped)
+        comp = round((sconf + 0.5 * spart) / sass * 100) if sass else None
+        risk = "Unknown"
+        for c in mapped:
+            if _RISK_ORDER.get(c["risk"], 0) > _RISK_ORDER.get(risk, 0):
+                risk = c["risk"]
+        functions.append({"code": code, "name": name, "categories": cats, "mapped": len(mapped),
+                          "compliance_rate": comp, "risk": risk,
+                          "implemented": sum(1 for c in mapped if c["status"] == "Implemented"),
+                          "partial": sum(1 for c in mapped if c["status"] == "Partial"),
+                          "gaps": sum(1 for c in mapped if c["status"] == "Gap"),
+                          "not_started": sum(1 for c in mapped if c["status"] == "Not Started"),
+                          "controls": [{"requirement_id": c["requirement_id"], "title": c["title"],
+                                        "compliance_rate": c["compliance_rate"], "status": c["status"], "risk": c["risk"],
+                                        "categories": (c.get("nist") or {}).get("categories", []),
+                                        "ssdf": (c.get("nist") or {}).get("ssdf", [])} for c in mapped]})
+    aligned = sum(1 for f in functions if f["compliance_rate"] == 100)
+    return {"overall": {"alignment_percentage": computed["overall"]["percentage"], "functions_total": len(functions),
+                        "functions_aligned": aligned, "framework": "NIST CSF 2.0 · SP 800-218 (SSDF)"},
+            "functions": functions}
+
+
+@cra_router.get("/nist")
+async def nist_dashboard(user: dict = Depends(get_current_user)):
+    return await _compute_nist(user["org_id"])
 
 @cra_router.get("/products")
 async def list_products(user: dict = Depends(get_current_user)):
@@ -1393,10 +1459,456 @@ async def public_scorecard(raw_token: str):
     computed = await _compute_controls(org_id)
     org = await db.organizations.find_one({"_id": ObjectId(org_id)}, {"_id": 0, "name": 1})
     gaps = [{"requirement_id": c["requirement_id"], "domain": c["domain"], "title": c["title"],
-             "compliance_rate": c["compliance_rate"], "status": c["status"], "risk": c["risk"]}
+             "compliance_rate": c["compliance_rate"], "status": c["status"], "risk": c["risk"],
+             "conforming": c["conforming"], "partial": c["partial"], "nonconforming": c["nonconforming"], "assessed": c["assessed"]}
             for c in computed["controls"] if c["status"] in ("Gap", "Partial", "Not Started") or c["risk"] == "High"]
     gaps.sort(key=lambda c: (c["compliance_rate"] if c["compliance_rate"] is not None else -1))
     return {"role": "scorecard", "organization": (org or {}).get("name", "Organization"),
             "regulation": CRA_VERSION, "generated_at": iso(), "expires_at": token["expires_at"].isoformat(),
             "overall": computed["overall"], "top_gaps": gaps[:8], "next_deadline": _cra_next_deadline(),
             "note": "Read-only compliance scorecard. Product names and internal records are not exposed."}
+
+
+class CRAControlAssignment(BaseModel):
+    owner: str = Field(default="", max_length=180)
+    due_date: str = Field(default="", max_length=40)
+    status: str = Field(default="Open", max_length=20)
+    note: str = Field(default="", max_length=1000)
+
+
+@cra_router.put("/controls/{requirement_id}/assignment")
+async def set_control_assignment(requirement_id: str, body: CRAControlAssignment, user: dict = Depends(get_current_user)):
+    if requirement_id not in {r["requirement_id"] for r in REGULATORY_REQUIREMENTS}:
+        raise HTTPException(404, "Unknown control requirement")
+    status = body.status if body.status in ("Open", "In Progress", "Closed") else "Open"
+    org_id = user["org_id"]
+    doc = {"org_id": org_id, "requirement_id": requirement_id, "owner": body.owner.strip(),
+           "due_date": body.due_date.strip(), "status": status, "note": body.note.strip(),
+           "updated_at": iso(), "updated_by": user.get("email", "unknown")}
+    await db.cra_control_owners.update_one({"org_id": org_id, "requirement_id": requirement_id}, {"$set": doc}, upsert=True)
+    await ledger_append(org_id, user.get("email", "unknown"), "control.assignment", "control", requirement_id, [],
+                        {"owner": doc["owner"], "due_date": doc["due_date"], "status": doc["status"]})
+    return {"ok": True, "assignment": {k: doc[k] for k in ("owner", "due_date", "status", "note", "updated_at", "updated_by")}}
+
+
+@cra_router.post("/products/{ref}/verification-link/revoke")
+async def revoke_verification_links(ref: str, admin: dict = Depends(require_roles("admin"))):
+    org_id = admin["org_id"]
+    result = await db.cra_portal_tokens.update_many(
+        {"org_id": org_id, "product_ref": ref, "role": "auditor", "revoked_at": None},
+        {"$set": {"revoked_at": utcnow()}})
+    await ledger_append(org_id, admin.get("email", "unknown"), "verification_link.revoked", "product", ref, ["Article 28"], {"revoked": result.modified_count})
+    return {"ok": True, "revoked": result.modified_count}
+
+
+@cra_router.post("/scorecard-link/revoke")
+async def revoke_scorecard_links(admin: dict = Depends(require_roles("admin"))):
+    org_id = admin["org_id"]
+    result = await db.cra_portal_tokens.update_many(
+        {"org_id": org_id, "role": "scorecard", "revoked_at": None},
+        {"$set": {"revoked_at": utcnow()}})
+    return {"ok": True, "revoked": result.modified_count}
+
+
+def _cra_scorecard_pdf(org_name, payload):
+    from io import BytesIO
+    from reportlab.lib.pagesizes import LETTER
+    from reportlab.lib.units import inch
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+
+    def xx(s):
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    buf = BytesIO()
+    styles = getSampleStyleSheet()
+    navy = colors.HexColor("#0f1e3d"); ai = colors.HexColor("#12b4d6")
+    title = ParagraphStyle("t", parent=styles["Title"], fontSize=18, textColor=navy, spaceAfter=2)
+    sub = ParagraphStyle("s", parent=styles["Normal"], fontSize=9, textColor=colors.grey)
+    h = ParagraphStyle("h", parent=styles["Heading2"], fontSize=12, textColor=ai, spaceBefore=10, spaceAfter=4)
+    o = payload["overall"]; nd = payload.get("next_deadline")
+    doc = SimpleDocTemplate(buf, pagesize=LETTER, topMargin=0.7 * inch, bottomMargin=0.7 * inch, title="EU CRA Compliance Scorecard")
+    story = [Paragraph("EU CRA Compliance Scorecard", title),
+             Paragraph(f"{xx(org_name)} &#183; {payload['regulation']} &#183; {datetime.now().strftime('%d %B %Y')}", sub),
+             HRFlowable(width="100%", color=ai), Spacer(1, 10),
+             Paragraph(f"<b>Overall CRA compliance: {o['percentage']}%</b> &#183; {o['products_assessed']}/{o['products_total']} products assessed", styles["BodyText"])]
+    if nd:
+        story.append(Paragraph(f"Next statutory deadline: {xx(nd['label'])} on {nd['date']} ({nd['days_remaining']} days).", styles["BodyText"]))
+    story.append(Paragraph("Posture", h))
+    prow = [["Implemented", str(o["implemented"])], ["Partial", str(o["partial"])], ["Gaps", str(o["gaps"])],
+            ["Not started", str(o["not_started"])], ["High risk", str(o["high_risk"])], ["Requirements", str(o["requirements_total"])]]
+    pt = Table(prow, colWidths=[3.2 * inch, 3.0 * inch])
+    pt.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 10), ("TEXTCOLOR", (0, 0), (0, -1), navy), ("LINEBELOW", (0, 0), (-1, -1), 0.3, colors.HexColor("#e5e7eb")), ("BOTTOMPADDING", (0, 0), (-1, -1), 5), ("TOPPADDING", (0, 0), (-1, -1), 5)]))
+    story += [pt, Paragraph("Top gaps to close", h)]
+    rows = [["Control", "Compliance", "Status", "Risk"]]
+    for g in payload.get("top_gaps", []):
+        rows.append([f"{g['requirement_id']} — {g['title'][:52]}", ("—" if g["compliance_rate"] is None else f"{g['compliance_rate']}%"), g["status"], g["risk"]])
+    gt = Table(rows, colWidths=[3.9 * inch, 0.9 * inch, 0.9 * inch, 0.8 * inch])
+    gt.setStyle(TableStyle([("FONTSIZE", (0, 0), (-1, -1), 8), ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f1e3d")), ("TEXTCOLOR", (0, 0), (-1, 0), colors.white), ("LINEBELOW", (0, 0), (-1, -1), 0.25, colors.HexColor("#e5e7eb")), ("BOTTOMPADDING", (0, 0), (-1, -1), 4), ("TOPPADDING", (0, 0), (-1, -1), 4)]))
+    story += [gt, Spacer(1, 10), HRFlowable(width="100%", color=colors.HexColor("#e5e7eb")),
+              Paragraph("Read-only compliance snapshot. Product names and internal records are not exposed. Decision-support only — not legal advice or a guarantee of CRA conformity.", sub)]
+    doc.build(story)
+    return buf.getvalue()
+
+
+@cra_public_router.get("/scorecard/{raw_token}/pdf")
+async def public_scorecard_pdf(raw_token: str):
+    from fastapi.responses import Response
+    payload = await public_scorecard(raw_token)
+    pdf = _cra_scorecard_pdf(payload.get("organization", "Organization"), payload)
+    return Response(content=pdf, media_type="application/pdf",
+                    headers={"Content-Disposition": "attachment; filename=obserra-eu-cra-compliance-scorecard.pdf"})
+
+
+def _past_due(due_date: str, today) -> bool:
+    try:
+        return datetime.strptime(str(due_date)[:10], "%Y-%m-%d").date() < today
+    except Exception:
+        return False
+
+
+def _cra_reassess_html(org_name, stale, overdue):
+    def esc(s):
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    stale_rows = "".join(f'<tr><td style="padding:5px 0;font:400 13px Arial;color:#1f2937">{esc(n)} &#8212; {esc(reason)}</td></tr>' for n, reason in stale) or '<tr><td style="font:400 13px Arial;color:#6b7280">None</td></tr>'
+    gap_rows = "".join(f'<tr><td style="padding:5px 0;font:400 13px Arial;color:#1f2937">{esc(o["requirement_id"])} &#8212; owner {esc(o.get("owner") or "unassigned")} &#183; due {esc(o.get("due_date"))} &#183; {esc(o.get("status"))}</td></tr>' for o in overdue) or '<tr><td style="font:400 13px Arial;color:#6b7280">None</td></tr>'
+    return ('<table width="100%" cellpadding="0" cellspacing="0" style="max-width:620px;margin:auto;background:#fff"><tr><td style="padding:24px">'
+            '<div style="font:800 18px Arial;color:#0f1e3d">CRA Reassessment Reminder</div>'
+            f'<div style="font:400 12px Arial;color:#6b7280;margin-bottom:10px">{esc(org_name)} &#183; Obserra EU CRA Governance</div>'
+            '<div style="font:700 11px Arial;color:#6b7280;letter-spacing:.05em;margin-top:8px">STALE PRODUCT ASSESSMENTS (90+ days)</div>'
+            f'<table width="100%">{stale_rows}</table>'
+            '<div style="font:700 11px Arial;color:#6b7280;letter-spacing:.05em;margin-top:12px">OVERDUE CONTROL GAPS</div>'
+            f'<table width="100%">{gap_rows}</table>'
+            '<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:10px;font:400 10px Arial;color:#9ca3af">Sign in to Obserra EU CRA Governance to reassess. Decision-support only &#8212; not legal advice.</div>'
+            '</td></tr></table>')
+
+
+async def _run_cra_reassess_reminder_tick():
+    import logging
+    from kernel import notifications
+    logger = logging.getLogger("obserra.cra")
+    now = utcnow()
+    if now.hour != 9:
+        return
+    day_key = now.strftime("%Y-%m-%d")
+    today = now.date()
+    stale_days = 90
+    orgs = await db.organizations.find({}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        try:
+            cfg = org.get("cra_reassess") or {}
+            if cfg.get("last_sent_day") == day_key:
+                continue
+            products = await db.cra_products.find({"org_id": org_id}, {"_id": 0, "ref": 1, "name": 1}).to_list(1000)
+            if not products:
+                continue
+            assessments = await db.cra_assessments.find({"org_id": org_id}, {"_id": 0, "product_ref": 1, "updated_at": 1}).to_list(2000)
+            latest = {}
+            for a in sorted(assessments, key=lambda x: x.get("updated_at", ""), reverse=True):
+                latest.setdefault(a.get("product_ref"), a)
+            stale = []
+            for p in products:
+                a = latest.get(p["ref"])
+                if not a:
+                    stale.append((p.get("name", p["ref"]), "never assessed"))
+                    continue
+                try:
+                    upd = datetime.fromisoformat(str(a.get("updated_at")).replace("Z", "+00:00"))
+                    days = (now - upd).days
+                    if days >= stale_days:
+                        stale.append((p.get("name", p["ref"]), f"last assessed {days} days ago"))
+                except Exception:
+                    pass
+            owners = await db.cra_control_owners.find({"org_id": org_id}, {"_id": 0}).to_list(1000)
+            overdue = [o for o in owners if o.get("status") != "Closed" and o.get("due_date") and _past_due(o["due_date"], today)]
+            await db.organizations.update_one({"_id": org["_id"]}, {"$set": {"cra_reassess.last_sent_day": day_key}})
+            if not stale and not overdue:
+                continue
+            recipients = set(r["email"] for r in await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}}, {"_id": 0, "email": 1}).to_list(200))
+            recipients |= {o["owner"] for o in overdue if o.get("owner") and "@" in str(o.get("owner", ""))}
+            if not recipients:
+                continue
+            html = _cra_reassess_html(org.get("name", "Your organization"), stale, overdue)
+            for email in recipients:
+                await notifications.send_email(email, "CRA reassessment reminder — stale assessments & overdue gaps", html)
+            await notifications.create(org_id, "reminder", "CRA reassessment reminder sent",
+                                       f"{len(stale)} stale assessment(s), {len(overdue)} overdue control gap(s).", ref="cra-reassess")
+            logger.info(f"CRA reassess reminder sent for org {org_id}: {len(recipients)} recipient(s)")
+        except Exception as e:
+            logger.error(f"CRA reassess reminder failed for org {org_id}: {e}")
+
+
+
+# ===========================================================================
+# Obserrian CRA Advisor — per-dashboard AI analyst + per-item explain.
+# Both are strictly EU CRA (Regulation (EU) 2024/2847) grounded and reuse the
+# Emergent LLM key (openai gpt-5.4) with a deterministic fallback.
+# ===========================================================================
+_CRA_TAB_CACHE = {}
+_CRA_EXPLAIN_CACHE = {}
+
+_CRA_TAB_FOCUS = {
+    "mission": "the overall EU CRA product-compliance posture and nearest statutory deadline",
+    "products": "product registration, the classification split (Default/Class I/Class II/Critical), classification approvals and conformity pathways",
+    "certification": "readiness assessments, assessment scores and the secure certification-portal workflow for vendors and external assessors",
+    "ledger": "the hash-chained Internal Regulatory Ledger, event integrity and auditor verification links",
+    "sbom": "software bill of materials (CycloneDX/SPDX) coverage and component/vulnerability documentation under Annex I Part II(1)",
+    "vulnerability": "Article 14 reporting clocks (24h early warning, 72h notification, final report), actively-exploited vulnerabilities, severe incidents and overdue reporting stages",
+    "conformity": "testing labs, CRA notified bodies (NANDO), external conformity assessments and module selection (B+C, H)",
+    "declaration": "EU Declaration of Conformity approval, CE market-readiness gates and open blockers",
+    "regulation": "the authoritative CRA requirement map linking each obligation to Regulation (EU) 2024/2847 and Implementing Regulation (EU) 2025/2392",
+    "controls": "the CRA control dashboard — compliance rate per essential requirement, gaps, high-risk controls and gap ownership",
+    "nist": "the mapping of EU CRA controls onto the NIST CSF 2.0 functions (GV/ID/PR/DE/RS/RC) and SP 800-218 (SSDF) practices",
+}
+
+
+async def _cra_tab_context(org_id: str, tab: str) -> dict:
+    base = await _cra_insight_context(org_id)
+    t = base["totals"]
+    c = base["counts"]
+
+    def _pct(n, d):
+        if not d:
+            return "0%"
+        v = (n / d) * 100
+        return f"{v:.1f}%" if abs(v - round(v)) > 0.05 else f"{round(v)}%"
+
+    # Surface the derived ratios/percentages the analyst legitimately cites so the
+    # grounding verifier treats correct arithmetic as supported (not a hallucination).
+    base["derived_metrics"] = {
+        "products_total": t["products"],
+        "classification_approved": t["classification_approved"],
+        "classification_approved_pct": _pct(t["classification_approved"], t["products"]),
+        "classification_approved_ratio": f"{t['classification_approved']}/{t['products']}",
+        "products_unapproved": t["products"] - t["classification_approved"],
+        "ce_ready": t["ce_ready"],
+        "ce_ready_pct": _pct(t["ce_ready"], t["products"]),
+        "ce_ready_ratio": f"{t['ce_ready']}/{t['products']}",
+        "products_blocked": c["blocked"],
+        "products_blocked_pct": _pct(c["blocked"], t["products"]),
+        "products_blocked_ratio": f"{c['blocked']}/{t['products']}",
+        "average_readiness_pct": f"{t['average_readiness']}%",
+    }
+    if tab in ("controls", "nist"):
+        computed = await _compute_controls(org_id)
+        gaps = [c for c in computed["controls"] if c["status"] in ("Gap", "Partial", "Not Started") or c["risk"] == "High"]
+        gaps.sort(key=lambda c: (c["compliance_rate"] if c["compliance_rate"] is not None else -1))
+        base["control_overall"] = computed["overall"]
+        base["top_gaps"] = [{"requirement_id": c["requirement_id"], "title": c["title"], "status": c["status"],
+                             "risk": c["risk"], "compliance_rate": c["compliance_rate"]} for c in gaps[:8]]
+        if tab == "nist":
+            nist = await _compute_nist(org_id)
+            base["nist_overall"] = nist["overall"]
+            base["nist_functions"] = [{"code": f["code"], "name": f["name"], "compliance_rate": f["compliance_rate"],
+                                       "risk": f["risk"], "mapped": f["mapped"], "implemented": f["implemented"],
+                                       "gaps": f["gaps"]} for f in nist["functions"]]
+    base["focus_tab"] = tab
+    base["focus"] = _CRA_TAB_FOCUS.get(tab, "EU CRA product compliance")
+    return base
+
+
+class CRATabInsightReq(BaseModel):
+    tab: str = "mission"
+
+
+@cra_router.post("/dashboard-insight")
+async def cra_dashboard_insight(body: CRATabInsightReq, user: dict = Depends(get_current_user)):
+    import os
+    import asyncio
+    org_id = user["org_id"]
+    tab = body.tab or "mission"
+    ctx = await _cra_tab_context(org_id, tab)
+    focus = ctx["focus"]
+    ck = (org_id, tab, ctx["counts"]["products"], ctx["counts"]["blocked"], ctx["counts"]["overdue_clocks"],
+          ctx["totals"]["classification_approved"], ctx["totals"]["ce_ready"], ctx["totals"]["average_readiness"])
+    hit = _CRA_TAB_CACHE.get(ck)
+    if hit and (utcnow() - hit["ts"]).total_seconds() < 120:
+        return hit["data"]
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
+        system = (
+            "You are the Obserra EU CRA Governance AI Analyst producing a concise, grounded briefing for the "
+            f"'{tab}' dashboard, focused on {focus}. Read the LIVE EU Cyber Resilience Act posture JSON and return "
+            "STRICTLY JSON: {\"headline\": str, \"insights\": [{\"text\": str, \"kind\": \"fact\"|\"estimate\"|\"risk\"}], "
+            "\"actions\": [str]}. 3-4 insights, 2-3 actions. Ground EVERY statement in the data — cite counts, refs, "
+            "compliance rates, named blockers or overdue reporting stages relevant to THIS dashboard's focus. This is "
+            "EU CRA (Regulation (EU) 2024/2847) product compliance: NEVER mention SAP access, SoD conflicts, "
+            "cyber-crisis or any unrelated governance domain. Return ONLY the JSON object.")
+        chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"cra-tab-{org_id}-{tab}",
+                       system_message=system).with_model("openai", "gpt-5.4")
+        prompt = f"DASHBOARD: {tab} (focus: {focus})\nLIVE EU CRA POSTURE (JSON):\n{json.dumps(ctx, default=str)[:9000]}"
+        collected = []
+
+        async def _run():
+            async for ev in chat.stream_message(UserMessage(text=prompt)):
+                if isinstance(ev, TextDelta):
+                    collected.append(ev.content)
+                elif isinstance(ev, StreamDone):
+                    break
+        await asyncio.wait_for(_run(), timeout=16)
+        raw = "".join(collected).strip()
+        m = re.search(r"\{.*\}", raw, re.S)
+        parsed = json.loads(m.group(0)) if m else None
+        if not parsed or not parsed.get("insights"):
+            data = _cra_insight_fallback(ctx)
+        else:
+            parsed.setdefault("actions", [])
+            parsed["model"] = "openai/gpt-5.4"
+            parsed["generated_at"] = iso()
+            data = parsed
+    except Exception:
+        data = _cra_insight_fallback(ctx)
+    data["focus"] = focus
+    data["tab"] = tab
+    data.setdefault("model", "obserra/cra-grounded")
+    data.setdefault("generated_at", iso())
+    _CRA_TAB_CACHE[ck] = {"ts": utcnow(), "data": data}
+    return data
+
+
+class CRAExplainReq(BaseModel):
+    title: str = Field(default="", max_length=240)
+    kind: str = Field(default="item", max_length=60)
+    context: dict = {}
+
+
+def _cra_explain_fallback(body: "CRAExplainReq") -> dict:
+    ctx = body.context or {}
+    risk = ctx.get("risk") or ctx.get("risk_level") or ctx.get("classification") or "Medium"
+    sev = {"high": "risk", "critical": "risk", "medium": "watch", "low": "opportunity"}.get(str(risk).lower(), "info")
+    bits = ", ".join(f"{k}={v}" for k, v in list(ctx.items())[:4]) or "no additional context"
+    return {"summary": f"{body.title}: grounded from the live record ({bits}).",
+            "severity": sev, "risk": str(risk).title(),
+            "risk_detail": "Risk is derived from the current CRA compliance state recorded for this item.",
+            "recommendation": "Review the mapped CRA obligation and close any open gap to raise conformity.",
+            "steps": ["Open the item's readiness assessment and verify each mapped requirement.",
+                      "Assign an owner and due date to any gap on the Control Dashboard.",
+                      "Record supporting evidence so the change is written to the Regulatory Ledger."],
+            "model": "obserra/cra-grounded", "generated_at": iso()}
+
+
+@cra_router.post("/explain")
+async def cra_explain(body: CRAExplainReq, user: dict = Depends(get_current_user)):
+    import os
+    import asyncio
+    org_id = user["org_id"]
+    ckey = (org_id, body.kind, body.title, json.dumps(body.context, default=str, sort_keys=True)[:600])
+    hit = _CRA_EXPLAIN_CACHE.get(ckey)
+    if hit and (utcnow() - hit["ts"]).total_seconds() < 300:
+        return hit["data"]
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
+        system = (
+            "You are the Obserra EU CRA Governance AI Advisor. A user clicked a single item on an EU Cyber Resilience "
+            "Act dashboard. Using ONLY the supplied live context (never invent numbers, names or refs), return STRICT "
+            "JSON: {\"summary\": str (<=240 chars), \"severity\": \"risk\"|\"watch\"|\"opportunity\"|\"info\", "
+            "\"risk\": str (a risk level: Critical/High/Medium/Low), \"risk_detail\": str (<=240 chars, why it matters "
+            "under the CRA), \"recommendation\": str (one imperative action, <=200 chars), \"steps\": [str] (2-4 "
+            "concrete fix steps)}. This is EU CRA (Regulation (EU) 2024/2847) product compliance: NEVER mention SAP, "
+            "SoD, cyber-crisis or unrelated domains. Return ONLY the JSON object.")
+        chat = LlmChat(api_key=os.environ["EMERGENT_LLM_KEY"], session_id=f"cra-explain-{org_id}",
+                       system_message=system).with_model("openai", "gpt-5.4")
+        prompt = f"ITEM: {body.title}\nKIND: {body.kind}\nLIVE CONTEXT (JSON):\n{json.dumps(body.context, default=str)[:6000]}"
+        collected = []
+
+        async def _run():
+            async for ev in chat.stream_message(UserMessage(text=prompt)):
+                if isinstance(ev, TextDelta):
+                    collected.append(ev.content)
+                elif isinstance(ev, StreamDone):
+                    break
+        await asyncio.wait_for(_run(), timeout=16)
+        raw = "".join(collected).strip()
+        m = re.search(r"\{.*\}", raw, re.S)
+        parsed = json.loads(m.group(0)) if m else None
+        if not parsed or not parsed.get("summary"):
+            data = _cra_explain_fallback(body)
+        else:
+            parsed.setdefault("steps", [])
+            parsed.setdefault("severity", "info")
+            parsed.setdefault("risk", "Medium")
+            parsed["model"] = "openai/gpt-5.4"
+            parsed["generated_at"] = iso()
+            data = parsed
+    except Exception:
+        data = _cra_explain_fallback(body)
+    _CRA_EXPLAIN_CACHE[ckey] = {"ts": utcnow(), "data": data}
+    return data
+
+
+
+# ---------------------------------------------------------------------------
+# Hallucination monitor + versioning for the Obserrian CRA AI (grounding).
+# Reuses the platform grounding verifier (hallucination.ground_answer) so every
+# CRA AI answer is scored against the LIVE context that produced it. Grounding is
+# a separate, non-blocking call fired by the UI after the answer renders, so it
+# never adds latency to the primary AI response.
+# ---------------------------------------------------------------------------
+CRA_APP_VERSION = "1.0.0"
+
+
+class CRAGroundReq(BaseModel):
+    kind: str = Field(default="insight", max_length=40)   # 'insight' | 'explain'
+    tab: str = Field(default="", max_length=40)
+    title: str = Field(default="", max_length=240)
+    context: dict = {}
+    answer: str = Field(default="", max_length=8000)
+
+
+@cra_router.post("/ground")
+async def cra_ground(body: CRAGroundReq, user: dict = Depends(get_current_user)):
+    from hallucination import ground_answer, record_grounding
+    org_id = user["org_id"]
+    if body.kind == "insight" and body.tab:
+        ctx = await _cra_tab_context(org_id, body.tab)
+        context_str = json.dumps(ctx, default=str)[:12000]
+        surface = f"cra:insight:{body.tab}"
+        question = f"CRA {body.tab} dashboard analyst briefing"
+    else:
+        context_str = json.dumps(body.context, default=str)[:12000]
+        surface = f"cra:explain:{body.kind}"
+        question = body.title or "CRA item explanation"
+    result = await ground_answer(body.answer, context_str, use_llm=True)
+    await record_grounding(org_id, surface, question, body.answer, result,
+                           model="openai/gpt-5.4", user=user.get("email"))
+    return {"score": result["score"], "label": result["label"],
+            "flagged_count": result["flagged_count"], "flagged": result["flagged"][:6],
+            "claims": result["claims"][:12], "method": result["method"],
+            "version": CRA_APP_VERSION, "checked_at": iso()}
+
+
+@cra_router.get("/ai-monitor")
+async def cra_ai_monitor(days: int = 30, user: dict = Depends(get_current_user)):
+    from datetime import timedelta
+    org_id = user["org_id"]
+    days = max(1, min(180, int(days or 30)))
+    since = (utcnow() - timedelta(days=days)).isoformat()
+    rows = await db.ai_grounding_log.find(
+        {"org_id": org_id, "surface": {"$regex": "^cra:"}, "at": {"$gte": since}},
+        {"_id": 0}).sort("at", -1).to_list(2000)
+    scored = [r["score"] for r in rows if isinstance(r.get("score"), int)]
+    avg = round(sum(scored) / len(scored)) if scored else None
+    flagged_total = sum(1 for r in rows if (r.get("flagged_count") or 0) > 0)
+    by_surface = {}
+    for r in rows:
+        s = r.get("surface") or "cra:other"
+        b = by_surface.setdefault(s, {"surface": s, "count": 0, "flagged": 0, "_ss": 0, "_sc": 0})
+        b["count"] += 1
+        if (r.get("flagged_count") or 0) > 0:
+            b["flagged"] += 1
+        if isinstance(r.get("score"), int):
+            b["_ss"] += r["score"]
+            b["_sc"] += 1
+    surfaces = sorted([{"surface": v["surface"], "count": v["count"], "flagged": v["flagged"],
+                        "avg_score": round(v["_ss"] / v["_sc"]) if v["_sc"] else None}
+                       for v in by_surface.values()], key=lambda x: -x["count"])
+    recent = [{"at": r.get("at"), "surface": r.get("surface"), "score": r.get("score"),
+               "label": r.get("label"), "question": r.get("question"),
+               "flagged_count": r.get("flagged_count", 0), "claims": (r.get("claims") or [])[:6]}
+              for r in rows[:40]]
+    label = "Grounded" if (avg is None or avg >= 80) else ("Partially grounded" if avg >= 50 else "Unverified")
+    return {"version": CRA_APP_VERSION, "days": days, "total_checks": len(rows),
+            "avg_score": avg, "label": label, "flagged_total": flagged_total,
+            "by_surface": surfaces, "recent": recent}

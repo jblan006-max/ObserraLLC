@@ -1,0 +1,24 @@
+{
+  "summary": "Iteration 154 — Full-stack verification of v1.0.0 versioning + CRA hallucination monitor. Backend pytest /app/backend/tests/test_iter154_version_hallucination.py = 4/4 PASS: (a) GET /api/version → 200 {name:'Obserra EU CRA Governance', version:'1.0.0', regulation:'Regulation (EU) 2024/2847'}; (b) POST /api/cra/ground {kind:'insight',tab:'products',answer:...} → 200 with int score 0-100, label in {Grounded|Partially grounded|Unverified}, flagged_count int, flagged/claims arrays, method string, version:'1.0.0'; (c) same with kind:'explain'+title+context+answer → 200 with matching schema; (d) GET /api/cra/ai-monitor → 200 with version:'1.0.0', total_checks>0, avg_score int, label, flagged_total, non-empty by_surface (all surfaces prefixed 'cra:'), non-empty recent (all cra:-prefixed). Frontend Playwright (admin jblan2026@gmail.com, 1920x1080, Enter-key login + Skip tour): On /app/cra-governance, all 12 CRA tab-testids present and visible without horizontal scroll — mission, products, certification, ledger, sbom, vulnerability, conformity, declaration, regulation, controls, nist, assurance (tab bar wraps to a 2nd row as designed). cra-tab-analyst-products rendered; meta line contains 'Obserra CRA v1.0.0'; cra-grounding-badge visible; cra-grounding-score resolved to '92%' (Grounded) after ~15s async verifier call. AI Assurance tab (cra-tab-assurance) → cra-ai-monitor rendered with all three tiles — cra-ai-monitor-score='Avg grounding score 62% Partially grounded', cra-ai-monitor-checks='AI answers checked 13 grounding checks logged', cra-ai-monitor-flagged='Answers with flagged claims 8 unsupported figure/ref detected' — plus cra-ai-monitor-row-0 in the recent list. Refresh button clicked → 200. Regression: cra-tab-analyst-nist still renders on NIST tab; cra-explain-toggle on a product row opens cra-explain-summary and grounding-badge count on Products becomes 2 (tab-level analyst + per-item explain), confirming CraExplain also fires /cra/ground.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter154_version_hallucination.py",
+    "/app/test_reports/pytest/iter154.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "cra_governance.py is now 1915 lines (up from 1814 in iter153). The prior review flagged >700 LOC; add cra_ai.py (dashboard-insight/explain/_cra_tab_context/fallbacks) and cra_grounding.py (CRAGroundReq + /ground + /ai-monitor) to keep files focused.",
+    "CraExplain currently fires a /cra/ground call every time the card mounts; consider a client-side cache keyed on (kind,title,context-hash,answer-hash) so re-opening an item doesn't re-run the ~15s LLM verifier and inflate ai_grounding_log volume.",
+    "record_grounding writes to ai_grounding_log — ensure a TTL index on 'at' (or a periodic purge) exists so the monitor's $regex '^cra:' scan stays fast as volume grows; a compound index (org_id, surface, at desc) would also help the /ai-monitor sort.",
+    "GET /api/cra/ai-monitor caps recent[] at 40 and to_list(2000) — for a busy tenant on the default 30-day window this is fine, but the tile totals will silently truncate above 2000; consider a Mongo count_documents() for total_checks/flagged_total and pull only recent rows in memory."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter154_version_hallucination.py"],
+  "success_rate": {"backend": "100% (4/4)", "frontend": "100% (version stamp, grounding badge resolves to 92%, AI Assurance tab with 3 tiles + surface + recent lists, tab-bar wrap with all 12 tabs, Refresh works, NIST + Products CraExplain regression clean)"},
+  "test_credentials": "jblan2026@gmail.com / Obserra2026! (admin) — working via Enter-key submit.",
+  "seed_data_creation": "None. Two /cra/ground POSTs (products+sbom) issued from the pytest to guarantee ai_grounding_log rows before asserting /ai-monitor aggregates.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Grounding runs a gpt-5.4-mini verifier as a non-blocking POST /cra/ground call fired by the UI AFTER the AI answer renders; UI badge briefly shows 'Grounding…' then resolves — always poll cra-grounding-score for a '%' value with up to ~30s tolerance. All CRA grounding rows write to ai_grounding_log with surface 'cra:insight:<tab>' or 'cra:explain:<kind>'; /api/cra/ai-monitor only aggregates surfaces matching ^cra:. cra_governance.py end (lines 1842-1915) holds CRAGroundReq + /ground + /ai-monitor.",
+  "rca of the issue": "No functional issues. One test-only fix during setup: os.environ.get('REACT_APP_BACKEND_URL') was None in the pytest shell, so I read /app/frontend/.env directly to resolve BASE — pure test scaffolding, no code change."
+}
