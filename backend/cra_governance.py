@@ -2111,16 +2111,152 @@ async def cra_risk_trend(days: int = 30, user: dict = Depends(get_current_user))
     return {"days": days, "series": series, "change": last - first, "current": last}
 
 
+def _filter_sort_risks(risks, rating="", category="", owner="", sort="score"):
+    out = list(risks)
+    if rating:
+        keep = {x.strip() for x in rating.split(",") if x.strip()}
+        out = [r for r in out if r["rating"] in keep]
+    if category:
+        keep = {x.strip() for x in category.split(",") if x.strip()}
+        out = [r for r in out if r["category"] in keep]
+    if owner:
+        if owner == "__unassigned__":
+            out = [r for r in out if not r.get("owner")]
+        else:
+            out = [r for r in out if (r.get("owner") or "") == owner]
+    order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+    if sort == "rating":
+        out.sort(key=lambda r: (order.get(r["rating"], 9), -r["score"]))
+    elif sort == "due":
+        out.sort(key=lambda r: (r.get("due_date") or "9999-12-31"))
+    elif sort == "owner":
+        out.sort(key=lambda r: ((r.get("owner") or "~").lower(), -r["score"]))
+    else:
+        out.sort(key=lambda r: -r["score"])
+    return out
+
+
+async def _cra_risk_burndown(org_id, target):
+    from datetime import datetime, timezone, timedelta
+    rows = await db.cra_risk_history.find({"org_id": org_id}, {"_id": 0}).sort("date", 1).to_list(400)
+    if not rows:
+        await _compute_risk_correlation(org_id)
+        rows = await db.cra_risk_history.find({"org_id": org_id}, {"_id": 0}).sort("date", 1).to_list(400)
+    series = rows[-30:]
+    current = series[-1]["risk_index"] if series else 0
+    slope = None
+    projected_date = None
+    days_to_target = None
+    if len(series) >= 2:
+        d0 = datetime.strptime(series[0]["date"], "%Y-%m-%d")
+        d1 = datetime.strptime(series[-1]["date"], "%Y-%m-%d")
+        span = max(1, (d1 - d0).days)
+        slope = round((series[-1]["risk_index"] - series[0]["risk_index"]) / span, 3)
+    gap = current - target
+    on_track = current <= target
+    if not on_track and slope is not None and slope < 0:
+        days_to_target = int(round(gap / (-slope)))
+        projected_date = (datetime.now(timezone.utc) + timedelta(days=days_to_target)).strftime("%Y-%m-%d")
+    return {"target": target, "current": current, "gap": gap, "on_track": on_track,
+            "slope_per_day": slope, "days_to_target": days_to_target, "projected_date": projected_date,
+            "points": len(series)}
+
+
+class CRARiskTargetReq(BaseModel):
+    target: int = Field(..., ge=0, le=100)
+
+
+@cra_router.get("/risk-target")
+async def get_risk_target(user: dict = Depends(get_current_user)):
+    doc = await db.cra_risk_target.find_one({"org_id": user["org_id"]}, {"_id": 0})
+    target = doc.get("target", 30) if doc else 30
+    bd = await _cra_risk_burndown(user["org_id"], target)
+    bd["is_default"] = doc is None
+    return bd
+
+
+@cra_router.put("/risk-target")
+async def set_risk_target(body: CRARiskTargetReq, admin: dict = Depends(require_roles("admin"))):
+    await db.cra_risk_target.update_one({"org_id": admin["org_id"]},
+        {"$set": {"target": body.target, "updated_at": iso(), "by": admin.get("email")}}, upsert=True)
+    return await _cra_risk_burndown(admin["org_id"], body.target)
+
+
+def _cra_risk_owner_digest_html(org_name, items):
+    def esc(s):
+        return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    rtone = {"Critical": "#dc2626", "High": "#ea580c", "Medium": "#ca8a04", "Low": "#16a34a"}
+    rows = "".join(
+        f'<tr><td style="padding:8px 0;border-bottom:1px solid #eee;font:400 13px Arial;color:#1f2937">'
+        f'<b style="color:{rtone.get(it["rating"], "#0f1e3d")}">{esc(it["rating"])}</b> &#183; {esc(it["title"])}'
+        f'<br><span style="color:#6b7280;font-size:12px">Due {esc(it.get("due_date") or "no date")}'
+        f'{" &#183; OVERDUE" if it.get("overdue") else ""} &#183; {esc(", ".join(it.get("controls", [])))}</span></td></tr>'
+        for it in items)
+    overdue = sum(1 for it in items if it.get("overdue"))
+    return (
+        '<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:auto;background:#fff"><tr><td style="padding:24px">'
+        '<div style="font:800 18px Arial;color:#0f1e3d">Your weekly EU CRA risk digest</div>'
+        f'<div style="font:400 12px Arial;color:#6b7280;margin-bottom:12px">{esc(org_name)} &#183; Regulation (EU) 2024/2847</div>'
+        f'<div style="font:600 13px Arial;color:#b45309;margin-bottom:8px">{len(items)} risk(s) assigned to you &#183; {overdue} overdue</div>'
+        f'<table width="100%">{rows}</table>'
+        '<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:10px;font:400 10px Arial;color:#9ca3af">'
+        'Sign in to Obserra EU CRA Governance &#8594; Risk Correlation to update or close each risk.</div>'
+        '</td></tr></table>')
+
+
+async def _run_cra_risk_owner_digest():
+    """Weekly: each risk owner gets ONE email listing every open CRA risk assigned to them with due dates."""
+    import logging as _lg
+    from datetime import datetime, timezone
+    from kernel import notifications
+    log = _lg.getLogger(__name__)
+    now = datetime.now(timezone.utc)
+    orgs = await db.organizations.find({}, {"_id": 1, "name": 1}).to_list(1000)
+    for org in orgs:
+        org_id = str(org["_id"])
+        try:
+            if not await db.cra_products.find_one({"org_id": org_id}, {"_id": 1}):
+                continue
+            rc = await _compute_risk_correlation(org_id)
+            by_owner = {}
+            for r in rc["risks"]:
+                em = r.get("owner_email")
+                if not em:
+                    continue
+                overdue = False
+                if r.get("due_date"):
+                    try:
+                        overdue = datetime.strptime(r["due_date"], "%Y-%m-%d").replace(tzinfo=timezone.utc) < now
+                    except Exception:
+                        overdue = False
+                by_owner.setdefault(em, []).append({
+                    "title": r["title"], "rating": r["rating"], "due_date": r.get("due_date"),
+                    "overdue": overdue, "controls": [m["requirement_id"] for m in r["mapped_controls"]]})
+            order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+            for em, items in by_owner.items():
+                items.sort(key=lambda it: (0 if it["overdue"] else 1, order.get(it["rating"], 9), it.get("due_date") or "9999"))
+                html = _cra_risk_owner_digest_html(org.get("name", "Your organization"), items)
+                await notifications.send_email(em, f"Your weekly EU CRA risk digest — {len(items)} risk(s)", html)
+            if by_owner:
+                await notifications.create(org_id, "report", "CRA risk owner digest sent",
+                                           f"Emailed personalised risk lists to {len(by_owner)} owner(s).", ref="cra-risk-owner-digest")
+            log.info(f"CRA risk owner digest sent for org {org_id}: {len(by_owner)} owner(s)")
+        except Exception as e:
+            log.error(f"CRA risk owner digest failed for org {org_id}: {e}")
+
+
 @cra_router.get("/risk-register.csv")
-async def risk_register_csv(user: dict = Depends(get_current_user)):
+async def risk_register_csv(rating: str = "", category: str = "", owner: str = "", sort: str = "score",
+                            user: dict = Depends(get_current_user)):
     import csv, io
     from fastapi.responses import Response
     rc = await _compute_risk_correlation(user["org_id"])
+    rows_f = _filter_sort_risks(rc["risks"], rating, category, owner, sort)
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(["Rating", "Score", "Severity", "Likelihood", "Category", "Risk", "Owner",
                 "Owner email", "Due date", "Mapped controls", "NIST CSF", "Recommendation", "Fixes"])
-    for r in rc["risks"]:
+    for r in rows_f:
         w.writerow([r["rating"], r["score"], r["severity"], r["likelihood"], r["category"], r["title"],
                     r.get("owner") or "", r.get("owner_email") or "", r.get("due_date") or "",
                     "; ".join(m["requirement_id"] for m in r["mapped_controls"]),
@@ -2131,11 +2267,13 @@ async def risk_register_csv(user: dict = Depends(get_current_user)):
 
 
 @cra_router.get("/risk-register.pdf")
-async def risk_register_pdf(user: dict = Depends(get_current_user)):
+async def risk_register_pdf(rating: str = "", category: str = "", owner: str = "", sort: str = "score",
+                            user: dict = Depends(get_current_user)):
     from bson import ObjectId
     from fastapi.responses import Response
     org = await db.organizations.find_one({"_id": ObjectId(user["org_id"])}, {"_id": 0, "name": 1})
     rc = await _compute_risk_correlation(user["org_id"])
+    rc = {**rc, "risks": _filter_sort_risks(rc["risks"], rating, category, owner, sort)}
     pdf = _cra_risk_register_pdf((org or {}).get("name", "Your organization"), rc)
     return Response(content=pdf, media_type="application/pdf",
                     headers={"Content-Disposition": "attachment; filename=obserra-cra-risk-register.pdf"})
@@ -2230,6 +2368,22 @@ async def _run_cra_risk_governance_tick():
                 continue
             rc = await _compute_risk_correlation(org_id)  # also upserts today's history point
             active = {r["key"]: r for r in rc["risks"]}
+            # Slack/Teams alert for NEW Critical/High correlated risks (fires once per key)
+            try:
+                from self_scan import _post_chat_alert
+                hi = {k: r for k, r in active.items() if r["rating"] in ("Critical", "High")}
+                seen_doc = await db.cra_risk_alerted.find_one({"org_id": org_id}) or {}
+                already = set(seen_doc.get("keys", []))
+                for k in [x for x in hi if x not in already]:
+                    r = hi[k]
+                    ctrls = ", ".join(m["requirement_id"] for m in r["mapped_controls"])
+                    body = f"{r['category']} · score {r['score']}/25 · maps to {ctrls}. {r['recommendation']}"
+                    await _post_chat_alert(org_id, f"\u26a0 New {r['rating']} CRA risk: {r['title']}", body)
+                    await notifications.create(org_id, "risk", f"New {r['rating']} CRA risk", r["title"], ref="cra-risk-alert")
+                await db.cra_risk_alerted.update_one({"org_id": org_id},
+                    {"$set": {"keys": list(hi.keys()), "updated_at": iso()}}, upsert=True)
+            except Exception as e:
+                log.error(f"CRA risk chat alert failed for org {org_id}: {e}")
             owners = await db.cra_risk_owners.find({"org_id": org_id, "status": {"$ne": "resolved"}}).to_list(500)
             for o in owners:
                 key = o.get("risk_key")

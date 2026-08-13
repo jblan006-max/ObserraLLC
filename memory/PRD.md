@@ -1,5 +1,14 @@
 # Obserra EIOS — PRD
 
+## Round 37 (Jun 2026) — Burndown target, owner workload, Slack/Teams risk alerts, register filters, weekly owner digest (iteration_159: backend 13/13, frontend 100%, no bugs)
+- **Risk Burndown Target**: `GET/PUT /api/cra/risk-target` (`cra_risk_target`, admin PUT) + `_cra_risk_burndown` — target vs current, gap, linear slope from `cra_risk_history`, projected date/days-to-target when trending down. UI `BurndownTarget` card (`cra-risk-burndown` + `cra-risk-target-input/save`).
+- **Owner Workload View**: `By risk` / `By owner` toggle (`cra-risk-view-risks/-owners`); `OwnerWorkload` groups risks by owner (count, overdue, rating breakdown, due dates) with an Unassigned bucket — client-side from `/risk-correlation`.
+- **Register Filters & Sort**: filter bar (`cra-risk-filterbar`) rating toggles + category/owner/sort selects filter on-screen cards AND the exports; `risk-register.csv`/`.pdf` accept `rating,category,owner,sort` via `_filter_sort_risks` (owner `__unassigned__` sentinel).
+- **Slack/Teams Risk Alerts**: `_run_cra_risk_governance_tick` posts NEW Critical/High risks via `self_scan._post_chat_alert` (Teams+Slack, no-op if unconfigured) + `notifications.create`; fires once per key via `cra_risk_alerted`.
+- **Weekly Risk Owner Digest**: `_run_cra_risk_owner_digest` (registered in `/cron/weekly-drift-digest`) emails each owner one HTML list of their open risks + due dates + overdue flags.
+- **New collections**: `cra_risk_target`, `cra_risk_alerted` (plus prior `cra_risk_owners`, `cra_risk_history`).
+- **Files**: RiskCorrelation.jsx (burndown/filters/workload/export-qs), cra_governance.py (endpoints/helpers/tick), scheduled.py (weekly digest).
+
 ## Round 36 (Jun 2026) — Risk register export, owners & due dates, public snapshot movement, risk trend, risk in link+email (iteration_158: backend 7/7, frontend 100%, no bugs)
 - **Risk Register Export**: `GET /api/cra/risk-register.pdf` (board-ready landscape ReportLab table w/ rating colour, owner, due, mapped controls, recommendation) + `GET /api/cra/risk-register.csv`. UI buttons `cra-risk-export-pdf` / `cra-risk-export-csv` on the Risk Correlation dashboard.
 - **Risk Owners & Due Dates**: each correlated risk now has a stable `key` (md5 of category|title). `POST /api/cra/risk-owner` (upsert owner/email/due_date/note into `cra_risk_owners`) + `DELETE /api/cra/risk-owner/{key}`. Owner joins back into `_compute_risk_correlation`. Per-card `OwnerForm` (assign/edit/clear) + owner chip. Hourly `_run_cra_risk_governance_tick` emails owners when a risk is due in ≤3 days or overdue (20h throttle) and auto-resolves owners whose risk no longer exists.
