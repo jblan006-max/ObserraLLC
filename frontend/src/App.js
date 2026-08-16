@@ -3,6 +3,9 @@ import { Suspense, lazy } from "react";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
 import { Toaster } from "@/components/ui/sonner";
+import { ThemeProvider } from "@mui/material/styles";
+import theme from "@/theme";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import Auth from "@/pages/Auth";
 import AppShell from "@/pages/AppShell";
 import AuthCallback from "@/pages/AuthCallback";
@@ -145,14 +148,19 @@ function AppRoutes() {
 }
 
 function App() {
+  const queryClient = new QueryClient();
   return (
     <div className="App">
       <Splash />
       <InstallBanner />
       <AuthProvider>
+        <ThemeProvider theme={theme}>
+          <QueryClientProvider client={queryClient}>
         <BrowserRouter>
           <AppRoutes />
         </BrowserRouter>
+          </QueryClientProvider>
+        </ThemeProvider>
         <Toaster position="top-right" richColors theme="dark" />
       </AuthProvider>
     </div>
