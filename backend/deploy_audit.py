@@ -1,4 +1,4 @@
-"""Auditor-governance module for Obserra SAP UAC.
+"""Auditor-governance module for Obserra EU CRA Governance.
 
 External Audit Room portal, auditor comments / requests inbox, response SLA targets,
 response-time analytics + heatmap, tokenized Slack/Teams action links, SLA escalation
@@ -446,10 +446,10 @@ async def audit_room_comment(token: str, body: RoomCommentBody):
                 f"<h2 style='color:#0f1e3d'>New Audit Room comment</h2>"
                 f"<p><strong>{_esc_html(author)}</strong> left a comment on your SAP Access Compliance audit portal:</p>"
                 f"<blockquote style='border-left:3px solid #2f6df6;margin:0;padding:6px 14px;color:#374151'>{_esc_html(text[:1000])}</blockquote>"
-                f"<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — System Health · Audit Room</p></div>")
+                f"<p style='font-size:11px;color:#9ca3af'>Obserra EU CRA Governance — System Health · Audit Room</p></div>")
         for rr in recips:
             try:
-                await notifications.send_email(rr["email"], "New Audit Room comment — Obserra SAP UAC", html)
+                await notifications.send_email(rr["email"], "New Audit Room comment — Obserra EU CRA Governance", html)
             except Exception:
                 pass
     except Exception:
@@ -505,7 +505,7 @@ async def reply_audit_room_comment(comment_id: str, body: CommentReplyBody, user
                     f"<p>The SAP access governance team at <strong>{_esc_html(oname)}</strong> replied to your comment:</p>"
                     f"<blockquote style='border-left:3px solid #2f6df6;margin:0;padding:6px 14px;color:#374151'>{_esc_html(reply[:1000])}</blockquote>"
                     f"<p style='font-size:12px;color:#6b7280'>Your original note: {_esc_html((doc.get('comment') or '')[:300])}</p>"
-                    f"<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — Audit Room</p></div>")
+                    f"<p style='font-size:11px;color:#9ca3af'>Obserra EU CRA Governance — Audit Room</p></div>")
             await notifications.send_email(em, f"Reply to your audit comment — {oname}", html)
     except Exception:
         pass
@@ -1049,7 +1049,7 @@ async def req_action_reply(token: str, body: ActionReplyBody):
                     f"<h2 style='color:#0f1e3d'>Reply to your audit comment</h2>"
                     f"<p>The SAP access governance team at <strong>{_esc_html(oname)}</strong> replied:</p>"
                     f"<blockquote style='border-left:3px solid #2f6df6;margin:0;padding:6px 14px;color:#374151'>{_esc_html(reply[:1000])}</blockquote>"
-                    f"<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — Audit Room</p></div>")
+                    f"<p style='font-size:11px;color:#9ca3af'>Obserra EU CRA Governance — Audit Room</p></div>")
             await notifications.send_email(em, f"Reply to your audit comment — {oname}", html)
     except Exception:
         pass
@@ -1087,10 +1087,10 @@ async def _run_audit_room_expiry_reminders(within_days: int = 3):
                     f"<strong>{exp[:10]}</strong> — about {days_left} day(s) away.</p>"
                     f"<p style='margin:18px 0'><a href='{link}' style='background:#2f6df6;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600' target='_blank'>Open System Health to renew</a></p>"
                     f"<p class='hint' style='font-size:12px;color:#6b7280'>In the <strong>Shared Access Links</strong> panel, click <strong>Renew</strong> on the room to extend it in one click — so your audit doesn't stall on a dead link.</p>"
-                    f"<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — System Health · Audit Room</p></div>")
+                    f"<p style='font-size:11px;color:#9ca3af'>Obserra EU CRA Governance — System Health · Audit Room</p></div>")
             for rr in recips:
                 try:
-                    await notifications.send_email(rr["email"], "Audit Room link expiring soon — Obserra SAP UAC", html)
+                    await notifications.send_email(rr["email"], "Audit Room link expiring soon — Obserra EU CRA Governance", html)
                 except Exception:
                     pass
             await db.audit_rooms.update_one({"token": token}, {"$set": {"expiry_reminder_sent": nowiso}})
@@ -1151,12 +1151,12 @@ async def _run_overdue_request_digest(sla_hours: int | None = None):
                     f"<p>These auditor requests for <strong>{_esc_html(oname)}</strong> have been open past their SLA target (org default {base}h, with per-room overrides):</p>"
                     f"<ul>{li}</ul>"
                     f"<p style='margin:16px 0'><a href='{link}' style='background:#2f6df6;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600' target='_blank'>Open the Audit Requests inbox</a></p>"
-                    f"<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — System Health · Audit Requests</p></div>")
+                    f"<p style='font-size:11px;color:#9ca3af'>Obserra EU CRA Governance — System Health · Audit Requests</p></div>")
             recips = await db.users.find({"org_id": org_id, "role": {"$in": ["admin", "executive"]}},
                                          {"_id": 0, "email": 1}).to_list(200)
             for rr in recips:
                 try:
-                    await notifications.send_email(rr["email"], f"{len(items)} audit request(s) past SLA — Obserra SAP UAC", html)
+                    await notifications.send_email(rr["email"], f"{len(items)} audit request(s) past SLA — Obserra EU CRA Governance", html)
                 except Exception:
                     pass
             try:
@@ -1199,7 +1199,7 @@ async def _run_overdue_request_digest(sla_hours: int | None = None):
                                  f"{esc['multiplier']:g}× their SLA target and need an owner's attention:</p>"
                                  f"<ul>{eli}</ul>"
                                  f"<p style='margin:16px 0'><a href='{link}' style='background:#b91c1c;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600' target='_blank'>Open the Audit Requests inbox</a></p>"
-                                 f"<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — System Health · SLA escalation</p></div>")
+                                 f"<p style='font-size:11px;color:#9ca3af'>Obserra EU CRA Governance — System Health · SLA escalation</p></div>")
                         for to in esc["contacts"]:
                             try:
                                 await notifications.send_email(to, f"Escalation: {len(crit)} audit request(s) far past SLA — {oname}", ehtml)
@@ -1285,7 +1285,7 @@ async def _run_weekly_escalation_rollup():
                     + (f" · median {med}h from escalation to resolution" if med is not None else "") + ".</p>"
                     f"<ul>{li}</ul>"
                     f"<p style='margin:16px 0'><a href='{link}' style='background:#2f6df6;color:#fff;text-decoration:none;padding:11px 18px;border-radius:8px;font-weight:600' target='_blank'>Open the Audit Requests inbox</a></p>"
-                    f"<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — SLA escalation rollup</p></div>")
+                    f"<p style='font-size:11px;color:#9ca3af'>Obserra EU CRA Governance — SLA escalation rollup</p></div>")
             for to in esc["contacts"]:
                 try:
                     await notifications.send_email(to, f"Weekly SLA escalation rollup ({len(rows)}) — {oname}", html)

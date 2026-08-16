@@ -1,4 +1,4 @@
-"""Obserra SAP UAC — SoD Evidence Pack (auditor CSV/PDF + scheduled weekly auto-email).
+"""Obserra EU CRA Governance — SoD Evidence Pack (auditor CSV/PDF + scheduled weekly auto-email).
 Attached to the shared sap_router. Extracted from sap_digest.py for maintainability."""
 import os
 import io

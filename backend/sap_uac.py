@@ -1,12 +1,10 @@
 """
-Obserra SAP UAC — Enterprise SAP User Access Control & Access Intelligence engine.
+Obserra EU CRA Governance — Enterprise SAP User Access Control & Access Intelligence engine.
 
-Everything is computed LIVE from stored records (No-Mock): SoD conflict detection, the SAP
-Access Risk Score, JML lifecycle, privileged/dormant/orphan detection and ADP↔IZ8 HR
-reconciliation all recompute from the actual account/role/HR data on every request. The
-enterprise access inventory is ingested as a discovered snapshot (with full source provenance)
-so live SAP / ADP / IZ8 / AD / Entra / ServiceNow connectors slot in later without changing
-the engine or the API contract.
+This module continues to provide the SAP-focused access governance engine. Many internal
+identifiers and historical snapshots still reference the legacy "SAP UAC" product name to
+preserve auditability and test artifacts. Live user-facing templates and emails have been
+rebranded to "Obserra EU CRA Governance" elsewhere in the codebase.
 """
 import os
 import io

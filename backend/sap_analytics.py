@@ -1,4 +1,4 @@
-"""Obserra SAP UAC — Analytics & SoD Risk Watchlist.
+"""Obserra EU CRA Governance — Analytics & SoD Risk Watchlist.
 
 Peeled out of sap_uac.py to keep that module from growing. Attaches to the shared sap_router.
 Owns: /analytics (+ region/department slice filters), /analytics/export (branded CSV/PDF of the
@@ -114,7 +114,7 @@ async def analytics(region: str = "", department: str = "", user: dict = Depends
 def _analytics_csv(d, slice_label):
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["Obserra SAP UAC — Access Analytics Export"])
+    w.writerow(["Obserra EU CRA Governance — Access Analytics Export"])
     w.writerow(["Slice", slice_label])
     w.writerow(["Generated", d["generated_at"]])
     w.writerow([])
@@ -193,7 +193,7 @@ def _analytics_pdf(d, slice_label, actor):
     _tbl("Top roles by usage", [[r["name"], r["value"]] for r in d["top_roles"]], ["Role", "Assignments"])
     _tbl("Highest-risk identities", [[r["name"], r["department"], r["score"], r["rating"]] for r in d["top_risk"]],
          ["Identity", "Department", "Score", "Rating"])
-    elems += [Spacer(1, 16), Paragraph("Obserra SAP UAC — SAP User Access Control & Access Intelligence. "
+    elems += [Spacer(1, 16), Paragraph("Obserra EU CRA Governance — SAP User Access Control & Access Intelligence. "
                                        "Figures reflect the live access model at generation time.", small)]
     doc.build(elems)
     return buf.getvalue()
@@ -312,13 +312,13 @@ def _watchlist_alert_html(area, s, thr, owner):
         '<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:auto;background:#fff">'
         '<tr><td style="padding:24px">'
         '<div style="font:800 18px Arial;color:#0f1e3d">SAP SoD hot spot on your watchlist</div>'
-        '<div style="font:400 12px Arial;color:#6b7280;margin-bottom:14px">Obserra SAP UAC — SAP Access Governance</div>'
+        '<div style="font:400 12px Arial;color:#6b7280;margin-bottom:14px">Obserra EU CRA Governance — SAP Access Governance</div>'
         f'<div style="font:700 15px Arial;color:#b91c1c;margin-bottom:6px">{area} — {s["Critical"]} open Critical SoD conflict(s)</div>'
         f'<div style="font:400 13px Arial;color:#1f2937;margin-bottom:8px">This crossed your alert threshold of {thr} Critical. '
         f'Total open conflicts in this area: <b>{s["open"]}</b>. Breakdown: {chips or "—"}.</div>'
         f'<div style="font:400 12px Arial;color:#6b7280">Owner: {owner or "unassigned"}.</div>'
         '<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:10px;font:400 10px Arial;color:#9ca3af">'
-        'Sign in to Obserra SAP UAC → SoD Command Center to assign an owner and open a remediation ticket.</div>'
+        'Sign in to Obserra EU CRA Governance → SoD Command Center to assign an owner and open a remediation ticket.</div>'
         '</td></tr></table>')
 
 
@@ -503,7 +503,7 @@ def _owner_digest_html(owner, rows, total_open, total_crit, frontend=""):
         '<table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:auto;background:#fff">'
         '<tr><td style="padding:22px">'
         '<div style="font:800 18px Arial;color:#0f1e3d">Your SAP SoD areas this week</div>'
-        '<div style="font:400 12px Arial;color:#6b7280;margin-bottom:12px">Obserra SAP UAC — assigned to ' + owner + '</div>'
+        '<div style="font:400 12px Arial;color:#6b7280;margin-bottom:12px">Obserra EU CRA Governance — assigned to ' + owner + '</div>'
         f'<div style="font:400 13px Arial;color:#1f2937;margin-bottom:12px">You own <b>{len(rows)}</b> SoD area(s): '
         f'<b style="color:#b91c1c">{total_crit}</b> open Critical, <b>{total_open}</b> open total.</div>'
         '<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;font:400 12px Arial">'
@@ -511,7 +511,7 @@ def _owner_digest_html(owner, rows, total_open, total_crit, frontend=""):
         '<td style="padding:7px 10px;text-align:center">Critical</td><td style="padding:7px 10px;text-align:center">Open</td>'
         '<td style="padding:7px 10px">Ticket</td></tr>' + body + '</table>'
         '<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:10px;font:400 10px Arial;color:#9ca3af">'
-        'Sign in to Obserra SAP UAC → SoD Command Center → Risk Watchlist to remediate.</div>'
+        'Sign in to Obserra EU CRA Governance → SoD Command Center → Risk Watchlist to remediate.</div>'
         '</td></tr></table>')
 
 
@@ -554,7 +554,7 @@ def _board_pack_html(d, wins, month):
     return (
         '<table width="100%" cellpadding="0" cellspacing="0" style="max-width:680px;margin:auto;background:#fff">'
         '<tr><td style="background:#0f1e3d;padding:20px 24px"><div style="font:800 20px Arial;color:#fff">SAP Access Governance — Board Pack</div>'
-        f'<div style="font:400 12px Arial;color:#c7d2fe">{month} · Obserra SAP UAC</div></td></tr>'
+        f'<div style="font:400 12px Arial;color:#c7d2fe">{month} · Obserra EU CRA Governance</div></td></tr>'
         '<tr><td style="padding:22px 24px">'
         '<div style="font:700 14px Arial;color:#0f1e3d;margin-bottom:6px">Executive summary</div>'
         f'<div style="font:400 13px Arial;color:#1f2937;margin-bottom:14px">{k["identities"]} identities · {k["accounts"]} accounts · '
@@ -564,7 +564,7 @@ def _board_pack_html(d, wins, month):
         f'<div style="font:700 13px Arial;color:#0f1e3d;margin:12px 0 4px">Risk movers</div><ul style="font:400 12px Arial;color:#1f2937;margin:0;padding-left:18px">{movers}</ul>'
         '<div style="font:700 13px Arial;color:#0f1e3d;margin:12px 0 4px">Remediation wins (last 30 days)</div>'
         f'<div style="font:400 13px Arial;color:#065f46"><b>{wins["remediation_tickets"]}</b> remediation change(s) processed · <b>{wins["mitigated"]}</b> conflict(s) under mitigating control.</div>'
-        '<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:10px;font:400 10px Arial;color:#9ca3af">Full metrics attached (SAP analytics PDF). Generated by Obserra SAP UAC.</div>'
+        '<div style="border-top:1px solid #e5e7eb;margin-top:16px;padding-top:10px;font:400 10px Arial;color:#9ca3af">Full metrics attached (SAP analytics PDF). Generated by Obserra EU CRA Governance.</div>'
         '</td></tr></table>')
 
 

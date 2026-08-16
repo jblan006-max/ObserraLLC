@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Obserra SAP UAC — one-click on-premise installer.
+# Obserra EU CRA Governance — one-click on-premise installer.
 # Run this from the extracted "obserra-sap-uac/" folder:  ./install.sh
 set -euo pipefail
 
@@ -11,7 +11,7 @@ err(){ printf "\033[31m!!\033[0m %s\n" "$1" >&2; }
 
 VER="$([ -f VERSION ] && cat VERSION || echo '?')"
 BUILT="$([ -f BUILD_INFO ] && (grep '^built=' BUILD_INFO | cut -d= -f2) || echo '')"
-say "Obserra SAP UAC — one-click on-premise installer (v${VER}${BUILT:+, built ${BUILT}})"
+say "Obserra EU CRA Governance — one-click on-premise installer (v${VER}${BUILT:+, built ${BUILT}})"
 
 command -v docker >/dev/null 2>&1 || { err "Docker is required — see https://docs.docker.com/get-docker/"; exit 1; }
 docker compose version >/dev/null 2>&1 || { err "Docker Compose v2 is required (the 'docker compose' command)."; exit 1; }
@@ -54,7 +54,7 @@ if [ "$ok" != "1" ]; then
   exit 0
 fi
 
-say "Obserra SAP UAC is up at ${PUBLIC_URL}"
+say "Obserra EU CRA Governance is up at ${PUBLIC_URL}"
 
 # --- First-run administrator (only while the instance has no users yet) ---
 STATUS="$(curl -fsS "${PUBLIC_URL}/api/auth/bootstrap-status" 2>/dev/null || echo '')"

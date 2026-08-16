@@ -1,4 +1,4 @@
-# Obserra SAP UAC frontend — build with Node, serve with nginx.
+# Obserra EU CRA Governance frontend — build with Node, serve with nginx.
 # Build context is the package root (so we can also copy deploy/nginx.conf).
 FROM node:20-alpine AS build
 WORKDIR /app

@@ -1,6 +1,12 @@
-"""Obserra SAP UAC — Ask-AI channels (in-app multi-turn Q&A + Slack/Teams inbound slash
+"""Obserra EU CRA Governance — Ask-AI channels (in-app multi-turn Q&A + Slack/Teams inbound slash
 commands + answer log/analytics + Q&A export/email/history). Attached to the shared sap_router.
-Extracted from sap_digest.py for maintainability."""
+Extracted from sap_digest.py for maintainability.
+
+Note: many system prompts and small branding tokens reference the historic "SAP UAC"
+product name. For audit-preservation, prompts are normalized to mention the broader
+Obserra brand where appropriate; user-visible app titles elsewhere are handled by
+the global rebrand applied across templates.
+"""
 import os
 import io
 from datetime import datetime, timedelta
@@ -115,7 +121,7 @@ async def _run_digest_ask(org_id, question, session_id=None, actor="", channel="
         import asyncio
         import json as _json
         from emergentintegrations.llm.chat import LlmChat, UserMessage, TextDelta, StreamDone
-        system = ("You are the Obserra SAP UAC AI Analyst answering a leader's follow-up question about the SAP "
+        system = ("You are the Obserra EU CRA Governance AI Analyst answering a leader's follow-up question about the SAP "
                   "Access Governance Digest. Ground EVERY answer strictly in the provided live snapshot JSON "
                   "(open SoD conflicts, severities, per-area/system breakdown, governance score, forecast, residual "
                   "leavers, auto-remediation). Be concise and executive (2-4 sentences), cite the numbers, and if the "
@@ -227,7 +233,7 @@ async def _slack_answer_and_respond(org_id, question, response_url, user_name, s
                         "text": f":lock: *SAP Access Governance* — asked by @{user_name}\n>{question}"}},
                        {"type": "section", "text": {"type": "mrkdwn", "text": res["answer"]}},
                        {"type": "context", "elements": [{"type": "mrkdwn",
-                        "text": "Grounded in the live SAP access snapshot · Obserra SAP UAC"}]},
+                        "text": "Grounded in the live SAP access snapshot · Obserra EU CRA Governance"}]},
                    ]}
     except Exception as e:
         payload = {"response_type": "ephemeral", "text": f"Sorry — I couldn't answer that right now ({str(e)[:120]})."}

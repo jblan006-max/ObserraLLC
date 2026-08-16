@@ -31,7 +31,7 @@ def main():
     ish = os.path.join(pkg_dir, "install.sh")
     if os.path.exists(ish):
         os.chmod(ish, 0o755)
-    print(f"Assembled {count} files at {pkg_dir} (Obserra SAP UAC v{P.read_version()})")
+    print(f"Assembled {count} files at {pkg_dir} (Obserra EU CRA Governance v{P.read_version()})")
 
 
 if __name__ == "__main__":

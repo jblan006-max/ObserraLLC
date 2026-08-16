@@ -1,6 +1,6 @@
 version: "3.9"
 
-# Obserra SAP UAC — self-hosted with automatic HTTPS via Caddy (Let's Encrypt).
+# Obserra EU CRA Governance — self-hosted with automatic HTTPS via Caddy (Let's Encrypt).
 #
 # Prerequisites:
 #   • A public DNS A/AAAA record for $DOMAIN pointing at this host.

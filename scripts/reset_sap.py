@@ -1,4 +1,9 @@
-"""Reset the SAP UAC discovered snapshot to a clean, consistent state (re-seeds on next access)."""
+"""Reset the SAP UAC discovered snapshot to a clean, consistent state (re-seeds on next access).
+
+Note: This script deals with historical SAP snapshot data. For branding consistency, the
+live control plane has been renamed to "Obserra EU CRA Governance". This script remains
+as-is to avoid altering historical snapshot semantics.
+"""
 from pymongo import MongoClient
 
 env = {}

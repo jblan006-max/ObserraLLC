@@ -866,7 +866,7 @@ async def _route_alert(org, channels, title, body):
                                      {"_id": 0, "email": 1}).to_list(200)
         html = (f"<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
                 f"<h2 style='color:#b45309'>{title}</h2><p>{body}</p>"
-                f"<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — System Health</p></div>")
+                f"<p style='font-size:11px;color:#9ca3af'>Obserra EU CRA Governance — System Health</p></div>")
         for r in recips:
             try:
                 await notifications.send_email(r["email"], title, html)
@@ -1013,7 +1013,7 @@ async def health_alert_test(user: dict = Depends(get_current_user)):
     teams_cfg = bool(alerts.get("teams_url") or (org.get("live_teams") or {}).get("webhook_url"))
     slack_cfg = bool(alerts.get("slack_url"))
     await _route_alert(org, {"slack": True, "teams": True, "email": True},
-                       "✅ Obserra SAP UAC — test alert",
+                       "✅ Obserra EU CRA Governance — test alert",
                        "This is a test of your System Health alert routing. If you received this, the channel is working correctly.")
     return {"slack_configured": slack_cfg, "teams_configured": teams_cfg, "email_attempted": True}
 
@@ -1057,7 +1057,7 @@ def _build_compliance_pdf(org_name, generated_by, version, health, enc, bcfg, ba
     buf = io.BytesIO()
     doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=20 * mm, bottomMargin=18 * mm,
                             leftMargin=18 * mm, rightMargin=18 * mm,
-                            title="Obserra SAP UAC — Compliance Evidence")
+                            title="Obserra EU CRA Governance — Compliance Evidence")
     styles = getSampleStyleSheet()
     h1 = ParagraphStyle("h1", parent=styles["Heading1"], textColor=NAVY, fontSize=20, spaceAfter=2, leading=24)
     subs = ParagraphStyle("subs", parent=styles["Normal"], textColor=MUTED, fontSize=9)
@@ -1068,7 +1068,7 @@ def _build_compliance_pdf(org_name, generated_by, version, health, enc, bcfg, ba
     status = "HEALTHY" if health.get("healthy") else "DEGRADED"
     status_color = colors.HexColor("#12805c") if health.get("healthy") else colors.HexColor("#c2410c")
 
-    el = [Paragraph("Obserra SAP UAC", h1),
+    el = [Paragraph("Obserra EU CRA Governance", h1),
           Paragraph("Compliance Evidence Report — SAP User Access Control &amp; Access Intelligence", subs),
           Spacer(1, 6),
           HRFlowable(width="100%", thickness=1.2, color=ACCENT, spaceAfter=8)]
@@ -1122,7 +1122,7 @@ def _build_compliance_pdf(org_name, generated_by, version, health, enc, bcfg, ba
 
     el.append(Paragraph("3 &middot; Attestation", h2))
     el.append(Paragraph(
-        "This report is generated directly from the live Obserra SAP UAC control plane at the timestamp above. "
+        "This report is generated directly from the live Obserra EU CRA Governance control plane at the timestamp above. "
         "It reflects the operational state of segregation-of-duties, access certification, backup and "
         "at-rest encryption controls for the named organization. All figures are computed from the current "
         "data snapshot and are not editable after generation.", body))
@@ -1151,7 +1151,7 @@ def _build_compliance_pdf(org_name, generated_by, version, health, enc, bcfg, ba
         el.append(qr_tbl)
         el.append(Spacer(1, 4))
     el.append(Paragraph(f"Document integrity signature (SHA-256): {fingerprint}", small))
-    el.append(Paragraph("Obserra SAP UAC &middot; Enterprise SAP Access Governance &middot; Confidential", small))
+    el.append(Paragraph("Obserra EU CRA Governance &middot; Enterprise SAP Access Governance &middot; Confidential", small))
 
     doc.build(el)
     return buf.getvalue()
@@ -1483,12 +1483,12 @@ def _verify_html(doc, exists=True):
                  'counterfeit or the link mistyped.</p>')
         badge = '#c2410c'
     elif not exists:
-        inner = ('<h1>Record found — file no longer stored</h1><p>This report was genuinely issued by Obserra SAP UAC, '
+        inner = ('<h1>Record found — file no longer stored</h1><p>This report was genuinely issued by Obserra EU CRA Governance, '
                  f'but its archived copy has since rolled off retention.</p><p class="mono">Expected SHA-256: {doc.get("sha256")}</p>')
         badge = '#b45309'
     else:
         inner = ('<h1>&#10003; Authentic document</h1>'
-                 '<p>This report was issued by the Obserra SAP UAC control plane. Confirm the copy you hold is '
+                 '<p>This report was issued by the Obserra EU CRA Governance control plane. Confirm the copy you hold is '
                  'untampered by checking its SHA-256 fingerprint against the value below.</p>'
                  f'<table><tr><td>Organization</td><td>{doc.get("org_name") or doc.get("org_id")}</td></tr>'
                  f'<tr><td>Reporting period</td><td>{doc.get("period_label") or "—"}</td></tr>'
@@ -1499,7 +1499,7 @@ def _verify_html(doc, exists=True):
                  '<code>certutil -hashfile &lt;file&gt; SHA256</code> (Windows) and compare.</p>')
         badge = '#12805c'
     return (f'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<title>Obserra SAP UAC — Evidence Verification</title>'
+            '<title>Obserra EU CRA Governance — Evidence Verification</title>'
             '<style>body{font:400 15px/1.6 -apple-system,Segoe UI,Arial;background:#0f1e3d;color:#e5e7eb;margin:0;padding:40px 16px}'
             f'.card{{max-width:640px;margin:auto;background:#fff;color:#111827;border-radius:16px;padding:32px 30px;border-top:6px solid {badge}}}'
             'h1{font-size:22px;margin:0 0 12px;color:#0f1e3d}'
@@ -1508,7 +1508,7 @@ def _verify_html(doc, exists=True):
             'word-break:break-all;background:#f4f6fb;padding:10px 12px;border-radius:8px;color:#0f1e3d}'
             '.hint{font-size:12px;color:#6b7280}code{background:#f4f6fb;padding:1px 5px;border-radius:4px}'
             '.brand{max-width:640px;margin:14px auto 0;text-align:center;color:#94a3b8;font-size:12px}</style></head>'
-            f'<body><div class="card">{inner}</div><div class="brand">Obserra SAP UAC · Enterprise SAP Access Governance</div></body></html>')
+            f'<body><div class="card">{inner}</div><div class="brand">Obserra EU CRA Governance · Enterprise SAP Access Governance</div></body></html>')
 
 
 @deploy_router.get("/evidence/verify/{token}")
@@ -1579,11 +1579,11 @@ async def _run_monthly_evidence_email():
                     "<p>Attached is this month's signed compliance-evidence report for your SAP "
                     "User Access Control platform — system health &amp; controls, access-governance "
                     "coverage, backup/encryption posture, and a document-integrity signature.</p>"
-                    "<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — Enterprise SAP Access Governance</p></div>")
+                    "<p style='font-size:11px;color:#9ca3af'>Obserra EU CRA Governance — Enterprise SAP Access Governance</p></div>")
             attachments = [{"filename": f"Obserra-Compliance-Evidence-{meta['created_at'][:10]}.pdf",
                             "content": base64.b64encode(pdf).decode()}]
             for to in emails:
-                await notifications.send_email(to, "Monthly SAP Access Compliance Evidence — Obserra SAP UAC",
+                await notifications.send_email(to, "Monthly SAP Access Compliance Evidence — Obserra EU CRA Governance",
                                                html, attachments=attachments)
             await notifications.create(oid, "report", "Monthly compliance evidence delivered",
                                        f"Signed evidence PDF archived to the Evidence Locker and emailed to {len(emails)} recipient(s).",
@@ -1623,10 +1623,10 @@ async def _run_quarterly_evidence_pack():
                     "<p>Attached is the signed compliance-evidence pack for the just-ended quarter, covering system "
                     "health &amp; controls, access-governance coverage, quarter uptime, backup/encryption posture and a "
                     "document-integrity signature with a QR verification link.</p>"
-                    "<p style='font-size:11px;color:#9ca3af'>Obserra SAP UAC — Enterprise SAP Access Governance</p></div>")
+                    "<p style='font-size:11px;color:#9ca3af'>Obserra EU CRA Governance — Enterprise SAP Access Governance</p></div>")
             attachments = [{"filename": f"Obserra-Quarter-End-{period['value']}.pdf", "content": base64.b64encode(pdf).decode()}]
             for to in emails:
-                await notifications.send_email(to, f"Quarter-End SAP Access Compliance Pack — {period['value']}", html, attachments=attachments)
+                await notifications.send_email(to, f"Quarter-End SAP Access Compliance Pack — {period['value']} — Obserra EU CRA Governance", html, attachments=attachments)
             await notifications.create(oid, "report", "Quarterly compliance pack delivered",
                                        f"Signed {period['value']} evidence archived and emailed to {len(emails)} recipient(s).", ref="compliance-evidence")
         except Exception as e:
@@ -1652,8 +1652,8 @@ async def health_digest_test_email(body: DigestTestEmail, user: dict = Depends(g
     html = ("<div style='font:400 14px Arial;color:#1f2937;max-width:560px;margin:auto'>"
             "<h2 style='color:#0f1e3d'>System Health Digest (test)</h2><ul>"
             + "".join(f"<li>{ln}</li>" for ln in lines)
-            + "</ul><p style='font-size:11px;color:#9ca3af'>Sent as a one-off test from Obserra SAP UAC — no channel was changed.</p></div>")
-    await notifications.send_email(email, "System Health Digest (test) — Obserra SAP UAC", html)
+            + "</ul><p style='font-size:11px;color:#9ca3af'>Sent as a one-off test from Obserra EU CRA Governance — no channel was changed.</p></div>")
+    await notifications.send_email(email, "System Health Digest (test) — Obserra EU CRA Governance", html)
     return {"email": email, "healthy": h["healthy"]}
 
 
@@ -1767,7 +1767,7 @@ def _docs_html(sender_email):
             "<b>on-premise deployment package</b> (zip).</p>"
             "<ul><li>Self-host with Docker: unzip and follow <code>INSTALL.md</code>.</li>"
             "<li>Install the app on any device straight from the browser (PWA) — no app store needed.</li></ul>"
-            f"<p style='color:#6b7280'>Sent by {sender_email} via Obserra SAP UAC.</p></div>")
+            f"<p style='color:#6b7280'>Sent by {sender_email} via Obserra EU CRA Governance.</p></div>")
 
 
 @deploy_router.post("/email-docs")
@@ -1779,7 +1779,7 @@ async def email_docs(body: EmailDocsBody, user: dict = Depends(get_current_user)
     if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", to):
         raise HTTPException(400, "Enter a valid email address")
     from kernel import notifications
-    await notifications.send_email(to, "Obserra SAP UAC — Install Guide & Deployment Package",
+    await notifications.send_email(to, "Obserra EU CRA Governance — Install Guide & Deployment Package",
                                    _docs_html(user["email"]), attachments=_doc_attachments())
     return {"status": "sent", "to": to}
 
@@ -1799,7 +1799,7 @@ async def email_docs_all(user: dict = Depends(get_current_user)):
     sent = []
     for to in recipients:
         try:
-            await notifications.send_email(to, "Obserra SAP UAC — Install Guide & Deployment Package",
+            await notifications.send_email(to, "Obserra EU CRA Governance — Install Guide & Deployment Package",
                                            html, attachments=attachments)
             sent.append(to)
         except Exception:

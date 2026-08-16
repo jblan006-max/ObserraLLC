@@ -1,4 +1,4 @@
-"""Obserra SAP UAC — Governance Digest (email + Slack/Teams) and Access Governance Scorecard
+"""Obserra EU CRA Governance — Governance Digest (email + Slack/Teams) and Access Governance Scorecard
 (attached to the shared sap_router)."""
 import os
 import io
@@ -57,7 +57,7 @@ def _governance_digest_html(d, share_url="", logo="", accent=""):
         '<div style="font:400 14px Arial,Helvetica,sans-serif;color:#1f2937;max-width:640px;margin:auto">'
         f'<div style="background:{acc};color:#fff;padding:18px 22px;border-radius:12px 12px 0 0">'
         + logo_html +
-        '<div style="font-size:11px;letter-spacing:2px;opacity:.7">OBSERRA SAP UAC</div>'
+        '<div style="font-size:11px;letter-spacing:2px;opacity:.7">OBSERRA</div>'
         '<h2 style="margin:4px 0 0;font-size:20px">SAP Access Governance Digest</h2>'
         f'<div style="font-size:12px;opacity:.75;margin-top:2px">Daily posture · {_now().strftime("%B %d, %Y")}</div></div>'
         '<div style="border:1px solid #e2e8f0;border-top:0;border-radius:0 0 12px 12px;padding:6px 12px 18px">'

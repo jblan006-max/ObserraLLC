@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Obserra SAP UAC — build a FULLY offline Python wheelhouse for air-gapped installs.
+# Obserra EU CRA Governance — build a FULLY offline Python wheelhouse for air-gapped installs.
 #
 # Run this on an internet-connected machine with the SAME CPU architecture and
 # Python 3.11 as your target Docker host. Afterwards copy the whole package to the

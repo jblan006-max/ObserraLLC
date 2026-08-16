@@ -1,6 +1,6 @@
 version: "3.9"
 
-# Obserra SAP UAC — run PREBUILT images from GHCR (no local build).
+# Obserra EU CRA Governance — run PREBUILT images from GHCR (no local build).
 # Every tagged release publishes ghcr.io/<owner>/<repo>/{backend,frontend} images.
 #
 # Usage (from the package root):

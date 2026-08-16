@@ -1,6 +1,6 @@
 version: "3.9"
 
-# Obserra SAP UAC — self-hosted with automatic HTTPS via Traefik v3 (Let's Encrypt).
+# Obserra EU CRA Governance — self-hosted with automatic HTTPS via Traefik v3 (Let's Encrypt).
 # Alternative to docker-compose.https.yml (Caddy). Traefik auto-provisions the cert
 # and redirects HTTP -> HTTPS.
 #

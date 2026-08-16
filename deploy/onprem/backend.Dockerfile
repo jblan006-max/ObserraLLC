@@ -1,4 +1,4 @@
-# Obserra SAP UAC backend — FastAPI + Uvicorn.
+# Obserra EU CRA Governance backend — FastAPI + Uvicorn.
 # Build context is the PACKAGE ROOT (so we can also bundle deploy/wheels for offline installs).
 FROM python:3.11-slim
 
