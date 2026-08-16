@@ -67,3 +67,4 @@ def iter_files():
             fp = os.path.join(root, fn)
             rel = os.path.relpath(fp, ONPREM).replace(os.sep, "/")
             yield fp, ("install.sh" if rel == "install.sh" else f"deploy/{rel}")
+    yield from _walk(os.path.join(ROOT, "deploy", "wheels"), "deploy/wheels")
