@@ -1,0 +1,5 @@
+[
+  { "id": "AC-1", "title": "Access Control Policy", "family": "AC", "description": "Develop, disseminate, and periodically review access control policy.", "keywords": ["access", "identity", "mfa", "AC"] },
+  { "id": "IA-1", "title": "Identification and Authentication", "family": "IA", "description": "Identify and authenticate users before allowing access.", "keywords": ["identity", "authentication", "login", "IA"] },
+  { "id": "CM-1", "title": "Configuration Management", "family": "CM", "description": "Establish configuration baselines and manage changes.", "keywords": ["configuration", "baseline", "CM"] }
+]

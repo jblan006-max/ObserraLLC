@@ -1,0 +1,44 @@
+[
+  {
+    "id": "CRA-01",
+    "title": "Scope: Products with digital elements",
+    "description": "Products with digital elements placed on the EU market must meet CRA obligations including secure-by-design, secure-by-default and timely updates.",
+    "source": "https://digital-strategy.ec.europa.eu/en/policies/cyber-resilience-act",
+    "mapped_nist": []
+  },
+  {
+    "id": "CRA-02",
+    "title": "Secure by design and secure by default",
+    "description": "Manufacturers must design products to be secure throughout their lifecycle and ship them with secure default settings.",
+    "source": "https://digital-strategy.ec.europa.eu/en/policies/cyber-resilience-act",
+    "mapped_nist": []
+  },
+  {
+    "id": "CRA-03",
+    "title": "Vulnerability handling and updates",
+    "description": "Manufacturers must have processes to handle vulnerabilities and provide timely security updates for an appropriate period.",
+    "source": "https://digital-strategy.ec.europa.eu/en/policies/cyber-resilience-act",
+    "mapped_nist": []
+  },
+  {
+    "id": "CRA-04",
+    "title": "Incident reporting",
+    "description": "Reporting obligations for manufacturers and importers for certain cybersecurity incidents, with dates phased in according to the regulation.",
+    "source": "https://digital-strategy.ec.europa.eu/en/policies/cyber-resilience-act",
+    "mapped_nist": []
+  },
+  {
+    "id": "CRA-05",
+    "title": "Third-party assessment and CE marking",
+    "description": "Some high-risk products require third-party assessment before market entry; compliant products will carry the CE mark.",
+    "source": "https://digital-strategy.ec.europa.eu/en/policies/cyber-resilience-act",
+    "mapped_nist": []
+  },
+  {
+    "id": "CRA-06",
+    "title": "Labelling and transparency",
+    "description": "Manufacturers must provide transparent information about security functionality and maintenance periods to buyers.",
+    "source": "https://digital-strategy.ec.europa.eu/en/policies/cyber-resilience-act",
+    "mapped_nist": []
+  }
+]
