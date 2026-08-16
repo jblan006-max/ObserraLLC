@@ -138,3 +138,4 @@ frontend/node_modules/.cache/default-development/82.pack
 .env
 .env.*
 *.env
+.vs
