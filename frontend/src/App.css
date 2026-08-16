@@ -1,1 +1,6 @@
 .App { min-height: 100vh; }
+
+/* Brand helpers */
+.bg-obserra { background-color: hsl(var(--brand)); }
+.text-obserra { color: hsl(var(--brand-foreground)); }
+

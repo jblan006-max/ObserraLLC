@@ -56,6 +56,10 @@ module.exports = {
         med: 'hsl(var(--med))',
         low: 'hsl(var(--low))',
         ai: 'hsl(var(--ai))',
+        brand: {
+          DEFAULT: 'hsl(var(--brand))',
+          foreground: 'hsl(var(--brand-foreground))'
+        },
         amber: 'hsl(35 90% 55% / <alpha-value>)',
         teal: 'hsl(168 76% 46% / <alpha-value>)',
         purple: 'hsl(266 85% 66% / <alpha-value>)',

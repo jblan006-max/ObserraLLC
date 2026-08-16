@@ -1,4 +1,4 @@
-# Obserra SAP UAC — On‑Premise Installer
+# Obserra EU CRA Governance — On‑Premise Installer
 
 Run the entire **Obserra SAP User Access Control** platform (database + backend +
 web app) on your own infrastructure with **one command**. This package is
@@ -72,6 +72,17 @@ When it finishes, open:
 ```
 http://<this-machine-ip>:8080
 ```
+
+### Windows one‑click installer
+
+For Windows users a PowerShell one‑click installer is provided. From the project root run (PowerShell):
+
+```powershell
+.\deploy\onprem\install-windows.ps1
+```
+
+The script performs the same tasks as the Linux `install.sh`: it creates `deploy/.env` from the template, generates a strong `JWT_SECRET`, starts the Docker Compose stack, waits for the backend to become healthy, bootstraps the first administrator and seeds demo data, then wires the on‑prem agent runtime webhook to the included agent container so enforcement tests can be performed end‑to‑end.
+
 
 > Prefer to do it by hand? See **Manual launch** below.
 

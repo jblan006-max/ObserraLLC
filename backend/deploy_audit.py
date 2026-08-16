@@ -104,7 +104,7 @@ def _resolve_room_logo(org, cfg):
 
 def _audit_wrap(inner, badge):
     return (f'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">'
-            '<title>Obserra SAP UAC — Audit Room</title>'
+            '<title>Obserra EU CRA Governance — Audit Room</title>'
             '<style>body{font:400 15px/1.6 -apple-system,Segoe UI,Arial;background:#0f1e3d;color:#e5e7eb;margin:0;padding:40px 16px}'
             f'.card{{max-width:720px;margin:auto;background:#fff;color:#111827;border-radius:16px;padding:32px 30px;border-top:6px solid {badge}}}'
             'h1{font-size:22px;margin:6px 0 2px;color:#0f1e3d}h2{font-size:15px;color:#0f1e3d;margin:22px 0 6px}'
@@ -129,7 +129,7 @@ def _audit_wrap(inner, badge):
             '.ctext{font-size:13px;color:#374151;margin-top:4px;white-space:pre-wrap}'
             '.reply{font-size:13px;color:#111827;margin-top:8px;padding-top:8px;border-top:1px dashed #d1d5db;white-space:pre-wrap}'
             '.brand{max-width:720px;margin:14px auto 0;text-align:center;color:#94a3b8;font-size:12px}</style></head>'
-            f'<body><div class="card">{inner}</div><div class="brand">Obserra SAP UAC · Enterprise SAP Access Governance</div></body></html>')
+            f'<body><div class="card">{inner}</div><div class="brand">Obserra EU CRA Governance · Executive Protection &amp; Intelligence LLC</div></body></html>')
 
 
 def _esc_html(s):

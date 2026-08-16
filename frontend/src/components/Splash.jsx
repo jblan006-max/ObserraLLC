@@ -27,14 +27,14 @@ export const Splash = () => {
       className={`fixed inset-0 z-[9999] flex flex-col items-center justify-center transition-opacity duration-500 ${
         phase === "fade" ? "opacity-0" : "opacity-100"
       }`}
-      style={{ backgroundColor: "#061F3B" }}
+      style={{ backgroundColor: "#042033" }}
     >
       <img
         src="/brand-mark.png"
         alt="Obserra"
-        className="h-44 md:h-56 w-auto object-contain logo-pulse drop-shadow-[0_8px_40px_rgba(86,184,233,0.35)]"
+        className="h-44 md:h-56 w-auto object-contain logo-pulse drop-shadow-[0_8px_40px_rgba(0,77,122,0.35)]"
       />
-      <img src="/brand-wordmark.png" alt="Obserra EU CRA Governance — Executive Protection & Intelligence LLC" className="mt-8 h-16 md:h-20 w-auto object-contain" />
+      <img src="/brand-wordmark.png" alt="Obserra — Executive Protection & Intelligence LLC" className="mt-8 h-16 md:h-20 w-auto object-contain" />
     </div>
   );
 };

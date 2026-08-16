@@ -110,6 +110,8 @@ function AppRoutes() {
         <Route path="/payment/success" element={<Gate><PaymentSuccess /></Gate>} />
         <Route path="/app" element={<Gate><AppShell /></Gate>}>
           <Route index element={<CRAExecutiveOverview />} />
+          <Route path="saas-overview" element={<SaaSOverview />} />
+          <Route path="compliance" element={<Compliance />} />
           <Route path="sod" element={<SodCommandCenter />} />
           <Route path="identities" element={<Identities />} />
           <Route path="privileged" element={<PrivilegedAccess />} />

@@ -1762,7 +1762,7 @@ def _doc_attachments():
 
 def _docs_html(sender_email):
     return ("<div style='font:400 14px Arial;color:#0f1e3d'>"
-            "<h2 style='font:800 20px Arial;color:#0f1e3d'>Obserra SAP UAC — Install &amp; Deployment</h2>"
+            "<h2 style='font:800 20px Arial;color:#0f1e3d'>Obserra EU CRA Governance — Install &amp; Deployment</h2>"
             "<p>Attached you'll find the <b>Install &amp; User Guide</b> (PDF) and the "
             "<b>on-premise deployment package</b> (zip).</p>"
             "<ul><li>Self-host with Docker: unzip and follow <code>INSTALL.md</code>.</li>"

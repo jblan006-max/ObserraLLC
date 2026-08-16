@@ -102,7 +102,7 @@ jobs:
           mkdir -p site
           VER="${{ github.ref_name }}"
           cat > site/manifest.json <<EOF
-          {"version": "${VER#v}", "url": "https://github.com/${{ github.repository }}/releases/tag/${VER}", "notes": "Latest Obserra SAP UAC release. See the linked GitHub release for full notes."}
+          {"version": "${VER#v}", "url": "https://github.com/${{ github.repository }}/releases/tag/${VER}", "notes": "Latest Obserra EU CRA Governance release. See the linked GitHub release for full notes."}
           EOF
           cp site/manifest.json "site/index.json"
 

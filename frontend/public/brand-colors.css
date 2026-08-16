@@ -1,0 +1,17 @@
+/* Brand color CSS variables for Obserra */
+:root{
+  /* Extracted light brand palette from brand-mark.png */
+  --brand: 240 36% 96%; /* #f0f0f8 */
+  --brand-foreground: 220 8% 10%; /* dark foreground for contrast */
+  --primary: var(--brand);
+  --primary-foreground: var(--brand-foreground);
+  --background: 240 36% 96%;
+  --foreground: 220 8% 10%;
+  --card: 240 20% 94%;
+  --card-foreground: 220 8% 10%;
+  --ai: 180 80% 40%;
+  --muted: 240 12% 86%;
+  --muted-foreground: 220 6% 45%;
+  --accent: 200 95% 50%;
+  --accent-foreground: 220 8% 10%;
+}
